@@ -68,3 +68,4 @@ obj/
 # Autres fichiers temporaires
 *.log
 
+/.env
