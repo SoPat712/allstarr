@@ -210,6 +210,18 @@ octo-fiesta.Tests/
 - **TagLibSharp** - ID3 tag and cover art embedding
 - **Swashbuckle.AspNetCore** - Swagger/OpenAPI documentation
 
+## Tested Clients
+
+### PC
+
+- [Aonsoku](https://github.com/victoralvesf/aonsoku)
+- [Subplayer](https://github.com/peguerosdc/subplayer)
+- [Aurial](https://github.com/shrimpza/aurial)
+
+### Android
+
+- [Symfonium](https://symfonium.app/) (works as a standard Subsonic client, but Octo-Fiesta specific features like Deezer search are not supported)
+
 ## Limitations
 
 - **Playlist Search**: Subsonic clients like Aonsoku filter playlists client-side from a cached `getPlaylists` call. Deezer playlists appear in global search (`search3`) but not in the Playlists tab filter.
