@@ -244,8 +244,7 @@ public class DeezerDownloadService : IDownloadService
                     _licenseToken = licenseToken.GetString();
                 }
                 
-                _logger.LogInformation("Deezer token refreshed: {Token}...", 
-                    _apiToken?[..Math.Min(16, _apiToken?.Length ?? 0)]);
+                _logger.LogInformation("Deezer token refreshed successfully");
                 return true;
             }
 
