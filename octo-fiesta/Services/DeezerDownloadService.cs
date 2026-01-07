@@ -513,8 +513,9 @@ public class DeezerDownloadService : IDownloadService
             _ => ".mp3"
         };
 
-        // Build organized folder structure: Artist/Album/Track
-        var outputPath = PathHelper.BuildTrackPath(_downloadPath, song.Artist, song.Album, song.Title, song.Track, extension);
+        // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
+        var artistForPath = song.AlbumArtist ?? song.Artist;
+        var outputPath = PathHelper.BuildTrackPath(_downloadPath, artistForPath, song.Album, song.Title, song.Track, extension);
         
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;
