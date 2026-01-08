@@ -283,27 +283,69 @@ dotnet test
 ```
 octo-fiesta/
 ├── Controllers/
-│   └── SubsonicController.cs       # Main API controller
+│   └── SubsonicController.cs              # Main API controller
+├── Middleware/
+│   └── GlobalExceptionHandler.cs          # Global error handling
 ├── Models/
-│   ├── MusicModels.cs              # Song, Album, Artist, etc.
-│   ├── SubsonicSettings.cs         # Configuration model
-│   └── QobuzSettings.cs            # Qobuz configuration
+│   ├── Domain/                            # Domain entities
+│   │   ├── Song.cs
+│   │   ├── Album.cs
+│   │   └── Artist.cs
+│   ├── Settings/                          # Configuration models
+│   │   ├── SubsonicSettings.cs
+│   │   ├── DeezerSettings.cs
+│   │   └── QobuzSettings.cs
+│   ├── Download/                          # Download-related models
+│   │   ├── DownloadInfo.cs
+│   │   └── DownloadStatus.cs
+│   ├── Search/
+│   │   └── SearchResult.cs
+│   └── Subsonic/
+│       └── ScanStatus.cs
 ├── Services/
-│   ├── DeezerDownloadService.cs    # Deezer download & decryption
-│   ├── DeezerMetadataService.cs    # Deezer API integration
-│   ├── QobuzBundleService.cs       # Qobuz App ID/secret extraction
-│   ├── QobuzDownloadService.cs     # Qobuz download service
-│   ├── QobuzMetadataService.cs     # Qobuz API integration
-│   ├── IDownloadService.cs         # Download interface
-│   ├── IMusicMetadataService.cs    # Metadata interface
-│   └── LocalLibraryService.cs      # Local file management
-├── Program.cs                      # Application entry point
-└── appsettings.json                # Configuration
+│   ├── Common/                            # Shared services
+│   │   ├── BaseDownloadService.cs         # Template method base class
+│   │   ├── PathHelper.cs                  # Path utilities
+│   │   ├── Result.cs                      # Result<T> pattern
+│   │   └── Error.cs                       # Error types
+│   ├── Deezer/                            # Deezer provider
+│   │   ├── DeezerDownloadService.cs
+│   │   ├── DeezerMetadataService.cs
+│   │   └── DeezerStartupValidator.cs
+│   ├── Qobuz/                             # Qobuz provider
+│   │   ├── QobuzDownloadService.cs
+│   │   ├── QobuzMetadataService.cs
+│   │   ├── QobuzBundleService.cs
+│   │   └── QobuzStartupValidator.cs
+│   ├── Local/                             # Local library
+│   │   ├── ILocalLibraryService.cs
+│   │   └── LocalLibraryService.cs
+│   ├── Subsonic/                          # Subsonic API logic
+│   │   ├── SubsonicProxyService.cs        # Request proxying
+│   │   ├── SubsonicModelMapper.cs         # Model mapping
+│   │   ├── SubsonicRequestParser.cs       # Request parsing
+│   │   └── SubsonicResponseBuilder.cs     # Response building
+│   ├── Validation/                        # Startup validation
+│   │   ├── IStartupValidator.cs
+│   │   ├── BaseStartupValidator.cs
+│   │   ├── SubsonicStartupValidator.cs
+│   │   ├── StartupValidationOrchestrator.cs
+│   │   └── ValidationResult.cs
+│   ├── IDownloadService.cs                # Download interface
+│   ├── IMusicMetadataService.cs           # Metadata interface
+│   └── StartupValidationService.cs
+├── Program.cs                             # Application entry point
+└── appsettings.json                       # Configuration
 
 octo-fiesta.Tests/
-├── DeezerDownloadServiceTests.cs
-├── DeezerMetadataServiceTests.cs
-└── LocalLibraryServiceTests.cs
+├── DeezerDownloadServiceTests.cs          # Deezer download tests
+├── DeezerMetadataServiceTests.cs          # Deezer metadata tests
+├── QobuzDownloadServiceTests.cs           # Qobuz download tests (127 tests)
+├── LocalLibraryServiceTests.cs            # Local library tests
+├── SubsonicModelMapperTests.cs            # Model mapping tests
+├── SubsonicProxyServiceTests.cs           # Proxy service tests
+├── SubsonicRequestParserTests.cs          # Request parser tests
+└── SubsonicResponseBuilderTests.cs        # Response builder tests
 ```
 
 ### Dependencies
@@ -311,6 +353,9 @@ octo-fiesta.Tests/
 - **BouncyCastle.Cryptography** - Blowfish decryption for Deezer streams
 - **TagLibSharp** - ID3 tag and cover art embedding
 - **Swashbuckle.AspNetCore** - Swagger/OpenAPI documentation
+- **xUnit** - Unit testing framework
+- **Moq** - Mocking library for tests
+- **FluentAssertions** - Fluent assertion library for tests
 
 ## License
 
