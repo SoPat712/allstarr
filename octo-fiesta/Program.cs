@@ -4,6 +4,7 @@ using octo_fiesta.Services.Deezer;
 using octo_fiesta.Services.Qobuz;
 using octo_fiesta.Services.Local;
 using octo_fiesta.Services.Validation;
+using octo_fiesta.Services.Subsonic;
 using octo_fiesta.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,6 +34,12 @@ var musicService = builder.Configuration.GetValue<MusicService>("Subsonic:MusicS
 // Business services
 // Registered as Singleton to share state (mappings cache, scan debounce, download tracking, rate limiting)
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
+
+// Subsonic services
+builder.Services.AddSingleton<SubsonicRequestParser>();
+builder.Services.AddSingleton<SubsonicResponseBuilder>();
+builder.Services.AddSingleton<SubsonicModelMapper>();
+builder.Services.AddSingleton<SubsonicProxyService>();
 
 // Register music service based on configuration
 if (musicService == MusicService.Qobuz)
