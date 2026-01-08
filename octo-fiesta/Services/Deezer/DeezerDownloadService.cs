@@ -5,10 +5,9 @@ using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Modes;
 using Org.BouncyCastle.Crypto.Parameters;
 using octo_fiesta.Models;
-using octo_fiesta.Services;
 using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Common;
 using Microsoft.Extensions.Options;
-using TagLib;
 using IOFile = System.IO.File;
 
 namespace octo_fiesta.Services.Deezer;
@@ -17,26 +16,17 @@ namespace octo_fiesta.Services.Deezer;
 /// C# port of the DeezerDownloader JavaScript
 /// Handles Deezer authentication, track downloading and decryption
 /// </summary>
-public class DeezerDownloadService : IDownloadService
+public class DeezerDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
-    private readonly IConfiguration _configuration;
-    private readonly ILocalLibraryService _localLibraryService;
-    private readonly IMusicMetadataService _metadataService;
-    private readonly SubsonicSettings _subsonicSettings;
-    private readonly ILogger<DeezerDownloadService> _logger;
+    private readonly SemaphoreSlim _requestLock = new(1, 1);
     
-    private readonly string _downloadPath;
     private readonly string? _arl;
     private readonly string? _arlFallback;
     private readonly string? _preferredQuality;
     
     private string? _apiToken;
     private string? _licenseToken;
-    
-    private readonly Dictionary<string, DownloadInfo> _activeDownloads = new();
-    private readonly SemaphoreSlim _downloadLock = new(1, 1);
-    private readonly SemaphoreSlim _requestLock = new(1, 1);
     
     private DateTime _lastRequestTime = DateTime.MinValue;
     private readonly int _minRequestIntervalMs = 200;
@@ -47,6 +37,8 @@ public class DeezerDownloadService : IDownloadService
     // This is a well-known constant used by the Deezer API, not a user-specific secret
     private const string BfSecret = "g4el58wc0zvf9na1";
 
+    protected override string ProviderName => "deezer";
+
     public DeezerDownloadService(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
@@ -55,162 +47,23 @@ public class DeezerDownloadService : IDownloadService
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<DeezerSettings> deezerSettings,
         ILogger<DeezerDownloadService> logger)
+        : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _configuration = configuration;
-        _localLibraryService = localLibraryService;
-        _metadataService = metadataService;
-        _subsonicSettings = subsonicSettings.Value;
-        _logger = logger;
         
         var deezer = deezerSettings.Value;
-        _downloadPath = configuration["Library:DownloadPath"] ?? "./downloads";
         _arl = deezer.Arl;
         _arlFallback = deezer.ArlFallback;
         _preferredQuality = deezer.Quality;
-        
-        if (!Directory.Exists(_downloadPath))
-        {
-            Directory.CreateDirectory(_downloadPath);
-        }
     }
 
-    #region IDownloadService Implementation
+    #region BaseDownloadService Implementation
 
-    public async Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    {
-        return await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
-    }
-
-    /// <summary>
-    /// Internal method for downloading a song with control over album download triggering
-    /// </summary>
-    /// <param name="triggerAlbumDownload">If true and DownloadMode is Album, triggers background download of remaining album tracks</param>
-    private async Task<string> DownloadSongInternalAsync(string externalProvider, string externalId, bool triggerAlbumDownload, CancellationToken cancellationToken = default)
-    {
-        if (externalProvider != "deezer")
-        {
-            throw new NotSupportedException($"Provider '{externalProvider}' is not supported");
-        }
-
-        var songId = $"ext-{externalProvider}-{externalId}";
-        
-        // Check if already downloaded
-        var existingPath = await _localLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-        if (existingPath != null && IOFile.Exists(existingPath))
-        {
-            _logger.LogInformation("Song already downloaded: {Path}", existingPath);
-            return existingPath;
-        }
-
-        // Check if download in progress
-        if (_activeDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
-        {
-            _logger.LogInformation("Download already in progress for {SongId}", songId);
-            while (_activeDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
-            {
-                await Task.Delay(500, cancellationToken);
-            }
-            
-            if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
-            {
-                return activeDownload.LocalPath;
-            }
-            
-            throw new Exception(activeDownload?.ErrorMessage ?? "Download failed");
-        }
-
-        await _downloadLock.WaitAsync(cancellationToken);
-        try
-        {
-            // Get metadata
-            var song = await _metadataService.GetSongAsync(externalProvider, externalId);
-            if (song == null)
-            {
-                throw new Exception("Song not found");
-            }
-
-            var downloadInfo = new DownloadInfo
-            {
-                SongId = songId,
-                ExternalId = externalId,
-                ExternalProvider = externalProvider,
-                Status = DownloadStatus.InProgress,
-                StartedAt = DateTime.UtcNow
-            };
-            _activeDownloads[songId] = downloadInfo;
-
-            try
-            {
-                var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
-                
-                downloadInfo.Status = DownloadStatus.Completed;
-                downloadInfo.LocalPath = localPath;
-                downloadInfo.CompletedAt = DateTime.UtcNow;
-                
-                song.LocalPath = localPath;
-                await _localLibraryService.RegisterDownloadedSongAsync(song, localPath);
-                
-                // Trigger a Subsonic library rescan (with debounce)
-                // Fire-and-forget with error handling to prevent unobserved task exceptions
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _localLibraryService.TriggerLibraryScanAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to trigger library scan after download");
-                    }
-                });
-                
-                // If download mode is Album and triggering is enabled, start background download of remaining tracks
-                if (triggerAlbumDownload && _subsonicSettings.DownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
-                {
-                    // Extract album external ID from AlbumId (format: "ext-deezer-album-{id}")
-                    var albumExternalId = ExtractExternalIdFromAlbumId(song.AlbumId);
-                    if (!string.IsNullOrEmpty(albumExternalId))
-                    {
-                        _logger.LogInformation("Download mode is Album, triggering background download for album {AlbumId}", albumExternalId);
-                        DownloadRemainingAlbumTracksInBackground(externalProvider, albumExternalId, externalId);
-                    }
-                }
-                
-                _logger.LogInformation("Download completed: {Path}", localPath);
-                return localPath;
-            }
-            catch (Exception ex)
-            {
-                downloadInfo.Status = DownloadStatus.Failed;
-                downloadInfo.ErrorMessage = ex.Message;
-                _logger.LogError(ex, "Download failed for {SongId}", songId);
-                throw;
-            }
-        }
-        finally
-        {
-            _downloadLock.Release();
-        }
-    }
-
-    public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    {
-        var localPath = await DownloadSongAsync(externalProvider, externalId, cancellationToken);
-        return IOFile.OpenRead(localPath);
-    }
-
-    public DownloadInfo? GetDownloadStatus(string songId)
-    {
-        _activeDownloads.TryGetValue(songId, out var info);
-        return info;
-    }
-
-    public async Task<bool> IsAvailableAsync()
+    public override async Task<bool> IsAvailableAsync()
     {
         if (string.IsNullOrEmpty(_arl))
         {
-            _logger.LogWarning("Deezer ARL not configured");
+            Logger.LogWarning("Deezer ARL not configured");
             return false;
         }
 
@@ -221,76 +74,71 @@ public class DeezerDownloadService : IDownloadService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Deezer service not available");
+            Logger.LogWarning(ex, "Deezer service not available");
             return false;
         }
     }
 
-    public void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId)
+    protected override string? ExtractExternalIdFromAlbumId(string albumId)
     {
-        if (externalProvider != "deezer")
+        const string prefix = "ext-deezer-album-";
+        if (albumId.StartsWith(prefix))
         {
-            _logger.LogWarning("Provider '{Provider}' is not supported for album download", externalProvider);
-            return;
+            return albumId[prefix.Length..];
         }
-
-        // Fire-and-forget with error handling
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await DownloadRemainingAlbumTracksAsync(albumExternalId, excludeTrackExternalId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to download remaining album tracks for album {AlbumId}", albumExternalId);
-            }
-        });
+        return null;
     }
 
-    private async Task DownloadRemainingAlbumTracksAsync(string albumExternalId, string excludeTrackExternalId)
+    protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Starting background download for album {AlbumId} (excluding track {TrackId})", 
-            albumExternalId, excludeTrackExternalId);
+        var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken);
+        
+        Logger.LogInformation("Track token obtained for: {Title} - {Artist}", downloadInfo.Title, downloadInfo.Artist);
+        Logger.LogInformation("Using format: {Format}", downloadInfo.Format);
 
-        // Get album with tracks
-        var album = await _metadataService.GetAlbumAsync("deezer", albumExternalId);
-        if (album == null)
+        // Determine extension based on format
+        var extension = downloadInfo.Format?.ToUpper() switch
         {
-            _logger.LogWarning("Album {AlbumId} not found, cannot download remaining tracks", albumExternalId);
-            return;
-        }
+            "FLAC" => ".flac",
+            _ => ".mp3"
+        };
 
-        var tracksToDownload = album.Songs
-            .Where(s => s.ExternalId != excludeTrackExternalId && !string.IsNullOrEmpty(s.ExternalId))
-            .ToList();
+        // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
+        var artistForPath = song.AlbumArtist ?? song.Artist;
+        var outputPath = PathHelper.BuildTrackPath(DownloadPath, artistForPath, song.Album, song.Title, song.Track, extension);
+        
+        // Create directories if they don't exist
+        var albumFolder = Path.GetDirectoryName(outputPath)!;
+        EnsureDirectoryExists(albumFolder);
+        
+        // Resolve unique path if file already exists
+        outputPath = PathHelper.ResolveUniquePath(outputPath);
 
-        _logger.LogInformation("Found {Count} additional tracks to download for album '{AlbumTitle}'", 
-            tracksToDownload.Count, album.Title);
-
-        foreach (var track in tracksToDownload)
+        // Download the encrypted file
+        var response = await RetryWithBackoffAsync(async () =>
         {
-            try
-            {
-                // Check if already downloaded
-                var existingPath = await _localLibraryService.GetLocalPathForExternalSongAsync("deezer", track.ExternalId!);
-                if (existingPath != null && IOFile.Exists(existingPath))
-                {
-                    _logger.LogDebug("Track {TrackId} already downloaded, skipping", track.ExternalId);
-                    continue;
-                }
+            using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
+            request.Headers.Add("User-Agent", "Mozilla/5.0");
+            request.Headers.Add("Accept", "*/*");
+            
+            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        });
 
-                _logger.LogInformation("Downloading track '{Title}' from album '{Album}'", track.Title, album.Title);
-                await DownloadSongInternalAsync("deezer", track.ExternalId!, triggerAlbumDownload: false, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to download track {TrackId} '{Title}'", track.ExternalId, track.Title);
-                // Continue with other tracks
-            }
-        }
+        response.EnsureSuccessStatusCode();
 
-        _logger.LogInformation("Completed background download for album '{AlbumTitle}'", album.Title);
+        // Download and decrypt
+        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var outputFile = IOFile.Create(outputPath);
+        
+        await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
+        
+        // Close file before writing metadata
+        await outputFile.DisposeAsync();
+        
+        // Write metadata and cover art
+        await WriteMetadataAsync(outputPath, song, cancellationToken);
+
+        return outputPath;
     }
 
     #endregion
@@ -331,7 +179,7 @@ public class DeezerDownloadService : IDownloadService
                     _licenseToken = licenseToken.GetString();
                 }
                 
-                _logger.LogInformation("Deezer token refreshed successfully");
+                Logger.LogInformation("Deezer token refreshed successfully");
                 return true;
             }
 
@@ -434,11 +282,9 @@ public class DeezerDownloadService : IDownloadService
                     }
 
                     // Log available formats for debugging
-                    _logger.LogInformation("Available formats from Deezer: {Formats}", string.Join(", ", availableFormats.Keys));
+                    Logger.LogInformation("Available formats from Deezer: {Formats}", string.Join(", ", availableFormats.Keys));
 
                     // Quality priority order (highest to lowest)
-                    // Since we already filtered the requested formats based on preference,
-                    // we just need to pick the best one available
                     var qualityPriority = new[] { "FLAC", "MP3_320", "MP3_128" };
                     
                     string? selectedFormat = null;
@@ -460,7 +306,7 @@ public class DeezerDownloadService : IDownloadService
                         throw new Exception("No compatible format found in available media sources");
                     }
 
-                    _logger.LogInformation("Selected quality: {Format}", selectedFormat);
+                    Logger.LogInformation("Selected quality: {Format}", selectedFormat);
 
                     return new DownloadResult
                     {
@@ -481,199 +327,10 @@ public class DeezerDownloadService : IDownloadService
         {
             if (!string.IsNullOrEmpty(_arlFallback))
             {
-                _logger.LogWarning(ex, "Primary ARL failed, trying fallback ARL...");
+                Logger.LogWarning(ex, "Primary ARL failed, trying fallback ARL...");
                 return await tryDownload(_arlFallback);
             }
             throw;
-        }
-    }
-
-    private async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
-    {
-        var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken);
-        
-        _logger.LogInformation("Track token obtained for: {Title} - {Artist}", downloadInfo.Title, downloadInfo.Artist);
-        _logger.LogInformation("Using format: {Format}", downloadInfo.Format);
-
-        // Determine extension based on format
-        var extension = downloadInfo.Format?.ToUpper() switch
-        {
-            "FLAC" => ".flac",
-            _ => ".mp3"
-        };
-
-        // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
-        var artistForPath = song.AlbumArtist ?? song.Artist;
-        var outputPath = PathHelper.BuildTrackPath(_downloadPath, artistForPath, song.Album, song.Title, song.Track, extension);
-        
-        // Create directories if they don't exist
-        var albumFolder = Path.GetDirectoryName(outputPath)!;
-        EnsureDirectoryExists(albumFolder);
-        
-        // Resolve unique path if file already exists
-        outputPath = PathHelper.ResolveUniquePath(outputPath);
-
-        // Download the encrypted file
-        var response = await RetryWithBackoffAsync(async () =>
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
-            request.Headers.Add("User-Agent", "Mozilla/5.0");
-            request.Headers.Add("Accept", "*/*");
-            
-            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        });
-
-        response.EnsureSuccessStatusCode();
-
-        // Download and decrypt
-        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var outputFile = IOFile.Create(outputPath);
-        
-        await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
-        
-        // Close file before writing metadata
-        await outputFile.DisposeAsync();
-        
-        // Write metadata and cover art
-        await WriteMetadataAsync(outputPath, song, cancellationToken);
-
-        return outputPath;
-    }
-
-    /// <summary>
-    /// Writes ID3/Vorbis metadata and cover art to the audio file
-    /// </summary>
-    private async Task WriteMetadataAsync(string filePath, Song song, CancellationToken cancellationToken)
-    {
-        try
-        {
-            _logger.LogInformation("Writing metadata to: {Path}", filePath);
-            
-            using var tagFile = TagLib.File.Create(filePath);
-            
-            // Basic metadata
-            tagFile.Tag.Title = song.Title;
-            tagFile.Tag.Performers = new[] { song.Artist };
-            tagFile.Tag.Album = song.Album;
-            
-            // Album artist (may differ from track artist for compilations)
-            tagFile.Tag.AlbumArtists = new[] { !string.IsNullOrEmpty(song.AlbumArtist) ? song.AlbumArtist : song.Artist };
-            
-            // Track number
-            if (song.Track.HasValue)
-            {
-                tagFile.Tag.Track = (uint)song.Track.Value;
-            }
-            
-            // Total track count
-            if (song.TotalTracks.HasValue)
-            {
-                tagFile.Tag.TrackCount = (uint)song.TotalTracks.Value;
-            }
-            
-            // Disc number
-            if (song.DiscNumber.HasValue)
-            {
-                tagFile.Tag.Disc = (uint)song.DiscNumber.Value;
-            }
-            
-            // Year
-            if (song.Year.HasValue)
-            {
-                tagFile.Tag.Year = (uint)song.Year.Value;
-            }
-            
-            // Genre
-            if (!string.IsNullOrEmpty(song.Genre))
-            {
-                tagFile.Tag.Genres = new[] { song.Genre };
-            }
-            
-            // BPM
-            if (song.Bpm.HasValue)
-            {
-                tagFile.Tag.BeatsPerMinute = (uint)song.Bpm.Value;
-            }
-            
-            // ISRC (stored in comment if no dedicated field, or via MusicBrainz ID)
-            // TagLib doesn't directly support ISRC, but we can add it to comments
-            var comments = new List<string>();
-            if (!string.IsNullOrEmpty(song.Isrc))
-            {
-                comments.Add($"ISRC: {song.Isrc}");
-            }
-            
-            // Contributors in comments
-            if (song.Contributors.Count > 0)
-            {
-                tagFile.Tag.Composers = song.Contributors.ToArray();
-            }
-            
-            // Copyright
-            if (!string.IsNullOrEmpty(song.Copyright))
-            {
-                tagFile.Tag.Copyright = song.Copyright;
-            }
-            
-            // Comment with additional info
-            if (comments.Count > 0)
-            {
-                tagFile.Tag.Comment = string.Join(" | ", comments);
-            }
-            
-            // Download and embed cover art
-            var coverUrl = song.CoverArtUrlLarge ?? song.CoverArtUrl;
-            if (!string.IsNullOrEmpty(coverUrl))
-            {
-                try
-                {
-                    var coverData = await DownloadCoverArtAsync(coverUrl, cancellationToken);
-                    if (coverData != null && coverData.Length > 0)
-                    {
-                        var mimeType = coverUrl.Contains(".png") ? "image/png" : "image/jpeg";
-                        var picture = new TagLib.Picture
-                        {
-                            Type = TagLib.PictureType.FrontCover,
-                            MimeType = mimeType,
-                            Description = "Cover",
-                            Data = new TagLib.ByteVector(coverData)
-                        };
-                        tagFile.Tag.Pictures = new TagLib.IPicture[] { picture };
-                        _logger.LogInformation("Cover art embedded: {Size} bytes", coverData.Length);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to download cover art from {Url}", coverUrl);
-                }
-            }
-            
-            // Save changes
-            tagFile.Save();
-            _logger.LogInformation("Metadata written successfully to: {Path}", filePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to write metadata to: {Path}", filePath);
-            // Don't propagate the error - the file is downloaded, just without metadata
-        }
-    }
-
-    /// <summary>
-    /// Downloads cover art from a URL
-    /// </summary>
-    private async Task<byte[]?> DownloadCoverArtAsync(string url, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to download cover art from {Url}", url);
-            return null;
         }
     }
 
@@ -760,23 +417,7 @@ public class DeezerDownloadService : IDownloadService
     #region Utility Methods
 
     /// <summary>
-    /// Extracts the external album ID from the internal album ID format
-    /// Example: "ext-deezer-album-123456" -> "123456"
-    /// </summary>
-    private static string? ExtractExternalIdFromAlbumId(string albumId)
-    {
-        const string prefix = "ext-deezer-album-";
-        if (albumId.StartsWith(prefix))
-        {
-            return albumId[prefix.Length..];
-        }
-        return null;
-    }
-
-    /// <summary>
     /// Builds the list of formats to request from Deezer based on preferred quality.
-    /// If a specific quality is preferred, only request that quality and lower.
-    /// This prevents Deezer from returning higher quality formats when user wants a specific one.
     /// </summary>
     private static object[] BuildFormatsList(string? preferredQuality)
     {
@@ -789,7 +430,6 @@ public class DeezerDownloadService : IDownloadService
 
         if (string.IsNullOrEmpty(preferredQuality))
         {
-            // No preference, request all formats (highest quality will be selected)
             return allFormats;
         }
 
@@ -797,7 +437,7 @@ public class DeezerDownloadService : IDownloadService
         
         return preferred switch
         {
-            "FLAC" => allFormats, // Request all, FLAC will be preferred
+            "FLAC" => allFormats,
             "MP3_320" => new object[]
             {
                 new { cipher = "BF_CBC_STRIPE", format = "MP3_320" },
@@ -807,7 +447,7 @@ public class DeezerDownloadService : IDownloadService
             {
                 new { cipher = "BF_CBC_STRIPE", format = "MP3_128" }
             },
-            _ => allFormats // Unknown preference, request all
+            _ => allFormats
         };
     }
 
@@ -828,7 +468,7 @@ public class DeezerDownloadService : IDownloadService
                 if (attempt < maxRetries - 1)
                 {
                     var delay = initialDelayMs * (int)Math.Pow(2, attempt);
-                    _logger.LogWarning("Retry attempt {Attempt}/{MaxRetries} after {Delay}ms ({Message})", 
+                    Logger.LogWarning("Retry attempt {Attempt}/{MaxRetries} after {Delay}ms ({Message})", 
                         attempt + 1, maxRetries, delay, ex.Message);
                     await Task.Delay(delay);
                 }
@@ -866,27 +506,6 @@ public class DeezerDownloadService : IDownloadService
         finally
         {
             _requestLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Ensures a directory exists, creating it and all parent directories if necessary.
-    /// Handles errors gracefully.
-    /// </summary>
-    private void EnsureDirectoryExists(string path)
-    {
-        try
-        {
-            if (!Directory.Exists(path))
-            {
-                Directory.CreateDirectory(path);
-                _logger.LogDebug("Created directory: {Path}", path);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create directory: {Path}", path);
-            throw;
         }
     }
 
@@ -950,7 +569,6 @@ public static class PathHelper
 
     /// <summary>
     /// Sanitizes a folder name by removing invalid path characters.
-    /// Similar to SanitizeFileName but also handles additional folder-specific constraints.
     /// </summary>
     public static string SanitizeFolderName(string folderName)
     {
