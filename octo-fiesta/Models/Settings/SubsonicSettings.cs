@@ -1,4 +1,4 @@
-namespace octo_fiesta.Models;
+namespace octo_fiesta.Models.Settings;
 
 /// <summary>
 /// Download mode for tracks

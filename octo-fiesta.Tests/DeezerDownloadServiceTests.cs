@@ -1,5 +1,12 @@
 using octo_fiesta.Services;
-using octo_fiesta.Models;
+using octo_fiesta.Services.Deezer;
+using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Common;
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Download;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -68,6 +75,13 @@ public class DeezerDownloadServiceTests : IDisposable
         { 
             DownloadMode = downloadMode 
         });
+        
+        var deezerSettings = Options.Create(new DeezerSettings
+        {
+            Arl = arl,
+            ArlFallback = null,
+            Quality = null
+        });
 
         return new DeezerDownloadService(
             _httpClientFactoryMock.Object,
@@ -75,6 +89,7 @@ public class DeezerDownloadServiceTests : IDisposable
             _localLibraryServiceMock.Object,
             _metadataServiceMock.Object,
             subsonicSettings,
+            deezerSettings,
             _loggerMock.Object);
     }
 

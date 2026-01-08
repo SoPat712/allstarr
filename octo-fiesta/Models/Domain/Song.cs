@@ -1,4 +1,4 @@
-namespace octo_fiesta.Models;
+namespace octo_fiesta.Models.Domain;
 
 /// <summary>
 /// Represents a song (local or external)
@@ -94,83 +94,4 @@ public class Song
     /// 0 = Naturally clean, 1 = Explicit, 2 = Not applicable, 3 = Clean/edited version, 6/7 = Unknown
     /// </summary>
     public int? ExplicitContentLyrics { get; set; }
-}
-
-/// <summary>
-/// Represents an artist
-/// </summary>
-public class Artist
-{
-    public string Id { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public string? ImageUrl { get; set; }
-    public int? AlbumCount { get; set; }
-    public bool IsLocal { get; set; }
-    public string? ExternalProvider { get; set; }
-    public string? ExternalId { get; set; }
-}
-
-/// <summary>
-/// Represents an album
-/// </summary>
-public class Album
-{
-    public string Id { get; set; } = string.Empty;
-    public string Title { get; set; } = string.Empty;
-    public string Artist { get; set; } = string.Empty;
-    public string? ArtistId { get; set; }
-    public int? Year { get; set; }
-    public int? SongCount { get; set; }
-    public string? CoverArtUrl { get; set; }
-    public string? Genre { get; set; }
-    public bool IsLocal { get; set; }
-    public string? ExternalProvider { get; set; }
-    public string? ExternalId { get; set; }
-    public List<Song> Songs { get; set; } = new();
-}
-
-/// <summary>
-/// Search result combining local and external results
-/// </summary>
-public class SearchResult
-{
-    public List<Song> Songs { get; set; } = new();
-    public List<Album> Albums { get; set; } = new();
-    public List<Artist> Artists { get; set; } = new();
-}
-
-/// <summary>
-/// Download status of a song
-/// </summary>
-public enum DownloadStatus
-{
-    NotStarted,
-    InProgress,
-    Completed,
-    Failed
-}
-
-/// <summary>
-/// Information about an ongoing or completed download
-/// </summary>
-public class DownloadInfo
-{
-    public string SongId { get; set; } = string.Empty;
-    public string ExternalId { get; set; } = string.Empty;
-    public string ExternalProvider { get; set; } = string.Empty;
-    public DownloadStatus Status { get; set; }
-    public double Progress { get; set; } // 0.0 to 1.0
-    public string? LocalPath { get; set; }
-    public string? ErrorMessage { get; set; }
-    public DateTime StartedAt { get; set; }
-    public DateTime? CompletedAt { get; set; }
-}
-
-/// <summary>
-/// Subsonic library scan status
-/// </summary>
-public class ScanStatus
-{
-    public bool Scanning { get; set; }
-    public int? Count { get; set; }
 }

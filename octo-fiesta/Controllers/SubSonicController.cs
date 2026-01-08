@@ -3,8 +3,14 @@ using System.Xml.Linq;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using octo_fiesta.Models;
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Download;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services;
+using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Subsonic;
 
 namespace octo_fiesta.Controllers;
 
@@ -12,26 +18,35 @@ namespace octo_fiesta.Controllers;
 [Route("")]
 public class SubsonicController : ControllerBase
 {
-    private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly IMusicMetadataService _metadataService;
     private readonly ILocalLibraryService _localLibraryService;
     private readonly IDownloadService _downloadService;
+    private readonly SubsonicRequestParser _requestParser;
+    private readonly SubsonicResponseBuilder _responseBuilder;
+    private readonly SubsonicModelMapper _modelMapper;
+    private readonly SubsonicProxyService _proxyService;
     private readonly ILogger<SubsonicController> _logger;
     
     public SubsonicController(
-        IHttpClientFactory httpClientFactory, 
         IOptions<SubsonicSettings> subsonicSettings,
         IMusicMetadataService metadataService,
         ILocalLibraryService localLibraryService,
         IDownloadService downloadService,
+        SubsonicRequestParser requestParser,
+        SubsonicResponseBuilder responseBuilder,
+        SubsonicModelMapper modelMapper,
+        SubsonicProxyService proxyService,
         ILogger<SubsonicController> logger)
     {
-        _httpClient = httpClientFactory.CreateClient();
         _subsonicSettings = subsonicSettings.Value;
         _metadataService = metadataService;
         _localLibraryService = localLibraryService;
         _downloadService = downloadService;
+        _requestParser = requestParser;
+        _responseBuilder = responseBuilder;
+        _modelMapper = modelMapper;
+        _proxyService = proxyService;
         _logger = logger;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
@@ -43,85 +58,7 @@ public class SubsonicController : ControllerBase
     // Extract all parameters (query + body)
     private async Task<Dictionary<string, string>> ExtractAllParameters()
     {
-        var parameters = new Dictionary<string, string>();
-
-        // Get query parameters
-        foreach (var query in Request.Query)
-        {
-            parameters[query.Key] = query.Value.ToString();
-        }
-
-        // Get body parameters
-        if (Request.ContentLength > 0 || Request.ContentType != null)
-        {
-            // Handle application/x-www-form-urlencoded (OpenSubsonic formPost extension)
-            if (Request.HasFormContentType)
-            {
-                try
-                {
-                    var form = await Request.ReadFormAsync();
-                    foreach (var field in form)
-                    {
-                        parameters[field.Key] = field.Value.ToString();
-                    }
-                }
-                catch
-                {
-                    // Fall back to manual parsing if ReadFormAsync fails
-                    Request.EnableBuffering();
-                    using var reader = new StreamReader(Request.Body, leaveOpen: true);
-                    var body = await reader.ReadToEndAsync();
-                    Request.Body.Position = 0;
-                    
-                    if (!string.IsNullOrEmpty(body))
-                    {
-                        var formParams = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(body);
-                        foreach (var param in formParams)
-                        {
-                            parameters[param.Key] = param.Value.ToString();
-                        }
-                    }
-                }
-            }
-            // Handle application/json
-            else if (Request.ContentType?.Contains("application/json") == true)
-            {
-                using var reader = new StreamReader(Request.Body);
-                var body = await reader.ReadToEndAsync();
-                
-                if (!string.IsNullOrEmpty(body))
-                {
-                    try
-                    {
-                        var bodyParams = JsonSerializer.Deserialize<Dictionary<string, object>>(body);
-                        if (bodyParams != null)
-                        {
-                            foreach (var param in bodyParams)
-                            {
-                                parameters[param.Key] = param.Value?.ToString() ?? "";
-                            }
-                        }
-                    }
-                    catch (JsonException)
-                    {
-                        
-                    }
-                }
-            }
-        }
-
-        return parameters;
-    }
-
-    private async Task<(object Body, string? ContentType)> RelayToSubsonic(string endpoint, Dictionary<string, string> parameters)
-    {
-        var query = string.Join("&", parameters.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-        var url = $"{_subsonicSettings.Url}/{endpoint}?{query}";
-        HttpResponseMessage response = await _httpClient.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadAsByteArrayAsync();
-        var contentType = response.Content.Headers.ContentType?.ToString();
-        return (body, contentType);
+        return await _requestParser.ExtractAllParametersAsync(Request);
     }
 
     /// <summary>
@@ -142,17 +79,17 @@ public class SubsonicController : ControllerBase
         {
             try
             {
-                var result = await RelayToSubsonic("rest/search3", parameters);
+                var result = await _proxyService.RelayAsync("rest/search3", parameters);
                 var contentType = result.ContentType ?? $"application/{format}";
-                return File((byte[])result.Body, contentType);
+                return File(result.Body, contentType);
             }
             catch
             {
-                return CreateSubsonicResponse(format, "searchResult3", new { });
+                return _responseBuilder.CreateResponse(format, "searchResult3", new { });
             }
         }
 
-        var subsonicTask = RelayToSubsonicSafe("rest/search3", parameters);
+        var subsonicTask = _proxyService.RelaySafeAsync("rest/search3", parameters);
         var externalTask = _metadataService.SearchAllAsync(
             cleanQuery,
             int.TryParse(parameters.GetValueOrDefault("songCount", "20"), out var sc) ? sc : 20,
@@ -188,7 +125,7 @@ public class SubsonicController : ControllerBase
 
         if (!isExternal)
         {
-            return await RelayStreamToSubsonic(parameters);
+            return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted);
         }
 
         var localPath = await _localLibraryService.GetLocalPathForExternalSongAsync(provider!, externalId!);
@@ -224,26 +161,26 @@ public class SubsonicController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(id))
         {
-            return CreateSubsonicError(format, 10, "Missing id parameter");
+            return _responseBuilder.CreateError(format, 10, "Missing id parameter");
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
 
         if (!isExternal)
         {
-            var result = await RelayToSubsonic("rest/getSong", parameters);
+            var result = await _proxyService.RelayAsync("rest/getSong", parameters);
             var contentType = result.ContentType ?? $"application/{format}";
-            return File((byte[])result.Body, contentType);
+            return File(result.Body, contentType);
         }
 
         var song = await _metadataService.GetSongAsync(provider!, externalId!);
 
         if (song == null)
         {
-            return CreateSubsonicError(format, 70, "Song not found");
+            return _responseBuilder.CreateError(format, 70, "Song not found");
         }
 
-        return CreateSubsonicSongResponse(format, song);
+        return _responseBuilder.CreateSongResponse(format, song);
     }
 
     /// <summary>
@@ -260,7 +197,7 @@ public class SubsonicController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(id))
         {
-            return CreateSubsonicError(format, 10, "Missing id parameter");
+            return _responseBuilder.CreateError(format, 10, "Missing id parameter");
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
@@ -270,7 +207,7 @@ public class SubsonicController : ControllerBase
             var artist = await _metadataService.GetArtistAsync(provider!, externalId!);
             if (artist == null)
             {
-                return CreateSubsonicError(format, 70, "Artist not found");
+                return _responseBuilder.CreateError(format, 70, "Artist not found");
             }
 
             var albums = await _metadataService.GetArtistAlbumsAsync(provider!, externalId!);
@@ -288,14 +225,14 @@ public class SubsonicController : ControllerBase
                 }
             }
             
-            return CreateSubsonicArtistResponse(format, artist, albums);
+            return _responseBuilder.CreateArtistResponse(format, artist, albums);
         }
 
-        var navidromeResult = await RelayToSubsonicSafe("rest/getArtist", parameters);
+        var navidromeResult = await _proxyService.RelaySafeAsync("rest/getArtist", parameters);
         
         if (!navidromeResult.Success || navidromeResult.Body == null)
         {
-            return CreateSubsonicError(format, 70, "Artist not found");
+            return _responseBuilder.CreateError(format, 70, "Artist not found");
         }
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
@@ -311,13 +248,13 @@ public class SubsonicController : ControllerBase
                 response.TryGetProperty("artist", out var artistElement))
             {
                 artistName = artistElement.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "";
-                artistData = ConvertSubsonicJsonElement(artistElement, true);
+                artistData = _responseBuilder.ConvertSubsonicJsonElement(artistElement, true);
                 
                 if (artistElement.TryGetProperty("album", out var albums))
                 {
                     foreach (var album in albums.EnumerateArray())
                     {
-                        localAlbums.Add(ConvertSubsonicJsonElement(album, true));
+                        localAlbums.Add(_responseBuilder.ConvertSubsonicJsonElement(album, true));
                     }
                 }
             }
@@ -368,7 +305,7 @@ public class SubsonicController : ControllerBase
         {
             if (!localAlbumNames.Contains(deezerAlbum.Title))
             {
-                mergedAlbums.Add(ConvertAlbumToSubsonicJson(deezerAlbum));
+                mergedAlbums.Add(_responseBuilder.ConvertAlbumToJson(deezerAlbum));
             }
         }
 
@@ -378,7 +315,7 @@ public class SubsonicController : ControllerBase
             artistDict["albumCount"] = mergedAlbums.Count;
         }
 
-        return CreateSubsonicJsonResponse(new
+        return _responseBuilder.CreateJsonResponse(new
         {
             status = "ok",
             version = "1.16.1",
@@ -400,7 +337,7 @@ public class SubsonicController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(id))
         {
-            return CreateSubsonicError(format, 10, "Missing id parameter");
+            return _responseBuilder.CreateError(format, 10, "Missing id parameter");
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
@@ -411,17 +348,17 @@ public class SubsonicController : ControllerBase
 
             if (album == null)
             {
-                return CreateSubsonicError(format, 70, "Album not found");
+                return _responseBuilder.CreateError(format, 70, "Album not found");
             }
 
-            return CreateSubsonicAlbumResponse(format, album);
+            return _responseBuilder.CreateAlbumResponse(format, album);
         }
 
-        var navidromeResult = await RelayToSubsonicSafe("rest/getAlbum", parameters);
+        var navidromeResult = await _proxyService.RelaySafeAsync("rest/getAlbum", parameters);
         
         if (!navidromeResult.Success || navidromeResult.Body == null)
         {
-            return CreateSubsonicError(format, 70, "Album not found");
+            return _responseBuilder.CreateError(format, 70, "Album not found");
         }
 
         var navidromeContent = Encoding.UTF8.GetString(navidromeResult.Body);
@@ -438,13 +375,13 @@ public class SubsonicController : ControllerBase
             {
                 albumName = albumElement.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "";
                 artistName = albumElement.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "";
-                albumData = ConvertSubsonicJsonElement(albumElement, true);
+                albumData = _responseBuilder.ConvertSubsonicJsonElement(albumElement, true);
                 
                 if (albumElement.TryGetProperty("song", out var songs))
                 {
                     foreach (var song in songs.EnumerateArray())
                     {
-                        localSongs.Add(ConvertSubsonicJsonElement(song, true));
+                        localSongs.Add(_responseBuilder.ConvertSubsonicJsonElement(song, true));
                     }
                 }
             }
@@ -503,7 +440,7 @@ public class SubsonicController : ControllerBase
             {
                 if (!localSongTitles.Contains(deezerSong.Title))
                 {
-                    mergedSongs.Add(ConvertSongToSubsonicJson(deezerSong));
+                    mergedSongs.Add(_responseBuilder.ConvertSongToJson(deezerSong));
                 }
             }
 
@@ -530,7 +467,7 @@ public class SubsonicController : ControllerBase
             }
         }
 
-        return CreateSubsonicJsonResponse(new
+        return _responseBuilder.CreateJsonResponse(new
         {
             status = "ok",
             version = "1.16.1",
@@ -561,9 +498,9 @@ public class SubsonicController : ControllerBase
         {
             try
             {
-                var result = await RelayToSubsonic("rest/getCoverArt", parameters);
+                var result = await _proxyService.RelayAsync("rest/getCoverArt", parameters);
                 var contentType = result.ContentType ?? "image/jpeg";
-                return File((byte[])result.Body, contentType);
+                return File(result.Body, contentType);
             }
             catch
             {
@@ -614,7 +551,8 @@ public class SubsonicController : ControllerBase
         
         if (coverUrl != null)
         {
-            var response = await _httpClient.GetAsync(coverUrl);
+            using var httpClient = new HttpClient();
+            var response = await httpClient.GetAsync(coverUrl);
             if (response.IsSuccessStatusCode)
             {
                 var imageBytes = await response.Content.ReadAsByteArrayAsync();
@@ -628,148 +566,26 @@ public class SubsonicController : ControllerBase
 
     #region Helper Methods
 
-    private async Task<(byte[]? Body, string? ContentType, bool Success)> RelayToSubsonicSafe(string endpoint, Dictionary<string, string> parameters)
-    {
-        try
-        {
-            var result = await RelayToSubsonic(endpoint, parameters);
-            return ((byte[])result.Body, result.ContentType, true);
-        }
-        catch
-        {
-            return (null, null, false);
-        }
-    }
-
-    private async Task<IActionResult> RelayStreamToSubsonic(Dictionary<string, string> parameters)
-    {
-        try
-        {
-            var query = string.Join("&", parameters.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-            var url = $"{_subsonicSettings.Url}/rest/stream?{query}";
-            
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, HttpContext.RequestAborted);
-            
-            if (!response.IsSuccessStatusCode)
-            {
-                return StatusCode((int)response.StatusCode);
-            }
-
-            var stream = await response.Content.ReadAsStreamAsync();
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
-            
-            return File(stream, contentType, enableRangeProcessing: true);
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = $"Error streaming from Subsonic: {ex.Message}" });
-        }
-    }
-
     private IActionResult MergeSearchResults(
         (byte[]? Body, string? ContentType, bool Success) subsonicResult,
         SearchResult externalResult,
         string format)
     {
-        var localSongs = new List<object>();
-        var localAlbums = new List<object>();
-        var localArtists = new List<object>();
+        var (localSongs, localAlbums, localArtists) = subsonicResult.Success && subsonicResult.Body != null
+            ? _modelMapper.ParseSearchResponse(subsonicResult.Body, subsonicResult.ContentType)
+            : (new List<object>(), new List<object>(), new List<object>());
 
-        if (subsonicResult.Success && subsonicResult.Body != null)
+        var isJson = format == "json" || subsonicResult.ContentType?.Contains("json") == true;
+        var (mergedSongs, mergedAlbums, mergedArtists) = _modelMapper.MergeSearchResults(
+            localSongs, 
+            localAlbums, 
+            localArtists, 
+            externalResult, 
+            isJson);
+
+        if (isJson)
         {
-            try
-            {
-                var subsonicContent = Encoding.UTF8.GetString(subsonicResult.Body);
-                
-                if (format == "json" || subsonicResult.ContentType?.Contains("json") == true)
-                {
-                    var jsonDoc = JsonDocument.Parse(subsonicContent);
-                    if (jsonDoc.RootElement.TryGetProperty("subsonic-response", out var response) &&
-                        response.TryGetProperty("searchResult3", out var searchResult))
-                    {
-                        if (searchResult.TryGetProperty("song", out var songs))
-                        {
-                            foreach (var song in songs.EnumerateArray())
-                            {
-                                localSongs.Add(ConvertSubsonicJsonElement(song, true));
-                            }
-                        }
-                        if (searchResult.TryGetProperty("album", out var albums))
-                        {
-                            foreach (var album in albums.EnumerateArray())
-                            {
-                                localAlbums.Add(ConvertSubsonicJsonElement(album, true));
-                            }
-                        }
-                        if (searchResult.TryGetProperty("artist", out var artists))
-                        {
-                            foreach (var artist in artists.EnumerateArray())
-                            {
-                                localArtists.Add(ConvertSubsonicJsonElement(artist, true));
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    var xmlDoc = XDocument.Parse(subsonicContent);
-                    var ns = xmlDoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
-                    var searchResult = xmlDoc.Descendants(ns + "searchResult3").FirstOrDefault();
-                    
-                    if (searchResult != null)
-                    {
-                        foreach (var song in searchResult.Elements(ns + "song"))
-                        {
-                            localSongs.Add(ConvertSubsonicXmlElement(song, "song"));
-                        }
-                        foreach (var album in searchResult.Elements(ns + "album"))
-                        {
-                            localAlbums.Add(ConvertSubsonicXmlElement(album, "album"));
-                        }
-                        foreach (var artist in searchResult.Elements(ns + "artist"))
-                        {
-                            localArtists.Add(ConvertSubsonicXmlElement(artist, "artist"));
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error parsing Subsonic response");
-            }
-        }
-
-        if (format == "json")
-        {
-            var mergedSongs = localSongs
-                .Concat(externalResult.Songs.Select(s => ConvertSongToSubsonicJson(s)))
-                .ToList();
-            var mergedAlbums = localAlbums
-                .Concat(externalResult.Albums.Select(a => ConvertAlbumToSubsonicJson(a)))
-                .ToList();
-            
-            // Deduplicate artists by name - prefer local artists over external ones
-            var localArtistNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var artist in localArtists)
-            {
-                if (artist is Dictionary<string, object> dict && dict.TryGetValue("name", out var nameObj))
-                {
-                    localArtistNames.Add(nameObj?.ToString() ?? "");
-                }
-            }
-            
-            var mergedArtists = localArtists.ToList();
-            foreach (var externalArtist in externalResult.Artists)
-            {
-                // Only add external artist if no local artist with same name exists
-                if (!localArtistNames.Contains(externalArtist.Name))
-                {
-                    mergedArtists.Add(ConvertArtistToSubsonicJson(externalArtist));
-                }
-            }
-
-            return CreateSubsonicJsonResponse(new
+            return _responseBuilder.CreateJsonResponse(new
             {
                 status = "ok",
                 version = "1.16.1",
@@ -784,48 +600,19 @@ public class SubsonicController : ControllerBase
         else
         {
             var ns = XNamespace.Get("http://subsonic.org/restapi");
-            
             var searchResult3 = new XElement(ns + "searchResult3");
             
-            // Deduplicate artists by name - prefer local artists over external ones
-            var localArtistNamesXml = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var artist in localArtists.Cast<XElement>())
+            foreach (var artist in mergedArtists.Cast<XElement>())
             {
-                var name = artist.Attribute("name")?.Value;
-                if (!string.IsNullOrEmpty(name))
-                {
-                    localArtistNamesXml.Add(name);
-                }
-                artist.Name = ns + "artist";
                 searchResult3.Add(artist);
             }
-            foreach (var artist in externalResult.Artists)
+            foreach (var album in mergedAlbums.Cast<XElement>())
             {
-                // Only add external artist if no local artist with same name exists
-                if (!localArtistNamesXml.Contains(artist.Name))
-                {
-                    searchResult3.Add(ConvertArtistToSubsonicXml(artist, ns));
-                }
-            }
-            
-            foreach (var album in localAlbums.Cast<XElement>())
-            {
-                album.Name = ns + "album";
                 searchResult3.Add(album);
             }
-            foreach (var album in externalResult.Albums)
+            foreach (var song in mergedSongs.Cast<XElement>())
             {
-                searchResult3.Add(ConvertAlbumToSubsonicXml(album, ns));
-            }
-            
-            foreach (var song in localSongs.Cast<XElement>())
-            {
-                song.Name = ns + "song";
                 searchResult3.Add(song);
-            }
-            foreach (var song in externalResult.Songs)
-            {
-                searchResult3.Add(ConvertSongToSubsonicXml(song, ns));
             }
 
             var doc = new XDocument(
@@ -838,296 +625,6 @@ public class SubsonicController : ControllerBase
 
             return Content(doc.ToString(), "application/xml");
         }
-    }
-
-    private object ConvertSubsonicJsonElement(JsonElement element, bool isLocal)
-    {
-        var dict = new Dictionary<string, object>();
-        foreach (var prop in element.EnumerateObject())
-        {
-            dict[prop.Name] = ConvertJsonValue(prop.Value);
-        }
-        dict["isExternal"] = !isLocal;
-        return dict;
-    }
-
-    private object ConvertJsonValue(JsonElement value)
-    {
-        return value.ValueKind switch
-        {
-            JsonValueKind.String => value.GetString() ?? "",
-            JsonValueKind.Number => value.TryGetInt32(out var i) ? i : value.GetDouble(),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Array => value.EnumerateArray().Select(ConvertJsonValue).ToList(),
-            JsonValueKind.Object => value.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonValue(p.Value)),
-            JsonValueKind.Null => null!,
-            _ => value.ToString()
-        };
-    }
-
-    private XElement ConvertSubsonicXmlElement(XElement element, string type)
-    {
-        var newElement = new XElement(element);
-        newElement.SetAttributeValue("isExternal", "false");
-        return newElement;
-    }
-
-    private Dictionary<string, object> ConvertSongToSubsonicJson(Song song)
-    {
-        var result = new Dictionary<string, object>
-        {
-            ["id"] = song.Id,
-            ["parent"] = song.AlbumId ?? "",
-            ["isDir"] = false,
-            ["title"] = song.Title,
-            ["album"] = song.Album ?? "",
-            ["artist"] = song.Artist ?? "",
-            ["albumId"] = song.AlbumId ?? "",
-            ["artistId"] = song.ArtistId ?? "",
-            ["duration"] = song.Duration ?? 0,
-            ["track"] = song.Track ?? 0,
-            ["year"] = song.Year ?? 0,
-            ["coverArt"] = song.Id,
-            ["suffix"] = song.IsLocal ? "mp3" : "Remote",
-            ["contentType"] = "audio/mpeg",
-            ["type"] = "music",
-            ["isVideo"] = false,
-            ["isExternal"] = !song.IsLocal
-        };
-        
-        result["bitRate"] = song.IsLocal ? 128 : 0; // Default bitrate for local files
-        
-        return result;
-    }
-
-    private object ConvertAlbumToSubsonicJson(Album album)
-    {
-        return new
-        {
-            id = album.Id,
-            name = album.Title,
-            artist = album.Artist,
-            artistId = album.ArtistId,
-            songCount = album.SongCount ?? 0,
-            year = album.Year ?? 0,
-            coverArt = album.Id,
-            isExternal = !album.IsLocal
-        };
-    }
-
-    private object ConvertArtistToSubsonicJson(Artist artist)
-    {
-        return new
-        {
-            id = artist.Id,
-            name = artist.Name,
-            albumCount = artist.AlbumCount ?? 0,
-            coverArt = artist.Id,
-            isExternal = !artist.IsLocal
-        };
-    }
-
-    private XElement ConvertSongToSubsonicXml(Song song, XNamespace ns)
-    {
-        return new XElement(ns + "song",
-            new XAttribute("id", song.Id),
-            new XAttribute("title", song.Title),
-            new XAttribute("album", song.Album ?? ""),
-            new XAttribute("artist", song.Artist ?? ""),
-            new XAttribute("duration", song.Duration ?? 0),
-            new XAttribute("track", song.Track ?? 0),
-            new XAttribute("year", song.Year ?? 0),
-            new XAttribute("coverArt", song.Id),
-            new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
-        );
-    }
-
-    private XElement ConvertAlbumToSubsonicXml(Album album, XNamespace ns)
-    {
-        return new XElement(ns + "album",
-            new XAttribute("id", album.Id),
-            new XAttribute("name", album.Title),
-            new XAttribute("artist", album.Artist ?? ""),
-            new XAttribute("songCount", album.SongCount ?? 0),
-            new XAttribute("year", album.Year ?? 0),
-            new XAttribute("coverArt", album.Id),
-            new XAttribute("isExternal", (!album.IsLocal).ToString().ToLower())
-        );
-    }
-
-    private XElement ConvertArtistToSubsonicXml(Artist artist, XNamespace ns)
-    {
-        return new XElement(ns + "artist",
-            new XAttribute("id", artist.Id),
-            new XAttribute("name", artist.Name),
-            new XAttribute("albumCount", artist.AlbumCount ?? 0),
-            new XAttribute("coverArt", artist.Id),
-            new XAttribute("isExternal", (!artist.IsLocal).ToString().ToLower())
-        );
-    }
-
-    /// <summary>
-    /// Creates a JSON Subsonic response with "subsonic-response" key (with hyphen).
-    /// </summary>
-    private IActionResult CreateSubsonicJsonResponse(object responseContent)
-    {
-        var response = new Dictionary<string, object>
-        {
-            ["subsonic-response"] = responseContent
-        };
-        return new JsonResult(response);
-    }
-
-    private IActionResult CreateSubsonicResponse(string format, string elementName, object data)
-    {
-        if (format == "json")
-        {
-            return CreateSubsonicJsonResponse(new { status = "ok", version = "1.16.1" });
-        }
-        
-        var ns = XNamespace.Get("http://subsonic.org/restapi");
-        var doc = new XDocument(
-            new XElement(ns + "subsonic-response",
-                new XAttribute("status", "ok"),
-                new XAttribute("version", "1.16.1"),
-                new XElement(ns + elementName)
-            )
-        );
-        return Content(doc.ToString(), "application/xml");
-    }
-
-    private IActionResult CreateSubsonicError(string format, int code, string message)
-    {
-        if (format == "json")
-        {
-            return CreateSubsonicJsonResponse(new 
-            { 
-                status = "failed", 
-                version = "1.16.1",
-                error = new { code, message }
-            });
-        }
-        
-        var ns = XNamespace.Get("http://subsonic.org/restapi");
-        var doc = new XDocument(
-            new XElement(ns + "subsonic-response",
-                new XAttribute("status", "failed"),
-                new XAttribute("version", "1.16.1"),
-                new XElement(ns + "error",
-                    new XAttribute("code", code),
-                    new XAttribute("message", message)
-                )
-            )
-        );
-        return Content(doc.ToString(), "application/xml");
-    }
-
-    private IActionResult CreateSubsonicSongResponse(string format, Song song)
-    {
-        if (format == "json")
-        {
-            return CreateSubsonicJsonResponse(new 
-            { 
-                status = "ok", 
-                version = "1.16.1",
-                song = ConvertSongToSubsonicJson(song)
-            });
-        }
-        
-        var ns = XNamespace.Get("http://subsonic.org/restapi");
-        var doc = new XDocument(
-            new XElement(ns + "subsonic-response",
-                new XAttribute("status", "ok"),
-                new XAttribute("version", "1.16.1"),
-                ConvertSongToSubsonicXml(song, ns)
-            )
-        );
-        return Content(doc.ToString(), "application/xml");
-    }
-
-    private IActionResult CreateSubsonicAlbumResponse(string format, Album album)
-    {
-        // Calculate total duration from songs
-        var totalDuration = album.Songs.Sum(s => s.Duration ?? 0);
-        
-        if (format == "json")
-        {
-            return CreateSubsonicJsonResponse(new 
-            { 
-                status = "ok", 
-                version = "1.16.1",
-                album = new
-                {
-                    id = album.Id,
-                    name = album.Title,
-                    artist = album.Artist,
-                    artistId = album.ArtistId,
-                    coverArt = album.Id,
-                    songCount = album.Songs.Count > 0 ? album.Songs.Count : (album.SongCount ?? 0),
-                    duration = totalDuration,
-                    year = album.Year ?? 0,
-                    genre = album.Genre ?? "",
-                    isCompilation = false,
-                    song = album.Songs.Select(s => ConvertSongToSubsonicJson(s)).ToList()
-                }
-            });
-        }
-        
-        var ns = XNamespace.Get("http://subsonic.org/restapi");
-        var doc = new XDocument(
-            new XElement(ns + "subsonic-response",
-                new XAttribute("status", "ok"),
-                new XAttribute("version", "1.16.1"),
-                new XElement(ns + "album",
-                    new XAttribute("id", album.Id),
-                    new XAttribute("name", album.Title),
-                    new XAttribute("artist", album.Artist ?? ""),
-                    new XAttribute("songCount", album.SongCount ?? 0),
-                    new XAttribute("year", album.Year ?? 0),
-                    new XAttribute("coverArt", album.Id),
-                    album.Songs.Select(s => ConvertSongToSubsonicXml(s, ns))
-                )
-            )
-        );
-        return Content(doc.ToString(), "application/xml");
-    }
-
-    private IActionResult CreateSubsonicArtistResponse(string format, Artist artist, List<Album> albums)
-    {
-        if (format == "json")
-        {
-            return CreateSubsonicJsonResponse(new 
-            { 
-                status = "ok", 
-                version = "1.16.1",
-                artist = new
-                {
-                    id = artist.Id,
-                    name = artist.Name,
-                    coverArt = artist.Id,
-                    albumCount = albums.Count,
-                    artistImageUrl = artist.ImageUrl,
-                    album = albums.Select(a => ConvertAlbumToSubsonicJson(a)).ToList()
-                }
-            });
-        }
-        
-        var ns = XNamespace.Get("http://subsonic.org/restapi");
-        var doc = new XDocument(
-            new XElement(ns + "subsonic-response",
-                new XAttribute("status", "ok"),
-                new XAttribute("version", "1.16.1"),
-                new XElement(ns + "artist",
-                    new XAttribute("id", artist.Id),
-                    new XAttribute("name", artist.Name),
-                    new XAttribute("coverArt", artist.Id),
-                    new XAttribute("albumCount", albums.Count),
-                    albums.Select(a => ConvertAlbumToSubsonicXml(a, ns))
-                )
-            )
-        );
-        return Content(doc.ToString(), "application/xml");
     }
 
     private string GetContentType(string filePath)
@@ -1157,14 +654,14 @@ public class SubsonicController : ControllerBase
         
         try
         {
-            var result = await RelayToSubsonic(endpoint, parameters);
+            var result = await _proxyService.RelayAsync(endpoint, parameters);
             var contentType = result.ContentType ?? $"application/{format}";
-            return File((byte[])result.Body, contentType);
+            return File(result.Body, contentType);
         }
         catch (HttpRequestException ex)
         {
             // Return Subsonic-compatible error response
-            return CreateSubsonicError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
+            return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
         }
     }
 }

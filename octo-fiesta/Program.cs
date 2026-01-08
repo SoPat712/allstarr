@@ -1,5 +1,11 @@
-using octo_fiesta.Models;
+using octo_fiesta.Models.Settings;
 using octo_fiesta.Services;
+using octo_fiesta.Services.Deezer;
+using octo_fiesta.Services.Qobuz;
+using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Validation;
+using octo_fiesta.Services.Subsonic;
+using octo_fiesta.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,9 +16,15 @@ builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Exception handling
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 // Configuration
 builder.Services.Configure<SubsonicSettings>(
     builder.Configuration.GetSection("Subsonic"));
+builder.Services.Configure<DeezerSettings>(
+    builder.Configuration.GetSection("Deezer"));
 builder.Services.Configure<QobuzSettings>(
     builder.Configuration.GetSection("Qobuz"));
 
@@ -22,6 +34,12 @@ var musicService = builder.Configuration.GetValue<MusicService>("Subsonic:MusicS
 // Business services
 // Registered as Singleton to share state (mappings cache, scan debounce, download tracking, rate limiting)
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
+
+// Subsonic services
+builder.Services.AddSingleton<SubsonicRequestParser>();
+builder.Services.AddSingleton<SubsonicResponseBuilder>();
+builder.Services.AddSingleton<SubsonicModelMapper>();
+builder.Services.AddSingleton<SubsonicProxyService>();
 
 // Register music service based on configuration
 if (musicService == MusicService.Qobuz)
@@ -38,8 +56,13 @@ else
     builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
 }
 
-// Startup validation - runs at application startup to validate configuration
-builder.Services.AddHostedService<StartupValidationService>();
+// Startup validation - register validators
+builder.Services.AddSingleton<IStartupValidator, SubsonicStartupValidator>();
+builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
+builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
+
+// Register orchestrator as hosted service
+builder.Services.AddHostedService<StartupValidationOrchestrator>();
 
 builder.Services.AddCors(options =>
 {
@@ -55,6 +78,8 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+app.UseExceptionHandler(_ => { }); // Global exception handler
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

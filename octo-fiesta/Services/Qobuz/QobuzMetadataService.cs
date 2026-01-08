@@ -1,8 +1,12 @@
-using octo_fiesta.Models;
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Download;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
-namespace octo_fiesta.Services;
+namespace octo_fiesta.Services.Qobuz;
 
 /// <summary>
 /// Metadata service implementation using the Qobuz API

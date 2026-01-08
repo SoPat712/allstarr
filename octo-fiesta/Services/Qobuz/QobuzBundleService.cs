@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace octo_fiesta.Services;
+namespace octo_fiesta.Services.Qobuz;
 
 /// <summary>
 /// Service to dynamically extract Qobuz App ID and secrets from the Qobuz web player
