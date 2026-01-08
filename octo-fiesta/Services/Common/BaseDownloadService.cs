@@ -4,7 +4,6 @@ using octo_fiesta.Models.Download;
 using octo_fiesta.Models.Search;
 using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services.Local;
-using octo_fiesta.Services.Deezer;
 using TagLib;
 using IOFile = System.IO.File;
 
