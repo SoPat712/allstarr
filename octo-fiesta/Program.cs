@@ -16,6 +16,7 @@ builder.Services.AddControllers();
 builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpContextAccessor();
 
 // Exception handling
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
