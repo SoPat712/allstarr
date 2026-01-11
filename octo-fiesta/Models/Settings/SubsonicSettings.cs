@@ -53,7 +53,12 @@ public enum MusicService
     /// <summary>
     /// Qobuz music service
     /// </summary>
-    Qobuz
+    Qobuz,
+	
+	/// <summary>
+	/// SquidWTF music service
+	/// </summary>
+	SquidWTF
 }
 
 public class SubsonicSettings
@@ -78,7 +83,7 @@ public class SubsonicSettings
     /// <summary>
     /// Music service to use (default: Deezer)
     /// Environment variable: MUSIC_SERVICE
-    /// Values: "Deezer", "Qobuz"
+    /// Values: "Deezer", "Qobuz", "SquidWTF"
     /// </summary>
-    public MusicService MusicService { get; set; } = MusicService.Deezer;
+    public MusicService MusicService { get; set; } = MusicService.SquidWTF;
 }
