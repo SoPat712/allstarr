@@ -1,0 +1,599 @@
+using octo_fiesta.Models.Domain;
+using octo_fiesta.Models.Settings;
+using octo_fiesta.Models.Download;
+using octo_fiesta.Models.Search;
+using octo_fiesta.Models.Subsonic;
+using System.Text.Json;
+using System.Text;
+using Microsoft.Extensions.Options;
+//using Microsoft.Extensions.Logging;
+
+namespace octo_fiesta.Services.SquidWTF;
+
+/// <summary>
+/// Metadata service implementation using the SquidWTF API (free, no key required)
+/// </summary>
+
+public class SquidWTFMetadataService : IMusicMetadataService
+{
+	private readonly HttpClient _httpClient;
+    private readonly SubsonicSettings _settings;
+	private readonly ILogger<SquidWTFMetadataService> _logger;
+    private const string BaseUrl = "https://triton.squid.wtf";
+
+	public SquidWTFMetadataService(IHttpClientFactory httpClientFactory, 
+	IOptions<SubsonicSettings> settings,
+	IOptions<SquidWTFSettings> squidwtfSettings,
+	ILogger<SquidWTFMetadataService> logger)
+    {
+        _httpClient = httpClientFactory.CreateClient();
+        _settings = settings.Value;
+		_logger = logger;
+		
+		// Set up default headers
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
+
+    }
+
+    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
+    {
+        try
+        {
+            var url = $"{BaseUrl}/search/?s={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
+            			
+            if (!response.IsSuccessStatusCode) return new List<Song>();
+            
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+            
+            var songs = new List<Song>();
+            if (result.RootElement.TryGetProperty("data", out var data) &&
+				data.TryGetProperty("items", out var items))
+            {
+				int count = 0;
+                foreach (var track in items.EnumerateArray())
+                {
+					if (count >= limit) break;
+					Console.WriteLine("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@Do i make it this far?");
+                    var song = ParseTidalTrack(track);
+                    songs.Add(song);
+					count++;
+
+                }
+            }
+			Console.WriteLine($"!!!!!!!!!!!!!!!!!!!!!!!!!!![SquidWTF] SearchSongs '{url}' → {songs.Count} songs");
+            return songs;
+        }
+        catch (Exception ex)
+        {    
+			Console.WriteLine("========== [SquidWTF] SearchSongsAsync EXCEPTION ==========");
+			Console.WriteLine(ex.ToString());
+			Console.WriteLine("===========================================================");
+			return new List<Song>();
+        }
+	}
+	
+    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
+    {
+        try
+        {
+            var url = $"{BaseUrl}/search/?al={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
+            
+            if (!response.IsSuccessStatusCode) return new List<Album>();
+            
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+            
+            var albums = new List<Album>();
+            if (result.RootElement.TryGetProperty("data", out var data) &&
+				data.TryGetProperty("albums", out var albumsObj) &&
+				albumsObj.TryGetProperty("items", out var items))
+            {
+				int count = 0;
+                foreach (var album in items.EnumerateArray())
+                {
+					if (count >= limit) break;
+                    albums.Add(ParseTidalAlbum(album));
+					count++;
+                }
+            }
+			Console.WriteLine($"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!![SquidWTF] SearchAlbums '{url}' → {albums.Count} albums");
+            return albums;
+        }
+        catch
+        {
+            return new List<Album>();
+        }
+    }
+
+    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
+    {
+        try
+        {
+            var url = $"{BaseUrl}/search/?a={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return new List<Artist>();
+            
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+            
+            var artists = new List<Artist>();
+            if (result.RootElement.TryGetProperty("data", out var data) &&
+				data.TryGetProperty("artists", out var artistsObj) &&
+				artistsObj.TryGetProperty("items", out var items))
+            {
+				int count = 0;
+                foreach (var artist in items.EnumerateArray())
+                {
+					if (count >= limit) break;
+                    artists.Add(ParseTidalArtist(artist));
+					count++;
+                }
+            }
+			Console.WriteLine($"!!!!!!!!!!!!!!!!!!!!![SquidWTF] SearchArtists '{url}' → {artists.Count} artists");
+            return artists;
+        }
+        catch
+        {
+			Console.WriteLine("except");
+            return new List<Artist>();
+        }
+    }
+
+    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
+    {
+        // Execute searches in parallel
+        var songsTask = SearchSongsAsync(query, songLimit);
+        var albumsTask = SearchAlbumsAsync(query, albumLimit);
+        var artistsTask = SearchArtistsAsync(query, artistLimit);
+        
+        await Task.WhenAll(songsTask, albumsTask, artistsTask);
+		
+		var temp = new SearchResult
+        {			
+            Songs = await songsTask,
+            Albums = await albumsTask,
+            Artists = await artistsTask
+        };
+			Console.WriteLine($"[SquidWTF] SearchAll '{query}' → {temp.Songs.Count} songs");
+		return temp;
+		/*
+        return new SearchResult
+        {			
+            Songs = await songsTask,
+            Albums = await albumsTask,
+            Artists = await artistsTask
+        };*/
+    }
+
+    public async Task<Song?> GetSongAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            // Use the /info endpoint for full track metadata
+            var url = $"{BaseUrl}/info/?id={externalId}";
+			
+			Console.WriteLine($"++++++++++++++ URL FOR GET SONG: {url}");
+			
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+            
+			if (!result.RootElement.TryGetProperty("data", out var track))
+				return null;
+
+			return ParseTidalTrackFull(track);
+        }
+        catch (Exception ex)
+        {
+			_logger.LogWarning(ex, "GetSongAsync Exception");
+            return null;
+        }
+    }
+
+    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return null;
+        
+        try
+        {
+            // Use the /info endpoint for full track metadata
+            var url = $"{BaseUrl}/album/?id={externalId}";
+			
+			Console.WriteLine($"++++++++++++++ URL FOR GET ALBUM: {url}");
+
+			
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+            
+			
+			if (!result.RootElement.TryGetProperty("data", out var albumElement))
+				return null;
+
+			var album = ParseTidalAlbum(albumElement);
+	
+			// Get album tracks
+			if (albumElement.TryGetProperty("items", out var tracks))
+			{
+				foreach (var trackWrapper in tracks.EnumerateArray())
+				{
+					if (trackWrapper.TryGetProperty("item", out var track))
+					{
+						var song = ParseTidalTrack(track);
+						if (ShouldIncludeSong(song))
+						{
+							album.Songs.Add(song);
+						}
+					}
+				}
+			}
+			return album;	
+		}
+        catch (Exception ex)
+        {
+			_logger.LogWarning(ex, "GetAlbumAsync Exception");
+            return null;
+        }
+    }
+	
+    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "squidwtf") return null;
+  
+        try
+        {
+            // Use the /info endpoint for full track metadata
+            var url = $"{BaseUrl}/artist/?f={externalId}"; // this has the data for me to count albums and songs
+
+			Console.WriteLine($"++++++++++++++ URL FOR GET ARTIST: {url}");
+
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+            
+            if (result.RootElement.TryGetProperty("data", out var data) &&
+				data.TryGetProperty("items", out var items))
+            {
+                return ParseTidalArtist(data);
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+			_logger.LogWarning(ex, "GetArtistAsync Exception.");
+            return null;
+        }
+    }
+
+    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId)
+    {
+		// Not sure about this endpoint/logic right now. Let's just return null for right now.
+		/*
+        if (externalProvider != "deezer") return new List<Album>();
+        
+        var url = $"{BaseUrl}/artist/{externalId}/albums";
+        var response = await _httpClient.GetAsync(url);
+        
+        if (!response.IsSuccessStatusCode) return new List<Album>();
+        
+        var json = await response.Content.ReadAsStringAsync();
+        var result = JsonDocument.Parse(json);
+        
+        var albums = new List<Album>();
+        if (result.RootElement.TryGetProperty("data", out var data))
+        {
+            foreach (var album in data.EnumerateArray())
+            {
+                albums.Add(ParseDeezerAlbum(album));
+            }
+        }
+        
+        return albums;
+		*/
+//        var albums = new List<Album>();
+//		return albums;
+		Console.WriteLine("********************** AM I CALLED???");
+		return null;
+    }
+
+	// --- Parser functions start here ---
+
+    private Song ParseTidalTrack(JsonElement track, int? fallbackTrackNumber = null)
+    {
+        var externalId = track.GetProperty("id").GetInt64().ToString();
+		Console.WriteLine($"#### ID GIVEN: {externalId}");
+
+		// Explicit content lyrics value - idk if this will work
+		int? explicitContentLyrics =
+			track.TryGetProperty("explicit", out var ecl) && ecl.ValueKind == JsonValueKind.True
+				? 1
+				: 0;
+        
+        int? trackNumber = track.TryGetProperty("trackNumber", out var trackNum) 
+            ? trackNum.GetInt32() 
+            : fallbackTrackNumber;
+        
+        int? discNumber = track.TryGetProperty("volumeNumber", out var volNum)
+            ? volNum.GetInt32()
+            : null;
+        
+        // Get artist name - handle both single artist and artists array
+        string artistName = "";
+        if (track.TryGetProperty("artist", out var artist))
+        {
+            artistName = artist.GetProperty("name").GetString() ?? "";
+        }
+        else if (track.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
+        {
+            artistName = artists[0].GetProperty("name").GetString() ?? "";
+        }
+        
+        // Get artist ID
+        string? artistId = null;
+        if (track.TryGetProperty("artist", out var artistForId))
+        {
+            artistId = $"ext-squidwtf-artist-{artistForId.GetProperty("id").GetInt64()}";
+        }
+        else if (track.TryGetProperty("artists", out var artistsForId) && artistsForId.GetArrayLength() > 0)
+        {
+            artistId = $"ext-squidwtf-artist-{artistsForId[0].GetProperty("id").GetInt64()}";
+        }
+        
+        // Get album info
+        string albumTitle = "";
+        string? albumId = null;
+        string? coverArt = null;
+        
+        if (track.TryGetProperty("album", out var album))
+        {
+            albumTitle = album.GetProperty("title").GetString() ?? "";
+            albumId = $"ext-squidwtf-album-{album.GetProperty("id").GetInt64()}";
+            
+            if (album.TryGetProperty("cover", out var cover))
+            {
+                var coverGuid = cover.GetString()?.Replace("-", "/");
+                coverArt = $"https://resources.tidal.com/images/{coverGuid}/320x320.jpg";
+				Console.WriteLine(coverArt);
+            }
+        }
+        
+        return new Song
+        {
+            Id = $"ext-squidwtf-song-{externalId}",
+            Title = track.GetProperty("title").GetString() ?? "",
+            Artist = artistName,
+            ArtistId = artistId,
+            Album = albumTitle,
+            AlbumId = albumId,
+            Duration = track.TryGetProperty("duration", out var duration) 
+                ? duration.GetInt32() 
+                : null,
+            Track = trackNumber,
+            DiscNumber = discNumber,
+            CoverArtUrl = coverArt,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId,
+            ExplicitContentLyrics = explicitContentLyrics
+        };
+    }
+
+    private Song ParseTidalTrackFull(JsonElement track)
+    {
+        var externalId = track.GetProperty("id").GetInt64().ToString();
+
+		// Explicit content lyrics value - idk if this will work
+		int? explicitContentLyrics =
+			track.TryGetProperty("explicit", out var ecl) && ecl.ValueKind == JsonValueKind.True
+				? 1
+				: 0;
+
+		
+        int? trackNumber = track.TryGetProperty("trackNumber", out var trackNum) 
+            ? trackNum.GetInt32() 
+            : null;
+        
+        int? discNumber = track.TryGetProperty("volumeNumber", out var volNum)
+            ? volNum.GetInt32()
+            : null;
+        
+        int? bpm = track.TryGetProperty("bpm", out var bpmVal) && bpmVal.ValueKind == JsonValueKind.Number
+            ? bpmVal.GetInt32() 
+            : null;
+        
+        string? isrc = track.TryGetProperty("isrc", out var isrcVal) 
+            ? isrcVal.GetString() 
+            : null;
+        
+        int? year = null;
+        if (track.TryGetProperty("streamStartDate", out var streamDate))
+        {
+            var dateStr = streamDate.GetString();
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4)
+            {
+                if (int.TryParse(dateStr.Substring(0, 4), out var y))
+                    year = y;
+            }
+        }
+        
+        // Get artist info
+        string artistName = track.GetProperty("artist").GetProperty("name").GetString() ?? "";
+        long artistIdNum = track.GetProperty("artist").GetProperty("id").GetInt64();
+        
+        // Album artist - same as main artist for Tidal tracks
+        string? albumArtist = artistName;
+        
+        // Get album info
+        var album = track.GetProperty("album");
+        string albumTitle = album.GetProperty("title").GetString() ?? "";
+        long albumIdNum = album.GetProperty("id").GetInt64();
+        
+        // Cover art URLs
+        string? coverArt = null;
+        string? coverArtLarge = null;
+        if (album.TryGetProperty("cover", out var cover))
+        {
+            var coverGuid = cover.GetString()?.Replace("-", "/");
+            coverArt = $"https://resources.tidal.com/images/{coverGuid}/320x320.jpg";
+            coverArtLarge = $"https://resources.tidal.com/images/{coverGuid}/1280x1280.jpg";
+        }
+        
+        // Copyright
+        string? copyright = track.TryGetProperty("copyright", out var copyrightVal)
+            ? copyrightVal.GetString()
+            : null;
+        
+        // Explicit content
+        bool isExplicit = track.TryGetProperty("explicit", out var explicitVal) && explicitVal.GetBoolean();
+        
+        return new Song
+        {
+            Id = $"ext-squidwtf-song-{externalId}",
+            Title = track.GetProperty("title").GetString() ?? "",
+            Artist = artistName,
+            ArtistId = $"ext-squidwtf-artist-{artistIdNum}",
+            Album = albumTitle,
+            AlbumId = $"ext-squidwtf-album-{albumIdNum}",
+            AlbumArtist = albumArtist,
+            Duration = track.TryGetProperty("duration", out var duration) 
+                ? duration.GetInt32() 
+                : null,
+            Track = trackNumber,
+            DiscNumber = discNumber,
+            Year = year,
+            Bpm = bpm,
+            Isrc = isrc,
+            CoverArtUrl = coverArt,
+            CoverArtUrlLarge = coverArtLarge,
+            Label = copyright, // Store copyright in label field
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId,
+            ExplicitContentLyrics = explicitContentLyrics
+        };
+    }
+
+    private Album ParseTidalAlbum(JsonElement album)
+    {
+        var externalId = album.GetProperty("id").GetInt64().ToString();
+        
+        int? year = null;
+        if (album.TryGetProperty("releaseDate", out var releaseDate))
+        {
+            var dateStr = releaseDate.GetString();
+            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4)
+            {
+                if (int.TryParse(dateStr.Substring(0, 4), out var y))
+                    year = y;
+            }
+        }
+        
+        string? coverArt = null;
+        if (album.TryGetProperty("cover", out var cover))
+        {
+            var coverGuid = cover.GetString()?.Replace("-", "/");
+            coverArt = $"https://resources.tidal.com/images/{coverGuid}/320x320.jpg";
+        }
+        
+        // Get artist name
+        string artistName = "";
+        string? artistId = null;
+        if (album.TryGetProperty("artist", out var artist))
+        {
+            artistName = artist.GetProperty("name").GetString() ?? "";
+            artistId = $"ext-squidwtf-artist-{artist.GetProperty("id").GetInt64()}";
+        }
+        else if (album.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
+        {
+            artistName = artists[0].GetProperty("name").GetString() ?? "";
+            artistId = $"ext-squidwtf-artist-{artists[0].GetProperty("id").GetInt64()}";
+        }
+        
+        return new Album
+        {
+            Id = $"ext-squidwtf-album-{externalId}",
+            Title = album.GetProperty("title").GetString() ?? "",
+            Artist = artistName,
+            ArtistId = artistId,
+            Year = year,
+            SongCount = album.TryGetProperty("numberOfTracks", out var trackCount) 
+                ? trackCount.GetInt32() 
+                : null,
+            CoverArtUrl = coverArt,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    private Artist ParseTidalArtist(JsonElement artist)
+    {
+        var externalId = artist.GetProperty("id").GetInt64().ToString();
+        
+		// pretty sure this wont work. API response for artists doesnt provide individual artist pic i dont think.
+        string? imageUrl = null;
+        if (artist.TryGetProperty("picture", out var picture))
+        {
+            var pictureGuid = picture.GetString()?.Replace("-", "/");
+            imageUrl = $"https://resources.tidal.com/images/{pictureGuid}/320x320.jpg";
+        }
+        Console.WriteLine($"{imageUrl}");
+		// also, album count is not implemented because once again API response doesn't seem to track albums properly
+		
+        return new Artist
+        {
+            Id = $"ext-squidwtf-artist-{externalId}",
+            Name = artist.GetProperty("name").GetString() ?? "",
+            ImageUrl = imageUrl,
+			AlbumCount = artist.TryGetProperty("albums_count", out var albumsCount)
+				? albumsCount.GetInt32()
+				: null,
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = externalId
+        };
+    }
+
+    /// <summary>
+    /// Determines whether a song should be included based on the explicit content filter setting
+    /// </summary>
+    /// <param name="song">The song to check</param>
+    /// <returns>True if the song should be included, false otherwise</returns>
+    private bool ShouldIncludeSong(Song song)
+    {
+        // If no explicit content info, include the song
+        if (song.ExplicitContentLyrics == null)
+            return true;
+        
+        return _settings.ExplicitFilter switch
+        {
+            // All: No filtering, include everything
+            ExplicitFilter.All => true,
+            
+            // ExplicitOnly: Exclude clean/edited versions (value 3)
+            // Include: 0 (naturally clean), 1 (explicit), 2 (not applicable), 6/7 (unknown)
+            ExplicitFilter.ExplicitOnly => song.ExplicitContentLyrics != 3,
+            
+            // CleanOnly: Only show clean content
+            // Include: 0 (naturally clean), 3 (clean/edited version)
+            // Exclude: 1 (explicit)
+            ExplicitFilter.CleanOnly => song.ExplicitContentLyrics != 1,
+            
+            _ => true
+        };
+    }
+
+}
