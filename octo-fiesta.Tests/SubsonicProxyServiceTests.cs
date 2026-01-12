@@ -22,17 +22,17 @@ public class SubsonicProxyServiceTests
 
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
- 
-		var settings = Options.Create(new SubsonicSettings 
+
+        var settings = Options.Create(new SubsonicSettings 
         { 
             Url = "http://localhost:4533" 
         });
 
-		var httpContext = new DefaultHttpContext();
-		var httpContextAccessor = new HttpContextAccessor
-		{
-			HttpContext = httpContext
-		};
+        var httpContext = new DefaultHttpContext();
+        var httpContextAccessor = new HttpContextAccessor
+        {
+            HttpContext = httpContext
+        };
 
         _service = new SubsonicProxyService(_mockHttpClientFactory.Object, settings, httpContextAccessor);
     }
@@ -328,5 +328,96 @@ public class SubsonicProxyServiceTests
         // Assert
         var fileResult = Assert.IsType<FileStreamResult>(result);
         Assert.Equal("audio/mpeg", fileResult.ContentType);
+    }
+
+    [Fact]
+    public async Task RelayStreamAsync_WithRangeHeader_ForwardsRangeToUpstream()
+    {
+        // Arrange
+        HttpRequestMessage? capturedRequest = null;
+        var streamContent = new byte[] { 1, 2, 3, 4, 5 };
+        var responseMessage = new HttpResponseMessage(HttpStatusCode.PartialContent)
+        {
+            Content = new ByteArrayContent(streamContent)
+        };
+        responseMessage.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+
+        _mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => capturedRequest = req)
+            .ReturnsAsync(responseMessage);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["Range"] = "bytes=0-1023";
+        var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
+        var service = new SubsonicProxyService(_mockHttpClientFactory.Object, 
+            Options.Create(new SubsonicSettings { Url = "http://localhost:4533" }), 
+            httpContextAccessor);
+
+        var parameters = new Dictionary<string, string> { { "id", "song123" } };
+
+        // Act
+        await service.RelayStreamAsync(parameters, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedRequest);
+        Assert.True(capturedRequest!.Headers.Contains("Range"));
+        Assert.Equal("bytes=0-1023", capturedRequest.Headers.GetValues("Range").First());
+    }
+
+    [Fact]
+    public async Task RelayStreamAsync_WithIfRangeHeader_ForwardsIfRangeToUpstream()
+    {
+        // Arrange
+        HttpRequestMessage? capturedRequest = null;
+        var streamContent = new byte[] { 1, 2, 3 };
+        var responseMessage = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(streamContent)
+        };
+
+        _mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => capturedRequest = req)
+            .ReturnsAsync(responseMessage);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["If-Range"] = "\"etag123\"";
+        var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
+        var service = new SubsonicProxyService(_mockHttpClientFactory.Object,
+            Options.Create(new SubsonicSettings { Url = "http://localhost:4533" }),
+            httpContextAccessor);
+
+        var parameters = new Dictionary<string, string> { { "id", "song123" } };
+
+        // Act
+        await service.RelayStreamAsync(parameters, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedRequest);
+        Assert.True(capturedRequest!.Headers.Contains("If-Range"));
+    }
+
+    [Fact]
+    public async Task RelayStreamAsync_NullHttpContext_ReturnsError()
+    {
+        // Arrange
+        var httpContextAccessor = new HttpContextAccessor { HttpContext = null };
+        var service = new SubsonicProxyService(_mockHttpClientFactory.Object,
+            Options.Create(new SubsonicSettings { Url = "http://localhost:4533" }),
+            httpContextAccessor);
+
+        var parameters = new Dictionary<string, string> { { "id", "song123" } };
+
+        // Act
+        var result = await service.RelayStreamAsync(parameters, CancellationToken.None);
+
+        // Assert
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(500, objectResult.StatusCode);
     }
 }
