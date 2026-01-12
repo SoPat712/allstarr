@@ -6,6 +6,7 @@ using octo_fiesta.Models.Subsonic;
 using System.Text.Json;
 using System.Text;
 using Microsoft.Extensions.Options;
+using System.Text.Json.Nodes;
 //using Microsoft.Extensions.Logging;
 
 namespace octo_fiesta.Services.SquidWTF;
@@ -56,21 +57,16 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 foreach (var track in items.EnumerateArray())
                 {
 					if (count >= limit) break;
-					Console.WriteLine("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@Do i make it this far?");
                     var song = ParseTidalTrack(track);
                     songs.Add(song);
 					count++;
 
                 }
             }
-			Console.WriteLine($"!!!!!!!!!!!!!!!!!!!!!!!!!!![SquidWTF] SearchSongs '{url}' → {songs.Count} songs");
             return songs;
         }
         catch (Exception ex)
         {    
-			Console.WriteLine("========== [SquidWTF] SearchSongsAsync EXCEPTION ==========");
-			Console.WriteLine(ex.ToString());
-			Console.WriteLine("===========================================================");
 			return new List<Song>();
         }
 	}
@@ -100,7 +96,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 					count++;
                 }
             }
-			Console.WriteLine($"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!![SquidWTF] SearchAlbums '{url}' → {albums.Count} albums");
+			
             return albums;
         }
         catch
@@ -133,12 +129,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
 					count++;
                 }
             }
-			Console.WriteLine($"!!!!!!!!!!!!!!!!!!!!![SquidWTF] SearchArtists '{url}' → {artists.Count} artists");
+
             return artists;
         }
         catch
         {
-			Console.WriteLine("except");
             return new List<Artist>();
         }
     }
@@ -158,15 +153,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Albums = await albumsTask,
             Artists = await artistsTask
         };
-			Console.WriteLine($"[SquidWTF] SearchAll '{query}' → {temp.Songs.Count} songs");
+
 		return temp;
-		/*
-        return new SearchResult
-        {			
-            Songs = await songsTask,
-            Albums = await albumsTask,
-            Artists = await artistsTask
-        };*/
     }
 
     public async Task<Song?> GetSongAsync(string externalProvider, string externalId)
@@ -177,9 +165,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         {
             // Use the /info endpoint for full track metadata
             var url = $"{BaseUrl}/info/?id={externalId}";
-			
-			Console.WriteLine($"++++++++++++++ URL FOR GET SONG: {url}");
-			
+						
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode) return null;
             
@@ -206,9 +192,6 @@ public class SquidWTFMetadataService : IMusicMetadataService
         {
             // Use the /info endpoint for full track metadata
             var url = $"{BaseUrl}/album/?id={externalId}";
-			
-			Console.WriteLine($"++++++++++++++ URL FOR GET ALBUM: {url}");
-
 			
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode) return null;
@@ -253,9 +236,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         try
         {
             // Use the /info endpoint for full track metadata
-            var url = $"{BaseUrl}/artist/?f={externalId}"; // this has the data for me to count albums and songs
-
-			Console.WriteLine($"++++++++++++++ URL FOR GET ARTIST: {url}");
+            var url = $"{BaseUrl}/artist/?f={externalId}"; 
 
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode) return null;
@@ -263,13 +244,41 @@ public class SquidWTFMetadataService : IMusicMetadataService
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
             
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-				data.TryGetProperty("items", out var items))
-            {
-                return ParseTidalArtist(data);
+			JsonElement? artistSource = null;
+			int albumCount = 0;
+			
+			// Think this can maybe switch to something using ParseTidalAlbum
+            if (result.RootElement.TryGetProperty("albums", out var albums) &&
+				albums.TryGetProperty("items", out var albumItems) &&
+				albumItems.GetArrayLength() > 0)
+			{
+				albumCount = albumItems.GetArrayLength();
+				artistSource = albumItems[0].GetProperty("artist");
             }
-            
-            return null;
+			
+			// Think this can maybe switch to something using ParseTidalTrack
+			else if (result.RootElement.TryGetProperty("tracks", out var tracks) &&
+					 tracks.GetArrayLength() > 0 &&
+					 tracks[0].TryGetProperty("artists", out var artists) &&
+					 artists.GetArrayLength() > 0)
+			{
+				artistSource = artists[0];
+			}
+
+			if (artistSource == null) return null;
+
+			var artistElement = artistSource.Value;
+			var normalizedArtist = new JsonObject
+			{
+				["id"] = artistElement.GetProperty("id").GetInt64(),
+				["name"] = artistElement.GetProperty("name").GetString(),
+				["albums_count"] = albumCount,
+				["picture"] = artistElement.GetProperty("picture").GetString()
+			};
+
+			using var doc = JsonDocument.Parse(normalizedArtist.ToJsonString());
+			return ParseTidalArtist(doc.RootElement);
+
         }
         catch (Exception ex)
         {
@@ -280,41 +289,44 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
     public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId)
     {
-		// Not sure about this endpoint/logic right now. Let's just return null for right now.
-		/*
-        if (externalProvider != "deezer") return new List<Album>();
-        
-        var url = $"{BaseUrl}/artist/{externalId}/albums";
-        var response = await _httpClient.GetAsync(url);
-        
-        if (!response.IsSuccessStatusCode) return new List<Album>();
-        
-        var json = await response.Content.ReadAsStringAsync();
-        var result = JsonDocument.Parse(json);
-        
-        var albums = new List<Album>();
-        if (result.RootElement.TryGetProperty("data", out var data))
-        {
-            foreach (var album in data.EnumerateArray())
-            {
-                albums.Add(ParseDeezerAlbum(album));
-            }
-        }
-        
-        return albums;
-		*/
-//        var albums = new List<Album>();
-//		return albums;
-		Console.WriteLine("********************** AM I CALLED???");
-		return null;
-    }
+
+		try
+		{
+			if (externalProvider != "squidwtf") return new List<Album>();
+			
+			var url = $"{BaseUrl}/artist/?f={externalId}";
+			var response = await _httpClient.GetAsync(url);
+			
+			if (!response.IsSuccessStatusCode) return new List<Album>();
+			
+			var json = await response.Content.ReadAsStringAsync();
+			var result = JsonDocument.Parse(json);
+			
+			var albums = new List<Album>();
+			
+			if (result.RootElement.TryGetProperty("albums", out var albumsObj) &&
+				albumsObj.TryGetProperty("items", out var items))
+			{
+				foreach (var album in items.EnumerateArray())
+				{
+					albums.Add(ParseTidalAlbum(album));
+				}
+			}
+			
+			return albums;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Failed to get SquidWTF artist albums for {ExternalId}");
+			return new List<Album>();
+		}
+	}
 
 	// --- Parser functions start here ---
 
     private Song ParseTidalTrack(JsonElement track, int? fallbackTrackNumber = null)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();
-		Console.WriteLine($"#### ID GIVEN: {externalId}");
 
 		// Explicit content lyrics value - idk if this will work
 		int? explicitContentLyrics =
@@ -366,7 +378,6 @@ public class SquidWTFMetadataService : IMusicMetadataService
             {
                 var coverGuid = cover.GetString()?.Replace("-", "/");
                 coverArt = $"https://resources.tidal.com/images/{coverGuid}/320x320.jpg";
-				Console.WriteLine(coverArt);
             }
         }
         
@@ -539,19 +550,18 @@ public class SquidWTFMetadataService : IMusicMetadataService
         };
     }
 
+	// TODO: Think of a way to implement album count when this function is called by search function
+	// 		 as the API endpoint in search does not include this data
     private Artist ParseTidalArtist(JsonElement artist)
     {
         var externalId = artist.GetProperty("id").GetInt64().ToString();
         
-		// pretty sure this wont work. API response for artists doesnt provide individual artist pic i dont think.
         string? imageUrl = null;
         if (artist.TryGetProperty("picture", out var picture))
         {
             var pictureGuid = picture.GetString()?.Replace("-", "/");
             imageUrl = $"https://resources.tidal.com/images/{pictureGuid}/320x320.jpg";
         }
-        Console.WriteLine($"{imageUrl}");
-		// also, album count is not implemented because once again API response doesn't seem to track albums properly
 		
         return new Artist
         {
