@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Moq.Protected;
 using octo_fiesta.Models.Settings;
@@ -18,16 +19,22 @@ public class SubsonicProxyServiceTests
     {
         _mockHttpMessageHandler = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_mockHttpMessageHandler.Object);
-        
+
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
-
-        var settings = Options.Create(new SubsonicSettings 
+ 
+		var settings = Options.Create(new SubsonicSettings 
         { 
             Url = "http://localhost:4533" 
         });
 
-        _service = new SubsonicProxyService(_mockHttpClientFactory.Object, settings);
+		var httpContext = new DefaultHttpContext();
+		var httpContextAccessor = new HttpContextAccessor
+		{
+			HttpContext = httpContext
+		};
+
+        _service = new SubsonicProxyService(_mockHttpClientFactory.Object, settings, httpContextAccessor);
     }
 
     [Fact]
