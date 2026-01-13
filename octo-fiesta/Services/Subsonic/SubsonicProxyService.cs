@@ -60,8 +60,7 @@ public class SubsonicProxyService
         }
     }
 
-    private static ReadOnlySpan<string> StreamingRequiredHeaders =>
-        new
+    private static readonly string[] StreamingRequiredHeaders =
     {
         "Accept-Ranges",
         "Content-Range",
