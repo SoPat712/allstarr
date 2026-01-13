@@ -60,6 +60,16 @@ public class SubsonicProxyService
         }
     }
 
+    private static ReadOnlySpan<string> StreamingRequiredHeaders =>
+        new
+    {
+        "Accept-Ranges",
+        "Content-Range",
+        "Content-Length",
+        "ETag",
+        "Last-Modified"
+    };
+
     /// <summary>
     /// Relays a stream request to the Subsonic server with range processing support.
     /// </summary>
@@ -113,14 +123,7 @@ public class SubsonicProxyService
             outgoingResponse.StatusCode = (int)response.StatusCode;
 
             // Forward streaming-required headers from upstream response
-            foreach (var header in new[]
-            {
-                "Accept-Ranges",
-                "Content-Range",
-                "Content-Length",
-                "ETag",
-                "Last-Modified"
-            })
+            foreach (var header in StreamingRequiredHeaders)
             {
                 if (response.Headers.TryGetValues(header, out var values) ||
                     response.Content.Headers.TryGetValues(header, out values))
