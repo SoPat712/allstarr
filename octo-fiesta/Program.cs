@@ -16,6 +16,7 @@ builder.Services.AddControllers();
 builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpContextAccessor();
 
 // Exception handling
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
@@ -41,7 +42,7 @@ builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<SubsonicRequestParser>();
 builder.Services.AddSingleton<SubsonicResponseBuilder>();
 builder.Services.AddSingleton<SubsonicModelMapper>();
-builder.Services.AddSingleton<SubsonicProxyService>();
+builder.Services.AddScoped<SubsonicProxyService>();
 
 // Register music service based on configuration
 // IMPORTANT: Primary service MUST be registered LAST because ASP.NET Core DI
