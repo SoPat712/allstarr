@@ -11,6 +11,7 @@ using octo_fiesta.Models.Search;
 using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services.Local;
 using octo_fiesta.Services.Common;
+using octo_fiesta.Services.Subsonic;
 using Microsoft.Extensions.Options;
 using IOFile = System.IO.File;
 
@@ -50,8 +51,9 @@ public class DeezerDownloadService : BaseDownloadService
         IMusicMetadataService metadataService,
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<DeezerSettings> deezerSettings,
+        IServiceProvider serviceProvider,
         ILogger<DeezerDownloadService> logger)
-        : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, logger)
+        : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
         _httpClient = httpClientFactory.CreateClient();
         
@@ -109,7 +111,8 @@ public class DeezerDownloadService : BaseDownloadService
 
         // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        var outputPath = PathHelper.BuildTrackPath(DownloadPath, artistForPath, song.Album, song.Title, song.Track, extension);
+        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache ? CachePath : DownloadPath;
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
         
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;

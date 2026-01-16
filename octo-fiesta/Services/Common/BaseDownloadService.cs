@@ -4,6 +4,7 @@ using octo_fiesta.Models.Download;
 using octo_fiesta.Models.Search;
 using octo_fiesta.Models.Subsonic;
 using octo_fiesta.Services.Local;
+using octo_fiesta.Services.Subsonic;
 using TagLib;
 using IOFile = System.IO.File;
 
@@ -21,11 +22,29 @@ public abstract class BaseDownloadService : IDownloadService
     protected readonly IMusicMetadataService MetadataService;
     protected readonly SubsonicSettings SubsonicSettings;
     protected readonly ILogger Logger;
+    private readonly IServiceProvider _serviceProvider;
     
     protected readonly string DownloadPath;
+    protected readonly string CachePath;
     
     protected readonly Dictionary<string, DownloadInfo> ActiveDownloads = new();
     protected readonly SemaphoreSlim DownloadLock = new(1, 1);
+    
+    /// <summary>
+    /// Lazy-loaded PlaylistSyncService to avoid circular dependency
+    /// </summary>
+    private PlaylistSyncService? _playlistSyncService;
+    protected PlaylistSyncService? PlaylistSyncService
+    {
+        get
+        {
+            if (_playlistSyncService == null)
+            {
+                _playlistSyncService = _serviceProvider.GetService<PlaylistSyncService>();
+            }
+            return _playlistSyncService;
+        }
+    }
     
     /// <summary>
     /// Provider name (e.g., "deezer", "qobuz")
@@ -37,19 +56,27 @@ public abstract class BaseDownloadService : IDownloadService
         ILocalLibraryService localLibraryService,
         IMusicMetadataService metadataService,
         SubsonicSettings subsonicSettings,
+        IServiceProvider serviceProvider,
         ILogger logger)
     {
         Configuration = configuration;
         LocalLibraryService = localLibraryService;
         MetadataService = metadataService;
         SubsonicSettings = subsonicSettings;
+        _serviceProvider = serviceProvider;
         Logger = logger;
         
         DownloadPath = configuration["Library:DownloadPath"] ?? "./downloads";
+        CachePath = PathHelper.GetCachePath();
         
         if (!Directory.Exists(DownloadPath))
         {
             Directory.CreateDirectory(DownloadPath);
+        }
+        
+        if (!Directory.Exists(CachePath))
+        {
+            Directory.CreateDirectory(CachePath);
         }
     }
     
@@ -62,7 +89,7 @@ public abstract class BaseDownloadService : IDownloadService
     
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        var localPath = await DownloadSongAsync(externalProvider, externalId, cancellationToken);
+        var localPath = await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
         return IOFile.OpenRead(localPath);
     }
     
@@ -70,6 +97,30 @@ public abstract class BaseDownloadService : IDownloadService
     {
         ActiveDownloads.TryGetValue(songId, out var info);
         return info;
+    }
+    
+    public async Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != ProviderName)
+        {
+            return null;
+        }
+        
+        // Check local library
+        var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
+        if (localPath != null && IOFile.Exists(localPath))
+        {
+            return localPath;
+        }
+        
+        // Check cache directory
+        var cachedPath = GetCachedFilePath(externalProvider, externalId);
+        if (cachedPath != null && IOFile.Exists(cachedPath))
+        {
+            return cachedPath;
+        }
+        
+        return null;
     }
     
     public abstract Task<bool> IsAvailableAsync();
@@ -130,37 +181,86 @@ public abstract class BaseDownloadService : IDownloadService
         }
 
         var songId = $"ext-{externalProvider}-{externalId}";
+        var isCache = SubsonicSettings.StorageMode == StorageMode.Cache;
         
-        // Check if already downloaded
-        var existingPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-        if (existingPath != null && IOFile.Exists(existingPath))
-        {
-            Logger.LogInformation("Song already downloaded: {Path}", existingPath);
-            return existingPath;
-        }
-
-        // Check if download in progress
-        if (ActiveDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
-        {
-            Logger.LogInformation("Download already in progress for {SongId}", songId);
-            while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
-            {
-                await Task.Delay(500, cancellationToken);
-            }
-            
-            if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
-            {
-                return activeDownload.LocalPath;
-            }
-            
-            throw new Exception(activeDownload?.ErrorMessage ?? "Download failed");
-        }
-
+        // Acquire lock BEFORE checking existence to prevent race conditions with concurrent requests
         await DownloadLock.WaitAsync(cancellationToken);
+        
         try
         {
+            // Check if already downloaded (skip for cache mode as we want to check cache folder)
+            if (!isCache)
+            {
+                var existingPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
+                if (existingPath != null && IOFile.Exists(existingPath))
+                {
+                    Logger.LogInformation("Song already downloaded: {Path}", existingPath);
+                    return existingPath;
+                }
+            }
+            else
+            {
+                // For cache mode, check if file exists in cache directory
+                var cachedPath = GetCachedFilePath(externalProvider, externalId);
+                if (cachedPath != null && IOFile.Exists(cachedPath))
+                {
+                    Logger.LogInformation("Song found in cache: {Path}", cachedPath);
+                    // Update file access time for cache cleanup logic
+                    IOFile.SetLastAccessTime(cachedPath, DateTime.UtcNow);
+                    return cachedPath;
+                }
+            }
+
+            // Check if download in progress
+            if (ActiveDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
+            {
+                Logger.LogInformation("Download already in progress for {SongId}, waiting...", songId);
+                // Release lock while waiting
+                DownloadLock.Release();
+                
+                while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
+                {
+                    await Task.Delay(500, cancellationToken);
+                }
+                
+                if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
+                {
+                    return activeDownload.LocalPath;
+                }
+                
+                throw new Exception(activeDownload?.ErrorMessage ?? "Download failed");
+            }
+
             // Get metadata
-            var song = await MetadataService.GetSongAsync(externalProvider, externalId);
+            // In Album mode, fetch the full album first to ensure AlbumArtist is correctly set
+            Song? song = null;
+            
+            if (SubsonicSettings.DownloadMode == DownloadMode.Album)
+            {
+                // First try to get the song to extract album ID
+                var tempSong = await MetadataService.GetSongAsync(externalProvider, externalId);
+                if (tempSong != null && !string.IsNullOrEmpty(tempSong.AlbumId))
+                {
+                    var albumExternalId = ExtractExternalIdFromAlbumId(tempSong.AlbumId);
+                    if (!string.IsNullOrEmpty(albumExternalId))
+                    {
+                        // Get full album with correct AlbumArtist
+                        var album = await MetadataService.GetAlbumAsync(externalProvider, albumExternalId);
+                        if (album != null)
+                        {
+                            // Find the track in the album
+                            song = album.Songs.FirstOrDefault(s => s.ExternalId == externalId);
+                        }
+                    }
+                }
+            }
+            
+            // Fallback to individual song fetch if not in Album mode or album fetch failed
+            if (song == null)
+            {
+                song = await MetadataService.GetSongAsync(externalProvider, externalId);
+            }
+            
             if (song == null)
             {
                 throw new Exception("Song not found");
@@ -176,15 +276,35 @@ public abstract class BaseDownloadService : IDownloadService
             };
             ActiveDownloads[songId] = downloadInfo;
 
-            try
+            var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
+            
+            downloadInfo.Status = DownloadStatus.Completed;
+            downloadInfo.LocalPath = localPath;
+            downloadInfo.CompletedAt = DateTime.UtcNow;
+            
+            song.LocalPath = localPath;
+            
+            // Check if this track belongs to a playlist and update M3U
+            if (PlaylistSyncService != null)
             {
-                var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
-                
-                downloadInfo.Status = DownloadStatus.Completed;
-                downloadInfo.LocalPath = localPath;
-                downloadInfo.CompletedAt = DateTime.UtcNow;
-                
-                song.LocalPath = localPath;
+                try
+                {
+                    var playlistId = PlaylistSyncService.GetPlaylistIdForTrack(songId);
+                    if (playlistId != null)
+                    {
+                        Logger.LogInformation("Track {SongId} belongs to playlist {PlaylistId}, adding to M3U", songId, playlistId);
+                        await PlaylistSyncService.AddTrackToM3UAsync(playlistId, song, localPath, isFullPlaylistDownload: false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to update playlist M3U for track {SongId}", songId);
+                }
+            }
+            
+            // Only register and scan if NOT in cache mode
+            if (!isCache)
+            {
                 await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
                 
                 // Trigger a Subsonic library rescan (with debounce)
@@ -210,17 +330,24 @@ public abstract class BaseDownloadService : IDownloadService
                         DownloadRemainingAlbumTracksInBackground(externalProvider, albumExternalId, externalId);
                     }
                 }
-                
-                Logger.LogInformation("Download completed: {Path}", localPath);
-                return localPath;
             }
-            catch (Exception ex)
+            else
+            {
+                Logger.LogInformation("Cache mode: skipping library registration and scan");
+            }
+            
+            Logger.LogInformation("Download completed: {Path}", localPath);
+            return localPath;
+        }
+        catch (Exception ex)
+        {
+            if (ActiveDownloads.TryGetValue(songId, out var downloadInfo))
             {
                 downloadInfo.Status = DownloadStatus.Failed;
                 downloadInfo.ErrorMessage = ex.Message;
-                Logger.LogError(ex, "Download failed for {SongId}", songId);
-                throw;
             }
+            Logger.LogError(ex, "Download failed for {SongId}", songId);
+            throw;
         }
         finally
         {
@@ -256,6 +383,23 @@ public abstract class BaseDownloadService : IDownloadService
                 {
                     Logger.LogDebug("Track {TrackId} already downloaded, skipping", track.ExternalId);
                     continue;
+                }
+
+                // Check if download is already in progress or recently completed
+                var songId = $"ext-{ProviderName}-{track.ExternalId}";
+                if (ActiveDownloads.TryGetValue(songId, out var activeDownload))
+                {
+                    if (activeDownload.Status == DownloadStatus.InProgress)
+                    {
+                        Logger.LogDebug("Track {TrackId} download already in progress, skipping", track.ExternalId);
+                        continue;
+                    }
+                    
+                    if (activeDownload.Status == DownloadStatus.Completed)
+                    {
+                        Logger.LogDebug("Track {TrackId} already downloaded in this session, skipping", track.ExternalId);
+                        continue;
+                    }
                 }
 
                 Logger.LogInformation("Downloading track '{Title}' from album '{Album}'", track.Title, album.Title);
@@ -398,6 +542,32 @@ public abstract class BaseDownloadService : IDownloadService
         {
             Logger.LogError(ex, "Failed to create directory: {Path}", path);
             throw;
+        }
+    }
+    
+    /// <summary>
+    /// Gets the cached file path for a given provider and external ID
+    /// Returns null if no cached file exists
+    /// </summary>
+    protected string? GetCachedFilePath(string provider, string externalId)
+    {
+        try
+        {
+            // Search for cached files matching the pattern: {provider}_{externalId}.*
+            var pattern = $"{provider}_{externalId}.*";
+            var files = Directory.GetFiles(CachePath, pattern, SearchOption.AllDirectories);
+            
+            if (files.Length > 0)
+            {
+                return files[0]; // Return first match
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to search for cached file: {Provider}_{ExternalId}", provider, externalId);
+            return null;
         }
     }
     

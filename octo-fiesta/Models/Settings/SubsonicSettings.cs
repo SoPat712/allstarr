@@ -41,6 +41,23 @@ public enum ExplicitFilter
 }
 
 /// <summary>
+/// Storage mode for downloaded tracks
+/// </summary>
+public enum StorageMode
+{
+    /// <summary>
+    /// Files are permanently stored in the library and registered in the database
+    /// </summary>
+    Permanent,
+    
+    /// <summary>
+    /// Files are stored in a temporary cache and automatically cleaned up
+    /// Not registered in the database, no Navidrome scan triggered
+    /// </summary>
+    Cache
+}
+
+/// <summary>
 /// Music service provider
 /// </summary>
 public enum MusicService
@@ -85,5 +102,38 @@ public class SubsonicSettings
     /// Environment variable: MUSIC_SERVICE
     /// Values: "Deezer", "Qobuz", "SquidWTF"
     /// </summary>
+
     public MusicService MusicService { get; set; } = MusicService.SquidWTF;
+    
+    /// <summary>
+    /// Storage mode for downloaded files (default: Permanent)
+    /// Environment variable: STORAGE_MODE
+    /// Values: "Permanent" (files saved to library), "Cache" (temporary files, auto-cleanup)
+    /// </summary>
+    public StorageMode StorageMode { get; set; } = StorageMode.Permanent;
+    
+    /// <summary>
+    /// Cache duration in hours for Cache storage mode (default: 1)
+    /// Environment variable: CACHE_DURATION_HOURS
+    /// Files older than this duration will be automatically deleted
+    /// Only applies when StorageMode is Cache
+    /// </summary>
+    public int CacheDurationHours { get; set; } = 1;
+    
+    /// <summary>
+    /// Enable external playlist search and streaming (default: true)
+    /// Environment variable: ENABLE_EXTERNAL_PLAYLISTS
+    /// When enabled, users can search for playlists from the configured music provider
+    /// Playlists appear as "albums" in search results with genre "Playlist"
+    /// </summary>
+    public bool EnableExternalPlaylists { get; set; } = true;
+    
+    /// <summary>
+    /// Directory name for storing playlist .m3u files (default: "playlists")
+    /// Environment variable: PLAYLISTS_DIRECTORY
+    /// Relative to the music library root directory
+    /// Playlist files will be stored in {MusicDirectory}/{PlaylistsDirectory}/
+    /// </summary>
+    public string PlaylistsDirectory { get; set; } = "playlists";
+
 }

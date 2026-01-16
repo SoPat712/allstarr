@@ -86,6 +86,10 @@ public class QobuzDownloadServiceTests : IDisposable
             Quality = quality
         });
 
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(sp => sp.GetService(typeof(octo_fiesta.Services.Subsonic.PlaylistSyncService)))
+            .Returns(null);
+
         return new QobuzDownloadService(
             _httpClientFactoryMock.Object,
             config,
@@ -94,6 +98,7 @@ public class QobuzDownloadServiceTests : IDisposable
             _bundleService,
             subsonicSettings,
             qobuzSettings,
+            serviceProviderMock.Object,
             _loggerMock.Object);
     }
 
