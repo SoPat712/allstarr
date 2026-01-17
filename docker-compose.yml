@@ -1,6 +1,6 @@
 services:
   octo-fiesta:
-    image: ghcr.io/bransoned/octo-fiesta
+    image: ghcr.io/bransoned/octo-fiestarr
     container_name: octo-fiesta
     restart: unless-stopped
     ports:
