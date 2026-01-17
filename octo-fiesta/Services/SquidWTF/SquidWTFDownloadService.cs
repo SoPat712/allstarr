@@ -38,8 +38,9 @@ public class SquidWTFDownloadService : BaseDownloadService
         IMusicMetadataService metadataService,
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<SquidWTFSettings> SquidWTFSettings,
+		IServiceProvider serviceProvider,
         ILogger<SquidWTFDownloadService> logger)
-        : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, logger)
+        : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
         _httpClient = httpClientFactory.CreateClient();
         _squidwtfSettings = SquidWTFSettings.Value;
