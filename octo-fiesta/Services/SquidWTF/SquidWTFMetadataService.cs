@@ -137,6 +137,37 @@ public class SquidWTFMetadataService : IMusicMetadataService
             return new List<Artist>();
         }
     }
+	
+	public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20)
+	{
+		try
+		{
+			var url = $"{BaseUrl}/search/?p={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
+
+            var json = await response.Content.ReadAsStringAsync();
+            var result = JsonDocument.Parse(json);
+
+            var playlists = new List<ExternalPlaylist>();
+			if (result.RootElement.TryGetProperty("data", out var data) &&
+				data.TryGetProperty("playlists", out var playlistObj) &&
+				playlistObj.TryGetProperty("items", out var items))
+			{
+				foreach(var playlist in items.EnumerateArray())
+				{
+					playlists.Add(ParseTidalPlaylist(playlist));
+				}
+			}
+			return playlists;
+		}
+		catch
+		{
+			return new List<ExternalPlaylist>();
+		}
+		
+		
+	}
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
     {
@@ -320,6 +351,95 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			_logger.LogError(ex, "Failed to get SquidWTF artist albums for {ExternalId}");
 			return new List<Album>();
 		}
+	}
+
+    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
+	{
+		if (externalProvider != "squidwtf") return null;
+		
+		try
+		{
+			var url = $"{BaseUrl}/playlist/?id={externalId}";
+			var response = await _httpClient.GetAsync(url);
+			if (!response.IsSuccessStatusCode) return null;
+			
+            var json = await response.Content.ReadAsStringAsync();
+            var playlistElement = JsonDocument.Parse(json).RootElement;
+			
+            if (playlistElement.TryGetProperty("error", out _)) return null;
+            
+			return ParseTidalPlaylist(playlistElement);
+		}
+		catch
+		{
+			return null;
+		}
+		
+	}
+	
+    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId)
+	{
+		if (externalProvider != "squidwtf") return new List<Song>();
+		
+		try
+		{
+			var url = $"{BaseUrl}/playlist/?id={externalId}";
+			var response = await _httpClient.GetAsync(url);
+			if (!response.IsSuccessStatusCode) return new List<Song>();
+			
+			var json = await response.Content.ReadAsStringAsync();
+            var playlistElement = JsonDocument.Parse(json).RootElement;
+            
+			if (playlistElement.TryGetProperty("error", out _)) return new List<Song>();
+			
+			JsonElement? playlist = null;
+			JsonElement? tracks = null;
+
+			if (playlistElement.TryGetProperty("playlist", out var playlistEl))
+			{
+				playlist = playlistEl;
+			}
+
+			if (playlistElement.TryGetProperty("items", out var tracksEl))
+			{
+				tracks = tracksEl;
+			}			
+			
+			var songs = new List<Song>();
+			
+			// Get playlist name for album field
+			var playlistName = playlist.Value.TryGetProperty("title", out var titleEl)
+				? titleEl.GetString() ?? "Unknown Playlist"
+				: "Unknown Playlist";
+
+			if (tracks != null)
+			{
+				int trackIndex = 1;
+				foreach (var entry in tracks.Value.EnumerateArray())
+				{
+					if (!entry.TryGetProperty("item", out var track))
+						continue;
+					
+					// For playlists, use the track's own artist (not a single album artist)
+					var song = ParseTidalTrack(track, trackIndex);
+				
+					// Override album name to be the playlist name
+					song.Album = playlistName;
+					
+					if (ShouldIncludeSong(song))
+					{
+						songs.Add(song);
+					}
+					trackIndex++;
+				}
+			}
+			return songs;
+		}
+		catch
+		{
+			return new List<Song>();
+		}
+		
 	}
 
 	// --- Parser functions start here ---
@@ -576,6 +696,73 @@ public class SquidWTFMetadataService : IMusicMetadataService
             ExternalId = externalId
         };
     }
+	
+    private ExternalPlaylist ParseTidalPlaylist(JsonElement playlistElement)
+	{
+		JsonElement? playlist = null;
+		JsonElement? tracks = null;
+
+		if (playlistElement.TryGetProperty("playlist", out var playlistEl))
+		{
+			playlist = playlistEl;
+		}
+		
+		if (playlistElement.TryGetProperty("items", out var tracksEl))
+		{
+			tracks = tracksEl;
+		}
+		
+		var externalId = playlist.Value.GetProperty("uuid").GetString()!;
+		
+        // Get curator/creator name
+        string? curatorName = null;
+        if (playlist.Value.TryGetProperty("creator", out var creator) &&
+            creator.TryGetProperty("id", out var id))
+        {
+            curatorName = id.GetString();
+        }
+		
+		// Get creation date
+        DateTime? createdDate = null;
+        if (playlist.Value.TryGetProperty("created", out var creationDateEl))
+        {
+            var dateStr = creationDateEl.GetString();
+            if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr, out var date))
+            {
+                createdDate = date;
+            }
+        }
+		
+		// Get playlist image URL
+		string? imageUrl = null;
+        if (playlist.Value.TryGetProperty("squareImage", out var picture))
+        {
+            var pictureGuid = picture.GetString()?.Replace("-", "/");
+            imageUrl = $"https://resources.tidal.com/images/{pictureGuid}/1080x1080.jpg";
+			// Maybe later add support for potentential fallbacks if this size isn't available
+        }
+
+		return new ExternalPlaylist
+        {
+            Id = Common.PlaylistIdHelper.CreatePlaylistId("squidwtf", externalId),
+            Name = playlist.Value.GetProperty("title").GetString() ?? "",
+            Description = playlist.Value.TryGetProperty("description", out var desc) 
+                ? desc.GetString() 
+                : null,
+            CuratorName = curatorName,
+            Provider = "squidwtf",
+            ExternalId = externalId,
+            TrackCount = playlist.Value.TryGetProperty("numberOfTracks", out var nbTracks) 
+                ? nbTracks.GetInt32() 
+                : 0,
+            Duration = playlist.Value.TryGetProperty("duration", out var duration) 
+                ? duration.GetInt32() 
+                : 0,
+            CoverUrl = imageUrl,
+            CreatedDate = createdDate
+        };
+		
+	}
 
     /// <summary>
     /// Determines whether a song should be included based on the explicit content filter setting
