@@ -1,5 +1,5 @@
 services:
-  octo-fiesta:
+  octo-fiestarr:
     image: ghcr.io/bransoned/octo-fiestarr
     container_name: octo-fiestarr
     restart: unless-stopped
