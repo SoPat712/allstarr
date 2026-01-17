@@ -65,7 +65,7 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 
 ## Quick Start (Docker)
 
-The easiest way to run Octo-Fiesta is with Docker Compose.
+The easiest way to run Octo-Fiestarr is with Docker Compose.
 
 1. **Create your environment file**
    ```bash
@@ -74,28 +74,81 @@ The easiest way to run Octo-Fiesta is with Docker Compose.
 
 2. **Edit the `.env` file** with your configuration:
    ```bash
-   # Navidrome/Subsonic server URL
-   SUBSONIC_URL=http://your-navidrome-server:4533
-   
-   # Path where downloaded songs will be stored on the host
-   DOWNLOAD_PATH=./downloads
-   
-   # Music service provider (SquidWTF, Deezer, or Qobuz)
-   MUSIC_SERVICE=SquidWTF
-   
-   # === External Playlists (optional) ===
-   ENABLE_EXTERNAL_PLAYLISTS=true  # Enable/disable playlist support (default: true)
-   PLAYLISTS_DIRECTORY=playlists    # Directory name for M3U files (default: playlists)
-   
-   # === Qobuz Configuration (if using Qobuz) ===
-   QOBUZ_USER_AUTH_TOKEN=your-qobuz-token
-   QOBUZ_USER_ID=your-qobuz-user-id
-   QOBUZ_QUALITY=FLAC  # FLAC, FLAC_24_HIGH, FLAC_24_LOW, FLAC_16, MP3_320
-   
-   # === Deezer Configuration (if using Deezer) ===
-   DEEZER_ARL=your-deezer-arl-token
-   DEEZER_QUALITY=FLAC  # FLAC, MP3_320, MP3_128
-   ```
+	# Navidrome/Subsonic server URL
+	SUBSONIC_URL=http://localhost:4533
+	
+	# Path where downloaded songs will be stored on the host (only applies if STORAGE_MODE=Permanent)
+	DOWNLOAD_PATH=./downloads
+	
+	# Music service to use: SquidWTF, Deezer, or Qobuz (default: SquidWTF)
+	MUSIC_SERVICE=SquidWTF
+	
+	# ===== SquidWTF CONFIGURATION =====
+	# Different quality options for SquidWTF. Only FLAC supported right now
+	SQUIDWTF_QUALITY=FLAC
+	
+	# ===== DEEZER CONFIGURATION =====
+	# Deezer ARL token (required if using Deezer)
+	# See README.md for instructions on how to get this token
+	DEEZER_ARL=your-deezer-arl-token
+	
+	# Fallback ARL token (optional)
+	DEEZER_ARL_FALLBACK=
+	
+	# Preferred audio quality: FLAC, MP3_320, MP3_128 (optional)
+	# If not specified, the highest available quality for your account will be used
+	DEEZER_QUALITY=
+	
+	# ===== QOBUZ CONFIGURATION =====
+	# Qobuz user authentication token (required if using Qobuz)
+	# Get this from your browser after logging into play.qobuz.com
+	# See README.md for detailed instructions
+	QOBUZ_USER_AUTH_TOKEN=
+	
+	# Qobuz user ID (required if using Qobuz)
+	# Get this from your browser after logging into play.qobuz.com
+	QOBUZ_USER_ID=
+	
+	# Preferred audio quality: FLAC, FLAC_24_HIGH, FLAC_24_LOW, FLAC_16, MP3_320 (optional)
+	# If not specified, the highest available quality will be used
+	QOBUZ_QUALITY=
+	
+	# ===== GENERAL SETTINGS =====
+	# External playlists support (optional, default: true)
+	# When enabled, allows searching and downloading playlists from Deezer/Qobuz
+	# Starring a playlist triggers automatic download of all tracks and creates an M3U file
+	ENABLE_EXTERNAL_PLAYLISTS=true
+	
+	# Playlists directory name (optional, default: playlists)
+	# M3U playlist files will be created in {DOWNLOAD_PATH}/{PLAYLISTS_DIRECTORY}/
+	PLAYLISTS_DIRECTORY=playlists
+	
+	# Explicit content filter (optional, default: All)
+	# - All: Show all tracks (no filtering)
+	# - ExplicitOnly: Exclude clean/edited versions, keep original explicit content
+	# - CleanOnly: Only show clean content (naturally clean or edited versions)
+	# Note: This only works with Deezer, Qobuz doesn't expose explicit content flags
+	EXPLICIT_FILTER=All
+	
+	# Download mode (optional, default: Track)
+	# - Track: Download only the played track
+	# - Album: When playing a track, download the entire album in background
+	#          The played track is downloaded first, remaining tracks are queued
+	DOWNLOAD_MODE=Track
+	
+	# Storage mode (optional, default: Permanent)
+	# - Permanent: Files are saved to the library permanently and registered in Navidrome
+	# - Cache: Files are stored in /tmp and automatically cleaned up after CACHE_DURATION_HOURS
+	#          Not registered in Navidrome, ideal for streaming without library bloat
+	#          Note: On Linux/Docker, you can customize cache location by setting TMPDIR environment variable
+	STORAGE_MODE=Permanent
+	
+	# Cache duration in hours (optional, default: 1)
+	# Files older than this duration will be automatically deleted when STORAGE_MODE=Cache
+	# Based on last access time (updated each time the file is streamed)
+	# Cache location: /tmp/octo-fiesta-cache (or $TMPDIR/octo-fiesta-cache if TMPDIR is set)
+	CACHE_DURATION_HOURS=1   
+	```
 
 3. **Start the container**
    ```bash
