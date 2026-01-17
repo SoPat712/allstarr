@@ -16,6 +16,10 @@ services:
       # Download path inside container
       - Library__DownloadPath=/app/downloads
       # SquidWTF preferred audio quality
-      - SquidWTF__Quality=${SQUIDWTF_QUALITY:-}
+      - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
+      # Set cache or permanent download of external songs
+      - Storage__Mode=${STORAGE_MODE:-Permanent}
+      # Set cache duration
+      - Cache__DurationHours=${CACHE_DURATION_HOURS:-1}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
