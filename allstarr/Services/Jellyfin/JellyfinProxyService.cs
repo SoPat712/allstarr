@@ -357,6 +357,7 @@ public class JellyfinProxyService
         string? sortBy = null,
         int? limit = null,
         int? startIndex = null,
+        string? artistIds = null,
         IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>
@@ -393,6 +394,11 @@ public class JellyfinProxyService
         if (startIndex.HasValue)
         {
             queryParams["startIndex"] = startIndex.Value.ToString();
+        }
+
+        if (!string.IsNullOrEmpty(artistIds))
+        {
+            queryParams["artistIds"] = artistIds;
         }
 
         return await GetJsonAsync("Items", queryParams, clientHeaders);

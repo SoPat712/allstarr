@@ -96,13 +96,14 @@ public class JellyfinController : ControllerBase
         // If Jellyfin returns empty results, we'll just return empty (not mixing browse with external)
         if (string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(parentId))
         {
-            _logger.LogDebug("No search term or parentId, proxying to Jellyfin");
+            _logger.LogDebug("No search term or parentId, proxying to Jellyfin with artistIds={ArtistIds}", artistIds);
             var browseResult = await _proxyService.GetItemsAsync(
                 parentId: null,
                 includeItemTypes: ParseItemTypes(includeItemTypes),
                 sortBy: sortBy,
                 limit: limit,
                 startIndex: startIndex,
+                artistIds: artistIds,
                 clientHeaders: Request.Headers);
 
             if (browseResult == null)
