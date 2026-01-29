@@ -1,41 +1,107 @@
-# Octo-Fiestarr
+# Allstarr
 
-A Subsonic API proxy server that transparently integrates multiple music streaming providers as sources. When a song is not available in your local Navidrome library, it is automatically fetched from your configured provider, downloaded, and served to your Subsonic-compatible client. The downloaded song is then added to your library, making it available locally for future listens.
+A media server proxy that integrates music streaming providers with your local library. Works with **Jellyfin** and **Subsonic-compatible** servers (Navidrome). When a song isn't in your local library, it gets fetched from your configured provider, downloaded, and served to your client. The downloaded song then lives in your library for next time.
 
-## Why "Octo-Fiestarr"?
+**THIS IS UNDER ACTIVE DEVELOPMENT**
 
-This fork was created to focus on integrating the original concept of Octo-Fiesta with music providers that do not require API credentials, such as SquidWTF. This allows for seamless external music discovery without the need for any subscriptions. Thus, I saw it fitting to change the name of the fork to resemble other *arr projects.
+Please report all bugs as soon as possible, as the Jellyfin addition is entirely a test at this point
+
+## Quick Start
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+nano .env  # Edit with your settings
+
+# 2. Start services
+docker-compose up -d --build
+
+# 3. Check status
+docker-compose ps
+docker-compose logs -f
+```
+
+### Nginx Proxy Setup (Required)
+
+This service only exposes ports internally. You **must** use nginx to proxy to it:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+    
+    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    
+    # Streaming settings
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 600s;
+    
+    location / {
+        proxy_pass http://allstarr:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**Security:** All authentication is forwarded to Jellyfin - this is as secure as Jellyfin itself. Always use HTTPS for public access.
+
+## Why "Allstarr"?
+
+This project brings together all the music streaming providers into one unified library - making them all stars in your collection.
 
 ## Features
 
-- **Multi-Provider Architecture**: Pluggable music service system supporting multiple streaming providers (Deezer, Qobuz, and more to come)
-- **Transparent Proxy**: Acts as a middleware between Subsonic clients (like Aonsoku, Sublime Music, etc.) and your Navidrome server
-- **Seamless Integration**: Automatically searches and streams music from your configured provider when not available locally
-- **Automatic Downloads**: Songs are downloaded on-the-fly and cached for future use
-- **External Playlist Support**: Search, discover, and download playlists from Deezer, Qobuz, and SquidWTF with automatic M3U generation
-- **Hi-Res Audio Support**: SquidWTF provider supports up to 24-bit/192kHz FLAC quality
-- **Full Metadata Embedding**: Downloaded files include complete ID3 tags (title, artist, album, track number, year, genre, BPM, ISRC, etc.) and embedded cover art
-- **Organized Library**: Downloads are saved in a clean `Artist/Album/Track` folder structure
-- **Artist Deduplication**: Merges local and streaming provider artists to avoid duplicates in search results
-- **Album Enrichment**: Local albums are enriched with missing tracks from streaming providers
-- **Cover Art Proxy**: Serves cover art for external content transparently
+- **Dual Backend Support**: Works with Jellyfin and Subsonic-compatible servers (Navidrome, Airsonic, etc.)
+- **Multi-Provider Architecture**: Pluggable system for streaming providers (Deezer, Qobuz, SquidWTF)
+- **Transparent Proxy**: Sits between your music clients and media server
+- **Automatic Search**: Searches streaming providers when songs aren't local
+- **On-the-Fly Downloads**: Songs download and cache for future use
+- **External Playlist Support**: Search and download playlists from Deezer, Qobuz, and SquidWTF with M3U generation
+- **Hi-Res Audio**: SquidWTF supports up to 24-bit/192kHz FLAC
+- **Full Metadata**: Downloaded files include complete ID3 tags (title, artist, album, track number, year, genre, BPM, ISRC, etc.) and cover art
+- **Organized Library**: Downloads save in `Artist/Album/Track` folder structure
+- **Artist Deduplication**: Merges local and streaming artists to avoid duplicates
+- **Album Enrichment**: Adds missing tracks to local albums from streaming providers
+- **Cover Art Proxy**: Serves cover art for external content
 
-## Compatible Clients
+## Supported Backends
 
-### PC
+### Jellyfin
+[Jellyfin](https://jellyfin.org/) is a free and open-source media server. Allstarr connects via the Jellyfin API using your Jellyfin user login. (I plan to move this to api key if possible)
 
+**Compatible Jellyfin clients:**
+
+- [Feishin](https://github.com/jeffvli/feishin) (Mac/Windows/Linux)
+- [Musiver](https://music.aqzscn.cn/en/) (Android/IOS/Windows/Android)
+
+_Working on getting more currently_
+
+### Subsonic/Navidrome
+[Navidrome](https://www.navidrome.org/) and other Subsonic-compatible servers are supported via the Subsonic API.
+
+**Compatible Subsonic clients:**
+
+#### PC
 - [Aonsoku](https://github.com/victoralvesf/aonsoku)
 - [Feishin](https://github.com/jeffvli/feishin)
 - [Subplayer](https://github.com/peguerosdc/subplayer)
 - [Aurial](https://github.com/shrimpza/aurial)
 
-### Android
-
+#### Android
 - [Tempus](https://github.com/eddyizm/tempus)
 - [Substreamer](https://substreamerapp.com/)
 
-### iOS
-
+#### iOS
 - [Narjo](https://www.reddit.com/r/NarjoApp/)
 - [Arpeggi](https://www.reddit.com/r/arpeggiApp/)
 
@@ -43,7 +109,7 @@ This fork was created to focus on integrating the original concept of Octo-Fiest
 
 ### Incompatible Clients
 
-These clients are **not compatible** with octo-fiesta due to architectural limitations:
+These clients are **not compatible** with Allstarr due to architectural limitations:
 
 - [Symfonium](https://symfonium.app/) - Uses offline-first architecture and never queries the server for searches, making streaming provider integration impossible. [See details](https://support.symfonium.app/t/suggestions-on-search-function/1121/)
 
@@ -57,15 +123,17 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 
 ## Requirements
 
-- A running Subsonic-compatible server (developed and tested with [Navidrome](https://www.navidrome.org/))
+- A running media server:
+  - **Jellyfin**: Any recent version with API access enabled
+  - **Subsonic**: Navidrome or other Subsonic-compatible server
 - Credentials for at least one music provider (IF NOT USING SQUIDWTF):
   - **Deezer**: ARL token from browser cookies
-  - **Qobuz**: User ID + User Auth Token from browser localStorage ([see Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)))
+  - **Qobuz**: User ID + User Auth Token from browser localStorage ([see Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)))
 - Docker and Docker Compose (recommended) **or** [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) for manual installation
 
 ## Quick Start (Docker)
 
-The easiest way to run Octo-Fiestarr is with Docker Compose.
+The easiest way to run Allstarr is with Docker Compose.
 
 1. **Create your environment file**
    ```bash
@@ -73,82 +141,47 @@ The easiest way to run Octo-Fiestarr is with Docker Compose.
    ```
 
 2. **Edit the `.env` file** with your configuration:
+
+   **For Jellyfin backend:**
    ```bash
-	# Navidrome/Subsonic server URL
-	SUBSONIC_URL=http://localhost:4533
-	
-	# Path where downloaded songs will be stored on the host (only applies if STORAGE_MODE=Permanent)
-	DOWNLOAD_PATH=./downloads
-	
-	# Music service to use: SquidWTF, Deezer, or Qobuz (default: SquidWTF)
-	MUSIC_SERVICE=SquidWTF
-	
-	# ===== SquidWTF CONFIGURATION =====
-	# Different quality options for SquidWTF. Only FLAC supported right now
-	SQUIDWTF_QUALITY=FLAC
-	
-	# ===== DEEZER CONFIGURATION =====
-	# Deezer ARL token (required if using Deezer)
-	# See README.md for instructions on how to get this token
-	DEEZER_ARL=your-deezer-arl-token
-	
-	# Fallback ARL token (optional)
-	DEEZER_ARL_FALLBACK=
-	
-	# Preferred audio quality: FLAC, MP3_320, MP3_128 (optional)
-	# If not specified, the highest available quality for your account will be used
-	DEEZER_QUALITY=
-	
-	# ===== QOBUZ CONFIGURATION =====
-	# Qobuz user authentication token (required if using Qobuz)
-	# Get this from your browser after logging into play.qobuz.com
-	# See README.md for detailed instructions
-	QOBUZ_USER_AUTH_TOKEN=
-	
-	# Qobuz user ID (required if using Qobuz)
-	# Get this from your browser after logging into play.qobuz.com
-	QOBUZ_USER_ID=
-	
-	# Preferred audio quality: FLAC, FLAC_24_HIGH, FLAC_24_LOW, FLAC_16, MP3_320 (optional)
-	# If not specified, the highest available quality will be used
-	QOBUZ_QUALITY=
-	
-	# ===== GENERAL SETTINGS =====
-	# External playlists support (optional, default: true)
-	# When enabled, allows searching and downloading playlists from Deezer/Qobuz
-	# Starring a playlist triggers automatic download of all tracks and creates an M3U file
-	ENABLE_EXTERNAL_PLAYLISTS=true
-	
-	# Playlists directory name (optional, default: playlists)
-	# M3U playlist files will be created in {DOWNLOAD_PATH}/{PLAYLISTS_DIRECTORY}/
-	PLAYLISTS_DIRECTORY=playlists
-	
-	# Explicit content filter (optional, default: All)
-	# - All: Show all tracks (no filtering)
-	# - ExplicitOnly: Exclude clean/edited versions, keep original explicit content
-	# - CleanOnly: Only show clean content (naturally clean or edited versions)
-	# Note: This only works with Deezer, Qobuz doesn't expose explicit content flags
-	EXPLICIT_FILTER=All
-	
-	# Download mode (optional, default: Track)
-	# - Track: Download only the played track
-	# - Album: When playing a track, download the entire album in background
-	#          The played track is downloaded first, remaining tracks are queued
-	DOWNLOAD_MODE=Track
-	
-	# Storage mode (optional, default: Permanent)
-	# - Permanent: Files are saved to the library permanently and registered in Navidrome
-	# - Cache: Files are stored in /tmp and automatically cleaned up after CACHE_DURATION_HOURS
-	#          Not registered in Navidrome, ideal for streaming without library bloat
-	#          Note: On Linux/Docker, you can customize cache location by setting TMPDIR environment variable
-	STORAGE_MODE=Permanent
-	
-	# Cache duration in hours (optional, default: 1)
-	# Files older than this duration will be automatically deleted when STORAGE_MODE=Cache
-	# Based on last access time (updated each time the file is streamed)
-	# Cache location: /tmp/octo-fiesta-cache (or $TMPDIR/octo-fiesta-cache if TMPDIR is set)
-	CACHE_DURATION_HOURS=1   
-	```
+   # Backend selection
+   BACKEND_TYPE=Jellyfin
+   
+   # Jellyfin server URL
+   JELLYFIN_URL=http://localhost:8096
+   
+   # API key (get from Jellyfin Dashboard > API Keys)
+   JELLYFIN_API_KEY=your-api-key-here
+   
+   # User ID (from Jellyfin Dashboard > Users > click user > check URL)
+   JELLYFIN_USER_ID=your-user-id-here
+   
+   # Music library ID (optional, auto-detected if not set)
+   JELLYFIN_LIBRARY_ID=
+   ```
+
+   **For Subsonic/Navidrome backend:**
+   ```bash
+   # Backend selection
+   BACKEND_TYPE=Subsonic
+   
+   # Navidrome/Subsonic server URL
+   SUBSONIC_URL=http://localhost:4533
+   ```
+
+   **Common settings (both backends):**
+   ```bash
+   # Path where downloaded songs will be stored
+   DOWNLOAD_PATH=./downloads
+   
+   # Music service to use: SquidWTF, Deezer, or Qobuz
+   MUSIC_SERVICE=SquidWTF
+   
+   # Storage mode: Permanent or Cache
+   STORAGE_MODE=Permanent
+   ```
+
+   See the full `.env.example` for all available options including Deezer/Qobuz credentials.
 
 3. **Start the container**
    ```bash
@@ -157,21 +190,47 @@ The easiest way to run Octo-Fiestarr is with Docker Compose.
    
    The proxy will be available at `http://localhost:5274`.
 
-4. **Configure your Subsonic client**
+4. **Configure your client**
    
-   Point your Subsonic client to `http://localhost:5274` instead of your Navidrome server directly.
+   Point your music client to `http://localhost:5274` instead of your media server directly.
 
-> **Tip**: Make sure the `DOWNLOAD_PATH` points to a directory that Navidrome can scan, so downloaded songs appear in your library.
+> **Tip**: Make sure the `DOWNLOAD_PATH` points to a directory that your media server can scan, so downloaded songs appear in your library.
 
 ## Configuration
 
-### General Settings
+### Backend Selection
+
+| Setting | Description |
+|---------|-------------|
+| `Backend:Type` | Backend type: `Subsonic` or `Jellyfin` (default: `Subsonic`) |
+
+### Jellyfin Settings
+
+| Setting | Description |
+|---------|-------------|
+| `Jellyfin:Url` | URL of your Jellyfin server |
+| `Jellyfin:ApiKey` | API key (get from Jellyfin Dashboard > API Keys) |
+| `Jellyfin:UserId` | User ID for library access |
+| `Jellyfin:LibraryId` | Music library ID (optional, auto-detected) |
+| `Jellyfin:MusicService` | Music provider: `SquidWTF`, `Deezer`, or `Qobuz` |
+
+### Subsonic Settings
 
 | Setting | Description |
 |---------|-------------|
 | `Subsonic:Url` | URL of your Navidrome/Subsonic server |
-| `Subsonic:MusicService` | Music provider to use: `SquidWTF`, `Deezer`, or `Qobuz` (default: `SquidWTF`) |
+| `Subsonic:MusicService` | Music provider: `SquidWTF`, `Deezer`, or `Qobuz` (default: `SquidWTF`) |
+
+### Shared Settings
+
+| Setting | Description |
+|---------|-------------|
 | `Library:DownloadPath` | Directory where downloaded songs are stored |
+| `*:ExplicitFilter` | Content filter: `All`, `ExplicitOnly`, or `CleanOnly` |
+| `*:DownloadMode` | Download mode: `Track` or `Album` |
+| `*:StorageMode` | Storage mode: `Permanent` or `Cache` |
+| `*:CacheDurationHours` | Cache expiration time in hours |
+| `*:EnableExternalPlaylists` | Enable external playlist support |
 
 ### SquidWTF Settings
 
@@ -191,13 +250,13 @@ The easiest way to run Octo-Fiestarr is with Docker Compose.
 
 | Setting | Description |
 |---------|-------------|
-| `Qobuz:UserAuthToken` | Your Qobuz User Auth Token (required if using Qobuz) - [How to get it](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) |
+| `Qobuz:UserAuthToken` | Your Qobuz User Auth Token (required if using Qobuz) - [How to get it](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) |
 | `Qobuz:UserId` | Your Qobuz User ID (required if using Qobuz) |
 | `Qobuz:Quality` | Preferred audio quality: `FLAC`, `FLAC_24_HIGH`, `FLAC_24_LOW`, `FLAC_16`, `MP3_320`. If not specified, the highest available quality will be used |
 
 ### External Playlists
 
-Octo-Fiesta supports discovering and downloading playlists from your streaming providers (SquidWTF, Deezer, and Qobuz).
+Allstarr supports discovering and downloading playlists from your streaming providers (SquidWTF, Deezer, and Qobuz).
 
 | Setting | Description |
 |---------|-------------|
@@ -206,7 +265,7 @@ Octo-Fiesta supports discovering and downloading playlists from your streaming p
 
 **How it works:**
 1. Search for playlists from an external provider using the global search in your Subsonic client
-2. When you "star" (favorite) a playlist, Octo-Fiesta automatically downloads all tracks
+2. When you "star" (favorite) a playlist, Allstarr automatically downloads all tracks
 3. An M3U playlist file is created in `{DownloadPath}/playlists/` with relative paths to downloaded tracks
 4. Individual tracks are added to the M3U as they are played or downloaded
 
@@ -222,11 +281,11 @@ Subsonic__EnableExternalPlaylists=false
 
 #### Deezer ARL Token
 
-See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Deezer-Credentials-(ARL-Token)) for detailed instructions on obtaining your Deezer ARL token.
+See the [Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Deezer-Credentials-(ARL-Token)) for detailed instructions on obtaining your Deezer ARL token.
 
 #### Qobuz Credentials
 
-See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) for detailed instructions on obtaining your Qobuz User ID and User Auth Token.
+See the [Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) for detailed instructions on obtaining your Qobuz User ID and User Auth Token.
 
 ## Limitations
 
@@ -237,29 +296,39 @@ See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Cr
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Subsonic       │────▶│   Octo-Fiesta    │────▶│   Navidrome     │
-│  Client         │◀────│   (Proxy)        │◀────│   Server        │
-│  (Aonsoku)      │     │                  │     │                 │
-└─────────────────┘     └────────┬─────────┘     └─────────────────┘
-                                 │
-                                 ▼
+                                                    ┌─────────────────┐
+                                               ┌───▶│    Jellyfin     │
+┌─────────────────┐     ┌──────────────────┐   │    │    Server       │
+│  Music Client   │────▶│     Allstarr     │───┤    └─────────────────┘
+│  (Aonsoku,      │◀────│   (Proxy)        │◀──┤
+│   Finamp, etc.) │     │                  │   │    ┌─────────────────┐
+└─────────────────┘     └────────┬─────────┘   └───▶│   Navidrome     │
+                                 │                  │   (Subsonic)    │
+                                 ▼                  └─────────────────┘
                         ┌─────────────────┐
                         │ Music Providers │
+                        │  - SquidWTF     │
                         │  - Deezer       │
                         │  - Qobuz        │
-                        │  - (more...)    │
                         └─────────────────┘
 ```
 
+The proxy intercepts requests from your music client and:
+1. Forwards library requests to your configured backend (Jellyfin or Subsonic)
+2. Merges results with content from your music provider
+3. Downloads and caches external tracks on-demand
+4. Serves audio streams transparently
+
+**Note**: Only the controller matching your configured `BACKEND_TYPE` is registered at runtime, preventing route conflicts and ensuring clean API separation.
+
 ## Manual Installation
 
-If you prefer to run Octo-Fiesta without Docker:
+If you prefer to run Allstarr without Docker:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-username/octo-fiesta.git
-   cd octo-fiesta
+   git clone https://github.com/your-username/allstarr.git
+   cd allstarr
    ```
 
 2. **Restore dependencies**
@@ -269,55 +338,63 @@ If you prefer to run Octo-Fiesta without Docker:
 
 3. **Configure the application**
    
-   Edit `octo-fiesta/appsettings.json`:
+   Edit `allstarr/appsettings.json`:
+   
+   **For Jellyfin:**
    ```json
-{
-  "Subsonic": {
-    "Url": "https://navidrome.local.bransonb.com",
-    "MusicService": "SquidWTF",
-    "ExplicitFilter": "All",
-    "DownloadMode": "Track",
-    "StorageMode": "Permanent",
-    "CacheDurationHours": 1
-  },
-  "Library": {
-    "DownloadPath": "./downloads"
-  },
-  "Qobuz": {
-    "UserAuthToken": "your-qobuz-token",
-    "UserId": "your-qobuz-user-id",
-    "Quality": "FLAC"
-  },
-  "Deezer": {
-    "Arl": "your-deezer-arl-token",
-    "ArlFallback": "",
-    "Quality": "FLAC"
-  },
-  "SquidWTF": {
-	"Quality": "FLAC"
-  }  
-}
-```
+   {
+     "Backend": {
+       "Type": "Jellyfin"
+     },
+     "Jellyfin": {
+       "Url": "http://localhost:8096",
+       "ApiKey": "your-api-key",
+       "UserId": "your-user-id",
+       "MusicService": "SquidWTF"
+     },
+     "Library": {
+       "DownloadPath": "./downloads"
+     }
+   }
+   ```
+   
+   **For Subsonic/Navidrome:**
+   ```json
+   {
+     "Backend": {
+       "Type": "Subsonic"
+     },
+     "Subsonic": {
+       "Url": "http://localhost:4533",
+       "MusicService": "SquidWTF"
+     },
+     "Library": {
+       "DownloadPath": "./downloads"
+     }
+   }
+   ```
 
 4. **Run the server**
    ```bash
-   cd octo-fiesta
+   cd allstarr
    dotnet run
    ```
    
    The proxy will start on `http://localhost:5274` by default.
 
-5. **Configure your Subsonic client**
+5. **Configure your client**
    
-   Point your Subsonic client to `http://localhost:5274` instead of your Navidrome server directly.
+   Point your music client to `http://localhost:5274` instead of your media server directly.
 
 ## API Endpoints
 
-The proxy implements the Subsonic API and adds transparent streaming provider integration to:
+### Subsonic Backend
+
+The proxy implements the Subsonic API and adds transparent streaming provider integration:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /rest/search3` | Merged search results from Navidrome + streaming provider (including playlists) |
+| `GET /rest/search3` | Merged search results from Navidrome + streaming provider |
 | `GET /rest/stream` | Streams audio, downloading from provider if needed |
 | `GET /rest/getSong` | Returns song details (local or from provider) |
 | `GET /rest/getAlbum` | Returns album with tracks from both sources |
@@ -326,6 +403,20 @@ The proxy implements the Subsonic API and adds transparent streaming provider in
 | `GET /rest/star` | Stars items; triggers automatic playlist download for external playlists |
 
 All other Subsonic API endpoints are passed through to Navidrome unchanged.
+
+### Jellyfin Backend
+
+The proxy implements a subset of the Jellyfin API:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /Items` | Search and browse library items |
+| `GET /Artists` | Browse artists with streaming provider results |
+| `GET /Audio/{id}/stream` | Stream audio, downloading from provider if needed |
+| `GET /Items/{id}/Images/{type}` | Proxy cover art for external content |
+| `POST /UserFavoriteItems/{id}` | Favorite items; triggers playlist download |
+
+All other Jellyfin API endpoints are passed through unchanged.
 
 ## External ID Format
 
@@ -388,9 +479,10 @@ dotnet test
 ### Project Structure
 
 ```
-octo-fiesta/
+allstarr/
 ├── Controllers/
-│   └── SubsonicController.cs              # Main API controller
+│   ├── JellyfinController.cs              # Jellyfin API controller (registered when Backend:Type=Jellyfin)
+│   └── SubsonicController.cs              # Subsonic API controller (registered when Backend:Type=Subsonic)
 ├── Middleware/
 │   └── GlobalExceptionHandler.cs          # Global error handling
 ├── Models/
@@ -444,7 +536,7 @@ octo-fiesta/
 ├── Program.cs                             # Application entry point
 └── appsettings.json                       # Configuration
 
-octo-fiesta.Tests/
+allstarr.Tests/
 ├── DeezerDownloadServiceTests.cs          # Deezer download tests
 ├── DeezerMetadataServiceTests.cs          # Deezer metadata tests
 ├── QobuzDownloadServiceTests.cs           # Qobuz download tests (127 tests)

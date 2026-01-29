@@ -1,6 +1,0 @@
-@octo_fiesta_HostAddress = http://localhost:5274
-
-GET {{octo_fiesta_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

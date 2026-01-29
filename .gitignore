@@ -71,4 +71,16 @@ obj/
 /.env
 
 # Downloaded music files
-octo-fiesta/downloads/
+downloads/
+!downloads/.gitkeep
+
+# Docker volumes
+redis-data/
+
+# API keys and specs (ignore markdown docs, keep OpenAPI spec)
+apis/*.md
+apis/*.json
+!apis/jellyfin-openapi-stable.json
+
+# Original source code for reference
+originals/

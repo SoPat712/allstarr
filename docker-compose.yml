@@ -1,25 +1,84 @@
 services:
-  octo-fiestarr:
-    image: ghcr.io/bransoned/octo-fiestarr
-    container_name: octo-fiestarr
+  redis:
+    image: redis:7-alpine
+    container_name: allstarr-redis
+    restart: unless-stopped
+    # Redis is only accessible internally - no external port exposure
+    expose:
+      - "6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - allstarr-network
+
+  allstarr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: allstarr:local
+    container_name: allstarr
     restart: unless-stopped
     ports:
       - "5274:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - allstarr-network
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      # Navidrome/Subsonic server URL
+      # Backend type: Subsonic or Jellyfin (default: Subsonic)
+      - Backend__Type=${BACKEND_TYPE:-Subsonic}
+      
+      # ===== REDIS CACHE =====
+      - Redis__ConnectionString=redis:6379
+      - Redis__Enabled=${REDIS_ENABLED:-true}
+      
+      # ===== SUBSONIC BACKEND =====
       - Subsonic__Url=${SUBSONIC_URL:-http://localhost:4533}
-      # Explicit content filter: All, ExplicitOnly, CleanOnly (default: ExplicitOnly)
       - Subsonic__ExplicitFilter=${EXPLICIT_FILTER:-ExplicitOnly}
-      # Download mode: Track (only requested track), Album (full album when playing a track)
       - Subsonic__DownloadMode=${DOWNLOAD_MODE:-Track}
-      # Download path inside container
+      - Subsonic__MusicService=${MUSIC_SERVICE:-SquidWTF}
+      - Subsonic__StorageMode=${STORAGE_MODE:-Permanent}
+      - Subsonic__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
+      - Subsonic__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
+      
+      # ===== JELLYFIN BACKEND =====
+      - Jellyfin__Url=${JELLYFIN_URL:-http://localhost:8096}
+      - Jellyfin__ApiKey=${JELLYFIN_API_KEY:-}
+      - Jellyfin__UserId=${JELLYFIN_USER_ID:-}
+      - Jellyfin__LibraryId=${JELLYFIN_LIBRARY_ID:-}
+      - Jellyfin__ClientUsername=${JELLYFIN_CLIENT_USERNAME:-}
+      - Jellyfin__ExplicitFilter=${EXPLICIT_FILTER:-ExplicitOnly}
+      - Jellyfin__DownloadMode=${DOWNLOAD_MODE:-Track}
+      - Jellyfin__MusicService=${MUSIC_SERVICE:-SquidWTF}
+      - Jellyfin__StorageMode=${STORAGE_MODE:-Permanent}
+      - Jellyfin__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
+      - Jellyfin__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
+      
+      # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
-      # SquidWTF preferred audio quality
       - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
-      # Set cache or permanent download of external songs
-      - Storage__Mode=${STORAGE_MODE:-Permanent}
-      # Set cache duration
-      - Cache__DurationHours=${CACHE_DURATION_HOURS:-1}
+      - Deezer__Arl=${DEEZER_ARL:-}
+      - Deezer__ArlFallback=${DEEZER_ARL_FALLBACK:-}
+      - Deezer__Quality=${DEEZER_QUALITY:-FLAC}
+      - Qobuz__UserAuthToken=${QOBUZ_USER_AUTH_TOKEN:-}
+      - Qobuz__UserId=${QOBUZ_USER_ID:-}
+      - Qobuz__Quality=${QOBUZ_QUALITY:-FLAC}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
+
+networks:
+  allstarr-network:
+    name: allstarr-network
+    driver: bridge
