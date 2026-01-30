@@ -1006,9 +1006,45 @@ public class JellyfinController : ControllerBase
         var lyricsText = lyrics.SyncedLyrics ?? lyrics.PlainLyrics ?? "";
         var isSynced = !string.IsNullOrEmpty(lyrics.SyncedLyrics);
 
-        // Return in Jellyfin lyrics format
-        // For synced lyrics, return the LRC format directly
-        // For plain lyrics, return as a single block
+        // Parse LRC format into individual lines for Jellyfin
+        var lyricLines = new List<object>();
+        
+        if (isSynced && !string.IsNullOrEmpty(lyrics.SyncedLyrics))
+        {
+            // Parse LRC format: [mm:ss.xx] text
+            var lines = lyrics.SyncedLyrics.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(line, @"^\[(\d+):(\d+)\.(\d+)\]\s*(.*)$");
+                if (match.Success)
+                {
+                    var minutes = int.Parse(match.Groups[1].Value);
+                    var seconds = int.Parse(match.Groups[2].Value);
+                    var centiseconds = int.Parse(match.Groups[3].Value);
+                    var text = match.Groups[4].Value;
+                    
+                    // Convert to ticks (100 nanoseconds)
+                    var totalMilliseconds = (minutes * 60 + seconds) * 1000 + centiseconds * 10;
+                    var ticks = totalMilliseconds * 10000L;
+                    
+                    lyricLines.Add(new
+                    {
+                        Start = ticks,
+                        Text = text
+                    });
+                }
+            }
+        }
+        else
+        {
+            // Plain lyrics - return as single block
+            lyricLines.Add(new
+            {
+                Start = (long?)null,
+                Text = lyricsText
+            });
+        }
+
         var response = new
         {
             Metadata = new
@@ -1019,14 +1055,7 @@ public class JellyfinController : ControllerBase
                 Length = lyrics.Duration,
                 IsSynced = isSynced
             },
-            Lyrics = new[]
-            {
-                new
-                {
-                    Start = (long?)null,
-                    Text = lyricsText
-                }
-            }
+            Lyrics = lyricLines
         };
 
         return Ok(response);
