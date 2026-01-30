@@ -208,7 +208,7 @@ public class SquidWTFDownloadService : BaseDownloadService
                 _ => "LOSSLESS" // Default to lossless
             };
             
-            var url = $"{_currentApiBase}track/?id={trackId}&quality={quality}";
+            var url = $"{_currentApiBase}/track?id={trackId}&quality={quality}";
 
             Console.WriteLine($"%%%%%%%%%%%%%%%%%%% URL For downloads??: {url}");
 
