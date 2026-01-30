@@ -481,11 +481,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			var songs = new List<Song>();
 			
 			// Get playlist name for album field
-			var playlistName = playlist.Value.TryGetProperty("title", out var titleEl)
+			var playlistName = playlist?.TryGetProperty("title", out var titleEl) == true
 				? titleEl.GetString() ?? "Unknown Playlist"
 				: "Unknown Playlist";
 
-			if (tracks != null)
+			if (tracks.HasValue)
 			{
 				int trackIndex = 1;
 				foreach (var entry in tracks.Value.EnumerateArray())
@@ -783,6 +783,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
 		if (playlistElement.TryGetProperty("items", out var tracksEl))
 		{
 			tracks = tracksEl;
+		}
+		
+		if (!playlist.HasValue)
+		{
+			throw new InvalidOperationException("Playlist data is missing");
 		}
 		
 		var externalId = playlist.Value.GetProperty("uuid").GetString()!;

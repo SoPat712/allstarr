@@ -140,7 +140,7 @@ public class JellyfinStartupValidator : BaseStartupValidator
                            $"Token=\"{settings.ApiKey}\"";
 
             using var request = new HttpRequestMessage(HttpMethod.Get, 
-                $"{settings.Url.TrimEnd('/')}/System/Info");
+                $"{settings.Url?.TrimEnd('/')}/System/Info");
             request.Headers.Add("Authorization", authHeader);
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -180,7 +180,7 @@ public class JellyfinStartupValidator : BaseStartupValidator
     {
         try
         {
-            var url = $"{settings.Url.TrimEnd('/')}/Library/MediaFolders";
+            var url = $"{settings.Url?.TrimEnd('/')}/Library/MediaFolders";
             if (!string.IsNullOrWhiteSpace(settings.UserId))
             {
                 url += $"?userId={settings.UserId}";

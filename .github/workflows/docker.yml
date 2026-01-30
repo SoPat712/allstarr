@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-    branches: [main, dev]
+    branches: [main, beta]
   pull_request:
     types: [closed]
-    branches: [main, dev]
+    branches: [main, beta]
 
 env:
   DOTNET_VERSION: "10.0.x"
@@ -77,7 +77,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
