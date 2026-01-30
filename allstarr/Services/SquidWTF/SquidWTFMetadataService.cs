@@ -100,6 +100,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
             
             if (!response.IsSuccessStatusCode)
             {
+                if (await TryNextEndpointAsync())
+                {
+                    return await SearchSongsAsync(query, limit);
+                }
                 return new List<Song>();
             }
             
@@ -125,6 +129,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to search songs for query: {Query}", query);
+            if (await TryNextEndpointAsync())
+            {
+                return await SearchSongsAsync(query, limit);
+            }
             return new List<Song>();
         }
     }
@@ -138,6 +146,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
             
             if (!response.IsSuccessStatusCode)
             {
+                if (await TryNextEndpointAsync())
+                {
+                    return await SearchAlbumsAsync(query, limit);
+                }
                 return new List<Album>();
             }
             
@@ -164,6 +176,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to search albums for query: {Query}", query);
+            if (await TryNextEndpointAsync())
+            {
+                return await SearchAlbumsAsync(query, limit);
+            }
             return new List<Album>();
         }
     }
@@ -177,6 +193,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
             
             if (!response.IsSuccessStatusCode)
             {
+                if (await TryNextEndpointAsync())
+                {
+                    return await SearchArtistsAsync(query, limit);
+                }
                 return new List<Artist>();
             }
             
@@ -203,6 +223,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to search artists for query: {Query}", query);
+            if (await TryNextEndpointAsync())
+            {
+                return await SearchArtistsAsync(query, limit);
+            }
             return new List<Artist>();
         }
     }
@@ -213,7 +237,14 @@ public class SquidWTFMetadataService : IMusicMetadataService
 		{
 			var url = $"{_currentApiBase}/search?p={Uri.EscapeDataString(query)}";
             var response = await _httpClient.GetAsync(url);
-            if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
+            if (!response.IsSuccessStatusCode)
+            {
+                if (await TryNextEndpointAsync())
+                {
+                    return await SearchPlaylistsAsync(query, limit);
+                }
+                return new List<ExternalPlaylist>();
+            }
 
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
@@ -230,12 +261,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			}
 			return playlists;
 		}
-		catch
+		catch (Exception ex)
 		{
+			_logger.LogWarning(ex, "Failed to search playlists for query: {Query}", query);
+            if (await TryNextEndpointAsync())
+            {
+                return await SearchPlaylistsAsync(query, limit);
+            }
 			return new List<ExternalPlaylist>();
 		}
-		
-		
 	}
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
