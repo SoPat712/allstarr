@@ -145,26 +145,77 @@ public class JellyfinProxyService
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         
+        bool authHeaderAdded = false;
+        
         // Forward authentication headers from client if provided
-        if (clientHeaders != null)
+        if (clientHeaders != null && clientHeaders.Count > 0)
         {
-            if (clientHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
+            // Try X-Emby-Authorization first (case-insensitive)
+            foreach (var header in clientHeaders)
             {
-                request.Headers.TryAddWithoutValidation("X-Emby-Authorization", embyAuth.ToString());
+                if (header.Key.Equals("X-Emby-Authorization", StringComparison.OrdinalIgnoreCase))
+                {
+                    var headerValue = header.Value.ToString();
+                    request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
+                    authHeaderAdded = true;
+                    _logger.LogInformation("✓ Forwarded X-Emby-Authorization: {Value}", headerValue);
+                    break;
+                }
             }
-            else if (clientHeaders.TryGetValue("Authorization", out var auth))
+            
+            // If no X-Emby-Authorization, check if Authorization header contains MediaBrowser format
+            // Some clients send it as "Authorization" instead of "X-Emby-Authorization"
+            if (!authHeaderAdded)
             {
-                request.Headers.TryAddWithoutValidation("Authorization", auth.ToString());
+                foreach (var header in clientHeaders)
+                {
+                    if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var headerValue = header.Value.ToString();
+                        
+                        // Check if it's MediaBrowser/Jellyfin format (contains "MediaBrowser" or "Token=")
+                        if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
+                            headerValue.Contains("Token=", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Forward as X-Emby-Authorization (Jellyfin's expected header)
+                            request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
+                            authHeaderAdded = true;
+                            _logger.LogInformation("✓ Converted Authorization to X-Emby-Authorization: {Value}", headerValue);
+                        }
+                        else
+                        {
+                            // Standard Bearer token - forward as-is
+                            request.Headers.TryAddWithoutValidation("Authorization", headerValue);
+                            authHeaderAdded = true;
+                            _logger.LogInformation("✓ Forwarded Authorization (Bearer): {Value}", headerValue);
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            if (!authHeaderAdded)
+            {
+                _logger.LogWarning("✗ No auth header found. Available headers: {Headers}", 
+                    string.Join(", ", clientHeaders.Select(h => $"{h.Key}={h.Value}")));
             }
         }
+        else
+        {
+            _logger.LogWarning("✗ No client headers provided for {Url}", url);
+        }
         
-        // Only use API key for server-initiated requests (when no client headers provided)
-        // This ensures client requests use the logged-in user's permissions
-        if (clientHeaders == null && !request.Headers.Contains("X-Emby-Authorization") && !request.Headers.Contains("Authorization"))
+        // Use API key if no valid client auth was found
+        if (!authHeaderAdded)
         {
             if (!string.IsNullOrEmpty(_settings.ApiKey))
             {
                 request.Headers.Add("Authorization", GetAuthorizationHeader());
+                _logger.LogInformation("→ Using API key for {Url}", url);
+            }
+            else
+            {
+                _logger.LogWarning("✗ No authentication available for {Url} - request will fail", url);
             }
         }
         
@@ -172,13 +223,26 @@ public class JellyfinProxyService
 
         var response = await _httpClient.SendAsync(request);
         
+        // Always parse the response, even for errors
+        // The caller needs to see 401s so the client can re-authenticate
+        var content = await response.Content.ReadAsStringAsync();
+        
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Jellyfin request failed: {StatusCode} for {Url}", response.StatusCode, url);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _logger.LogWarning("Jellyfin returned 401 Unauthorized for {Url} - passing through to client", url);
+            }
+            else
+            {
+                _logger.LogWarning("Jellyfin request failed: {StatusCode} for {Url}", response.StatusCode, url);
+            }
+            
+            // Return null so caller knows request failed
+            // TODO: We should return the status code too so caller can pass it through
             return null;
         }
 
-        var content = await response.Content.ReadAsStringAsync();
         return JsonDocument.Parse(content);
     }
 
@@ -203,27 +267,40 @@ public class JellyfinProxyService
             _logger.LogWarning("POST body is empty for {Url}", url);
         }
         
-        // For auth endpoints, we need X-Emby-Authorization header with client info (no token yet)
-        // Jellyfin requires this header format even for login
-        if (clientHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
+        bool authHeaderAdded = false;
+        
+        // Forward authentication headers from client (case-insensitive)
+        foreach (var header in clientHeaders)
         {
-            request.Headers.TryAddWithoutValidation("X-Emby-Authorization", embyAuth.ToString());
-            _logger.LogDebug("Forwarding X-Emby-Authorization: {Header}", embyAuth.ToString());
+            if (header.Key.Equals("X-Emby-Authorization", StringComparison.OrdinalIgnoreCase))
+            {
+                request.Headers.TryAddWithoutValidation("X-Emby-Authorization", header.Value.ToString());
+                authHeaderAdded = true;
+                break;
+            }
         }
-        else if (clientHeaders.TryGetValue("Authorization", out var auth))
+        
+        if (!authHeaderAdded)
         {
-            request.Headers.TryAddWithoutValidation("Authorization", auth.ToString());
-            _logger.LogDebug("Forwarding Authorization: {Header}", auth.ToString());
+            foreach (var header in clientHeaders)
+            {
+                if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                {
+                    request.Headers.TryAddWithoutValidation("Authorization", header.Value.ToString());
+                    authHeaderAdded = true;
+                    break;
+                }
+            }
         }
-        else
+        
+        // For login requests without auth headers, provide a minimal client auth header
+        if (!authHeaderAdded)
         {
-            // For login requests, provide a minimal client auth header (no token)
             var clientAuthHeader = $"MediaBrowser Client=\"{_settings.ClientName}\", " +
                                    $"Device=\"{_settings.DeviceName}\", " +
                                    $"DeviceId=\"{_settings.DeviceId}\", " +
                                    $"Version=\"{_settings.ClientVersion}\"";
             request.Headers.TryAddWithoutValidation("X-Emby-Authorization", clientAuthHeader);
-            _logger.LogDebug("Using default X-Emby-Authorization for login: {Header}", clientAuthHeader);
         }
         
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));

@@ -108,13 +108,8 @@ public class JellyfinController : ControllerBase
 
             if (browseResult == null)
             {
-                _logger.LogInformation("Jellyfin returned null, returning empty result");
-                return new JsonResult(new Dictionary<string, object>
-                {
-                    ["Items"] = Array.Empty<object>(),
-                    ["TotalRecordCount"] = 0,
-                    ["StartIndex"] = startIndex
-                });
+                _logger.LogInformation("Jellyfin returned null - likely 401 Unauthorized, returning 401 to client");
+                return Unauthorized(new { error = "Authentication required" });
             }
 
             var result = JsonSerializer.Deserialize<object>(browseResult.RootElement.GetRawText());
@@ -1207,6 +1202,7 @@ public class JellyfinController : ControllerBase
     /// </summary>
     [HttpGet("Items/{itemId}/Similar")]
     [HttpGet("Songs/{itemId}/Similar")]
+    [HttpGet("Artists/{artistId}/Similar")]
     public async Task<IActionResult> GetSimilarItems(
         string itemId,
         [FromQuery] int limit = 50,
@@ -1217,6 +1213,18 @@ public class JellyfinController : ControllerBase
         
         if (isExternal)
         {
+            // Check if this is an artist
+            if (itemId.Contains("-artist-", StringComparison.OrdinalIgnoreCase))
+            {
+                // For external artists, return empty - we don't have similar artist functionality
+                _logger.LogDebug("Similar artists not supported for external artist {ItemId}", itemId);
+                return _responseBuilder.CreateJsonResponse(new
+                {
+                    Items = Array.Empty<object>(),
+                    TotalRecordCount = 0
+                });
+            }
+            
             try
             {
                 // Get the original song to find similar content
