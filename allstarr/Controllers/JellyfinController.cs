@@ -1002,7 +1002,13 @@ public class JellyfinController : ControllerBase
             return NotFound(new { error = "Lyrics not found" });
         }
 
+        // Prefer synced lyrics, fall back to plain
+        var lyricsText = lyrics.SyncedLyrics ?? lyrics.PlainLyrics ?? "";
+        var isSynced = !string.IsNullOrEmpty(lyrics.SyncedLyrics);
+
         // Return in Jellyfin lyrics format
+        // For synced lyrics, return the LRC format directly
+        // For plain lyrics, return as a single block
         var response = new
         {
             Metadata = new
@@ -1011,14 +1017,14 @@ public class JellyfinController : ControllerBase
                 Album = lyrics.AlbumName,
                 Title = lyrics.TrackName,
                 Length = lyrics.Duration,
-                IsSynced = !string.IsNullOrEmpty(lyrics.SyncedLyrics)
+                IsSynced = isSynced
             },
             Lyrics = new[]
             {
                 new
                 {
                     Start = (long?)null,
-                    Text = lyrics.SyncedLyrics ?? lyrics.PlainLyrics ?? ""
+                    Text = lyricsText
                 }
             }
         };
