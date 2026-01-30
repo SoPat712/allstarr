@@ -298,6 +298,12 @@ public abstract class BaseDownloadService : IDownloadService
             
             song.LocalPath = localPath;
             
+            // Register BEFORE releasing lock to prevent race conditions
+            if (!isCache)
+            {
+                await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
+            }
+            
             // Check if this track belongs to a playlist and update M3U
             if (PlaylistSyncService != null)
             {
@@ -316,11 +322,9 @@ public abstract class BaseDownloadService : IDownloadService
                 }
             }
             
-            // Only register and scan if NOT in cache mode
+            // Trigger library scan and album download AFTER releasing lock
             if (!isCache)
             {
-                await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
-                
                 // Trigger a Subsonic library rescan (with debounce)
                 _ = Task.Run(async () =>
                 {
