@@ -11,7 +11,7 @@ Please report all bugs as soon as possible, as the Jellyfin addition is entirely
 ```bash
 # 1. Configure environment
 cp .env.example .env
-nano .env  # Edit with your settings
+vi .env  # Edit with your settings
 
 # 2. Start services
 docker-compose up -d --build
