@@ -304,10 +304,17 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album)
     {
+        // Add " - SW" suffix to external album names
+        var albumName = album.Title;
+        if (!album.IsLocal)
+        {
+            albumName = $"{album.Title} - SW";
+        }
+        
         var item = new Dictionary<string, object?>
         {
             ["Id"] = album.Id,
-            ["Name"] = album.Title,
+            ["Name"] = albumName,
             ["ServerId"] = "allstarr",
             ["Type"] = "MusicAlbum",
             ["IsFolder"] = true,
@@ -328,10 +335,10 @@ public class JellyfinResponseBuilder
             },
             ["BackdropImageTags"] = new string[0],
             ["ImageBlurHashes"] = new Dictionary<string, object>(),
-            ["LocationType"] = "FileSystem", // External content appears as local files to clients
-            ["MediaType"] = (object?)null, // Match Jellyfin structure
-            ["ChannelId"] = (object?)null, // Match Jellyfin structure
-            ["CollectionType"] = (object?)null, // Match Jellyfin structure
+            ["LocationType"] = "FileSystem",
+            ["MediaType"] = (object?)null,
+            ["ChannelId"] = (object?)null,
+            ["CollectionType"] = (object?)null,
             ["UserData"] = new Dictionary<string, object>
             {
                 ["PlaybackPositionTicks"] = 0,
@@ -364,10 +371,17 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist)
     {
+        // Add " - SW" suffix to external artist names
+        var artistName = artist.Name;
+        if (!artist.IsLocal)
+        {
+            artistName = $"{artist.Name} - SW";
+        }
+        
         var item = new Dictionary<string, object?>
         {
             ["Id"] = artist.Id,
-            ["Name"] = artist.Name,
+            ["Name"] = artistName,
             ["ServerId"] = "allstarr",
             ["Type"] = "MusicArtist",
             ["IsFolder"] = true,

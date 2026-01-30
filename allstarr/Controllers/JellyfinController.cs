@@ -811,6 +811,16 @@ public class JellyfinController : ControllerBase
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
+            // Update last access time for cache cleanup
+            try
+            {
+                System.IO.File.SetLastAccessTimeUtc(localPath, DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update last access time for {Path}", localPath);
+            }
+            
             var stream = System.IO.File.OpenRead(localPath);
             return File(stream, GetContentType(localPath), enableRangeProcessing: true);
         }
@@ -1202,7 +1212,7 @@ public class JellyfinController : ControllerBase
     /// </summary>
     [HttpGet("Items/{itemId}/Similar")]
     [HttpGet("Songs/{itemId}/Similar")]
-    [HttpGet("Artists/{artistId}/Similar")]
+    [HttpGet("Artists/{itemId}/Similar")]
     public async Task<IActionResult> GetSimilarItems(
         string itemId,
         [FromQuery] int limit = 50,
@@ -1266,7 +1276,11 @@ public class JellyfinController : ControllerBase
             }
         }
         
-        // For local items, proxy to Jellyfin
+        // For local items, determine the correct endpoint based on the request path
+        var endpoint = Request.Path.Value?.Contains("/Artists/", StringComparison.OrdinalIgnoreCase) == true
+            ? $"Artists/{itemId}/Similar"
+            : $"Items/{itemId}/Similar";
+        
         var queryParams = new Dictionary<string, string>
         {
             ["limit"] = limit.ToString()
@@ -1282,7 +1296,7 @@ public class JellyfinController : ControllerBase
             queryParams["userId"] = userId;
         }
 
-        var result = await _proxyService.GetJsonAsync($"Items/{itemId}/Similar", queryParams, Request.Headers);
+        var result = await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
         
         if (result == null)
         {
@@ -1532,28 +1546,32 @@ public class JellyfinController : ControllerBase
                 
                 // Read body using StreamReader with proper encoding
                 string body;
-                using (var reader = new StreamReader(Request.Body, System.Text.Encoding.UTF8, leaveOpen: true))
+                using (var reader = new StreamReader(Request.Body, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true))
                 {
                     body = await reader.ReadToEndAsync();
                 }
                 
-                // Reset stream position after reading
+                // Reset stream position after reading so it can be read again if needed
                 Request.Body.Position = 0;
                 
                 if (string.IsNullOrWhiteSpace(body))
                 {
-                    _logger.LogWarning("Empty POST body for {Path}, ContentLength={ContentLength}, ContentType={ContentType}", 
+                    _logger.LogWarning("Empty POST body received from client for {Path}, ContentLength={ContentLength}, ContentType={ContentType}", 
                         fullPath, Request.ContentLength, Request.ContentType);
+                    
+                    // Log all headers to debug
+                    _logger.LogWarning("Request headers: {Headers}", 
+                        string.Join(", ", Request.Headers.Select(h => $"{h.Key}={h.Value}")));
                 }
                 else
                 {
-                    _logger.LogInformation("POST body for {Path}: {BodyLength} bytes, ContentType={ContentType}", 
+                    _logger.LogInformation("POST body received from client for {Path}: {BodyLength} bytes, ContentType={ContentType}", 
                         fullPath, body.Length, Request.ContentType);
                     
                     // Always log body content for playback endpoints to debug the issue
                     if (fullPath.Contains("Playing", StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.LogInformation("POST body content: {Body}", body);
+                        _logger.LogInformation("POST body content from client: {Body}", body);
                     }
                 }
                 
