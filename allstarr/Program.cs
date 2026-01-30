@@ -16,18 +16,18 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Decode SquidWTF API base URLs once at startup (primary + backups)
+// Decode SquidWTF API base URLs once at startup
 var squidWtfApiUrls = DecodeSquidWtfUrls();
 static List<string> DecodeSquidWtfUrls()
 {
     var encodedUrls = new[]
     {
-        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",      // Primary: triton.squid.wtf
-        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",      // Backup 1: wolf.qqdl.site
-        "aHR0cDovL2h1bmQucXFkbC5zaXRl",          // Backup 2: hund.qqdl.site
-        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",      // Backup 3: maus.qqdl.site
-        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",      // Backup 4: vogel.qqdl.site
-        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU="       // Backup 5: katze.qqdl.site
+        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",      // triton
+        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",      // wolf
+        "aHR0cDovL2h1bmQucXFkbC5zaXRl",          // hund
+        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",      // maus
+        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",      // vogel
+        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU="       // katze
     };
     
     return encodedUrls
