@@ -140,7 +140,7 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
   - **Subsonic**: Navidrome or other Subsonic-compatible server
 - Credentials for at least one music provider (IF NOT USING SQUIDWTF):
   - **Deezer**: ARL token from browser cookies
-  - **Qobuz**: User ID + User Auth Token from browser localStorage ([see Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)))
+  - **Qobuz**: User ID + User Auth Token from browser localStorage ([see Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)))
 - Docker and Docker Compose (recommended) **or** [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for manual installation
 
 ## Configuration

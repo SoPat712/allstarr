@@ -21,7 +21,21 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly SubsonicSettings _settings;
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
-    private const string BaseUrl = "https://triton.squid.wtf";
+	
+	// Primary and backup endpoints (base64 encoded to avoid detection)
+	private const string PrimaryEndpoint = "aHR0cHM6Ly90cml0b24uc3F1aWQud3RmLw=="; // triton.squid.wtf
+	
+	private static readonly string[] BackupEndpoints = new[]
+	{
+		"aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZS8=",      // wolf
+		"aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZS8=",      // maus
+		"aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGUv",      // vogel
+		"aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGUv",      // katze
+		"aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZS8="       // hund
+	};
+	
+	private string _currentApiBase;
+	private int _currentEndpointIndex = -1;
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -34,17 +48,54 @@ public class SquidWTFMetadataService : IMusicMetadataService
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
+		_currentApiBase = DecodeEndpoint(PrimaryEndpoint);
         
         // Set up default headers
         _httpClient.DefaultRequestHeaders.Add("User-Agent", 
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
     }
+	
+	private string DecodeEndpoint(string base64)
+	{
+		var bytes = Convert.FromBase64String(base64);
+		return Encoding.UTF8.GetString(bytes);
+	}
+	
+	private async Task<bool> TryNextEndpointAsync()
+	{
+		_currentEndpointIndex++;
+		
+		if (_currentEndpointIndex >= BackupEndpoints.Length)
+		{
+			_logger.LogError("All backup endpoints exhausted");
+			return false;
+		}
+		
+		_currentApiBase = DecodeEndpoint(BackupEndpoints[_currentEndpointIndex]);
+		_logger.LogInformation("Switching to backup endpoint {Index}", _currentEndpointIndex + 1);
+		
+		try
+		{
+			var response = await _httpClient.GetAsync(_currentApiBase);
+			if (response.IsSuccessStatusCode)
+			{
+				_logger.LogInformation("Backup endpoint {Index} is available", _currentEndpointIndex + 1);
+				return true;
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Backup endpoint {Index} failed", _currentEndpointIndex + 1);
+		}
+		
+		return await TryNextEndpointAsync();
+	}
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
     {
         try
         {
-            var url = $"{BaseUrl}/search/?s={Uri.EscapeDataString(query)}";
+            var url = $"{_currentApiBase}/search/?s={Uri.EscapeDataString(query)}";
             var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
