@@ -16,10 +16,18 @@ services:
       - allstarr-network
 
   allstarr:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: allstarr:local
+    # Use pre-built image from GitHub Container Registry
+    # For latest stable: ghcr.io/sopat712/allstarr:latest
+    # For beta/testing: ghcr.io/sopat712/allstarr:beta
+    # To build locally instead, uncomment the build section below
+    image: ghcr.io/sopat712/allstarr:latest
+    
+    # Uncomment to build locally instead of using GHCR image:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    # image: allstarr:local
+    
     container_name: allstarr
     restart: unless-stopped
     ports:
