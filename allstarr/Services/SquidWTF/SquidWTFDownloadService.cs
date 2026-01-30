@@ -26,20 +26,8 @@ public class SquidWTFDownloadService : BaseDownloadService
     private DateTime _lastRequestTime = DateTime.MinValue;
     private readonly int _minRequestIntervalMs = 200;
     
-	// Primary and backup endpoints (base64 encoded to avoid detection)
-	private const string PrimaryEndpoint = "aHR0cHM6Ly90cml0b24uc3F1aWQud3RmLw=="; // triton.squid.wtf
-	
-	private static readonly string[] BackupEndpoints = new[]
-	{
-		"aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZS8=",      // wolf
-		"aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZS8=",      // maus
-		"aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGUv",      // vogel
-		"aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGUv",      // katze
-		"aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZS8="       // hund
-	};
-	
-	private string _currentApiBase;
-	private int _currentEndpointIndex = -1;
+	private readonly List<string> _apiUrls;
+    private int _currentUrlIndex = 0;
 
     protected override string ProviderName => "squidwtf";
 
@@ -51,77 +39,49 @@ public class SquidWTFDownloadService : BaseDownloadService
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<SquidWTFSettings> SquidWTFSettings,
 		IServiceProvider serviceProvider,
-        ILogger<SquidWTFDownloadService> logger)
+        ILogger<SquidWTFDownloadService> logger,
+        List<string> apiUrls)
         : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
         _httpClient = httpClientFactory.CreateClient();
         _squidwtfSettings = SquidWTFSettings.Value;
-		_currentApiBase = DecodeEndpoint(PrimaryEndpoint);
+        _apiUrls = apiUrls;
+    }
+    
+    private async Task<T> TryWithFallbackAsync<T>(Func<string, Task<T>> action)
+    {
+        for (int attempt = 0; attempt < _apiUrls.Count; attempt++)
+        {
+            try
+            {
+                var baseUrl = _apiUrls[_currentUrlIndex];
+                return await action(baseUrl);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Request failed with endpoint {Endpoint}, trying next...", _apiUrls[_currentUrlIndex]);
+                _currentUrlIndex = (_currentUrlIndex + 1) % _apiUrls.Count;
+                
+                if (attempt == _apiUrls.Count - 1)
+                {
+                    Logger.LogError("All SquidWTF endpoints failed");
+                    throw;
+                }
+            }
+        }
+        throw new Exception("All SquidWTF endpoints failed");
     }
 	
-	private string DecodeEndpoint(string base64)
-	{
-		var bytes = Convert.FromBase64String(base64);
-		return Encoding.UTF8.GetString(bytes).TrimEnd('/');
-	}
-	
-	private async Task<bool> TryNextEndpointAsync()
-	{
-		_currentEndpointIndex++;
-		
-		if (_currentEndpointIndex >= BackupEndpoints.Length)
-		{
-			Logger.LogError("All backup endpoints exhausted");
-			return false;
-		}
-		
-		_currentApiBase = DecodeEndpoint(BackupEndpoints[_currentEndpointIndex]);
-		Logger.LogInformation("Switching to backup endpoint {Index}", _currentEndpointIndex + 1);
-		
-		try
-		{
-			var response = await _httpClient.GetAsync(_currentApiBase);
-			if (response.IsSuccessStatusCode)
-			{
-				Logger.LogInformation("Backup endpoint {Index} is available", _currentEndpointIndex + 1);
-				return true;
-			}
-		}
-		catch (Exception ex)
-		{
-			Logger.LogWarning(ex, "Backup endpoint {Index} failed", _currentEndpointIndex + 1);
-		}
-		
-		return await TryNextEndpointAsync();
-	}
-
     #region BaseDownloadService Implementation
 
     public override async Task<bool> IsAvailableAsync()
     {
-        try
+        return await TryWithFallbackAsync(async (baseUrl) =>
         {
-            var response = await _httpClient.GetAsync(_currentApiBase);
+            var response = await _httpClient.GetAsync(baseUrl);
 			Console.WriteLine($"Response code from is available async: {response.IsSuccessStatusCode}");
-            
-			if (!response.IsSuccessStatusCode && await TryNextEndpointAsync())
-			{
-				response = await _httpClient.GetAsync(_currentApiBase);
-			}
-			
-			return response.IsSuccessStatusCode;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "SquidWTF service not available, trying backup");
-			
-			if (await TryNextEndpointAsync())
-			{
-				return await IsAvailableAsync();
-			}
-			
-            return false;
-        }
+            return response.IsSuccessStatusCode;
+        });
 	}
 
     protected override string? ExtractExternalIdFromAlbumId(string albumId)
@@ -197,80 +157,69 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         return await QueueRequestAsync(async () =>
         {
-            // Map quality settings to Tidal's quality levels
-            var quality = _squidwtfSettings.Quality?.ToUpperInvariant() switch
+            return await TryWithFallbackAsync(async (baseUrl) =>
             {
-                "FLAC" => "LOSSLESS",
-                "HI_RES" => "HI_RES_LOSSLESS",
-                "LOSSLESS" => "LOSSLESS",
-                "HIGH" => "HIGH",
-                "LOW" => "LOW",
-                _ => "LOSSLESS" // Default to lossless
-            };
-            
-            var url = $"{_currentApiBase}/track?id={trackId}&quality={quality}";
+                // Map quality settings to Tidal's quality levels
+                var quality = _squidwtfSettings.Quality?.ToUpperInvariant() switch
+                {
+                    "FLAC" => "LOSSLESS",
+                    "HI_RES" => "HI_RES_LOSSLESS",
+                    "LOSSLESS" => "LOSSLESS",
+                    "HIGH" => "HIGH",
+                    "LOW" => "LOW",
+                    _ => "LOSSLESS" // Default to lossless
+                };
+                
+                var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
 
-            Console.WriteLine($"%%%%%%%%%%%%%%%%%%% URL For downloads??: {url}");
+                Console.WriteLine($"%%%%%%%%%%%%%%%%%%% URL For downloads??: {url}");
 
-            try
-			{
-				var response = await _httpClient.GetAsync(url, cancellationToken);
-				response.EnsureSuccessStatusCode();
-				
-				var json = await response.Content.ReadAsStringAsync(cancellationToken);
-				var doc = JsonDocument.Parse(json);
-				
-				if (!doc.RootElement.TryGetProperty("data", out var data))
-				{
-					throw new Exception("Invalid response from API");
-				}
-				
-				// Get the manifest (base64 encoded JSON containing the actual CDN URL)
-				var manifestBase64 = data.GetProperty("manifest").GetString()
-					?? throw new Exception("No manifest in response");
-				
-				// Decode the manifest
-				var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
-				var manifest = JsonDocument.Parse(manifestJson);
-				
-				// Extract the download URL from the manifest
-				if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
-				{
-					throw new Exception("No download URLs in manifest");
-				}
-				
-				var downloadUrl = urls[0].GetString()
-					?? throw new Exception("Download URL is null");
-				
-				var mimeType = manifest.RootElement.TryGetProperty("mimeType", out var mimeTypeEl)
-					? mimeTypeEl.GetString()
-					: "audio/flac";
-				
-				var audioQuality = data.TryGetProperty("audioQuality", out var audioQualityEl)
-					? audioQualityEl.GetString()
-					: "LOSSLESS";
-				
-				Logger.LogDebug("Decoded manifest - URL: {Url}, MIME: {MimeType}, Quality: {Quality}", 
-					downloadUrl, mimeType, audioQuality);
-				
-				return new DownloadResult
-				{
-					DownloadUrl = downloadUrl,
-					MimeType = mimeType ?? "audio/flac",
-					AudioQuality = audioQuality ?? "LOSSLESS"
-				};
-			}
-			catch (Exception ex)
-			{
-				Logger.LogWarning(ex, "Failed to get track info, trying backup endpoint");
-				
-				if (await TryNextEndpointAsync())
-				{
-					return await GetTrackDownloadInfoAsync(trackId, cancellationToken);
-				}
-				
-				throw;
-			}
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+                response.EnsureSuccessStatusCode();
+                
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                var doc = JsonDocument.Parse(json);
+                
+                if (!doc.RootElement.TryGetProperty("data", out var data))
+                {
+                    throw new Exception("Invalid response from API");
+                }
+                
+                // Get the manifest (base64 encoded JSON containing the actual CDN URL)
+                var manifestBase64 = data.GetProperty("manifest").GetString()
+                    ?? throw new Exception("No manifest in response");
+                
+                // Decode the manifest
+                var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
+                var manifest = JsonDocument.Parse(manifestJson);
+                
+                // Extract the download URL from the manifest
+                if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
+                {
+                    throw new Exception("No download URLs in manifest");
+                }
+                
+                var downloadUrl = urls[0].GetString()
+                    ?? throw new Exception("Download URL is null");
+                
+                var mimeType = manifest.RootElement.TryGetProperty("mimeType", out var mimeTypeEl)
+                    ? mimeTypeEl.GetString()
+                    : "audio/flac";
+                
+                var audioQuality = data.TryGetProperty("audioQuality", out var audioQualityEl)
+                    ? audioQualityEl.GetString()
+                    : "LOSSLESS";
+                
+                Logger.LogDebug("Decoded manifest - URL: {Url}, MIME: {MimeType}, Quality: {Quality}", 
+                    downloadUrl, mimeType, audioQuality);
+                
+                return new DownloadResult
+                {
+                    DownloadUrl = downloadUrl,
+                    MimeType = mimeType ?? "audio/flac",
+                    AudioQuality = audioQuality ?? "LOSSLESS"
+                };
+            });
         });
     }
 	
