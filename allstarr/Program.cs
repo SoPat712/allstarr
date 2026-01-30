@@ -12,8 +12,18 @@ using allstarr.Services.Lyrics;
 using allstarr.Middleware;
 using allstarr.Filters;
 using Microsoft.Extensions.Http;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Decode SquidWTF API base URL once at startup
+var squidWtfApiBase = DecodeSquidWtfUrl();
+static string DecodeSquidWtfUrl()
+{
+    var encoded = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
+    var bytes = Convert.FromBase64String(encoded);
+    return Encoding.UTF8.GetString(bytes);
+}
 
 // Determine backend type FIRST
 var backendType = builder.Configuration.GetValue<BackendType>("Backend:Type");
@@ -163,9 +173,26 @@ else if (musicService == MusicService.Deezer)
 }
 else if (musicService == MusicService.SquidWTF)
 {
-    // SquidWTF services
-    builder.Services.AddSingleton<IMusicMetadataService, SquidWTFMetadataService>();
-    builder.Services.AddSingleton<IDownloadService, SquidWTFDownloadService>();
+    // SquidWTF services - pass decoded URL
+    builder.Services.AddSingleton<IMusicMetadataService>(sp => 
+        new SquidWTFMetadataService(
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+            sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
+            sp.GetRequiredService<RedisCacheService>(),
+            squidWtfApiBase));
+    builder.Services.AddSingleton<IDownloadService>(sp =>
+        new SquidWTFDownloadService(
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<IConfiguration>(),
+            sp.GetRequiredService<ILocalLibraryService>(),
+            sp.GetRequiredService<IMusicMetadataService>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+            sp,
+            sp.GetRequiredService<ILogger<SquidWTFDownloadService>>(),
+            squidWtfApiBase));
 }
 
 // Startup validation - register validators based on backend
@@ -180,7 +207,11 @@ else
 
 builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
 builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
-builder.Services.AddSingleton<IStartupValidator, SquidWTFStartupValidator>();
+builder.Services.AddSingleton<IStartupValidator>(sp =>
+    new SquidWTFStartupValidator(
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient(),
+        squidWtfApiBase));
 
 // Register orchestrator as hosted service
 builder.Services.AddHostedService<StartupValidationOrchestrator>();

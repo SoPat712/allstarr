@@ -12,22 +12,15 @@ namespace allstarr.Services.SquidWTF;
 public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
-	
-	private static readonly string _apiBase = DecodeBaseUrl();
-	
-	private static string DecodeBaseUrl()
-	{
-		var encoded = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
-		var bytes = Convert.FromBase64String(encoded);
-		return Encoding.UTF8.GetString(bytes);
-	}
+	private readonly string _apiBase;
 
     public override string ServiceName => "SquidWTF";
 
-    public SquidWTFStartupValidator(IOptions<SquidWTFSettings> settings, HttpClient httpClient)
+    public SquidWTFStartupValidator(IOptions<SquidWTFSettings> settings, HttpClient httpClient, string apiBase)
         : base(httpClient)
     {
         _settings = settings.Value;
+        _apiBase = apiBase;
     }	
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)

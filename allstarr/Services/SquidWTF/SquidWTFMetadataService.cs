@@ -21,27 +21,21 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly SubsonicSettings _settings;
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
-	
-	private static readonly string BaseUrl = DecodeBaseUrl();
-	
-	private static string DecodeBaseUrl()
-	{
-		var encoded = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
-		var bytes = Convert.FromBase64String(encoded);
-		return Encoding.UTF8.GetString(bytes);
-	}
+	private readonly string BaseUrl;
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
         IOptions<SubsonicSettings> settings,
         IOptions<SquidWTFSettings> squidwtfSettings,
         ILogger<SquidWTFMetadataService> logger,
-        RedisCacheService cache)
+        RedisCacheService cache,
+        string baseUrl)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
+        BaseUrl = baseUrl;
         
         // Set up default headers
         _httpClient.DefaultRequestHeaders.Add("User-Agent", 
