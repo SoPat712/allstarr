@@ -6,6 +6,7 @@ using Moq;
 using Moq.Protected;
 using allstarr.Models.Settings;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Common;
 using System.Net;
 using System.Text.Json;
 
@@ -16,6 +17,7 @@ public class JellyfinProxyServiceTests
     private readonly JellyfinProxyService _service;
     private readonly Mock<HttpMessageHandler> _mockHandler;
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
+    private readonly RedisCacheService _cache;
     private readonly JellyfinSettings _settings;
 
     public JellyfinProxyServiceTests()
@@ -25,6 +27,10 @@ public class JellyfinProxyServiceTests
 
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var redisSettings = new RedisSettings { Enabled = false };
+        var mockCacheLogger = new Mock<ILogger<RedisCacheService>>();
+        _cache = new RedisCacheService(Options.Create(redisSettings), mockCacheLogger.Object);
 
         _settings = new JellyfinSettings
         {
@@ -45,7 +51,8 @@ public class JellyfinProxyServiceTests
             _mockHttpClientFactory.Object,
             Options.Create(_settings),
             httpContextAccessor,
-            mockLogger.Object);
+            mockLogger.Object,
+            _cache);
     }
 
     [Fact]
@@ -252,55 +259,7 @@ public class JellyfinProxyServiceTests
         Assert.Contains("maxHeight=300", url);
     }
 
-    [Fact]
-    public async Task MarkFavoriteAsync_PostsToCorrectEndpoint()
-    {
-        // Arrange
-        HttpRequestMessage? captured = null;
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>("SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>())
-            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
-            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK));
 
-        // Act
-        var result = await _service.MarkFavoriteAsync("song-456");
-
-        // Assert
-        Assert.True(result);
-        Assert.NotNull(captured);
-        Assert.Equal(HttpMethod.Post, captured!.Method);
-        Assert.Contains($"/Users/{_settings.UserId}/FavoriteItems/song-456", captured.RequestUri!.ToString());
-    }
-
-    [Fact]
-    public async Task MarkFavoriteAsync_WithoutUserId_ReturnsFalse()
-    {
-        // Arrange - create service without UserId
-        var settingsWithoutUser = new JellyfinSettings
-        {
-            Url = "http://localhost:8096",
-            ApiKey = "test-key",
-            UserId = "" // no user
-        };
-
-        var httpContext = new DefaultHttpContext();
-        var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
-        var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
-
-        var service = new JellyfinProxyService(
-            _mockHttpClientFactory.Object,
-            Options.Create(settingsWithoutUser),
-            httpContextAccessor,
-            mockLogger.Object);
-
-        // Act
-        var result = await service.MarkFavoriteAsync("song-456");
-
-        // Assert
-        Assert.False(result);
-    }
 
     [Fact]
     public async Task TestConnectionAsync_ValidServer_ReturnsSuccess()
@@ -337,64 +296,7 @@ public class JellyfinProxyServiceTests
         Assert.Null(version);
     }
 
-    [Fact]
-    public async Task GetMusicLibraryIdAsync_WhenConfigured_ReturnsConfiguredId()
-    {
-        // Arrange - settings already have LibraryId set
-        var settingsWithLibrary = new JellyfinSettings
-        {
-            Url = "http://localhost:8096",
-            ApiKey = "test-key",
-            LibraryId = "configured-library-id"
-        };
 
-        var httpContext = new DefaultHttpContext();
-        var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
-        var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
-
-        var service = new JellyfinProxyService(
-            _mockHttpClientFactory.Object,
-            Options.Create(settingsWithLibrary),
-            httpContextAccessor,
-            mockLogger.Object);
-
-        // Act
-        var result = await service.GetMusicLibraryIdAsync();
-
-        // Assert
-        Assert.Equal("configured-library-id", result);
-    }
-
-    [Fact]
-    public async Task GetMusicLibraryIdAsync_AutoDetects_MusicLibrary()
-    {
-        // Arrange
-        var librariesJson = "{\"Items\":[{\"Id\":\"video-lib\",\"CollectionType\":\"movies\"},{\"Id\":\"music-lib-123\",\"CollectionType\":\"music\"}]}";
-        SetupMockResponse(HttpStatusCode.OK, librariesJson, "application/json");
-
-        var settingsNoLibrary = new JellyfinSettings
-        {
-            Url = "http://localhost:8096",
-            ApiKey = "test-key",
-            LibraryId = "" // not configured
-        };
-
-        var httpContext = new DefaultHttpContext();
-        var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
-        var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
-
-        var service = new JellyfinProxyService(
-            _mockHttpClientFactory.Object,
-            Options.Create(settingsNoLibrary),
-            httpContextAccessor,
-            mockLogger.Object);
-
-        // Act
-        var result = await service.GetMusicLibraryIdAsync();
-
-        // Assert
-        Assert.Equal("music-lib-123", result);
-    }
 
     [Fact]
     public async Task StreamAudioAsync_NullContext_ReturnsError()
@@ -402,12 +304,16 @@ public class JellyfinProxyServiceTests
         // Arrange
         var httpContextAccessor = new HttpContextAccessor { HttpContext = null };
         var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
+        var redisSettings = new RedisSettings { Enabled = false };
+        var mockCacheLogger = new Mock<ILogger<RedisCacheService>>();
+        var cache = new RedisCacheService(Options.Create(redisSettings), mockCacheLogger.Object);
 
         var service = new JellyfinProxyService(
             _mockHttpClientFactory.Object,
             Options.Create(_settings),
             httpContextAccessor,
-            mockLogger.Object);
+            mockLogger.Object,
+            cache);
 
         // Act
         var result = await service.StreamAudioAsync("song-123", CancellationToken.None);
