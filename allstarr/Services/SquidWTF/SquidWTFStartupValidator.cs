@@ -13,8 +13,8 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
 	
-	// Primary endpoint (base64 encoded to avoid detection)
-	private const string PrimaryEndpoint = "aHR0cHM6Ly90cml0b24uc3F1aWQud3RmLw=="; // triton.squid.wtf
+	// Base64 encoded to avoid GitHub detection
+	private const string EncodedBaseUrl = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
 	private readonly string _apiBase;
 
     public override string ServiceName => "SquidWTF";
@@ -23,14 +23,11 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         : base(httpClient)
     {
         _settings = settings.Value;
-		_apiBase = DecodeEndpoint(PrimaryEndpoint);
-    }
-	
-	private string DecodeEndpoint(string base64)
-	{
-		var bytes = Convert.FromBase64String(base64);
-		return Encoding.UTF8.GetString(bytes).TrimEnd('/');
-	}	
+		
+		// Decode the base URL
+		var bytes = Convert.FromBase64String(EncodedBaseUrl);
+		_apiBase = Encoding.UTF8.GetString(bytes);
+    }	
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
@@ -95,7 +92,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         try
         {
             // Test search with a simple query
-            var searchUrl = $"{_apiBase}/search?s=Taylor%20Swift";
+            var searchUrl = $"{_apiBase}/search/?s=Taylor%20Swift";
             var searchResponse = await _httpClient.GetAsync(searchUrl, cancellationToken);
 
             if (searchResponse.IsSuccessStatusCode)

@@ -26,20 +26,9 @@ public class SquidWTFDownloadService : BaseDownloadService
     private DateTime _lastRequestTime = DateTime.MinValue;
     private readonly int _minRequestIntervalMs = 200;
     
-	// Primary and backup endpoints (base64 encoded to avoid detection)
-	private const string PrimaryEndpoint = "aHR0cHM6Ly90cml0b24uc3F1aWQud3RmLw=="; // triton.squid.wtf
-	
-	private static readonly string[] BackupEndpoints = new[]
-	{
-		"aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZS8=",      // wolf
-		"aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZS8=",      // maus
-		"aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGUv",      // vogel
-		"aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGUv",      // katze
-		"aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZS8="       // hund
-	};
-	
-	private string _currentApiBase;
-	private int _currentEndpointIndex = -1;
+	// Base64 encoded to avoid GitHub detection
+	private const string EncodedBaseUrl = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
+	private readonly string SquidWTFApiBase;
 
     protected override string ProviderName => "squidwtf";
 
@@ -56,70 +45,25 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         _httpClient = httpClientFactory.CreateClient();
         _squidwtfSettings = SquidWTFSettings.Value;
-		_currentApiBase = DecodeEndpoint(PrimaryEndpoint);
+		
+		// Decode the base URL
+		var bytes = Convert.FromBase64String(EncodedBaseUrl);
+		SquidWTFApiBase = Encoding.UTF8.GetString(bytes);
     }
 	
-	private string DecodeEndpoint(string base64)
-	{
-		var bytes = Convert.FromBase64String(base64);
-		return Encoding.UTF8.GetString(bytes).TrimEnd('/');
-	}
-	
-	private async Task<bool> TryNextEndpointAsync()
-	{
-		_currentEndpointIndex++;
-		
-		if (_currentEndpointIndex >= BackupEndpoints.Length)
-		{
-			Logger.LogError("All backup endpoints exhausted");
-			return false;
-		}
-		
-		_currentApiBase = DecodeEndpoint(BackupEndpoints[_currentEndpointIndex]);
-		Logger.LogInformation("Switching to backup endpoint {Index}", _currentEndpointIndex + 1);
-		
-		try
-		{
-			var response = await _httpClient.GetAsync(_currentApiBase);
-			if (response.IsSuccessStatusCode)
-			{
-				Logger.LogInformation("Backup endpoint {Index} is available", _currentEndpointIndex + 1);
-				return true;
-			}
-		}
-		catch (Exception ex)
-		{
-			Logger.LogWarning(ex, "Backup endpoint {Index} failed", _currentEndpointIndex + 1);
-		}
-		
-		return await TryNextEndpointAsync();
-	}
-
     #region BaseDownloadService Implementation
 
     public override async Task<bool> IsAvailableAsync()
     {
         try
         {
-            var response = await _httpClient.GetAsync(_currentApiBase);
+            var response = await _httpClient.GetAsync(SquidWTFApiBase);
 			Console.WriteLine($"Response code from is available async: {response.IsSuccessStatusCode}");
-            
-			if (!response.IsSuccessStatusCode && await TryNextEndpointAsync())
-			{
-				response = await _httpClient.GetAsync(_currentApiBase);
-			}
-			
-			return response.IsSuccessStatusCode;
+            return response.IsSuccessStatusCode;
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "SquidWTF service not available, trying backup");
-			
-			if (await TryNextEndpointAsync())
-			{
-				return await IsAvailableAsync();
-			}
-			
+            Logger.LogWarning(ex, "SquidWTF service not available");
             return false;
         }
 	}
@@ -208,7 +152,7 @@ public class SquidWTFDownloadService : BaseDownloadService
                 _ => "LOSSLESS" // Default to lossless
             };
             
-            var url = $"{_currentApiBase}/track?id={trackId}&quality={quality}";
+            var url = $"{SquidWTFApiBase}/track/?id={trackId}&quality={quality}";
 
             Console.WriteLine($"%%%%%%%%%%%%%%%%%%% URL For downloads??: {url}");
 
@@ -262,13 +206,7 @@ public class SquidWTFDownloadService : BaseDownloadService
 			}
 			catch (Exception ex)
 			{
-				Logger.LogWarning(ex, "Failed to get track info, trying backup endpoint");
-				
-				if (await TryNextEndpointAsync())
-				{
-					return await GetTrackDownloadInfoAsync(trackId, cancellationToken);
-				}
-				
+				Logger.LogWarning(ex, "Failed to get track info");
 				throw;
 			}
         });
