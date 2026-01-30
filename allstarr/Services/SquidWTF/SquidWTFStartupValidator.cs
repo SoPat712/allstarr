@@ -12,15 +12,39 @@ namespace allstarr.Services.SquidWTF;
 public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
-	private readonly string _apiBase;
+	private readonly List<string> _apiUrls;
+    private int _currentUrlIndex = 0;
 
     public override string ServiceName => "SquidWTF";
 
-    public SquidWTFStartupValidator(IOptions<SquidWTFSettings> settings, HttpClient httpClient, string apiBase)
+    public SquidWTFStartupValidator(IOptions<SquidWTFSettings> settings, HttpClient httpClient, List<string> apiUrls)
         : base(httpClient)
     {
         _settings = settings.Value;
-        _apiBase = apiBase;
+        _apiUrls = apiUrls;
+    }
+    
+    private async Task<T> TryWithFallbackAsync<T>(Func<string, Task<T>> action, T defaultValue)
+    {
+        for (int attempt = 0; attempt < _apiUrls.Count; attempt++)
+        {
+            try
+            {
+                var baseUrl = _apiUrls[_currentUrlIndex];
+                return await action(baseUrl);
+            }
+            catch
+            {
+                WriteDetail($"Endpoint {_apiUrls[_currentUrlIndex]} failed, trying next...");
+                _currentUrlIndex = (_currentUrlIndex + 1) % _apiUrls.Count;
+                
+                if (attempt == _apiUrls.Count - 1)
+                {
+                    return defaultValue;
+                }
+            }
+        }
+        return defaultValue;
     }	
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
@@ -39,54 +63,36 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 
         WriteStatus("SquidWTF Quality", quality, ConsoleColor.Cyan);
 
-        // Test connectivity
-        try
+        // Test connectivity with fallback
+        var result = await TryWithFallbackAsync(async (baseUrl) =>
         {
-            var response = await _httpClient.GetAsync(_apiBase, cancellationToken);
+            var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
-                WriteStatus("SquidWTF API", "REACHABLE", ConsoleColor.Green);
+                WriteStatus("SquidWTF API", $"REACHABLE ({baseUrl})", ConsoleColor.Green);
                 WriteDetail("No authentication required - powered by Tidal");
                 
                 // Try a test search to verify functionality
-                await ValidateSearchFunctionality(cancellationToken);
+                await ValidateSearchFunctionality(baseUrl, cancellationToken);
                 
                 return ValidationResult.Success("SquidWTF validation completed");
             }
             else
             {
-                WriteStatus("SquidWTF API", $"HTTP {(int)response.StatusCode}", ConsoleColor.Yellow);
-                WriteDetail("Service may be temporarily unavailable");
-			return ValidationResult.Failure($"{response.StatusCode}", "SquidWTF returned code");
+                throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
             }
-        }
-        catch (TaskCanceledException)
-        {
-            WriteStatus("SquidWTF API", "TIMEOUT", ConsoleColor.Yellow);
-            WriteDetail("Could not reach service within timeout period");
-            return ValidationResult.Failure("-1", "SquidWTF connection timeout");
-        }
-        catch (HttpRequestException ex)
-        {
-            WriteStatus("SquidWTF API", "UNREACHABLE", ConsoleColor.Red);
-            WriteDetail(ex.Message);
-            return ValidationResult.Failure("-1", $"Cannot connect to SquidWTF: {ex.Message}");
-        }
-        catch (Exception ex)
-        {
-            WriteStatus("SquidWTF API", "ERROR", ConsoleColor.Red);
-            WriteDetail(ex.Message);
-            return ValidationResult.Failure("-1", $"Validation error: {ex.Message}");
-        }
+        }, ValidationResult.Failure("-1", "All SquidWTF endpoints failed"));
+
+        return result;
     }
 
-    private async Task ValidateSearchFunctionality(CancellationToken cancellationToken)
+    private async Task ValidateSearchFunctionality(string baseUrl, CancellationToken cancellationToken)
     {
         try
         {
             // Test search with a simple query
-            var searchUrl = $"{_apiBase}/search/?s=Taylor%20Swift";
+            var searchUrl = $"{baseUrl}/search/?s=Taylor%20Swift";
             var searchResponse = await _httpClient.GetAsync(searchUrl, cancellationToken);
 
             if (searchResponse.IsSuccessStatusCode)

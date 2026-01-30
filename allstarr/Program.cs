@@ -16,13 +16,23 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Decode SquidWTF API base URL once at startup
-var squidWtfApiBase = DecodeSquidWtfUrl();
-static string DecodeSquidWtfUrl()
+// Decode SquidWTF API base URLs once at startup (primary + backups)
+var squidWtfApiUrls = DecodeSquidWtfUrls();
+static List<string> DecodeSquidWtfUrls()
 {
-    var encoded = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
-    var bytes = Convert.FromBase64String(encoded);
-    return Encoding.UTF8.GetString(bytes);
+    var encodedUrls = new[]
+    {
+        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",      // Primary: triton.squid.wtf
+        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",      // Backup 1: wolf.qqdl.site
+        "aHR0cDovL2h1bmQucXFkbC5zaXRl",          // Backup 2: hund.qqdl.site
+        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",      // Backup 3: maus.qqdl.site
+        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",      // Backup 4: vogel.qqdl.site
+        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU="       // Backup 5: katze.qqdl.site
+    };
+    
+    return encodedUrls
+        .Select(encoded => Encoding.UTF8.GetString(Convert.FromBase64String(encoded)))
+        .ToList();
 }
 
 // Determine backend type FIRST
@@ -173,7 +183,7 @@ else if (musicService == MusicService.Deezer)
 }
 else if (musicService == MusicService.SquidWTF)
 {
-    // SquidWTF services - pass decoded URL
+    // SquidWTF services - pass decoded URLs with fallback support
     builder.Services.AddSingleton<IMusicMetadataService>(sp => 
         new SquidWTFMetadataService(
             sp.GetRequiredService<IHttpClientFactory>(),
@@ -181,7 +191,7 @@ else if (musicService == MusicService.SquidWTF)
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
             sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
             sp.GetRequiredService<RedisCacheService>(),
-            squidWtfApiBase));
+            squidWtfApiUrls));
     builder.Services.AddSingleton<IDownloadService>(sp =>
         new SquidWTFDownloadService(
             sp.GetRequiredService<IHttpClientFactory>(),
@@ -192,7 +202,7 @@ else if (musicService == MusicService.SquidWTF)
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
             sp,
             sp.GetRequiredService<ILogger<SquidWTFDownloadService>>(),
-            squidWtfApiBase));
+            squidWtfApiUrls));
 }
 
 // Startup validation - register validators based on backend
@@ -211,7 +221,7 @@ builder.Services.AddSingleton<IStartupValidator>(sp =>
     new SquidWTFStartupValidator(
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
         sp.GetRequiredService<IHttpClientFactory>().CreateClient(),
-        squidWtfApiBase));
+        squidWtfApiUrls));
 
 // Register orchestrator as hosted service
 builder.Services.AddHostedService<StartupValidationOrchestrator>();
