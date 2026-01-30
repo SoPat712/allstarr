@@ -811,6 +811,16 @@ public class JellyfinController : ControllerBase
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
+            // Update last access time for cache cleanup
+            try
+            {
+                System.IO.File.SetLastAccessTimeUtc(localPath, DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update last access time for {Path}", localPath);
+            }
+            
             var stream = System.IO.File.OpenRead(localPath);
             return File(stream, GetContentType(localPath), enableRangeProcessing: true);
         }
