@@ -11,6 +11,7 @@ using allstarr.Services.Common;
 using allstarr.Services.Lyrics;
 using allstarr.Middleware;
 using allstarr.Filters;
+using Microsoft.Extensions.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -55,6 +56,17 @@ builder.Services.AddControllers()
     });
     
 builder.Services.AddHttpClient();
+builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
+{
+    options.HttpMessageHandlerBuilderActions.Add(builder =>
+    {
+        builder.PrimaryHandler = new HttpClientHandler
+        {
+            AllowAutoRedirect = true,
+            MaxAutomaticRedirections = 5
+        };
+    });
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
