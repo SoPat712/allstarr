@@ -58,7 +58,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 	private string DecodeEndpoint(string base64)
 	{
 		var bytes = Convert.FromBase64String(base64);
-		return Encoding.UTF8.GetString(bytes);
+		return Encoding.UTF8.GetString(bytes).TrimEnd('/');
 	}
 	
 	private async Task<bool> TryNextEndpointAsync()

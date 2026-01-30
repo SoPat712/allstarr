@@ -29,7 +29,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 	private string DecodeEndpoint(string base64)
 	{
 		var bytes = Convert.FromBase64String(base64);
-		return Encoding.UTF8.GetString(bytes);
+		return Encoding.UTF8.GetString(bytes).TrimEnd('/');
 	}	
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
