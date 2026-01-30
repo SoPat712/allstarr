@@ -74,7 +74,7 @@ public class LrclibService
                 TrackName = lyrics.TrackName ?? trackName,
                 ArtistName = lyrics.ArtistName ?? artistName,
                 AlbumName = lyrics.AlbumName ?? albumName,
-                Duration = lyrics.Duration,
+                Duration = (int)Math.Round(lyrics.Duration),
                 Instrumental = lyrics.Instrumental,
                 PlainLyrics = lyrics.PlainLyrics,
                 SyncedLyrics = lyrics.SyncedLyrics
@@ -131,7 +131,7 @@ public class LrclibService
                 TrackName = lyrics.TrackName ?? trackName,
                 ArtistName = lyrics.ArtistName ?? artistName,
                 AlbumName = lyrics.AlbumName ?? albumName,
-                Duration = lyrics.Duration,
+                Duration = (int)Math.Round(lyrics.Duration),
                 Instrumental = lyrics.Instrumental,
                 PlainLyrics = lyrics.PlainLyrics,
                 SyncedLyrics = lyrics.SyncedLyrics
@@ -187,7 +187,7 @@ public class LrclibService
                 TrackName = lyrics.TrackName ?? string.Empty,
                 ArtistName = lyrics.ArtistName ?? string.Empty,
                 AlbumName = lyrics.AlbumName ?? string.Empty,
-                Duration = lyrics.Duration,
+                Duration = (int)Math.Round(lyrics.Duration),
                 Instrumental = lyrics.Instrumental,
                 PlainLyrics = lyrics.PlainLyrics,
                 SyncedLyrics = lyrics.SyncedLyrics
@@ -216,7 +216,7 @@ public class LrclibService
         public string? TrackName { get; set; }
         public string? ArtistName { get; set; }
         public string? AlbumName { get; set; }
-        public int Duration { get; set; }
+        public double Duration { get; set; }
         public bool Instrumental { get; set; }
         public string? PlainLyrics { get; set; }
         public string? SyncedLyrics { get; set; }
