@@ -22,19 +22,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
 	
-	// Primary and backup endpoints (base64 encoded to avoid detection)
-	private const string PrimaryEndpoint = "aHR0cHM6Ly90cml0b24uc3F1aWQud3RmLw=="; // triton.squid.wtf
-	
-	private static readonly string[] BackupEndpoints = new[]
-	{
-		"aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZS8=",      // wolf
-		"aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZS8=",      // maus
-		"aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGUv",      // vogel
-		"aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGUv",      // katze
-		"aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZS8="       // hund
-	};
-	
-	private readonly string _primaryApiBase;
+	private const string BaseUrl = "https://triton.squid.wtf";
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -47,70 +35,20 @@ public class SquidWTFMetadataService : IMusicMetadataService
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
-		_primaryApiBase = DecodeEndpoint(PrimaryEndpoint);
         
         // Set up default headers
         _httpClient.DefaultRequestHeaders.Add("User-Agent", 
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
     }
 	
-	private string DecodeEndpoint(string base64)
-	{
-		var bytes = Convert.FromBase64String(base64);
-		return Encoding.UTF8.GetString(bytes).TrimEnd('/');
-	}
-	
-	private async Task<HttpResponseMessage?> TryEndpointsAsync(string path, CancellationToken cancellationToken = default)
-	{
-		// Try primary first
-		try
-		{
-			var url = $"{_primaryApiBase}{path}";
-			var response = await _httpClient.GetAsync(url, cancellationToken);
-			if (response.IsSuccessStatusCode)
-			{
-				return response;
-			}
-		}
-		catch (Exception ex)
-		{
-			_logger.LogWarning(ex, "Primary endpoint failed");
-		}
-		
-		// Try backups
-		for (int i = 0; i < BackupEndpoints.Length; i++)
-		{
-			try
-			{
-				var backupBase = DecodeEndpoint(BackupEndpoints[i]);
-				var url = $"{backupBase}{path}";
-				_logger.LogInformation("Trying backup endpoint {Index}: {Url}", i + 1, backupBase);
-				
-				var response = await _httpClient.GetAsync(url, cancellationToken);
-				if (response.IsSuccessStatusCode)
-				{
-					_logger.LogInformation("Backup endpoint {Index} succeeded", i + 1);
-					return response;
-				}
-			}
-			catch (Exception ex)
-			{
-				_logger.LogWarning(ex, "Backup endpoint {Index} failed", i + 1);
-			}
-		}
-		
-		_logger.LogError("All endpoints exhausted");
-		return null;
-	}
-
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
     {
         try
         {
-            var path = $"/search?s={Uri.EscapeDataString(query)}";
-            var response = await TryEndpointsAsync(path);
+            var url = $"{BaseUrl}/search/?s={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
             
-            if (response == null || !response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 return new List<Song>();
             }
@@ -145,10 +83,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         try
         {
-            var path = $"/search?al={Uri.EscapeDataString(query)}";
-            var response = await TryEndpointsAsync(path);
+            var url = $"{BaseUrl}/search/?al={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
             
-            if (response == null || !response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 return new List<Album>();
             }
@@ -184,10 +122,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         try
         {
-            var path = $"/search?a={Uri.EscapeDataString(query)}";
-            var response = await TryEndpointsAsync(path);
+            var url = $"{BaseUrl}/search/?a={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
             
-            if (response == null || !response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 return new List<Artist>();
             }
@@ -223,13 +161,9 @@ public class SquidWTFMetadataService : IMusicMetadataService
 	{
 		try
 		{
-			var path = $"/search?p={Uri.EscapeDataString(query)}";
-            var response = await TryEndpointsAsync(path);
-            
-            if (response == null || !response.IsSuccessStatusCode)
-            {
-                return new List<ExternalPlaylist>();
-            }
+			var url = $"{BaseUrl}/search/?p={Uri.EscapeDataString(query)}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
 
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
@@ -246,9 +180,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			}
 			return playlists;
 		}
-		catch (Exception ex)
+		catch
 		{
-			_logger.LogWarning(ex, "Failed to search playlists for query: {Query}", query);
 			return new List<ExternalPlaylist>();
 		}
 	}
@@ -279,7 +212,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         try
         {
             // Use the /info endpoint for full track metadata
-            var url = $"{_primaryApiBase}/info?id={externalId}";
+            var url = $"{BaseUrl}/info/?id={externalId}";
 						
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode) return null;
@@ -311,7 +244,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         try
         {
             // Use the /info endpoint for full track metadata
-            var url = $"{_primaryApiBase}/album?id={externalId}";
+            var url = $"{BaseUrl}/album/?id={externalId}";
 			
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode) return null;
@@ -371,7 +304,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         try
         {
             // Use the /info endpoint for full track metadata
-            var url = $"{_primaryApiBase}/artist?f={externalId}"; 
+            var url = $"{BaseUrl}/artist/?f={externalId}"; 
             _logger.LogInformation("Fetching artist from {Url}", url);
 
             var response = await _httpClient.GetAsync(url);
@@ -450,7 +383,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			
             _logger.LogInformation("GetArtistAlbumsAsync called for SquidWTF artist {ExternalId}", externalId);
             
-			var url = $"{_primaryApiBase}/artist?f={externalId}";
+			var url = $"{BaseUrl}/artist/?f={externalId}";
 			_logger.LogInformation("Fetching artist albums from URL: {Url}", url);
 			var response = await _httpClient.GetAsync(url);
 			
@@ -498,7 +431,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 		
 		try
 		{
-			var url = $"{_primaryApiBase}/playlist?id={externalId}";
+			var url = $"{BaseUrl}/playlist/?id={externalId}";
 			var response = await _httpClient.GetAsync(url);
 			if (!response.IsSuccessStatusCode) return null;
 			
@@ -522,7 +455,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 		
 		try
 		{
-			var url = $"{_primaryApiBase}/playlist?id={externalId}";
+			var url = $"{BaseUrl}/playlist/?id={externalId}";
 			var response = await _httpClient.GetAsync(url);
 			if (!response.IsSuccessStatusCode) return new List<Song>();
 			
