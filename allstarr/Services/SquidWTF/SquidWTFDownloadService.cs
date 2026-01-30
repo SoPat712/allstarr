@@ -21,7 +21,6 @@ public class SquidWTFDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _requestLock = new(1, 1);
-    private readonly string? _preferredQuality;
     private readonly SquidWTFSettings _squidwtfSettings;
 	
     private DateTime _lastRequestTime = DateTime.MinValue;
