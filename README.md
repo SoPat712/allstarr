@@ -255,7 +255,7 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 
 | Setting | Description |
 |---------|-------------|
-| `Qobuz:UserAuthToken` | Your Qobuz User Auth Token (required if using Qobuz) - [How to get it](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) |
+| `Qobuz:UserAuthToken` | Your Qobuz User Auth Token (required if using Qobuz) - [How to get it](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) |
 | `Qobuz:UserId` | Your Qobuz User ID (required if using Qobuz) |
 | `Qobuz:Quality` | Preferred audio quality: `FLAC`, `FLAC_24_HIGH`, `FLAC_24_LOW`, `FLAC_16`, `MP3_320`. If not specified, the highest available quality will be used |
 
@@ -286,11 +286,11 @@ Subsonic__EnableExternalPlaylists=false
 
 #### Deezer ARL Token
 
-See the [Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Deezer-Credentials-(ARL-Token)) for detailed instructions on obtaining your Deezer ARL token.
+See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Deezer-Credentials-(ARL-Token)) for detailed instructions on obtaining your Deezer ARL token.
 
 #### Qobuz Credentials
 
-See the [Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) for detailed instructions on obtaining your Qobuz User ID and User Auth Token.
+See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) for detailed instructions on obtaining your Qobuz User ID and User Auth Token.
 
 ## Limitations
 
@@ -332,7 +332,7 @@ If you prefer to run Allstarr without Docker:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-username/allstarr.git
+   git clone https://github.com/SoPat712/allstarr.git
    cd allstarr
    ```
 
@@ -561,6 +561,79 @@ allstarr.Tests/
 - **Moq** - Mocking library for tests
 - **FluentAssertions** - Fluent assertion library for tests
 
+## Contributing
+
+We welcome contributions! Here's how to get started:
+
+### Development Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/SoPat712/allstarr.git
+   cd allstarr
+   ```
+
+2. **Build and run locally**
+   
+   Using Docker (recommended for development):
+   ```bash
+   # Copy and configure environment
+   cp .env.example .env
+   vi .env
+   
+   # Build and start with local changes
+   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+   
+   # View logs
+   docker-compose logs -f
+   ```
+   
+   Or using .NET directly:
+   ```bash
+   # Restore dependencies
+   dotnet restore
+   
+   # Run the application
+   cd allstarr
+   dotnet run
+   ```
+
+3. **Run tests**
+   ```bash
+   dotnet test
+   ```
+
+### Making Changes
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests to ensure everything works
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to your fork (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+### Code Style
+
+- Follow existing code patterns and conventions
+- Add tests for new features
+- Update documentation as needed
+- Keep commits focused and atomic
+
+### Testing
+
+All changes should include appropriate tests:
+```bash
+# Run all tests
+dotnet test
+
+# Run specific test file
+dotnet test --filter "FullyQualifiedName~SubsonicProxyServiceTests"
+
+# Run with coverage
+dotnet test --collect:"XPlat Code Coverage"
+```
+
 ## License
 
 GPL-3.0
@@ -568,6 +641,7 @@ GPL-3.0
 ## Acknowledgments
 
 - [Navidrome](https://www.navidrome.org/) - The excellent self-hosted music server
+- [Jellyfin](https://jellyfin.org/) - The free and open-source media server
 - [Deezer](https://www.deezer.com/) - Music streaming service
 - [Qobuz](https://www.qobuz.com/) - Hi-Res music streaming service
 - [Subsonic API](http://www.subsonic.org/pages/api.jsp) - The API specification
