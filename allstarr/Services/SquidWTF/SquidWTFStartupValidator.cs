@@ -95,7 +95,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         try
         {
             // Test search with a simple query
-            var searchUrl = $"{_apiBase}search/?s=Taylor%20Swift";
+            var searchUrl = $"{_apiBase}/search?s=Taylor%20Swift";
             var searchResponse = await _httpClient.GetAsync(searchUrl, cancellationToken);
 
             if (searchResponse.IsSuccessStatusCode)
