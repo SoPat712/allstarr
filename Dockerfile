@@ -1,5 +1,5 @@
 # Build stage
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY allstarr.sln .
@@ -14,7 +14,7 @@ COPY allstarr.Tests/ allstarr.Tests/
 RUN dotnet publish allstarr/allstarr.csproj -c Release -o /app/publish
 
 # Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 
 # Install curl for health checks

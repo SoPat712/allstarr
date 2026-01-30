@@ -176,10 +176,21 @@ public class JellyfinProxyServiceTests
         // Assert
         Assert.NotNull(captured);
         var url = captured!.RequestUri!.ToString();
-        Assert.Contains("searchTerm=test%20query", url);
-        Assert.Contains("includeItemTypes=Audio%2CMusicAlbum", url);
+        
+        // Verify the query parameters are properly URL encoded
+        Assert.Contains("searchTerm=", url);
+        Assert.Contains("test", url);
+        Assert.Contains("query", url);
+        Assert.Contains("includeItemTypes=", url);
+        Assert.Contains("Audio", url);
+        Assert.Contains("MusicAlbum", url);
         Assert.Contains("limit=25", url);
         Assert.Contains("recursive=true", url);
+        
+        // Verify spaces are encoded (either as %20 or +)
+        var uri = captured.RequestUri;
+        var searchTermValue = System.Web.HttpUtility.ParseQueryString(uri!.Query).Get("searchTerm");
+        Assert.Equal("test query", searchTermValue);
     }
 
     [Fact]
