@@ -53,7 +53,7 @@ server {
 }
 ```
 
-**Security:** All authentication is forwarded to Jellyfin - this is as secure as Jellyfin itself. Always use HTTPS for public access.
+**Security:** Don't trust me or my code, or anyone for that matter (Zero-trust, get it?), use Tailscale or Pangolin or Cloudflare Zero-Trust or anything like it please
 
 ## Why "Allstarr"?
 
