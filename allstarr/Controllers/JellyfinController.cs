@@ -1202,7 +1202,7 @@ public class JellyfinController : ControllerBase
     /// </summary>
     [HttpGet("Items/{itemId}/Similar")]
     [HttpGet("Songs/{itemId}/Similar")]
-    [HttpGet("Artists/{artistId}/Similar")]
+    [HttpGet("Artists/{itemId}/Similar")]
     public async Task<IActionResult> GetSimilarItems(
         string itemId,
         [FromQuery] int limit = 50,
@@ -1266,7 +1266,11 @@ public class JellyfinController : ControllerBase
             }
         }
         
-        // For local items, proxy to Jellyfin
+        // For local items, determine the correct endpoint based on the request path
+        var endpoint = Request.Path.Value?.Contains("/Artists/", StringComparison.OrdinalIgnoreCase) == true
+            ? $"Artists/{itemId}/Similar"
+            : $"Items/{itemId}/Similar";
+        
         var queryParams = new Dictionary<string, string>
         {
             ["limit"] = limit.ToString()
@@ -1282,7 +1286,7 @@ public class JellyfinController : ControllerBase
             queryParams["userId"] = userId;
         }
 
-        var result = await _proxyService.GetJsonAsync($"Items/{itemId}/Similar", queryParams, Request.Headers);
+        var result = await _proxyService.GetJsonAsync(endpoint, queryParams, Request.Headers);
         
         if (result == null)
         {
