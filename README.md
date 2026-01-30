@@ -13,18 +13,25 @@ Please report all bugs as soon as possible, as the Jellyfin addition is entirely
 
 ## Quick Start
 
+Using Docker (recommended):
+
 ```bash
-# 1. Configure environment
+# 1. Pull the latest image
+docker-compose pull
+
+# 2. Configure environment
 cp .env.example .env
 vi .env  # Edit with your settings
 
-# 2. Start services
-docker-compose up -d --build
+# 3. Start services
+docker-compose up -d
 
-# 3. Check status
+# 4. Check status
 docker-compose ps
 docker-compose logs -f
 ```
+
+The proxy will be available at `http://localhost:5274`.
 
 ### Nginx Proxy Setup (Required)
 
@@ -134,11 +141,11 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 - Credentials for at least one music provider (IF NOT USING SQUIDWTF):
   - **Deezer**: ARL token from browser cookies
   - **Qobuz**: User ID + User Auth Token from browser localStorage ([see Wiki guide](https://github.com/V1ck3s/allstarr/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)))
-- Docker and Docker Compose (recommended) **or** [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) for manual installation
+- Docker and Docker Compose (recommended) **or** [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for manual installation
 
-## Quick Start (Docker)
+## Configuration
 
-The easiest way to run Allstarr is with Docker Compose.
+### Environment Setup
 
 1. **Create your environment file**
    ```bash
@@ -188,20 +195,13 @@ The easiest way to run Allstarr is with Docker Compose.
 
    See the full `.env.example` for all available options including Deezer/Qobuz credentials.
 
-3. **Start the container**
-   ```bash
-   docker-compose up -d
-   ```
-   
-   The proxy will be available at `http://localhost:5274`.
-
-4. **Configure your client**
+3. **Configure your client**
    
    Point your music client to `http://localhost:5274` instead of your media server directly.
 
 > **Tip**: Make sure the `DOWNLOAD_PATH` points to a directory that your media server can scan, so downloaded songs appear in your library.
 
-## Configuration
+## Advanced Configuration
 
 ### Backend Selection
 
