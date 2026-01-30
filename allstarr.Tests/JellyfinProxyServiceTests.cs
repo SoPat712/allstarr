@@ -107,8 +107,8 @@ public class JellyfinProxyServiceTests
         Assert.True(captured!.Headers.Contains("Authorization"));
         var authHeader = captured.Headers.GetValues("Authorization").First();
         Assert.Contains("MediaBrowser", authHeader);
-        Assert.Contains(_settings.ApiKey, authHeader);
-        Assert.Contains(_settings.ClientName, authHeader);
+        Assert.Contains(_settings.ApiKey!, authHeader);
+        Assert.Contains(_settings.ClientName!, authHeader);
     }
 
     [Fact]
