@@ -71,6 +71,8 @@ builder.Services.Configure<DeezerSettings>(
     builder.Configuration.GetSection("Deezer"));
 builder.Services.Configure<QobuzSettings>(
     builder.Configuration.GetSection("Qobuz"));
+builder.Services.Configure<SquidWTFSettings>(
+    builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
 
