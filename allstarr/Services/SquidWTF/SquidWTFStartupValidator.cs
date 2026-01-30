@@ -13,9 +13,14 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
 	
-	// Base64 encoded to avoid GitHub detection
-	private const string EncodedBaseUrl = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
-	private readonly string _apiBase;
+	private static readonly string _apiBase = DecodeBaseUrl();
+	
+	private static string DecodeBaseUrl()
+	{
+		var encoded = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
+		var bytes = Convert.FromBase64String(encoded);
+		return Encoding.UTF8.GetString(bytes);
+	}
 
     public override string ServiceName => "SquidWTF";
 
@@ -23,10 +28,6 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         : base(httpClient)
     {
         _settings = settings.Value;
-		
-		// Decode the base URL
-		var bytes = Convert.FromBase64String(EncodedBaseUrl);
-		_apiBase = Encoding.UTF8.GetString(bytes);
     }	
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)

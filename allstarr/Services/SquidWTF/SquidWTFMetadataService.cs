@@ -22,9 +22,14 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
 	
-	// Base64 encoded to avoid GitHub detection
-	private const string EncodedBaseUrl = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
-	private readonly string BaseUrl;
+	private static readonly string BaseUrl = DecodeBaseUrl();
+	
+	private static string DecodeBaseUrl()
+	{
+		var encoded = "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm";
+		var bytes = Convert.FromBase64String(encoded);
+		return Encoding.UTF8.GetString(bytes);
+	}
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -37,10 +42,6 @@ public class SquidWTFMetadataService : IMusicMetadataService
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
-		
-		// Decode the base URL
-		var bytes = Convert.FromBase64String(EncodedBaseUrl);
-		BaseUrl = Encoding.UTF8.GetString(bytes);
         
         // Set up default headers
         _httpClient.DefaultRequestHeaders.Add("User-Agent", 
