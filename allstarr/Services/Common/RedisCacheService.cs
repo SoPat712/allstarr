@@ -59,11 +59,11 @@ public class RedisCacheService
             var value = await _db!.StringGetAsync(key);
             if (value.HasValue)
             {
-                _logger.LogDebug("Redis cache HIT: {Key}", key);
+                _logger.LogInformation("Redis cache HIT: {Key}", key);
             }
             else
             {
-                _logger.LogDebug("Redis cache MISS: {Key}", key);
+                _logger.LogInformation("Redis cache MISS: {Key}", key);
             }
             return value;
         }
@@ -105,7 +105,7 @@ public class RedisCacheService
             var result = await _db!.StringSetAsync(key, value, expiry);
             if (result)
             {
-                _logger.LogDebug("Redis cache SET: {Key} (TTL: {Expiry})", key, expiry?.ToString() ?? "none");
+                _logger.LogInformation("Redis cache SET: {Key} (TTL: {Expiry})", key, expiry?.ToString() ?? "none");
             }
             return result;
         }
