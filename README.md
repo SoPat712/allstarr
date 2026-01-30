@@ -11,7 +11,7 @@ Please report all bugs as soon as possible, as the Jellyfin addition is entirely
 ```bash
 # 1. Configure environment
 cp .env.example .env
-nano .env  # Edit with your settings
+vi .env  # Edit with your settings
 
 # 2. Start services
 docker-compose up -d --build
@@ -53,7 +53,7 @@ server {
 }
 ```
 
-**Security:** All authentication is forwarded to Jellyfin - this is as secure as Jellyfin itself. Always use HTTPS for public access.
+**Security:** Don't trust me or my code, or anyone for that matter (Zero-trust, get it?), use Tailscale or Pangolin or Cloudflare Zero-Trust or anything like it please
 
 ## Why "Allstarr"?
 
