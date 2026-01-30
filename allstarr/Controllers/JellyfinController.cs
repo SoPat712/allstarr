@@ -9,6 +9,7 @@ using allstarr.Services.Common;
 using allstarr.Services.Local;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Subsonic;
+using allstarr.Services.Lyrics;
 
 namespace allstarr.Controllers;
 
@@ -96,15 +97,16 @@ public class JellyfinController : ControllerBase
         // If Jellyfin returns empty results, we'll just return empty (not mixing browse with external)
         if (string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(parentId))
         {
-            _logger.LogDebug("No search term or parentId, proxying to Jellyfin with artistIds={ArtistIds}", artistIds);
-            var browseResult = await _proxyService.GetItemsAsync(
-                parentId: null,
-                includeItemTypes: ParseItemTypes(includeItemTypes),
-                sortBy: sortBy,
-                limit: limit,
-                startIndex: startIndex,
-                artistIds: artistIds,
-                clientHeaders: Request.Headers);
+            _logger.LogDebug("No search term or parentId, proxying to Jellyfin with full query string");
+            
+            // Build the full endpoint path with query string
+            var endpoint = userId != null ? $"Users/{userId}/Items" : "Items";
+            if (Request.QueryString.HasValue)
+            {
+                endpoint = $"{endpoint}{Request.QueryString.Value}";
+            }
+            
+            var browseResult = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
 
             if (browseResult == null)
             {
@@ -934,6 +936,100 @@ public class JellyfinController : ControllerBase
             _logger.LogWarning(ex, "Failed to fetch cover art from {Url}", coverUrl);
             return NotFound();
         }
+    }
+
+    #endregion
+
+    #region Lyrics
+
+    /// <summary>
+    /// Gets lyrics for an item.
+    /// </summary>
+    [HttpGet("Audio/{itemId}/Lyrics")]
+    [HttpGet("Items/{itemId}/Lyrics")]
+    public async Task<IActionResult> GetLyrics(string itemId)
+    {
+        if (string.IsNullOrWhiteSpace(itemId))
+        {
+            return NotFound();
+        }
+
+        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+
+        Song? song = null;
+        
+        if (isExternal)
+        {
+            song = await _metadataService.GetSongAsync(provider!, externalId!);
+        }
+        else
+        {
+            // For local songs, get metadata from Jellyfin
+            var item = await _proxyService.GetItemAsync(itemId, Request.Headers);
+            if (item != null && item.RootElement.TryGetProperty("Type", out var typeEl) && 
+                typeEl.GetString() == "Audio")
+            {
+                song = new Song
+                {
+                    Title = item.RootElement.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
+                    Artist = item.RootElement.TryGetProperty("AlbumArtist", out var artist) ? artist.GetString() ?? "" : "",
+                    Album = item.RootElement.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",
+                    Duration = item.RootElement.TryGetProperty("RunTimeTicks", out var ticks) ? (int)(ticks.GetInt64() / 10000000) : 0
+                };
+            }
+        }
+
+        if (song == null)
+        {
+            return NotFound(new { error = "Song not found" });
+        }
+
+        // Try to get lyrics from LRCLIB
+        var lyricsService = HttpContext.RequestServices.GetService<LrclibService>();
+        if (lyricsService == null)
+        {
+            return NotFound(new { error = "Lyrics service not available" });
+        }
+
+        var lyrics = await lyricsService.GetLyricsAsync(
+            song.Title,
+            song.Artist ?? "",
+            song.Album ?? "",
+            song.Duration ?? 0);
+
+        if (lyrics == null)
+        {
+            return NotFound(new { error = "Lyrics not found" });
+        }
+
+        // Prefer synced lyrics, fall back to plain
+        var lyricsText = lyrics.SyncedLyrics ?? lyrics.PlainLyrics ?? "";
+        var isSynced = !string.IsNullOrEmpty(lyrics.SyncedLyrics);
+
+        // Return in Jellyfin lyrics format
+        // For synced lyrics, return the LRC format directly
+        // For plain lyrics, return as a single block
+        var response = new
+        {
+            Metadata = new
+            {
+                Artist = lyrics.ArtistName,
+                Album = lyrics.AlbumName,
+                Title = lyrics.TrackName,
+                Length = lyrics.Duration,
+                IsSynced = isSynced
+            },
+            Lyrics = new[]
+            {
+                new
+                {
+                    Start = (long?)null,
+                    Text = lyricsText
+                }
+            }
+        };
+
+        return Ok(response);
     }
 
     #endregion

@@ -8,6 +8,7 @@ using allstarr.Services.Validation;
 using allstarr.Services.Subsonic;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
+using allstarr.Services.Lyrics;
 using allstarr.Middleware;
 using allstarr.Filters;
 
@@ -95,6 +96,7 @@ else
 // Business services - shared across backends
 builder.Services.AddSingleton<RedisCacheService>();
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
+builder.Services.AddSingleton<LrclibService>();
 
 // Register backend-specific services
 if (backendType == BackendType.Jellyfin)
