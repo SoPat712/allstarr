@@ -1,5 +1,10 @@
 # Allstarr
 
+[![Build Status - Main](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml)
+[![Build Status - Beta](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml/badge.svg?branch=beta)](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fsopat712%2Fallstarr-blue)](https://github.com/SoPat712/allstarr/pkgs/container/allstarr)
+[![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
+
 A media server proxy that integrates music streaming providers with your local library. Works with **Jellyfin** and **Subsonic-compatible** servers (Navidrome). When a song isn't in your local library, it gets fetched from your configured provider, downloaded, and served to your client. The downloaded song then lives in your library for next time.
 
 **THIS IS UNDER ACTIVE DEVELOPMENT**
