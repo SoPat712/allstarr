@@ -256,15 +256,39 @@ public class JellyfinProxyService
         
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         
-        // Create content from body string - ALWAYS set content even if empty
-        // Jellyfin expects a body for POST requests, even if it's "{}"
-        var bodyToSend = string.IsNullOrWhiteSpace(body) ? "{}" : body;
-        request.Content = new StringContent(bodyToSend, System.Text.Encoding.UTF8, "application/json");
-        
-        if (string.IsNullOrWhiteSpace(body))
+        // Handle special case for playback endpoints - Jellyfin expects wrapped body
+        var bodyToSend = body;
+        if (!string.IsNullOrWhiteSpace(body))
         {
+            // Check if this is a playback progress endpoint
+            if (endpoint.Contains("Sessions/Playing/Progress", StringComparison.OrdinalIgnoreCase))
+            {
+                // Wrap the body in playbackProgressInfo field
+                bodyToSend = $"{{\"playbackProgressInfo\":{body}}}";
+                _logger.LogDebug("Wrapped body for playback progress endpoint");
+            }
+            else if (endpoint.Contains("Sessions/Playing/Stopped", StringComparison.OrdinalIgnoreCase))
+            {
+                // Wrap the body in playbackStopInfo field
+                bodyToSend = $"{{\"playbackStopInfo\":{body}}}";
+                _logger.LogDebug("Wrapped body for playback stopped endpoint");
+            }
+            else if (endpoint.Contains("Sessions/Playing", StringComparison.OrdinalIgnoreCase) && 
+                     !endpoint.Contains("Progress", StringComparison.OrdinalIgnoreCase) &&
+                     !endpoint.Contains("Stopped", StringComparison.OrdinalIgnoreCase))
+            {
+                // Wrap the body in playbackStartInfo field for /Sessions/Playing
+                bodyToSend = $"{{\"playbackStartInfo\":{body}}}";
+                _logger.LogDebug("Wrapped body for playback start endpoint");
+            }
+        }
+        else
+        {
+            bodyToSend = "{}";
             _logger.LogWarning("POST body was empty for {Url}, sending empty JSON object", url);
         }
+        
+        request.Content = new StringContent(bodyToSend, System.Text.Encoding.UTF8, "application/json");
         
         bool authHeaderAdded = false;
         
