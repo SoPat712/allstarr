@@ -994,7 +994,7 @@ public class JellyfinController : ControllerBase
             song.Title,
             song.Artist ?? "",
             song.Album ?? "",
-            song.Duration);
+            song.Duration ?? 0);
 
         if (lyrics == null)
         {
