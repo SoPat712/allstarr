@@ -1702,6 +1702,17 @@ public class JellyfinController : ControllerBase
     [HttpPost("{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
+        // DEBUG: Log Spotify settings for playlist requests
+        if (path.Contains("playlist", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("=== PLAYLIST REQUEST DEBUG ===");
+            _logger.LogWarning("Path: {Path}", path);
+            _logger.LogWarning("Spotify Enabled: {Enabled}", _spotifySettings.Enabled);
+            _logger.LogWarning("Starts with 'playlists/': {StartsWith}", path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase));
+            _logger.LogWarning("Contains '/items': {Contains}", path.Contains("/items", StringComparison.OrdinalIgnoreCase));
+            _logger.LogWarning("Playlists count: {Count}", _spotifySettings.Playlists.Count);
+        }
+        
         // Intercept Spotify playlist requests FIRST
         if (_spotifySettings.Enabled && 
             path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) && 
