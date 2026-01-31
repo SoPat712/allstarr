@@ -169,31 +169,28 @@ public class JellyfinController : ControllerBase
         var (localSongs, localAlbums, localArtists) = _modelMapper.ParseItemsResponse(jellyfinResult);
 
         // Score and filter Jellyfin results by relevance
-        var scoredLocalSongs = ScoreSearchResults(cleanQuery, localSongs, s => s.Title, s => s.Artist, isExternal: false);
-        var scoredLocalAlbums = ScoreSearchResults(cleanQuery, localAlbums, a => a.Title, a => a.Artist, isExternal: false);
-        var scoredLocalArtists = ScoreSearchResults(cleanQuery, localArtists, a => a.Name, _ => null, isExternal: false);
+        var scoredLocalSongs = ScoreSearchResults(cleanQuery, localSongs, s => s.Title, s => s.Artist, s => s.Album, isExternal: false);
+        var scoredLocalAlbums = ScoreSearchResults(cleanQuery, localAlbums, a => a.Title, a => a.Artist, _ => null, isExternal: false);
+        var scoredLocalArtists = ScoreSearchResults(cleanQuery, localArtists, a => a.Name, _ => null, _ => null, isExternal: false);
 
         // Score external results with a small boost
-        var scoredExternalSongs = ScoreSearchResults(cleanQuery, externalResult.Songs, s => s.Title, s => s.Artist, isExternal: true);
-        var scoredExternalAlbums = ScoreSearchResults(cleanQuery, externalResult.Albums, a => a.Title, a => a.Artist, isExternal: true);
-        var scoredExternalArtists = ScoreSearchResults(cleanQuery, externalResult.Artists, a => a.Name, _ => null, isExternal: true);
+        var scoredExternalSongs = ScoreSearchResults(cleanQuery, externalResult.Songs, s => s.Title, s => s.Artist, s => s.Album, isExternal: true);
+        var scoredExternalAlbums = ScoreSearchResults(cleanQuery, externalResult.Albums, a => a.Title, a => a.Artist, _ => null, isExternal: true);
+        var scoredExternalArtists = ScoreSearchResults(cleanQuery, externalResult.Artists, a => a.Name, _ => null, _ => null, isExternal: true);
 
-        // Merge and sort by score (only include items with score >= 40)
+        // Merge and sort by score (no filtering - just reorder by relevance)
         var allSongs = scoredLocalSongs.Concat(scoredExternalSongs)
-            .Where(x => x.Score >= 40)
             .OrderByDescending(x => x.Score)
             .Select(x => x.Item)
             .ToList();
 
         var allAlbums = scoredLocalAlbums.Concat(scoredExternalAlbums)
-            .Where(x => x.Score >= 40)
             .OrderByDescending(x => x.Score)
             .Select(x => x.Item)
             .ToList();
 
         // Dedupe artists by name, keeping highest scored version
         var artistScores = scoredLocalArtists.Concat(scoredExternalArtists)
-            .Where(x => x.Score >= 40)
             .GroupBy(x => x.Item.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(x => x.Score).First())
             .OrderByDescending(x => x.Score)
@@ -210,7 +207,6 @@ public class JellyfinController : ControllerBase
         {
             var scoredPlaylists = playlistResult
                 .Select(p => new { Playlist = p, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, p.Name) })
-                .Where(x => x.Score >= 40)
                 .OrderByDescending(x => x.Score)
                 .Select(x => _responseBuilder.ConvertPlaylistToJellyfinItem(x.Playlist))
                 .ToList();
@@ -778,6 +774,23 @@ public class JellyfinController : ControllerBase
             
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
             
+            // Forward caching headers for client-side caching
+            if (response.Headers.ETag != null)
+            {
+                Response.Headers["ETag"] = response.Headers.ETag.ToString();
+            }
+            
+            if (response.Content.Headers.LastModified.HasValue)
+            {
+                Response.Headers["Last-Modified"] = response.Content.Headers.LastModified.Value.ToString("R");
+            }
+            
+            if (response.Headers.CacheControl != null)
+            {
+                Response.Headers["Cache-Control"] = response.Headers.CacheControl.ToString();
+            }
+            
+            // Forward range headers for seeking
             if (response.Content.Headers.ContentRange != null)
             {
                 Response.Headers["Content-Range"] = response.Content.Headers.ContentRange.ToString();
@@ -1761,28 +1774,52 @@ public class JellyfinController : ControllerBase
     private static List<(T Item, int Score)> ScoreSearchResults<T>(
         string query,
         List<T> items,
-        Func<T, string> primaryField,
-        Func<T, string?> secondaryField,
+        Func<T, string> titleField,
+        Func<T, string?> artistField,
+        Func<T, string?> albumField,
         bool isExternal = false)
     {
         return items.Select(item =>
         {
-            var primary = primaryField(item) ?? "";
-            var secondary = secondaryField(item) ?? "";
+            var title = titleField(item) ?? "";
+            var artist = artistField(item) ?? "";
+            var album = albumField(item) ?? "";
 
-            // Score against primary field (title/name)
-            var primaryScore = FuzzyMatcher.CalculateSimilarity(query, primary);
+            // Token-based fuzzy matching: split query and fields into words
+            var queryTokens = query.ToLower()
+                .Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries)
+                .ToList();
 
-            // Score against secondary field (artist) if provided
-            var secondaryScore = string.IsNullOrEmpty(secondary) 
-                ? 0 
-                : FuzzyMatcher.CalculateSimilarity(query, secondary);
+            var fieldText = $"{title} {artist} {album}".ToLower();
+            var fieldTokens = fieldText
+                .Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries)
+                .ToList();
 
-            // Use the better of the two scores
-            var baseScore = Math.Max(primaryScore, secondaryScore);
+            if (queryTokens.Count == 0) return (item, 0);
+
+            // Count how many query tokens match field tokens (with fuzzy tolerance)
+            var matchedTokens = 0;
+            foreach (var queryToken in queryTokens)
+            {
+                // Check if any field token matches this query token
+                var hasMatch = fieldTokens.Any(fieldToken =>
+                {
+                    // Exact match or substring match
+                    if (fieldToken.Contains(queryToken) || queryToken.Contains(fieldToken))
+                        return true;
+
+                    // Fuzzy match with Levenshtein distance
+                    var similarity = FuzzyMatcher.CalculateSimilarity(queryToken, fieldToken);
+                    return similarity >= 70; // 70% similarity threshold for individual words
+                });
+
+                if (hasMatch) matchedTokens++;
+            }
+
+            // Score = percentage of query tokens that matched
+            var baseScore = (matchedTokens * 100) / queryTokens.Count;
 
             // Give external results a small boost (+5 points) to prioritize the larger catalog
-            // This means external results will rank slightly higher when scores are close
             var finalScore = isExternal ? Math.Min(100, baseScore + 5) : baseScore;
 
             return (item, finalScore);

@@ -304,11 +304,11 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album)
     {
-        // Add " - SW" suffix to external album names
+        // Add " - S" suffix to external album names (S = SquidWTF)
         var albumName = album.Title;
         if (!album.IsLocal)
         {
-            albumName = $"{album.Title} - SW";
+            albumName = $"{album.Title} - S";
         }
         
         var item = new Dictionary<string, object?>
@@ -371,11 +371,11 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist)
     {
-        // Add " - SW" suffix to external artist names
+        // Add " - S" suffix to external artist names (S = SquidWTF)
         var artistName = artist.Name;
         if (!artist.IsLocal)
         {
-            artistName = $"{artist.Name} - SW";
+            artistName = $"{artist.Name} - S";
         }
         
         var item = new Dictionary<string, object?>

@@ -188,7 +188,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			{
 				foreach(var playlist in items.EnumerateArray())
 				{
-					playlists.Add(ParseTidalPlaylist(playlist));
+					try
+					{
+						playlists.Add(ParseTidalPlaylist(playlist));
+					}
+					catch (Exception ex)
+					{
+						_logger.LogDebug(ex, "Failed to parse playlist, skipping");
+						// Skip this playlist and continue with others
+					}
 				}
 			}
 			return playlists;
