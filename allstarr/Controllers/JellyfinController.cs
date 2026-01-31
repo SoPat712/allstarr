@@ -1641,6 +1641,16 @@ public class JellyfinController : ControllerBase
     }
 
     /// <summary>
+    /// Intercepts playlist items requests to inject Spotify playlist tracks.
+    /// </summary>
+    [HttpGet("Playlists/{playlistId}/Items", Order = 5)]
+    [HttpGet("playlists/{playlistId}/items", Order = 5)]
+    public async Task<IActionResult> GetPlaylistItems(string playlistId)
+    {
+        return await GetPlaylistTracks(playlistId);
+    }
+
+    /// <summary>
     /// Catch-all endpoint that proxies unhandled requests to Jellyfin transparently.
     /// This route has the lowest priority and should only match requests that don't have SearchTerm.
     /// </summary>
