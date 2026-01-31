@@ -74,6 +74,13 @@ services:
       - Jellyfin__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
       - Jellyfin__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
       
+      # ===== SPOTIFY PLAYLIST INJECTION (JELLYFIN ONLY) =====
+      - SpotifyImport__Enabled=${SPOTIFY_IMPORT_ENABLED:-false}
+      - SpotifyImport__SyncStartHour=${SPOTIFY_IMPORT_SYNC_START_HOUR:-16}
+      - SpotifyImport__SyncStartMinute=${SPOTIFY_IMPORT_SYNC_START_MINUTE:-15}
+      - SpotifyImport__SyncWindowHours=${SPOTIFY_IMPORT_SYNC_WINDOW_HOURS:-2}
+      - SpotifyImport__PlaylistIds=${SPOTIFY_IMPORT_PLAYLIST_IDS:-}
+      
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
       - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
