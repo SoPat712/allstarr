@@ -8,18 +8,21 @@ namespace allstarr.Services.Spotify;
 
 public class SpotifyMissingTracksFetcher : BackgroundService
 {
-    private readonly IOptions<SpotifyImportSettings> _settings;
+    private readonly IOptions<SpotifyImportSettings> _spotifySettings;
+    private readonly IOptions<JellyfinSettings> _jellyfinSettings;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RedisCacheService _cache;
     private readonly ILogger<SpotifyMissingTracksFetcher> _logger;
 
     public SpotifyMissingTracksFetcher(
-        IOptions<SpotifyImportSettings> settings,
+        IOptions<SpotifyImportSettings> spotifySettings,
+        IOptions<JellyfinSettings> jellyfinSettings,
         IHttpClientFactory httpClientFactory,
         RedisCacheService cache,
         ILogger<SpotifyMissingTracksFetcher> logger)
     {
-        _settings = settings;
+        _spotifySettings = spotifySettings;
+        _jellyfinSettings = jellyfinSettings;
         _httpClientFactory = httpClientFactory;
         _cache = cache;
         _logger = logger;
@@ -27,9 +30,18 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_settings.Value.Enabled)
+        if (!_spotifySettings.Value.Enabled)
         {
             _logger.LogInformation("Spotify playlist injection is disabled");
+            return;
+        }
+
+        var jellyfinUrl = _jellyfinSettings.Value.Url;
+        var apiKey = _jellyfinSettings.Value.ApiKey;
+
+        if (string.IsNullOrEmpty(jellyfinUrl) || string.IsNullOrEmpty(apiKey))
+        {
+            _logger.LogWarning("Jellyfin URL or API key not configured, Spotify playlist injection disabled");
             return;
         }
 
@@ -52,13 +64,9 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
     private async Task FetchMissingTracksAsync(CancellationToken cancellationToken)
     {
-        var settings = _settings.Value;
-        
-        if (string.IsNullOrEmpty(settings.ApiKey))
-        {
-            _logger.LogWarning("Spotify import API key not configured");
-            return;
-        }
+        var settings = _spotifySettings.Value;
+        var jellyfinUrl = _jellyfinSettings.Value.Url;
+        var apiKey = _jellyfinSettings.Value.ApiKey;
 
         var now = DateTime.UtcNow;
         var syncStart = now.Date
@@ -88,7 +96,9 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             return;
         }
 
-        var settings = _settings.Value;
+        var settings = _spotifySettings.Value;
+        var jellyfinUrl = _jellyfinSettings.Value.Url;
+        var apiKey = _jellyfinSettings.Value.ApiKey;
         var httpClient = _httpClientFactory.CreateClient();
         var today = DateTime.UtcNow.Date;
         var syncStart = today
@@ -101,8 +111,8 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             if (cancellationToken.IsCancellationRequested) break;
 
             var filename = $"{playlist.SpotifyName}_missing_{time:yyyy-MM-dd_HH-mm}.json";
-            var url = $"{settings.JellyfinUrl}/Viperinius.Plugin.SpotifyImport/MissingTracksFile" +
-                     $"?name={Uri.EscapeDataString(filename)}&api_key={settings.ApiKey}";
+            var url = $"{jellyfinUrl}/Viperinius.Plugin.SpotifyImport/MissingTracksFile" +
+                     $"?name={Uri.EscapeDataString(filename)}&api_key={apiKey}";
 
             try
             {

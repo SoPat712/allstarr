@@ -3,6 +3,7 @@ namespace allstarr.Models.Settings;
 /// <summary>
 /// Configuration for Spotify playlist injection feature.
 /// Requires Jellyfin Spotify Import Plugin: https://github.com/Viperinius/jellyfin-plugin-spotify-import
+/// Uses JellyfinSettings.Url and JellyfinSettings.ApiKey for API access.
 /// </summary>
 public class SpotifyImportSettings
 {
@@ -10,17 +11,6 @@ public class SpotifyImportSettings
     /// Enable Spotify playlist injection feature
     /// </summary>
     public bool Enabled { get; set; }
-    
-    /// <summary>
-    /// Jellyfin server URL (for accessing plugin API)
-    /// </summary>
-    public string JellyfinUrl { get; set; } = string.Empty;
-    
-    /// <summary>
-    /// Jellyfin API key (REQUIRED for accessing missing tracks files)
-    /// Get from Jellyfin Dashboard > API Keys
-    /// </summary>
-    public string ApiKey { get; set; } = string.Empty;
     
     /// <summary>
     /// Hour when Spotify Import plugin runs (24-hour format, 0-23)

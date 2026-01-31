@@ -295,15 +295,13 @@ Allstarr can inject virtual Spotify playlists (Release Radar, Discover Weekly) i
 **Requirements:**
 - [Jellyfin Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import) installed and configured
 - Plugin must run on a daily schedule (e.g., 4:15 PM daily)
-- Jellyfin API key with access to plugin endpoints
+- Jellyfin URL and API key configured (uses existing JELLYFIN_URL and JELLYFIN_API_KEY settings)
 
 **Configuration:**
 
 | Setting | Description |
 |---------|-------------|
 | `SpotifyImport:Enabled` | Enable Spotify playlist injection (default: `false`) |
-| `SpotifyImport:JellyfinUrl` | Jellyfin server URL for plugin access |
-| `SpotifyImport:ApiKey` | **REQUIRED** - Jellyfin API key for accessing missing tracks files |
 | `SpotifyImport:SyncStartHour` | Hour when plugin runs (24-hour format, 0-23) |
 | `SpotifyImport:SyncStartMinute` | Minute when plugin runs (0-59) |
 | `SpotifyImport:SyncWindowHours` | Hours to search for missing tracks files after sync time |
@@ -319,15 +317,13 @@ Allstarr can inject virtual Spotify playlists (Release Radar, Discover Weekly) i
 **Environment variables:**
 ```bash
 SPOTIFY_IMPORT_ENABLED=true
-SPOTIFY_IMPORT_JELLYFIN_URL=http://localhost:8096
-SPOTIFY_IMPORT_API_KEY=your-jellyfin-api-key
 SPOTIFY_IMPORT_SYNC_START_HOUR=16
 SPOTIFY_IMPORT_SYNC_START_MINUTE=15
 SPOTIFY_IMPORT_SYNC_WINDOW_HOURS=2
 SPOTIFY_IMPORT_PLAYLISTS=Release Radar,Discover Weekly
 ```
 
-> **Note**: This feature only works with Jellyfin backend. The plugin must be configured to run on a schedule, and the sync window should cover the plugin's execution time.
+> **Note**: This feature uses your existing JELLYFIN_URL and JELLYFIN_API_KEY settings. The plugin must be configured to run on a schedule, and the sync window should cover the plugin's execution time.
 
 ### Getting Credentials
 
