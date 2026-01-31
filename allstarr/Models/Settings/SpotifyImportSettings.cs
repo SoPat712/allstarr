@@ -31,29 +31,9 @@ public class SpotifyImportSettings
     public int SyncWindowHours { get; set; } = 2;
     
     /// <summary>
-    /// List of playlists to inject
+    /// Comma-separated list of Jellyfin playlist IDs to inject
+    /// Example: "4383a46d8bcac3be2ef9385053ea18df,ba50e26c867ec9d57ab2f7bf24cfd6b0"
+    /// Get IDs from Jellyfin playlist URLs
     /// </summary>
-    public List<SpotifyPlaylistConfig> Playlists { get; set; } = new();
-}
-
-/// <summary>
-/// Configuration for a single Spotify playlist
-/// </summary>
-public class SpotifyPlaylistConfig
-{
-    /// <summary>
-    /// Display name in Jellyfin (e.g., "Release Radar")
-    /// </summary>
-    public string Name { get; set; } = string.Empty;
-    
-    /// <summary>
-    /// Playlist name in Spotify Import plugin missing tracks file
-    /// Must match exactly (e.g., "Release Radar")
-    /// </summary>
-    public string SpotifyName { get; set; } = string.Empty;
-    
-    /// <summary>
-    /// Enable this playlist
-    /// </summary>
-    public bool Enabled { get; set; } = true;
+    public List<string> PlaylistIds { get; set; } = new();
 }

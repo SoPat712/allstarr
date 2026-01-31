@@ -1281,36 +1281,23 @@ public class JellyfinController : ControllerBase
                 return _responseBuilder.CreateItemsResponse(tracks);
             }
 
-            // Only check for Spotify playlists if the feature is enabled
-            _logger.LogInformation("Spotify Import Enabled: {Enabled}, Playlist starts with ext-: {IsExternal}", 
-                _spotifySettings.Enabled, playlistId.StartsWith("ext-"));
+            // Check if this is a Spotify playlist (by ID)
+            _logger.LogInformation("Spotify Import Enabled: {Enabled}, Configured IDs: {Count}", 
+                _spotifySettings.Enabled, _spotifySettings.PlaylistIds.Count);
             
-            if (_spotifySettings.Enabled && !playlistId.StartsWith("ext-"))
+            if (_spotifySettings.Enabled && 
+                _spotifySettings.PlaylistIds.Any(id => id.Equals(playlistId, StringComparison.OrdinalIgnoreCase)))
             {
-                // Get playlist info from Jellyfin to check the name
+                // Get playlist info from Jellyfin to get the name for matching missing tracks
                 _logger.LogInformation("Fetching playlist info from Jellyfin for ID: {PlaylistId}", playlistId);
                 var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
                 
                 if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
                 {
                     var playlistName = nameElement.GetString() ?? "";
-                    _logger.LogInformation("Jellyfin playlist name: '{PlaylistName}'", playlistName);
-                    
-                    // Check if this matches any configured Spotify playlists
-                    var matchingConfig = _spotifySettings.Playlists
-                        .FirstOrDefault(p => p.Enabled && p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
-                    
-                    if (matchingConfig != null)
-                    {
-                        _logger.LogInformation("✓ MATCHED! Intercepting Spotify playlist: {PlaylistName}", playlistName);
-                        return await GetSpotifyPlaylistTracksAsync(matchingConfig.SpotifyName);
-                    }
-                    else
-                    {
-                        _logger.LogInformation("✗ No match found for playlist '{PlaylistName}'", playlistName);
-                        _logger.LogInformation("Configured playlists: {Playlists}", 
-                            string.Join(", ", _spotifySettings.Playlists.Select(p => $"'{p.Name}' (enabled={p.Enabled})")));
-                    }
+                    _logger.LogInformation("✓ MATCHED! Intercepting Spotify playlist: {PlaylistName} (ID: {PlaylistId})", 
+                        playlistName, playlistId);
+                    return await GetSpotifyPlaylistTracksAsync(playlistName);
                 }
                 else
                 {
@@ -1705,48 +1692,34 @@ public class JellyfinController : ControllerBase
         // DEBUG: Log EVERY request to see what's happening
         _logger.LogWarning("ProxyRequest called with path: {Path}", path);
         
-        // DEBUG: Log Spotify settings for playlist requests
-        if (path.Contains("playlist", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning("=== PLAYLIST REQUEST DEBUG ===");
-            _logger.LogWarning("Path: {Path}", path);
-            _logger.LogWarning("Spotify Enabled: {Enabled}", _spotifySettings.Enabled);
-            _logger.LogWarning("Starts with 'playlists/': {StartsWith}", path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase));
-            _logger.LogWarning("Contains '/items': {Contains}", path.Contains("/items", StringComparison.OrdinalIgnoreCase));
-            _logger.LogWarning("Playlists count: {Count}", _spotifySettings.Playlists.Count);
-        }
-        
-        // Intercept Spotify playlist requests FIRST
+        // Intercept Spotify playlist requests by ID
         if (_spotifySettings.Enabled && 
             path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) && 
             path.Contains("/items", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("========================================");
-            _logger.LogInformation("=== SPOTIFY PLAYLIST REQUEST INTERCEPTED ===");
-            _logger.LogInformation("Path: {Path}", path);
-            _logger.LogInformation("Spotify Import Enabled: {Enabled}", _spotifySettings.Enabled);
-            _logger.LogInformation("Configured Playlists: {Count}", _spotifySettings.Playlists.Count);
-            foreach (var p in _spotifySettings.Playlists)
-            {
-                _logger.LogInformation("  - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
-                    p.Name, p.SpotifyName, p.Enabled);
-            }
-            _logger.LogInformation("========================================");
-            
             // Extract playlist ID from path: playlists/{id}/items
             var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2 && parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase))
             {
                 var playlistId = parts[1];
-                _logger.LogInformation("Extracted playlist ID: {PlaylistId}", playlistId);
-                return await GetPlaylistTracks(playlistId);
+                
+                _logger.LogWarning("=== PLAYLIST REQUEST ===");
+                _logger.LogWarning("Playlist ID: {PlaylistId}", playlistId);
+                _logger.LogWarning("Spotify Enabled: {Enabled}", _spotifySettings.Enabled);
+                _logger.LogWarning("Configured IDs: {Ids}", string.Join(", ", _spotifySettings.PlaylistIds));
+                _logger.LogWarning("Is configured: {IsConfigured}", _spotifySettings.PlaylistIds.Contains(playlistId, StringComparer.OrdinalIgnoreCase));
+                
+                // Check if this playlist ID is configured for Spotify injection
+                if (_spotifySettings.PlaylistIds.Any(id => id.Equals(playlistId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogInformation("========================================");
+                    _logger.LogInformation("=== INTERCEPTING SPOTIFY PLAYLIST ===");
+                    _logger.LogInformation("Playlist ID: {PlaylistId}", playlistId);
+                    _logger.LogInformation("========================================");
+                    return await GetPlaylistTracks(playlistId);
+                }
             }
         }
-        
-        // Intercept Spotify playlist requests (alternative path format)
-        if (_spotifySettings.Enabled && 
-            path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) && 
-            path.EndsWith("/items", StringComparison.OrdinalIgnoreCase))
         {
             // Extract playlist ID from path: playlists/{id}/items
             var parts = path.Split('/');
@@ -2009,36 +1982,27 @@ public class JellyfinController : ControllerBase
     {
         try
         {
-            var matchingPlaylist = _spotifySettings.Playlists
-                .FirstOrDefault(p => p.SpotifyName.Equals(spotifyPlaylistName, StringComparison.OrdinalIgnoreCase));
-
-            if (matchingPlaylist == null)
-            {
-                _logger.LogWarning("Spotify playlist not found in config: {PlaylistName}", spotifyPlaylistName);
-                return _responseBuilder.CreateItemsResponse(new List<Song>());
-            }
-
-            var cacheKey = $"spotify:matched:{matchingPlaylist.SpotifyName}";
+            var cacheKey = $"spotify:matched:{spotifyPlaylistName}";
             var cachedTracks = await _cache.GetAsync<List<Song>>(cacheKey);
             
             if (cachedTracks != null)
             {
                 _logger.LogDebug("Returning {Count} cached matched tracks for {Playlist}", 
-                    cachedTracks.Count, matchingPlaylist.Name);
+                    cachedTracks.Count, spotifyPlaylistName);
                 return _responseBuilder.CreateItemsResponse(cachedTracks);
             }
 
-            var missingTracksKey = $"spotify:missing:{matchingPlaylist.SpotifyName}";
+            var missingTracksKey = $"spotify:missing:{spotifyPlaylistName}";
             var missingTracks = await _cache.GetAsync<List<allstarr.Models.Spotify.MissingTrack>>(missingTracksKey);
             
             if (missingTracks == null || missingTracks.Count == 0)
             {
-                _logger.LogInformation("No missing tracks found for {Playlist}", matchingPlaylist.Name);
+                _logger.LogInformation("No missing tracks found for {Playlist}", spotifyPlaylistName);
                 return _responseBuilder.CreateItemsResponse(new List<Song>());
             }
 
             _logger.LogInformation("Matching {Count} tracks for {Playlist}", 
-                missingTracks.Count, matchingPlaylist.Name);
+                missingTracks.Count, spotifyPlaylistName);
 
             var matchTasks = missingTracks.Select(async track =>
             {
@@ -2064,7 +2028,7 @@ public class JellyfinController : ControllerBase
             await _cache.SetAsync(cacheKey, matchedTracks, TimeSpan.FromHours(1));
 
             _logger.LogInformation("Matched {Matched}/{Total} tracks for {Playlist}", 
-                matchedTracks.Count, missingTracks.Count, matchingPlaylist.Name);
+                matchedTracks.Count, missingTracks.Count, spotifyPlaylistName);
 
             return _responseBuilder.CreateItemsResponse(matchedTracks);
         }

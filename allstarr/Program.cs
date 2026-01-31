@@ -113,29 +113,23 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
 {
     builder.Configuration.GetSection("SpotifyImport").Bind(options);
     
-    // Parse SPOTIFY_IMPORT_PLAYLISTS env var (comma-separated) into Playlists array
-    var playlistsEnv = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
-    if (!string.IsNullOrWhiteSpace(playlistsEnv) && options.Playlists.Count == 0)
+    // Parse SPOTIFY_IMPORT_PLAYLIST_IDS env var (comma-separated) into PlaylistIds array
+    var playlistIdsEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistIds");
+    if (!string.IsNullOrWhiteSpace(playlistIdsEnv) && options.PlaylistIds.Count == 0)
     {
-        options.Playlists = playlistsEnv
+        options.PlaylistIds = playlistIdsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(name => name.Trim())
-            .Where(name => !string.IsNullOrEmpty(name))
-            .Select(name => new SpotifyPlaylistConfig
-            {
-                Name = name,
-                SpotifyName = name,
-                Enabled = true
-            })
+            .Select(id => id.Trim())
+            .Where(id => !string.IsNullOrEmpty(id))
             .ToList();
     }
     
     // Log configuration at startup
     Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, SyncHour={options.SyncStartHour}:{options.SyncStartMinute:D2}, WindowHours={options.SyncWindowHours}");
-    Console.WriteLine($"Spotify Import Playlists: {options.Playlists.Count} configured");
-    foreach (var p in options.Playlists)
+    Console.WriteLine($"Spotify Import Playlist IDs: {options.PlaylistIds.Count} configured");
+    foreach (var id in options.PlaylistIds)
     {
-        Console.WriteLine($"  - {p.Name} (SpotifyName: {p.SpotifyName}, Enabled: {p.Enabled})");
+        Console.WriteLine($"  - {id}");
     }
 });
 
