@@ -108,6 +108,8 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
+builder.Services.Configure<SpotifyImportSettings>(
+    builder.Configuration.GetSection("SpotifyImport"));
 
 // Get shared settings from the active backend config
 MusicService musicService;
@@ -228,6 +230,9 @@ builder.Services.AddHostedService<StartupValidationOrchestrator>();
 
 // Register cache cleanup service (only runs when StorageMode is Cache)
 builder.Services.AddHostedService<CacheCleanupService>();
+
+// Register Spotify missing tracks fetcher (only runs when SpotifyImport is enabled)
+builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>();
 
 builder.Services.AddCors(options =>
 {

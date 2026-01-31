@@ -22,6 +22,7 @@ namespace allstarr.Controllers;
 public class JellyfinController : ControllerBase
 {
     private readonly JellyfinSettings _settings;
+    private readonly SpotifyImportSettings _spotifySettings;
     private readonly IMusicMetadataService _metadataService;
     private readonly ILocalLibraryService _localLibraryService;
     private readonly IDownloadService _downloadService;
@@ -29,20 +30,24 @@ public class JellyfinController : ControllerBase
     private readonly JellyfinModelMapper _modelMapper;
     private readonly JellyfinProxyService _proxyService;
     private readonly PlaylistSyncService? _playlistSyncService;
+    private readonly RedisCacheService _cache;
     private readonly ILogger<JellyfinController> _logger;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
+        IOptions<SpotifyImportSettings> spotifySettings,
         IMusicMetadataService metadataService,
         ILocalLibraryService localLibraryService,
         IDownloadService downloadService,
         JellyfinResponseBuilder responseBuilder,
         JellyfinModelMapper modelMapper,
         JellyfinProxyService proxyService,
+        RedisCacheService cache,
         ILogger<JellyfinController> logger,
         PlaylistSyncService? playlistSyncService = null)
     {
         _settings = settings.Value;
+        _spotifySettings = spotifySettings.Value;
         _metadataService = metadataService;
         _localLibraryService = localLibraryService;
         _downloadService = downloadService;
@@ -50,6 +55,7 @@ public class JellyfinController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _playlistSyncService = playlistSyncService;
+        _cache = cache;
         _logger = logger;
 
         if (string.IsNullOrWhiteSpace(_settings.Url))
@@ -212,6 +218,13 @@ public class JellyfinController : ControllerBase
                 .ToList();
             
             mergedAlbums.AddRange(scoredPlaylists);
+        }
+
+        // Inject Spotify playlists if enabled
+        if (_spotifySettings.Enabled)
+        {
+            var spotifyPlaylists = await GetSpotifyPlaylistsAsync(cleanQuery);
+            mergedAlbums.AddRange(spotifyPlaylists);
         }
 
         _logger.LogInformation("Scored and filtered results: Songs={Songs}, Albums={Albums}, Artists={Artists}",
@@ -1251,6 +1264,12 @@ public class JellyfinController : ControllerBase
     {
         try
         {
+            // Check if this is a Spotify playlist
+            if (playlistId.StartsWith("spotify-"))
+            {
+                return await GetSpotifyPlaylistTracksAsync(playlistId);
+            }
+
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
             var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
@@ -1824,6 +1843,119 @@ public class JellyfinController : ControllerBase
 
             return (item, finalScore);
         }).ToList();
+    }
+
+    #endregion
+
+    #region Spotify Playlist Injection
+
+    /// <summary>
+    /// Gets Spotify playlists that have cached missing tracks.
+    /// </summary>
+    private async Task<List<Dictionary<string, object?>>> GetSpotifyPlaylistsAsync(string searchQuery)
+    {
+        var playlists = new List<Dictionary<string, object?>>();
+
+        foreach (var playlist in _spotifySettings.Playlists.Where(p => p.Enabled))
+        {
+            var cacheKey = $"spotify:missing:{playlist.SpotifyName}";
+            var hasTracks = await _cache.ExistsAsync(cacheKey);
+
+            if (!hasTracks) continue;
+
+            var score = string.IsNullOrWhiteSpace(searchQuery)
+                ? 100
+                : FuzzyMatcher.CalculateSimilarity(searchQuery, playlist.Name);
+
+            if (score < 30 && !string.IsNullOrWhiteSpace(searchQuery)) continue;
+
+            playlists.Add(new Dictionary<string, object?>
+            {
+                ["Id"] = $"spotify-{playlist.SpotifyName.ToLower().Replace(" ", "-")}",
+                ["Name"] = $"{playlist.Name} - S",
+                ["Type"] = "Playlist",
+                ["IsFolder"] = false,
+                ["MediaType"] = "Audio",
+                ["CollectionType"] = "music"
+            });
+        }
+
+        return playlists;
+    }
+
+    /// <summary>
+    /// Gets tracks for a Spotify playlist by matching missing tracks against external providers.
+    /// </summary>
+    private async Task<IActionResult> GetSpotifyPlaylistTracksAsync(string playlistId)
+    {
+        try
+        {
+            var playlistName = playlistId.Replace("spotify-", "").Replace("-", " ");
+            
+            var matchingPlaylist = _spotifySettings.Playlists
+                .FirstOrDefault(p => p.SpotifyName.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+
+            if (matchingPlaylist == null)
+            {
+                _logger.LogWarning("Spotify playlist not found in config: {PlaylistName}", playlistName);
+                return _responseBuilder.CreateItemsResponse(new List<Song>());
+            }
+
+            var cacheKey = $"spotify:matched:{matchingPlaylist.SpotifyName}";
+            var cachedTracks = await _cache.GetAsync<List<Song>>(cacheKey);
+            
+            if (cachedTracks != null)
+            {
+                _logger.LogDebug("Returning {Count} cached matched tracks for {Playlist}", 
+                    cachedTracks.Count, matchingPlaylist.Name);
+                return _responseBuilder.CreateItemsResponse(cachedTracks);
+            }
+
+            var missingTracksKey = $"spotify:missing:{matchingPlaylist.SpotifyName}";
+            var missingTracks = await _cache.GetAsync<List<allstarr.Models.Spotify.MissingTrack>>(missingTracksKey);
+            
+            if (missingTracks == null || missingTracks.Count == 0)
+            {
+                _logger.LogInformation("No missing tracks found for {Playlist}", matchingPlaylist.Name);
+                return _responseBuilder.CreateItemsResponse(new List<Song>());
+            }
+
+            _logger.LogInformation("Matching {Count} tracks for {Playlist}", 
+                missingTracks.Count, matchingPlaylist.Name);
+
+            var matchTasks = missingTracks.Select(async track =>
+            {
+                try
+                {
+                    var query = $"{track.Title} {track.AllArtists} {track.Album}";
+                    var results = await _metadataService.SearchSongsAsync(query, limit: 1);
+                    return results.FirstOrDefault();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to match track: {Title} - {Artist}", 
+                        track.Title, track.PrimaryArtist);
+                    return null;
+                }
+            });
+
+            var matchedTracks = (await Task.WhenAll(matchTasks))
+                .Where(t => t != null)
+                .Cast<Song>()
+                .ToList();
+
+            await _cache.SetAsync(cacheKey, matchedTracks, TimeSpan.FromHours(1));
+
+            _logger.LogInformation("Matched {Matched}/{Total} tracks for {Playlist}", 
+                matchedTracks.Count, missingTracks.Count, matchingPlaylist.Name);
+
+            return _responseBuilder.CreateItemsResponse(matchedTracks);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting Spotify playlist tracks {PlaylistId}", playlistId);
+            return _responseBuilder.CreateError(500, "Failed to get Spotify playlist tracks");
+        }
     }
 
     #endregion
