@@ -1785,45 +1785,39 @@ public class JellyfinController : ControllerBase
             var artist = artistField(item) ?? "";
             var album = albumField(item) ?? "";
 
-            var scores = new List<int>();
+            // Token-based fuzzy matching: split query and fields into words
+            var queryTokens = query.ToLower()
+                .Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries)
+                .ToList();
 
-            // Individual field scores
-            scores.Add(FuzzyMatcher.CalculateSimilarity(query, title));
-            if (!string.IsNullOrEmpty(artist))
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, artist));
-            if (!string.IsNullOrEmpty(album))
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, album));
+            var fieldText = $"{title} {artist} {album}".ToLower();
+            var fieldTokens = fieldText
+                .Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries)
+                .ToList();
 
-            // Two-field combinations
-            if (!string.IsNullOrEmpty(artist))
-            {
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {artist}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {title}"));
-            }
-            if (!string.IsNullOrEmpty(album))
-            {
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {album}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {title}"));
-            }
-            if (!string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(album))
-            {
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {album}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {artist}"));
-            }
+            if (queryTokens.Count == 0) return (item, 0);
 
-            // Three-field combinations (all permutations)
-            if (!string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(album))
+            // Count how many query tokens match field tokens (with fuzzy tolerance)
+            var matchedTokens = 0;
+            foreach (var queryToken in queryTokens)
             {
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {artist} {album}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {album} {artist}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {title} {album}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {album} {title}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {title} {artist}"));
-                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {artist} {title}"));
+                // Check if any field token matches this query token
+                var hasMatch = fieldTokens.Any(fieldToken =>
+                {
+                    // Exact match or substring match
+                    if (fieldToken.Contains(queryToken) || queryToken.Contains(fieldToken))
+                        return true;
+
+                    // Fuzzy match with Levenshtein distance
+                    var similarity = FuzzyMatcher.CalculateSimilarity(queryToken, fieldToken);
+                    return similarity >= 70; // 70% similarity threshold for individual words
+                });
+
+                if (hasMatch) matchedTokens++;
             }
 
-            // Use the best score from all attempts
-            var baseScore = scores.Max();
+            // Score = percentage of query tokens that matched
+            var baseScore = (matchedTokens * 100) / queryTokens.Count;
 
             // Give external results a small boost (+5 points) to prioritize the larger catalog
             var finalScore = isExternal ? Math.Min(100, baseScore + 5) : baseScore;
