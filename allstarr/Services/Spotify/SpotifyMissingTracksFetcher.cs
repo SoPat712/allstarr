@@ -31,6 +31,8 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("SpotifyMissingTracksFetcher: Starting up...");
+        
         if (!_spotifySettings.Value.Enabled)
         {
             _logger.LogInformation("Spotify playlist injection is disabled");
@@ -46,7 +48,14 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             return;
         }
 
-        _logger.LogInformation("Spotify missing tracks fetcher started");
+        _logger.LogInformation("Spotify missing tracks fetcher started - monitoring {Count} playlists", 
+            _spotifySettings.Value.Playlists.Count);
+        
+        foreach (var playlist in _spotifySettings.Value.Playlists)
+        {
+            _logger.LogInformation("  - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
+                playlist.Name, playlist.SpotifyName, playlist.Enabled);
+        }
 
         // Run once on startup if we haven't run in the last 24 hours
         if (!_hasRunOnce)

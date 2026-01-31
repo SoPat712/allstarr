@@ -108,8 +108,28 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
-builder.Services.Configure<SpotifyImportSettings>(
-    builder.Configuration.GetSection("SpotifyImport"));
+// Configure Spotify Import settings with custom playlist parsing from env var
+builder.Services.Configure<SpotifyImportSettings>(options =>
+{
+    builder.Configuration.GetSection("SpotifyImport").Bind(options);
+    
+    // Parse SPOTIFY_IMPORT_PLAYLISTS env var (comma-separated) into Playlists array
+    var playlistsEnv = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
+    if (!string.IsNullOrWhiteSpace(playlistsEnv) && options.Playlists.Count == 0)
+    {
+        options.Playlists = playlistsEnv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(name => name.Trim())
+            .Where(name => !string.IsNullOrEmpty(name))
+            .Select(name => new SpotifyPlaylistConfig
+            {
+                Name = name,
+                SpotifyName = name,
+                Enabled = true
+            })
+            .ToList();
+    }
+});
 
 // Get shared settings from the active backend config
 MusicService musicService;
