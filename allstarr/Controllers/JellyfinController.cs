@@ -220,13 +220,6 @@ public class JellyfinController : ControllerBase
             mergedAlbums.AddRange(scoredPlaylists);
         }
 
-        // Inject Spotify playlists if enabled
-        if (_spotifySettings.Enabled)
-        {
-            var spotifyPlaylists = await GetSpotifyPlaylistsAsync(cleanQuery);
-            mergedAlbums.AddRange(spotifyPlaylists);
-        }
-
         _logger.LogInformation("Scored and filtered results: Songs={Songs}, Albums={Albums}, Artists={Artists}",
             mergedSongs.Count, mergedAlbums.Count, mergedArtists.Count);
 
@@ -1264,16 +1257,49 @@ public class JellyfinController : ControllerBase
     {
         try
         {
-            // Check if this is a Spotify playlist
-            if (playlistId.StartsWith("spotify-"))
+            // Check if this is a Spotify playlist by fetching playlist info first
+            if (_spotifySettings.Enabled && !playlistId.StartsWith("ext-") && !playlistId.StartsWith("playlist-"))
             {
-                return await GetSpotifyPlaylistTracksAsync(playlistId);
+                // Get playlist info from Jellyfin to check the name
+                var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
+                if (playlistInfo != null && playlistInfo.TryGetProperty("Name", out var nameElement))
+                {
+                    var playlistName = nameElement.GetString() ?? "";
+                    
+                    // Check if this matches any configured Spotify playlists
+                    var matchingConfig = _spotifySettings.Playlists
+                        .FirstOrDefault(p => p.Enabled && p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (matchingConfig != null)
+                    {
+                        _logger.LogInformation("Intercepting Spotify playlist: {PlaylistName}", playlistName);
+                        return await GetSpotifyPlaylistTracksAsync(matchingConfig.SpotifyName);
+                    }
+                }
             }
 
-            var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-            var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+            // Check if this is an external playlist (Deezer/Qobuz)
+            if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
+            {
+                var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
+                var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+                return _responseBuilder.CreateItemsResponse(tracks);
+            }
 
-            return _responseBuilder.CreateItemsResponse(tracks);
+            // Regular Jellyfin playlist - proxy through
+            var endpoint = $"Playlists/{playlistId}/Items";
+            if (Request.QueryString.HasValue)
+            {
+                endpoint = $"{endpoint}{Request.QueryString.Value}";
+            }
+            
+            var result = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+            if (result == null)
+            {
+                return _responseBuilder.CreateError(404, "Playlist not found");
+            }
+            
+            return new JsonResult(JsonSerializer.Deserialize<object>(result.RootElement.GetRawText()));
         }
         catch (Exception ex)
         {
@@ -1850,54 +1876,18 @@ public class JellyfinController : ControllerBase
     #region Spotify Playlist Injection
 
     /// <summary>
-    /// Gets Spotify playlists that have cached missing tracks.
-    /// </summary>
-    private async Task<List<Dictionary<string, object?>>> GetSpotifyPlaylistsAsync(string searchQuery)
-    {
-        var playlists = new List<Dictionary<string, object?>>();
-
-        foreach (var playlist in _spotifySettings.Playlists.Where(p => p.Enabled))
-        {
-            var cacheKey = $"spotify:missing:{playlist.SpotifyName}";
-            var hasTracks = await _cache.ExistsAsync(cacheKey);
-
-            if (!hasTracks) continue;
-
-            var score = string.IsNullOrWhiteSpace(searchQuery)
-                ? 100
-                : FuzzyMatcher.CalculateSimilarity(searchQuery, playlist.Name);
-
-            if (score < 30 && !string.IsNullOrWhiteSpace(searchQuery)) continue;
-
-            playlists.Add(new Dictionary<string, object?>
-            {
-                ["Id"] = $"spotify-{playlist.SpotifyName.ToLower().Replace(" ", "-")}",
-                ["Name"] = $"{playlist.Name} - S",
-                ["Type"] = "Playlist",
-                ["IsFolder"] = false,
-                ["MediaType"] = "Audio",
-                ["CollectionType"] = "music"
-            });
-        }
-
-        return playlists;
-    }
-
-    /// <summary>
     /// Gets tracks for a Spotify playlist by matching missing tracks against external providers.
     /// </summary>
-    private async Task<IActionResult> GetSpotifyPlaylistTracksAsync(string playlistId)
+    private async Task<IActionResult> GetSpotifyPlaylistTracksAsync(string spotifyPlaylistName)
     {
         try
         {
-            var playlistName = playlistId.Replace("spotify-", "").Replace("-", " ");
-            
             var matchingPlaylist = _spotifySettings.Playlists
-                .FirstOrDefault(p => p.SpotifyName.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(p => p.SpotifyName.Equals(spotifyPlaylistName, StringComparison.OrdinalIgnoreCase));
 
             if (matchingPlaylist == null)
             {
-                _logger.LogWarning("Spotify playlist not found in config: {PlaylistName}", playlistName);
+                _logger.LogWarning("Spotify playlist not found in config: {PlaylistName}", spotifyPlaylistName);
                 return _responseBuilder.CreateItemsResponse(new List<Song>());
             }
 
@@ -1953,7 +1943,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting Spotify playlist tracks {PlaylistId}", playlistId);
+            _logger.LogError(ex, "Error getting Spotify playlist tracks {PlaylistName}", spotifyPlaylistName);
             return _responseBuilder.CreateError(500, "Failed to get Spotify playlist tracks");
         }
     }
