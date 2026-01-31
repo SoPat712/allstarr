@@ -1702,20 +1702,34 @@ public class JellyfinController : ControllerBase
     [HttpPost("{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
-        // Log all playlist requests for debugging
-        if (path.Contains("playlist", StringComparison.OrdinalIgnoreCase))
+        // Intercept Spotify playlist requests FIRST
+        if (_spotifySettings.Enabled && 
+            path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) && 
+            path.Contains("/items", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("=== PLAYLIST REQUEST === Path: {Path}, SpotifyEnabled: {Enabled}, PlaylistCount: {Count}", 
-                path, _spotifySettings.Enabled, _spotifySettings.Playlists.Count);
-            
+            _logger.LogInformation("========================================");
+            _logger.LogInformation("=== SPOTIFY PLAYLIST REQUEST INTERCEPTED ===");
+            _logger.LogInformation("Path: {Path}", path);
+            _logger.LogInformation("Spotify Import Enabled: {Enabled}", _spotifySettings.Enabled);
+            _logger.LogInformation("Configured Playlists: {Count}", _spotifySettings.Playlists.Count);
             foreach (var p in _spotifySettings.Playlists)
             {
-                _logger.LogInformation("  Configured playlist: {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
+                _logger.LogInformation("  - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
                     p.Name, p.SpotifyName, p.Enabled);
+            }
+            _logger.LogInformation("========================================");
+            
+            // Extract playlist ID from path: playlists/{id}/items
+            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2 && parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase))
+            {
+                var playlistId = parts[1];
+                _logger.LogInformation("Extracted playlist ID: {PlaylistId}", playlistId);
+                return await GetPlaylistTracks(playlistId);
             }
         }
         
-        // Intercept Spotify playlist requests
+        // Intercept Spotify playlist requests (alternative path format)
         if (_spotifySettings.Enabled && 
             path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) && 
             path.EndsWith("/items", StringComparison.OrdinalIgnoreCase))
