@@ -84,3 +84,6 @@ apis/*.json
 
 # Original source code for reference
 originals/
+
+# Sample missing playlists for Spotify integration testing
+sampleMissingPlaylists/
