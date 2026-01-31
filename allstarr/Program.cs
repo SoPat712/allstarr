@@ -129,6 +129,14 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
             })
             .ToList();
     }
+    
+    // Log configuration at startup
+    Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, SyncHour={options.SyncStartHour}:{options.SyncStartMinute:D2}, WindowHours={options.SyncWindowHours}");
+    Console.WriteLine($"Spotify Import Playlists: {options.Playlists.Count} configured");
+    foreach (var p in options.Playlists)
+    {
+        Console.WriteLine($"  - {p.Name} (SpotifyName: {p.SpotifyName}, Enabled: {p.Enabled})");
+    }
 });
 
 // Get shared settings from the active backend config

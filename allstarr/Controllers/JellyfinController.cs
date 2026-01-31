@@ -62,6 +62,20 @@ public class JellyfinController : ControllerBase
         {
             throw new InvalidOperationException("JELLYFIN_URL environment variable is not set");
         }
+        
+        // Log Spotify Import configuration on first controller instantiation
+        _logger.LogInformation("========================================");
+        _logger.LogInformation("Spotify Import Configuration:");
+        _logger.LogInformation("  Enabled: {Enabled}", _spotifySettings.Enabled);
+        _logger.LogInformation("  Sync Time: {Hour}:{Minute:D2}", _spotifySettings.SyncStartHour, _spotifySettings.SyncStartMinute);
+        _logger.LogInformation("  Sync Window: {Hours} hours", _spotifySettings.SyncWindowHours);
+        _logger.LogInformation("  Configured Playlists: {Count}", _spotifySettings.Playlists.Count);
+        foreach (var playlist in _spotifySettings.Playlists)
+        {
+            _logger.LogInformation("    - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
+                playlist.Name, playlist.SpotifyName, playlist.Enabled);
+        }
+        _logger.LogInformation("========================================");
     }
 
     #region Search
@@ -1257,6 +1271,8 @@ public class JellyfinController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("=== GetPlaylistTracks called === PlaylistId: {PlaylistId}", playlistId);
+            
             // Check if this is an external playlist (Deezer/Qobuz) first
             if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
             {
@@ -1266,13 +1282,19 @@ public class JellyfinController : ControllerBase
             }
 
             // Only check for Spotify playlists if the feature is enabled
+            _logger.LogInformation("Spotify Import Enabled: {Enabled}, Playlist starts with ext-: {IsExternal}", 
+                _spotifySettings.Enabled, playlistId.StartsWith("ext-"));
+            
             if (_spotifySettings.Enabled && !playlistId.StartsWith("ext-"))
             {
                 // Get playlist info from Jellyfin to check the name
+                _logger.LogInformation("Fetching playlist info from Jellyfin for ID: {PlaylistId}", playlistId);
                 var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
+                
                 if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
                 {
                     var playlistName = nameElement.GetString() ?? "";
+                    _logger.LogInformation("Jellyfin playlist name: '{PlaylistName}'", playlistName);
                     
                     // Check if this matches any configured Spotify playlists
                     var matchingConfig = _spotifySettings.Playlists
@@ -1280,9 +1302,19 @@ public class JellyfinController : ControllerBase
                     
                     if (matchingConfig != null)
                     {
-                        _logger.LogInformation("Intercepting Spotify playlist: {PlaylistName}", playlistName);
+                        _logger.LogInformation("✓ MATCHED! Intercepting Spotify playlist: {PlaylistName}", playlistName);
                         return await GetSpotifyPlaylistTracksAsync(matchingConfig.SpotifyName);
                     }
+                    else
+                    {
+                        _logger.LogInformation("✗ No match found for playlist '{PlaylistName}'", playlistName);
+                        _logger.LogInformation("Configured playlists: {Playlists}", 
+                            string.Join(", ", _spotifySettings.Playlists.Select(p => $"'{p.Name}' (enabled={p.Enabled})")));
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Could not get playlist name from Jellyfin for ID: {PlaylistId}", playlistId);
                 }
             }
 
@@ -1293,6 +1325,7 @@ public class JellyfinController : ControllerBase
                 endpoint = $"{endpoint}{Request.QueryString.Value}";
             }
             
+            _logger.LogInformation("Proxying to Jellyfin: {Endpoint}", endpoint);
             var result = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
             if (result == null)
             {
