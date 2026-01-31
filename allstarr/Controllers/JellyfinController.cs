@@ -1257,8 +1257,16 @@ public class JellyfinController : ControllerBase
     {
         try
         {
-            // Check if this is a Spotify playlist by fetching playlist info first
-            if (_spotifySettings.Enabled && !playlistId.StartsWith("ext-") && !playlistId.StartsWith("playlist-"))
+            // Check if this is an external playlist (Deezer/Qobuz) first
+            if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
+            {
+                var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
+                var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+                return _responseBuilder.CreateItemsResponse(tracks);
+            }
+
+            // Only check for Spotify playlists if the feature is enabled
+            if (_spotifySettings.Enabled && !playlistId.StartsWith("ext-"))
             {
                 // Get playlist info from Jellyfin to check the name
                 var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
@@ -1276,14 +1284,6 @@ public class JellyfinController : ControllerBase
                         return await GetSpotifyPlaylistTracksAsync(matchingConfig.SpotifyName);
                     }
                 }
-            }
-
-            // Check if this is an external playlist (Deezer/Qobuz)
-            if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
-            {
-                var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-                var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
-                return _responseBuilder.CreateItemsResponse(tracks);
             }
 
             // Regular Jellyfin playlist - proxy through
