@@ -62,20 +62,6 @@ public class JellyfinController : ControllerBase
         {
             throw new InvalidOperationException("JELLYFIN_URL environment variable is not set");
         }
-        
-        // Log Spotify Import configuration on first controller instantiation
-        _logger.LogInformation("========================================");
-        _logger.LogInformation("Spotify Import Configuration:");
-        _logger.LogInformation("  Enabled: {Enabled}", _spotifySettings.Enabled);
-        _logger.LogInformation("  Sync Time: {Hour}:{Minute:D2}", _spotifySettings.SyncStartHour, _spotifySettings.SyncStartMinute);
-        _logger.LogInformation("  Sync Window: {Hours} hours", _spotifySettings.SyncWindowHours);
-        _logger.LogInformation("  Configured Playlists: {Count}", _spotifySettings.Playlists.Count);
-        foreach (var playlist in _spotifySettings.Playlists)
-        {
-            _logger.LogInformation("    - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
-                playlist.Name, playlist.SpotifyName, playlist.Enabled);
-        }
-        _logger.LogInformation("========================================");
     }
 
     #region Search
@@ -1658,27 +1644,6 @@ public class JellyfinController : ControllerBase
     public async Task<IActionResult> ProxyRootRequest()
     {
         return await ProxyRequest("web/index.html");
-    }
-
-    /// <summary>
-    /// Intercepts playlist items requests to inject Spotify playlist tracks.
-    /// </summary>
-    [HttpGet("Playlists/{playlistId}/Items", Order = 1)]
-    [HttpGet("playlists/{playlistId}/items", Order = 1)]
-    public async Task<IActionResult> GetPlaylistItems(string playlistId)
-    {
-        _logger.LogInformation("========================================");
-        _logger.LogInformation("=== GetPlaylistItems INTERCEPTED ===");
-        _logger.LogInformation("PlaylistId: {PlaylistId}", playlistId);
-        _logger.LogInformation("Spotify Import Enabled: {Enabled}", _spotifySettings.Enabled);
-        _logger.LogInformation("Configured Playlists: {Count}", _spotifySettings.Playlists.Count);
-        foreach (var p in _spotifySettings.Playlists)
-        {
-            _logger.LogInformation("  - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
-                p.Name, p.SpotifyName, p.Enabled);
-        }
-        _logger.LogInformation("========================================");
-        return await GetPlaylistTracks(playlistId);
     }
 
     /// <summary>

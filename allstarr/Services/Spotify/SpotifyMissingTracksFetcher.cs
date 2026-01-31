@@ -14,7 +14,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RedisCacheService _cache;
     private readonly ILogger<SpotifyMissingTracksFetcher> _logger;
-    private readonly JellyfinProxyService _proxyService;
+    private readonly IServiceProvider _serviceProvider;
     private bool _hasRunOnce = false;
     private Dictionary<string, string> _playlistIdToName = new();
 
@@ -23,14 +23,14 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         IOptions<JellyfinSettings> jellyfinSettings,
         IHttpClientFactory httpClientFactory,
         RedisCacheService cache,
-        JellyfinProxyService proxyService,
+        IServiceProvider serviceProvider,
         ILogger<SpotifyMissingTracksFetcher> logger)
     {
         _spotifySettings = spotifySettings;
         _jellyfinSettings = jellyfinSettings;
         _httpClientFactory = httpClientFactory;
         _cache = cache;
-        _proxyService = proxyService;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -111,11 +111,14 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     {
         _playlistIdToName.Clear();
         
+        using var scope = _serviceProvider.CreateScope();
+        var proxyService = scope.ServiceProvider.GetRequiredService<JellyfinProxyService>();
+        
         foreach (var playlistId in _spotifySettings.Value.PlaylistIds)
         {
             try
             {
-                var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, null);
+                var playlistInfo = await proxyService.GetJsonAsync($"Items/{playlistId}", null, null);
                 if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
                 {
                     var name = nameElement.GetString() ?? "";
