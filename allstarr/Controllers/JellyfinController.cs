@@ -178,22 +178,19 @@ public class JellyfinController : ControllerBase
         var scoredExternalAlbums = ScoreSearchResults(cleanQuery, externalResult.Albums, a => a.Title, a => a.Artist, isExternal: true);
         var scoredExternalArtists = ScoreSearchResults(cleanQuery, externalResult.Artists, a => a.Name, _ => null, isExternal: true);
 
-        // Merge and sort by score (only include items with score >= 40)
+        // Merge and sort by score (no filtering - just reorder by relevance)
         var allSongs = scoredLocalSongs.Concat(scoredExternalSongs)
-            .Where(x => x.Score >= 40)
             .OrderByDescending(x => x.Score)
             .Select(x => x.Item)
             .ToList();
 
         var allAlbums = scoredLocalAlbums.Concat(scoredExternalAlbums)
-            .Where(x => x.Score >= 40)
             .OrderByDescending(x => x.Score)
             .Select(x => x.Item)
             .ToList();
 
         // Dedupe artists by name, keeping highest scored version
         var artistScores = scoredLocalArtists.Concat(scoredExternalArtists)
-            .Where(x => x.Score >= 40)
             .GroupBy(x => x.Item.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(x => x.Score).First())
             .OrderByDescending(x => x.Score)
@@ -210,7 +207,6 @@ public class JellyfinController : ControllerBase
         {
             var scoredPlaylists = playlistResult
                 .Select(p => new { Playlist = p, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, p.Name) })
-                .Where(x => x.Score >= 40)
                 .OrderByDescending(x => x.Score)
                 .Select(x => _responseBuilder.ConvertPlaylistToJellyfinItem(x.Playlist))
                 .ToList();
@@ -1795,11 +1791,21 @@ public class JellyfinController : ControllerBase
                 ? 0 
                 : FuzzyMatcher.CalculateSimilarity(query, secondary);
 
-            // Use the better of the two scores
-            var baseScore = Math.Max(primaryScore, secondaryScore);
+            // Score against combined "title artist" and "artist title" for queries like "say why zach bryan"
+            var combinedScore = 0;
+            if (!string.IsNullOrEmpty(secondary))
+            {
+                var combined1 = $"{primary} {secondary}";
+                var combined2 = $"{secondary} {primary}";
+                var score1 = FuzzyMatcher.CalculateSimilarity(query, combined1);
+                var score2 = FuzzyMatcher.CalculateSimilarity(query, combined2);
+                combinedScore = Math.Max(score1, score2);
+            }
+
+            // Use the best score from all attempts
+            var baseScore = Math.Max(Math.Max(primaryScore, secondaryScore), combinedScore);
 
             // Give external results a small boost (+5 points) to prioritize the larger catalog
-            // This means external results will rank slightly higher when scores are close
             var finalScore = isExternal ? Math.Min(100, baseScore + 5) : baseScore;
 
             return (item, finalScore);
