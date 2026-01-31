@@ -1680,7 +1680,17 @@ public class JellyfinController : ControllerBase
     [HttpGet("playlists/{playlistId}/items", Order = 1)]
     public async Task<IActionResult> GetPlaylistItems(string playlistId)
     {
-        _logger.LogInformation("=== GetPlaylistItems INTERCEPTED === playlistId={PlaylistId}", playlistId);
+        _logger.LogInformation("========================================");
+        _logger.LogInformation("=== GetPlaylistItems INTERCEPTED ===");
+        _logger.LogInformation("PlaylistId: {PlaylistId}", playlistId);
+        _logger.LogInformation("Spotify Import Enabled: {Enabled}", _spotifySettings.Enabled);
+        _logger.LogInformation("Configured Playlists: {Count}", _spotifySettings.Playlists.Count);
+        foreach (var p in _spotifySettings.Playlists)
+        {
+            _logger.LogInformation("  - {Name} (SpotifyName: {SpotifyName}, Enabled: {Enabled})", 
+                p.Name, p.SpotifyName, p.Enabled);
+        }
+        _logger.LogInformation("========================================");
         return await GetPlaylistTracks(playlistId);
     }
 
