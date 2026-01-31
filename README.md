@@ -16,12 +16,17 @@ Please report all bugs as soon as possible, as the Jellyfin addition is entirely
 Using Docker (recommended):
 
 ```bash
-# 1. Pull the latest image
-docker-compose pull
+# 1. Download the docker-compose.yml file and the .env.example file to a folder on the machine you have Docker
+
+curl -O https://raw.githubusercontent.com/SoPat712/allstarr/refs/heads/main/docker-compose.yml \
+     -O https://raw.githubusercontent.com/SoPat712/allstarr/refs/heads/main/.env.example
 
 # 2. Configure environment
 cp .env.example .env
 vi .env  # Edit with your settings
+
+# 3. Pull the latest image
+docker-compose pull
 
 # 3. Start services
 docker-compose up -d
@@ -35,7 +40,7 @@ The proxy will be available at `http://localhost:5274`.
 
 ### Nginx Proxy Setup (Required)
 
-This service only exposes ports internally. You **must** use nginx to proxy to it:
+This service only exposes ports internally. You can use nginx to proxy to it, however PLEASE take significant precautions before exposing this! Everyone decides their own level of risk, but this is currently untested, potentially dangerous software, with almost unfettered access to your Jellyfin server. My recommendation is use Tailscale or something similar!
 
 ```nginx
 server {
