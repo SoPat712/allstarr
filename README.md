@@ -90,7 +90,7 @@ This project brings together all the music streaming providers into one unified 
 - **Artist Deduplication**: Merges local and streaming artists to avoid duplicates
 - **Album Enrichment**: Adds missing tracks to local albums from streaming providers
 - **Cover Art Proxy**: Serves cover art for external content
-- **Spotify Playlist Injection** (Jellyfin only): Injects virtual Spotify playlists (Release Radar, Discover Weekly) with tracks auto-matched from streaming providers
+- **Spotify Playlist Injection** (Jellyfin only): Intercepts Spotify Import plugin playlists (Release Radar, Discover Weekly) and fills them with tracks auto-matched from streaming providers
 
 ## Supported Backends
 
@@ -290,7 +290,7 @@ Subsonic__EnableExternalPlaylists=false
 
 ### Spotify Playlist Injection (Jellyfin Only)
 
-Allstarr can inject virtual Spotify playlists (Release Radar, Discover Weekly) into Jellyfin with tracks automatically matched from your configured streaming provider.
+Allstarr can intercept Spotify Import plugin playlists (Release Radar, Discover Weekly) and fill them with tracks automatically matched from your configured streaming provider (SquidWTF, Deezer, or Qobuz).
 
 **Requirements:**
 - [Jellyfin Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import) installed and configured
@@ -308,11 +308,12 @@ Allstarr can inject virtual Spotify playlists (Release Radar, Discover Weekly) i
 | `SpotifyImport:Playlists` | Array of playlists to inject (Name, SpotifyName, Enabled) |
 
 **How it works:**
-1. Jellyfin Spotify Import plugin runs daily and creates missing tracks files for playlists
-2. Allstarr fetches these files within the configured time window
+1. Jellyfin Spotify Import plugin runs daily and creates playlists + missing tracks files
+2. Allstarr fetches these missing tracks files within the configured time window
 3. For each missing track, Allstarr searches your streaming provider (SquidWTF, Deezer, or Qobuz)
-4. Virtual playlists appear in Jellyfin with matched tracks ready to stream
+4. When you open the playlist in Jellyfin, Allstarr intercepts the request and returns matched tracks
 5. Tracks are downloaded on-demand when played
+6. On startup, Allstarr will fetch missing tracks if it hasn't run in the last 24 hours
 
 **Environment variables:**
 ```bash

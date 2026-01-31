@@ -13,6 +13,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly RedisCacheService _cache;
     private readonly ILogger<SpotifyMissingTracksFetcher> _logger;
+    private bool _hasRunOnce = false;
 
     public SpotifyMissingTracksFetcher(
         IOptions<SpotifyImportSettings> spotifySettings,
@@ -47,6 +48,30 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         _logger.LogInformation("Spotify missing tracks fetcher started");
 
+        // Run once on startup if we haven't run in the last 24 hours
+        if (!_hasRunOnce)
+        {
+            var shouldRunOnStartup = await ShouldRunOnStartupAsync();
+            if (shouldRunOnStartup)
+            {
+                _logger.LogInformation("Running initial fetch on startup");
+                try
+                {
+                    await FetchMissingTracksAsync(stoppingToken);
+                    _hasRunOnce = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error during startup fetch");
+                }
+            }
+            else
+            {
+                _logger.LogInformation("Skipping startup fetch - already ran within last 24 hours");
+                _hasRunOnce = true;
+            }
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -60,6 +85,20 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
             await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
         }
+    }
+
+    private async Task<bool> ShouldRunOnStartupAsync()
+    {
+        // Check if any playlist has cached data from the last 24 hours
+        foreach (var playlist in _spotifySettings.Value.Playlists.Where(p => p.Enabled))
+        {
+            var cacheKey = $"spotify:missing:{playlist.SpotifyName}";
+            if (await _cache.ExistsAsync(cacheKey))
+            {
+                return false; // Already have recent data
+            }
+        }
+        return true; // No recent data, should fetch
     }
 
     private async Task FetchMissingTracksAsync(CancellationToken cancellationToken)
