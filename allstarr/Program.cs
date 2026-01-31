@@ -108,6 +108,30 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
+// Configure Spotify Import settings with custom playlist parsing from env var
+builder.Services.Configure<SpotifyImportSettings>(options =>
+{
+    builder.Configuration.GetSection("SpotifyImport").Bind(options);
+    
+    // Parse SPOTIFY_IMPORT_PLAYLIST_IDS env var (comma-separated) into PlaylistIds array
+    var playlistIdsEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistIds");
+    if (!string.IsNullOrWhiteSpace(playlistIdsEnv) && options.PlaylistIds.Count == 0)
+    {
+        options.PlaylistIds = playlistIdsEnv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(id => id.Trim())
+            .Where(id => !string.IsNullOrEmpty(id))
+            .ToList();
+    }
+    
+    // Log configuration at startup
+    Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, SyncHour={options.SyncStartHour}:{options.SyncStartMinute:D2}, WindowHours={options.SyncWindowHours}");
+    Console.WriteLine($"Spotify Import Playlist IDs: {options.PlaylistIds.Count} configured");
+    foreach (var id in options.PlaylistIds)
+    {
+        Console.WriteLine($"  - {id}");
+    }
+});
 
 // Get shared settings from the active backend config
 MusicService musicService;
@@ -228,6 +252,9 @@ builder.Services.AddHostedService<StartupValidationOrchestrator>();
 
 // Register cache cleanup service (only runs when StorageMode is Cache)
 builder.Services.AddHostedService<CacheCleanupService>();
+
+// Register Spotify missing tracks fetcher (only runs when SpotifyImport is enabled)
+builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>();
 
 builder.Services.AddCors(options =>
 {
