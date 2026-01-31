@@ -27,6 +27,8 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         _httpClientFactory = httpClientFactory;
         _cache = cache;
         _logger = logger;
+        
+        _logger.LogInformation("SpotifyMissingTracksFetcher: Constructor called");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

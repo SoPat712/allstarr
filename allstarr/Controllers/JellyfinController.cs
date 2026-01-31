@@ -1211,17 +1211,6 @@ public class JellyfinController : ControllerBase
     #region Playlists
 
     /// <summary>
-    /// Intercepts playlist items requests to inject Spotify playlists.
-    /// This route must have lower Order than the catch-all ProxyRequest route.
-    /// </summary>
-    [HttpGet("Playlists/{playlistId}/Items", Order = 5)]
-    public async Task<IActionResult> GetPlaylistItems(string playlistId)
-    {
-        _logger.LogInformation("GetPlaylistItems called for playlist {PlaylistId}", playlistId);
-        return await GetPlaylistTracks(playlistId);
-    }
-
-    /// <summary>
     /// Gets playlist tracks displayed as an album.
     /// </summary>
     private async Task<IActionResult> GetPlaylistAsAlbum(string playlistId)
