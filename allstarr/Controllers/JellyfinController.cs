@@ -1702,6 +1702,9 @@ public class JellyfinController : ControllerBase
     [HttpPost("{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
+        // DEBUG: Log EVERY request to see what's happening
+        _logger.LogWarning("ProxyRequest called with path: {Path}", path);
+        
         // DEBUG: Log Spotify settings for playlist requests
         if (path.Contains("playlist", StringComparison.OrdinalIgnoreCase))
         {
