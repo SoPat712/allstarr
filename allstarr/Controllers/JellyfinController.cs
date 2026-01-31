@@ -778,6 +778,23 @@ public class JellyfinController : ControllerBase
             
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
             
+            // Forward caching headers for client-side caching
+            if (response.Headers.ETag != null)
+            {
+                Response.Headers["ETag"] = response.Headers.ETag.ToString();
+            }
+            
+            if (response.Content.Headers.LastModified.HasValue)
+            {
+                Response.Headers["Last-Modified"] = response.Content.Headers.LastModified.Value.ToString("R");
+            }
+            
+            if (response.Headers.CacheControl != null)
+            {
+                Response.Headers["Cache-Control"] = response.Headers.CacheControl.ToString();
+            }
+            
+            // Forward range headers for seeking
             if (response.Content.Headers.ContentRange != null)
             {
                 Response.Headers["Content-Range"] = response.Content.Headers.ContentRange.ToString();
