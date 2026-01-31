@@ -169,14 +169,14 @@ public class JellyfinController : ControllerBase
         var (localSongs, localAlbums, localArtists) = _modelMapper.ParseItemsResponse(jellyfinResult);
 
         // Score and filter Jellyfin results by relevance
-        var scoredLocalSongs = ScoreSearchResults(cleanQuery, localSongs, s => s.Title, s => s.Artist, isExternal: false);
-        var scoredLocalAlbums = ScoreSearchResults(cleanQuery, localAlbums, a => a.Title, a => a.Artist, isExternal: false);
-        var scoredLocalArtists = ScoreSearchResults(cleanQuery, localArtists, a => a.Name, _ => null, isExternal: false);
+        var scoredLocalSongs = ScoreSearchResults(cleanQuery, localSongs, s => s.Title, s => s.Artist, s => s.Album, isExternal: false);
+        var scoredLocalAlbums = ScoreSearchResults(cleanQuery, localAlbums, a => a.Title, a => a.Artist, _ => null, isExternal: false);
+        var scoredLocalArtists = ScoreSearchResults(cleanQuery, localArtists, a => a.Name, _ => null, _ => null, isExternal: false);
 
         // Score external results with a small boost
-        var scoredExternalSongs = ScoreSearchResults(cleanQuery, externalResult.Songs, s => s.Title, s => s.Artist, isExternal: true);
-        var scoredExternalAlbums = ScoreSearchResults(cleanQuery, externalResult.Albums, a => a.Title, a => a.Artist, isExternal: true);
-        var scoredExternalArtists = ScoreSearchResults(cleanQuery, externalResult.Artists, a => a.Name, _ => null, isExternal: true);
+        var scoredExternalSongs = ScoreSearchResults(cleanQuery, externalResult.Songs, s => s.Title, s => s.Artist, s => s.Album, isExternal: true);
+        var scoredExternalAlbums = ScoreSearchResults(cleanQuery, externalResult.Albums, a => a.Title, a => a.Artist, _ => null, isExternal: true);
+        var scoredExternalArtists = ScoreSearchResults(cleanQuery, externalResult.Artists, a => a.Name, _ => null, _ => null, isExternal: true);
 
         // Merge and sort by score (no filtering - just reorder by relevance)
         var allSongs = scoredLocalSongs.Concat(scoredExternalSongs)
@@ -1774,36 +1774,56 @@ public class JellyfinController : ControllerBase
     private static List<(T Item, int Score)> ScoreSearchResults<T>(
         string query,
         List<T> items,
-        Func<T, string> primaryField,
-        Func<T, string?> secondaryField,
+        Func<T, string> titleField,
+        Func<T, string?> artistField,
+        Func<T, string?> albumField,
         bool isExternal = false)
     {
         return items.Select(item =>
         {
-            var primary = primaryField(item) ?? "";
-            var secondary = secondaryField(item) ?? "";
+            var title = titleField(item) ?? "";
+            var artist = artistField(item) ?? "";
+            var album = albumField(item) ?? "";
 
-            // Score against primary field (title/name)
-            var primaryScore = FuzzyMatcher.CalculateSimilarity(query, primary);
+            var scores = new List<int>();
 
-            // Score against secondary field (artist) if provided
-            var secondaryScore = string.IsNullOrEmpty(secondary) 
-                ? 0 
-                : FuzzyMatcher.CalculateSimilarity(query, secondary);
+            // Individual field scores
+            scores.Add(FuzzyMatcher.CalculateSimilarity(query, title));
+            if (!string.IsNullOrEmpty(artist))
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, artist));
+            if (!string.IsNullOrEmpty(album))
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, album));
 
-            // Score against combined "title artist" and "artist title" for queries like "say why zach bryan"
-            var combinedScore = 0;
-            if (!string.IsNullOrEmpty(secondary))
+            // Two-field combinations
+            if (!string.IsNullOrEmpty(artist))
             {
-                var combined1 = $"{primary} {secondary}";
-                var combined2 = $"{secondary} {primary}";
-                var score1 = FuzzyMatcher.CalculateSimilarity(query, combined1);
-                var score2 = FuzzyMatcher.CalculateSimilarity(query, combined2);
-                combinedScore = Math.Max(score1, score2);
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {artist}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {title}"));
+            }
+            if (!string.IsNullOrEmpty(album))
+            {
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {album}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {title}"));
+            }
+            if (!string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(album))
+            {
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {album}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {artist}"));
+            }
+
+            // Three-field combinations (all permutations)
+            if (!string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(album))
+            {
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {artist} {album}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{title} {album} {artist}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {title} {album}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{artist} {album} {title}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {title} {artist}"));
+                scores.Add(FuzzyMatcher.CalculateSimilarity(query, $"{album} {artist} {title}"));
             }
 
             // Use the best score from all attempts
-            var baseScore = Math.Max(Math.Max(primaryScore, secondaryScore), combinedScore);
+            var baseScore = scores.Max();
 
             // Give external results a small boost (+5 points) to prioritize the larger catalog
             var finalScore = isExternal ? Math.Min(100, baseScore + 5) : baseScore;
