@@ -1643,10 +1643,11 @@ public class JellyfinController : ControllerBase
     /// <summary>
     /// Intercepts playlist items requests to inject Spotify playlist tracks.
     /// </summary>
-    [HttpGet("Playlists/{playlistId}/Items", Order = 5)]
-    [HttpGet("playlists/{playlistId}/items", Order = 5)]
+    [HttpGet("Playlists/{playlistId}/Items", Order = 1)]
+    [HttpGet("playlists/{playlistId}/items", Order = 1)]
     public async Task<IActionResult> GetPlaylistItems(string playlistId)
     {
+        _logger.LogInformation("=== GetPlaylistItems INTERCEPTED === playlistId={PlaylistId}", playlistId);
         return await GetPlaylistTracks(playlistId);
     }
 
