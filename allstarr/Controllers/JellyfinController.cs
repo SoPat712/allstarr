@@ -1659,6 +1659,38 @@ public class JellyfinController : ControllerBase
     [HttpPost("{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
+        // Intercept Spotify playlist requests
+        if (_spotifySettings.Enabled && 
+            path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) && 
+            path.EndsWith("/items", StringComparison.OrdinalIgnoreCase))
+        {
+            // Extract playlist ID from path: playlists/{id}/items
+            var parts = path.Split('/');
+            if (parts.Length == 3)
+            {
+                var playlistId = parts[1];
+                _logger.LogInformation("=== SPOTIFY INTERCEPTION === Checking playlist {PlaylistId}", playlistId);
+                
+                // Get playlist info from Jellyfin to check the name
+                var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
+                if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
+                {
+                    var playlistName = nameElement.GetString() ?? "";
+                    _logger.LogInformation("Playlist name: {PlaylistName}", playlistName);
+                    
+                    // Check if this matches any configured Spotify playlists
+                    var matchingConfig = _spotifySettings.Playlists
+                        .FirstOrDefault(p => p.Enabled && p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (matchingConfig != null)
+                    {
+                        _logger.LogInformation("=== INTERCEPTING SPOTIFY PLAYLIST === {PlaylistName}", playlistName);
+                        return await GetSpotifyPlaylistTracksAsync(matchingConfig.SpotifyName);
+                    }
+                }
+            }
+        }
+        
         // Handle non-JSON responses (robots.txt, etc.)
         if (path.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || 
             path.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
