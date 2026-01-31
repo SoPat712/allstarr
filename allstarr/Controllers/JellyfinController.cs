@@ -1270,7 +1270,7 @@ public class JellyfinController : ControllerBase
             {
                 // Get playlist info from Jellyfin to check the name
                 var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
-                if (playlistInfo != null && playlistInfo.TryGetProperty("Name", out var nameElement))
+                if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
                 {
                     var playlistName = nameElement.GetString() ?? "";
                     
