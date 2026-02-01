@@ -80,6 +80,7 @@ services:
       - SpotifyImport__SyncStartMinute=${SPOTIFY_IMPORT_SYNC_START_MINUTE:-15}
       - SpotifyImport__SyncWindowHours=${SPOTIFY_IMPORT_SYNC_WINDOW_HOURS:-2}
       - SpotifyImport__PlaylistIds=${SPOTIFY_IMPORT_PLAYLIST_IDS:-}
+      - SpotifyImport__PlaylistNames=${SPOTIFY_IMPORT_PLAYLIST_NAMES:-}
       
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
