@@ -1994,10 +1994,11 @@ public class JellyfinController : ControllerBase
         var results = new Dictionary<string, object>();
         
         // Hardcoded playlist names that match the Spotify Import plugin format
+        // Note: Plugin replaces spaces with underscores in filenames
         var playlistNames = new Dictionary<string, string>
         {
-            { "4383a46d8bcac3be2ef9385053ea18df", "Discover Weekly" },
-            { "ba50e26c867ec9d57ab2f7bf24cfd6b0", "Release Radar" }
+            { "4383a46d8bcac3be2ef9385053ea18df", "Discover_Weekly" },
+            { "ba50e26c867ec9d57ab2f7bf24cfd6b0", "Release_Radar" }
         };
         
         foreach (var playlistId in _spotifySettings.PlaylistIds)
