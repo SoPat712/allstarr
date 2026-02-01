@@ -174,6 +174,7 @@ if (backendType == BackendType.Jellyfin)
     builder.Services.AddSingleton<JellyfinModelMapper>();
     builder.Services.AddScoped<JellyfinProxyService>();
     builder.Services.AddScoped<JellyfinAuthFilter>();
+    builder.Services.AddScoped<allstarr.Filters.ApiKeyAuthFilter>();
 }
 else
 {

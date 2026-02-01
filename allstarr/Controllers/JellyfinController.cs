@@ -1979,9 +1979,10 @@ public class JellyfinController : ControllerBase
 
     /// <summary>
     /// Manual trigger endpoint to force fetch Spotify missing tracks.
-    /// GET /spotify/sync
+    /// GET /spotify/sync?api_key=YOUR_KEY
     /// </summary>
     [HttpGet("spotify/sync")]
+    [ServiceFilter(typeof(ApiKeyAuthFilter))]
     public async Task<IActionResult> TriggerSpotifySync()
     {
         if (!_spotifySettings.Enabled)
@@ -2110,9 +2111,10 @@ public class JellyfinController : ControllerBase
     
     /// <summary>
     /// Clear Spotify playlist cache to force re-matching.
-    /// GET /spotify/clear-cache
+    /// GET /spotify/clear-cache?api_key=YOUR_KEY
     /// </summary>
     [HttpGet("spotify/clear-cache")]
+    [ServiceFilter(typeof(ApiKeyAuthFilter))]
     public async Task<IActionResult> ClearSpotifyCache()
     {
         if (!_spotifySettings.Enabled)
