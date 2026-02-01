@@ -2010,8 +2010,8 @@ public class JellyfinController : ControllerBase
                 var httpClient = new HttpClient();
                 var found = false;
                 
-                // Search every 5 minutes for the last 24 hours
-                for (var time = searchStart; time <= now; time = time.AddMinutes(5))
+                // Search every minute for the last 24 hours (1440 attempts max)
+                for (var time = searchStart; time <= now; time = time.AddMinutes(1))
                 {
                     var filename = $"{playlistName}_missing_{time:yyyy-MM-dd_HH-mm}.json";
                     var url = $"{_settings.Url}/Viperinius.Plugin.SpotifyImport/MissingTracksFile" +
