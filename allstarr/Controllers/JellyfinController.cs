@@ -1949,8 +1949,43 @@ public class JellyfinController : ControllerBase
                 {
                     // Search with just title and artist for better matching
                     var query = $"{track.Title} {track.PrimaryArtist}";
-                    var results = await _metadataService.SearchSongsAsync(query, limit: 1);
-                    return results.FirstOrDefault();
+                    var results = await _metadataService.SearchSongsAsync(query, limit: 5);
+                    
+                    if (results.Count == 0)
+                        return null;
+                    
+                    // Fuzzy match to find best result
+                    var bestMatch = results
+                        .Select(song => new
+                        {
+                            Song = song,
+                            TitleScore = FuzzyMatcher.CalculateSimilarity(track.Title, song.Title),
+                            ArtistScore = FuzzyMatcher.CalculateSimilarity(track.PrimaryArtist, song.Artist),
+                            TotalScore = 0
+                        })
+                        .Select(x => new
+                        {
+                            x.Song,
+                            x.TitleScore,
+                            x.ArtistScore,
+                            TotalScore = (x.TitleScore * 0.6) + (x.ArtistScore * 0.4) // Weight title more
+                        })
+                        .OrderByDescending(x => x.TotalScore)
+                        .FirstOrDefault();
+                    
+                    // Only return if match is good enough (>60% combined score)
+                    if (bestMatch != null && bestMatch.TotalScore >= 60)
+                    {
+                        _logger.LogDebug("Matched '{Title}' by {Artist} -> '{MatchTitle}' by {MatchArtist} (score: {Score:F1})",
+                            track.Title, track.PrimaryArtist, 
+                            bestMatch.Song.Title, bestMatch.Song.Artist, 
+                            bestMatch.TotalScore);
+                        return bestMatch.Song;
+                    }
+                    
+                    _logger.LogDebug("No good match for '{Title}' by {Artist} (best score: {Score:F1})",
+                        track.Title, track.PrimaryArtist, bestMatch?.TotalScore ?? 0);
+                    return null;
                 }
                 catch (Exception ex)
                 {
