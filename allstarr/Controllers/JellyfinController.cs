@@ -1993,21 +1993,15 @@ public class JellyfinController : ControllerBase
         
         var results = new Dictionary<string, object>();
         
-        // Hardcoded playlist names that match the Spotify Import plugin format
-        // Note: Plugin replaces spaces with underscores in filenames
-        var playlistNames = new Dictionary<string, string>
+        for (int i = 0; i < _spotifySettings.PlaylistIds.Count; i++)
         {
-            { "4383a46d8bcac3be2ef9385053ea18df", "Discover_Weekly" },
-            { "ba50e26c867ec9d57ab2f7bf24cfd6b0", "Release_Radar" }
-        };
-        
-        foreach (var playlistId in _spotifySettings.PlaylistIds)
-        {
+            var playlistId = _spotifySettings.PlaylistIds[i];
+            
             try
             {
-                // Use hardcoded name or fall back to ID
-                var playlistName = playlistNames.ContainsKey(playlistId) 
-                    ? playlistNames[playlistId] 
+                // Use configured name if available, otherwise use ID
+                var playlistName = i < _spotifySettings.PlaylistNames.Count 
+                    ? _spotifySettings.PlaylistNames[i]
                     : playlistId;
                 
                 _logger.LogInformation("Fetching missing tracks for {Playlist} (ID: {Id})", playlistName, playlistId);

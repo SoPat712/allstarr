@@ -36,4 +36,12 @@ public class SpotifyImportSettings
     /// Get IDs from Jellyfin playlist URLs
     /// </summary>
     public List<string> PlaylistIds { get; set; } = new();
+    
+    /// <summary>
+    /// Comma-separated list of playlist names (must match Spotify Import plugin format)
+    /// Example: "Discover_Weekly,Release_Radar"
+    /// Must be in same order as PlaylistIds
+    /// Plugin replaces spaces with underscores in filenames
+    /// </summary>
+    public List<string> PlaylistNames { get; set; } = new();
 }
