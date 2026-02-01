@@ -2003,17 +2003,15 @@ public class JellyfinController : ControllerBase
                 
                 _logger.LogInformation("Fetching missing tracks for {Playlist} (ID: {Id})", playlistName, playlistId);
                 
-                // Try to fetch the missing tracks file
-                var today = DateTime.UtcNow.Date;
-                var syncStart = today
-                    .AddHours(_spotifySettings.SyncStartHour)
-                    .AddMinutes(_spotifySettings.SyncStartMinute);
-                var syncEnd = syncStart.AddHours(_spotifySettings.SyncWindowHours);
+                // Try to fetch the missing tracks file - search last 24 hours
+                var now = DateTime.UtcNow;
+                var searchStart = now.AddHours(-24);
                 
                 var httpClient = new HttpClient();
                 var found = false;
                 
-                for (var time = syncStart; time <= syncEnd; time = time.AddMinutes(5))
+                // Search every 5 minutes for the last 24 hours
+                for (var time = searchStart; time <= now; time = time.AddMinutes(5))
                 {
                     var filename = $"{playlistName}_missing_{time:yyyy-MM-dd_HH-mm}.json";
                     var url = $"{_settings.Url}/Viperinius.Plugin.SpotifyImport/MissingTracksFile" +
@@ -2021,6 +2019,7 @@ public class JellyfinController : ControllerBase
                     
                     try
                     {
+                        _logger.LogDebug("Trying {Filename}", filename);
                         var response = await httpClient.GetAsync(url);
                         if (response.IsSuccessStatusCode)
                         {
@@ -2038,8 +2037,8 @@ public class JellyfinController : ControllerBase
                                     filename = filename 
                                 };
                                 
-                                _logger.LogInformation("✓ Cached {Count} missing tracks for {Playlist}", 
-                                    tracks.Count, playlistName);
+                                _logger.LogInformation("✓ Cached {Count} missing tracks for {Playlist} from {Filename}", 
+                                    tracks.Count, playlistName, filename);
                                 found = true;
                                 break;
                             }
