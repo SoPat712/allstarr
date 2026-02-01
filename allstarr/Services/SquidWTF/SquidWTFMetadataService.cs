@@ -78,11 +78,18 @@ public class SquidWTFMetadataService : IMusicMetadataService
             
             if (!response.IsSuccessStatusCode)
             {
-                return new List<Song>();
+                throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
             var json = await response.Content.ReadAsStringAsync();
+            
+            // Check for error in response body
             var result = JsonDocument.Parse(json);
+            if (result.RootElement.TryGetProperty("detail", out _) || 
+                result.RootElement.TryGetProperty("error", out _))
+            {
+                throw new HttpRequestException("API returned error response");
+            }
             
             var songs = new List<Song>();
             if (result.RootElement.TryGetProperty("data", out var data) &&
