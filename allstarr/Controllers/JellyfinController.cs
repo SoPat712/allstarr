@@ -1946,7 +1946,7 @@ public class JellyfinController : ControllerBase
             {
                 foreach (var item in items.EnumerateArray())
                 {
-                    var song = _modelMapper.MapToSong(item);
+                    var song = _modelMapper.ParseSong(item);
                     existingTracks.Add(song);
                     
                     // Track Spotify IDs to avoid duplicates
