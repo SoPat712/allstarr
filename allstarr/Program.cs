@@ -124,12 +124,24 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
             .ToList();
     }
     
+    // Parse SPOTIFY_IMPORT_PLAYLIST_NAMES env var (comma-separated) into PlaylistNames array
+    var playlistNamesEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistNames");
+    if (!string.IsNullOrWhiteSpace(playlistNamesEnv) && options.PlaylistNames.Count == 0)
+    {
+        options.PlaylistNames = playlistNamesEnv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(name => name.Trim())
+            .Where(name => !string.IsNullOrEmpty(name))
+            .ToList();
+    }
+    
     // Log configuration at startup
     Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, SyncHour={options.SyncStartHour}:{options.SyncStartMinute:D2}, WindowHours={options.SyncWindowHours}");
     Console.WriteLine($"Spotify Import Playlist IDs: {options.PlaylistIds.Count} configured");
-    foreach (var id in options.PlaylistIds)
+    for (int i = 0; i < options.PlaylistIds.Count; i++)
     {
-        Console.WriteLine($"  - {id}");
+        var name = i < options.PlaylistNames.Count ? options.PlaylistNames[i] : options.PlaylistIds[i];
+        Console.WriteLine($"  - {name} (ID: {options.PlaylistIds[i]})");
     }
 });
 
