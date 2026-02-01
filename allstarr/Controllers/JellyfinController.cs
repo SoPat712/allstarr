@@ -2105,5 +2105,34 @@ public class JellyfinController : ControllerBase
     }
 
     #endregion
+    
+    #region Spotify Debug
+    
+    /// <summary>
+    /// Clear Spotify playlist cache to force re-matching.
+    /// GET /spotify/clear-cache
+    /// </summary>
+    [HttpGet("spotify/clear-cache")]
+    public async Task<IActionResult> ClearSpotifyCache()
+    {
+        if (!_spotifySettings.Enabled)
+        {
+            return BadRequest(new { error = "Spotify Import is not enabled" });
+        }
+
+        var cleared = new List<string>();
+        
+        foreach (var playlistName in _spotifySettings.PlaylistNames)
+        {
+            var matchedKey = $"spotify:matched:{playlistName}";
+            await _cache.DeleteAsync(matchedKey);
+            cleared.Add(playlistName);
+            _logger.LogInformation("Cleared cache for {Playlist}", playlistName);
+        }
+        
+        return Ok(new { status = "success", cleared = cleared });
+    }
+    
+    #endregion
 }
 // force rebuild Sun Jan 25 13:22:47 EST 2026
