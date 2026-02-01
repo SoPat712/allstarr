@@ -1947,7 +1947,8 @@ public class JellyfinController : ControllerBase
             {
                 try
                 {
-                    var query = $"{track.Title} {track.AllArtists} {track.Album}";
+                    // Search with just title and artist for better matching
+                    var query = $"{track.Title} {track.PrimaryArtist}";
                     var results = await _metadataService.SearchSongsAsync(query, limit: 1);
                     return results.FirstOrDefault();
                 }
