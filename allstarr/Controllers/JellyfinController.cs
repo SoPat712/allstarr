@@ -10,6 +10,7 @@ using allstarr.Services.Local;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Subsonic;
 using allstarr.Services.Lyrics;
+using allstarr.Filters;
 
 namespace allstarr.Controllers;
 
