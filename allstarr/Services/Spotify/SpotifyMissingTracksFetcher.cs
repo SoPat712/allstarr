@@ -111,27 +111,15 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     {
         _playlistIdToName.Clear();
         
-        using var scope = _serviceProvider.CreateScope();
-        var proxyService = scope.ServiceProvider.GetRequiredService<JellyfinProxyService>();
-        
-        foreach (var playlistId in _spotifySettings.Value.PlaylistIds)
+        // Use configured playlist names instead of fetching from API
+        for (int i = 0; i < _spotifySettings.Value.PlaylistIds.Count; i++)
         {
-            try
-            {
-                var playlistInfo = await proxyService.GetJsonAsync($"Items/{playlistId}", null, null);
-                if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
-                {
-                    var name = nameElement.GetString() ?? "";
-                    if (!string.IsNullOrEmpty(name))
-                    {
-                        _playlistIdToName[playlistId] = name;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to get name for playlist {PlaylistId}", playlistId);
-            }
+            var playlistId = _spotifySettings.Value.PlaylistIds[i];
+            var playlistName = i < _spotifySettings.Value.PlaylistNames.Count
+                ? _spotifySettings.Value.PlaylistNames[i]
+                : playlistId; // Fallback to ID if name not configured
+            
+            _playlistIdToName[playlistId] = playlistName;
         }
     }
 
