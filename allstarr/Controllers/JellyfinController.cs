@@ -1977,6 +1977,131 @@ public class JellyfinController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Manual trigger endpoint to force fetch Spotify missing tracks.
+    /// GET /spotify/sync
+    /// </summary>
+    [HttpGet("spotify/sync")]
+    public async Task<IActionResult> TriggerSpotifySync()
+    {
+        if (!_spotifySettings.Enabled)
+        {
+            return BadRequest(new { error = "Spotify Import is not enabled" });
+        }
+
+        _logger.LogInformation("Manual Spotify sync triggered");
+        
+        var results = new Dictionary<string, object>();
+        
+        foreach (var playlistId in _spotifySettings.PlaylistIds)
+        {
+            try
+            {
+                // Get playlist name
+                var playlistInfo = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
+                var playlistName = playlistInfo?.RootElement.GetProperty("Name").GetString() ?? playlistId;
+                
+                _logger.LogInformation("Fetching missing tracks for {Playlist} (ID: {Id})", playlistName, playlistId);
+                
+                // Try to fetch the missing tracks file
+                var today = DateTime.UtcNow.Date;
+                var syncStart = today
+                    .AddHours(_spotifySettings.SyncStartHour)
+                    .AddMinutes(_spotifySettings.SyncStartMinute);
+                var syncEnd = syncStart.AddHours(_spotifySettings.SyncWindowHours);
+                
+                var httpClient = new HttpClient();
+                var found = false;
+                
+                for (var time = syncStart; time <= syncEnd; time = time.AddMinutes(5))
+                {
+                    var filename = $"{playlistName}_missing_{time:yyyy-MM-dd_HH-mm}.json";
+                    var url = $"{_settings.Url}/Viperinius.Plugin.SpotifyImport/MissingTracksFile" +
+                             $"?name={Uri.EscapeDataString(filename)}&api_key={_settings.ApiKey}";
+                    
+                    try
+                    {
+                        var response = await httpClient.GetAsync(url);
+                        if (response.IsSuccessStatusCode)
+                        {
+                            var json = await response.Content.ReadAsStringAsync();
+                            var tracks = ParseMissingTracksJson(json);
+                            
+                            if (tracks.Count > 0)
+                            {
+                                var cacheKey = $"spotify:missing:{playlistName}";
+                                await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromHours(24));
+                                
+                                results[playlistName] = new { 
+                                    status = "success", 
+                                    tracks = tracks.Count, 
+                                    filename = filename 
+                                };
+                                
+                                _logger.LogInformation("✓ Cached {Count} missing tracks for {Playlist}", 
+                                    tracks.Count, playlistName);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to fetch {Filename}", filename);
+                    }
+                }
+                
+                if (!found)
+                {
+                    results[playlistName] = new { status = "not_found", message = "No missing tracks file found" };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error syncing playlist {PlaylistId}", playlistId);
+                results[playlistId] = new { status = "error", message = ex.Message };
+            }
+        }
+        
+        return Ok(results);
+    }
+    
+    private List<allstarr.Models.Spotify.MissingTrack> ParseMissingTracksJson(string json)
+    {
+        var tracks = new List<allstarr.Models.Spotify.MissingTrack>();
+        
+        try
+        {
+            var doc = JsonDocument.Parse(json);
+            
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                var track = new allstarr.Models.Spotify.MissingTrack
+                {
+                    SpotifyId = item.GetProperty("Id").GetString() ?? "",
+                    Title = item.GetProperty("Name").GetString() ?? "",
+                    Album = item.GetProperty("AlbumName").GetString() ?? "",
+                    Artists = item.GetProperty("ArtistNames")
+                        .EnumerateArray()
+                        .Select(a => a.GetString() ?? "")
+                        .Where(a => !string.IsNullOrEmpty(a))
+                        .ToList()
+                };
+                
+                if (!string.IsNullOrEmpty(track.Title))
+                {
+                    tracks.Add(track);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to parse missing tracks JSON");
+        }
+        
+        return tracks;
+    }
+
     #endregion
 }
 // force rebuild Sun Jan 25 13:22:47 EST 2026
