@@ -1,0 +1,3054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Allstarr Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --accent-hover: #79c0ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --error: #f85149;
+            --border: #30363d;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        h1 .version {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: normal;
+        }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .status-badge.success { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+        .status-badge.warning { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .status-badge.error { background: rgba(248, 81, 73, 0.2); color: var(--error); }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .card h2 .actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: var(--text-secondary);
+        }
+        
+        .stat-value {
+            font-weight: 500;
+        }
+        
+        .stat-value.success { color: var(--success); }
+        .stat-value.warning { color: var(--warning); }
+        .stat-value.error { color: var(--error); }
+        
+        button {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background: var(--border);
+        }
+        
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        
+        button.primary:hover {
+            background: var(--accent-hover);
+        }
+        
+        button.danger {
+            background: rgba(248, 81, 73, 0.15);
+            border-color: var(--error);
+            color: var(--error);
+        }
+        
+        button.danger:hover {
+            background: rgba(248, 81, 73, 0.3);
+        }
+        
+        .playlist-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .playlist-table th,
+        .playlist-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .playlist-table th {
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+        
+        .playlist-table tr:hover td {
+            background: var(--bg-tertiary);
+        }
+        
+        .playlist-table .track-count {
+            font-family: monospace;
+            color: var(--accent);
+        }
+        
+        .playlist-table .cache-age {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        
+        input, select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        input::placeholder {
+            color: var(--text-secondary);
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 120px auto;
+            gap: 8px;
+            align-items: end;
+        }
+        
+        .form-row label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        
+        .config-section {
+            margin-bottom: 24px;
+        }
+        
+        .config-section h3 {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .config-item {
+            display: grid;
+            grid-template-columns: 200px 1fr auto;
+            gap: 16px;
+            align-items: center;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        
+        .config-item .label {
+            font-weight: 500;
+        }
+        
+        .config-item .value {
+            font-family: monospace;
+            color: var(--text-secondary);
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .toast.success { border-color: var(--success); }
+        .toast.error { border-color: var(--error); }
+        .toast.warning { border-color: var(--warning); }
+        .toast.info { border-color: var(--accent); }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .restart-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-primary);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .restart-overlay.active {
+            display: flex;
+        }
+        
+        .restart-overlay .spinner-large {
+            width: 48px;
+            height: 48px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        .restart-overlay h2 {
+            color: var(--text-primary);
+            font-size: 1.5rem;
+        }
+        
+        .restart-overlay p {
+            color: var(--text-secondary);
+        }
+        
+        .restart-banner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: var(--warning);
+            color: var(--bg-primary);
+            padding: 12px 20px;
+            text-align: center;
+            font-weight: 500;
+            z-index: 9998;
+            display: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        
+        .restart-banner.active {
+            display: block;
+        }
+        
+        .restart-banner button {
+            margin-left: 16px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: none;
+            padding: 6px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .restart-banner button:hover {
+            background: var(--bg-secondary);
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 75%;
+            width: 75%;
+            max-height: 65vh;
+            overflow-y: auto;
+        }
+        
+        .modal-content h3 {
+            margin-bottom: 20px;
+        }
+        
+        .modal-content .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .modal-content .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--text-secondary);
+        }
+        
+        .modal-content .form-group input,
+        .modal-content .form-group select {
+            width: 100%;
+        }
+        
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 24px;
+        }
+        
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .tab:hover {
+            color: var(--text-primary);
+        }
+        
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .tracks-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .track-item {
+            display: grid;
+            grid-template-columns: 40px 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .track-item:hover {
+            background: var(--bg-tertiary);
+        }
+        
+        .track-position {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            text-align: center;
+        }
+        
+        .track-info h4 {
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+        
+        .track-info .artists {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+        
+        .track-meta {
+            text-align: right;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+        
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 12px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Restart Required Banner -->
+    <div class="restart-banner" id="restart-banner">
+        ⚠️ Configuration changed. Restart required to apply changes.
+        <button onclick="restartContainer()">Restart Now</button>
+        <button onclick="dismissRestartBanner()" style="background: transparent; border: 1px solid var(--bg-primary);">Dismiss</button>
+    </div>
+    
+    <div class="container">
+        <header>
+            <h1>
+                Allstarr <span class="version" id="version">v1.0.0</span>
+            </h1>
+            <div id="status-indicator">
+                <span class="status-badge" id="spotify-status">
+                    <span class="status-dot"></span>
+                    <span>Loading...</span>
+                </span>
+            </div>
+        </header>
+        
+        <div class="tabs">
+            <div class="tab active" data-tab="dashboard">Dashboard</div>
+            <div class="tab" data-tab="jellyfin-playlists">Link Playlists</div>
+            <div class="tab" data-tab="playlists">Active Playlists</div>
+            <div class="tab" data-tab="config">Configuration</div>
+            <div class="tab" data-tab="endpoints">API Analytics</div>
+        </div>
+        
+        <!-- Dashboard Tab -->
+        <div class="tab-content active" id="tab-dashboard">
+            <div class="grid">
+                <div class="card">
+                    <h2>Spotify API</h2>
+                    <div class="stat-row">
+                        <span class="stat-label">Status</span>
+                        <span class="stat-value" id="spotify-auth-status">Loading...</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">User</span>
+                        <span class="stat-value" id="spotify-user">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Cookie Age</span>
+                        <span class="stat-value" id="spotify-cookie-age">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Cache Duration</span>
+                        <span class="stat-value" id="cache-duration">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">ISRC Matching</span>
+                        <span class="stat-value" id="isrc-matching">-</span>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h2>Jellyfin</h2>
+                    <div class="stat-row">
+                        <span class="stat-label">Backend</span>
+                        <span class="stat-value" id="backend-type">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">URL</span>
+                        <span class="stat-value" id="jellyfin-url">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Playlists</span>
+                        <span class="stat-value" id="playlist-count">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>
+                    Quick Actions
+                </h2>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <button class="primary" onclick="refreshPlaylists()">Refresh All Playlists</button>
+                    <button onclick="clearCache()">Clear Cache</button>
+                    <button onclick="openAddPlaylist()">Add Playlist</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Link Playlists Tab -->
+        <div class="tab-content" id="tab-jellyfin-playlists">
+            <div class="card">
+                <h2>
+                    Link Jellyfin Playlists to Spotify
+                    <div class="actions">
+                        <button onclick="fetchJellyfinPlaylists()">Refresh</button>
+                    </div>
+                </h2>
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Connect your Jellyfin playlists to Spotify playlists. Allstarr will automatically fill in missing tracks from Spotify using your preferred music service (SquidWTF/Deezer/Qobuz).
+                    <br><strong>Tip:</strong> Use the sp_dc cookie method for best results - it's simpler and more reliable.
+                </p>
+                
+                <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+                    <div class="form-group" style="margin: 0; flex: 1; min-width: 200px;">
+                        <label style="display: block; margin-bottom: 4px; color: var(--text-secondary); font-size: 0.85rem;">User</label>
+                        <select id="jellyfin-user-select" onchange="fetchJellyfinPlaylists()" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);">
+                            <option value="">All Users</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Local</th>
+                            <th>External</th>
+                            <th>Linked Spotify ID</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="jellyfin-playlist-table-body">
+                        <tr>
+                            <td colspan="6" class="loading">
+                                <span class="spinner"></span> Loading Jellyfin playlists...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Active Playlists Tab -->
+        <div class="tab-content" id="tab-playlists">
+            <!-- Warning Banner (hidden by default) -->
+            <div id="matching-warning-banner" style="display:none;background:#f59e0b;color:#000;padding:16px;border-radius:8px;margin-bottom:16px;font-weight:600;text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                ⚠️ TRACK MATCHING IN PROGRESS - Please wait for matching to complete before making changes to playlists or mappings!
+            </div>
+            
+            <div class="card">
+                <h2>
+                    Active Spotify Playlists
+                    <div class="actions">
+                        <button onclick="matchAllPlaylists()" title="Match tracks for all playlists against your local library and external providers. This may take several minutes.">Match All Tracks</button>
+                        <button onclick="refreshPlaylists()" title="Fetch the latest playlist data from Spotify without re-matching tracks.">Refresh All</button>
+                        <button onclick="refreshAndMatchAll()" title="Clear caches, fetch fresh data from Spotify, and match all tracks. This is a full rebuild and may take several minutes." style="background:var(--accent);border-color:var(--accent);">Refresh & Match All</button>
+                    </div>
+                </h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                    These are the Spotify playlists currently being monitored and filled with tracks from your music service.
+                </p>
+                <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Spotify ID</th>
+                            <th>Tracks</th>
+                            <th>Completion</th>
+                            <th>Cache Age</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="playlist-table-body">
+                        <tr>
+                            <td colspan="6" class="loading">
+                                <span class="spinner"></span> Loading playlists...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Manual Track Mappings Section -->
+            <div class="card">
+                <h2>
+                    Manual Track Mappings
+                    <div class="actions">
+                        <button onclick="fetchTrackMappings()">Refresh</button>
+                    </div>
+                </h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                    Manual mappings override automatic matching for external providers (SquidWTF, Deezer, Qobuz). For local Jellyfin tracks, use the Spotify Import plugin instead.
+                </p>
+                <div id="mappings-summary" style="display: flex; gap: 20px; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 6px;">
+                    <div>
+                        <span style="color: var(--text-secondary);">Total:</span>
+                        <span style="font-weight: 600; margin-left: 8px;" id="mappings-total">0</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">External:</span>
+                        <span style="font-weight: 600; margin-left: 8px; color: var(--success);" id="mappings-external">0</span>
+                    </div>
+                </div>
+                <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Playlist</th>
+                            <th>Spotify ID</th>
+                            <th>Type</th>
+                            <th>Target</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="mappings-table-body">
+                        <tr>
+                            <td colspan="6" class="loading">
+                                <span class="spinner"></span> Loading mappings...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Missing Tracks Section -->
+            <div class="card">
+                <h2>
+                    Missing Tracks (All Playlists)
+                    <div class="actions">
+                        <button onclick="fetchMissingTracks()">Refresh</button>
+                    </div>
+                </h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                    Tracks that couldn't be matched locally or externally. Map them manually to add them to your playlists.
+                </p>
+                <div id="missing-summary" style="display: flex; gap: 20px; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 6px;">
+                    <div>
+                        <span style="color: var(--text-secondary);">Total Missing:</span>
+                        <span style="font-weight: 600; margin-left: 8px; color: var(--warning);" id="missing-total">0</span>
+                    </div>
+                </div>
+                <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Playlist</th>
+                            <th>Track</th>
+                            <th>Artist</th>
+                            <th>Album</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="missing-tracks-table-body">
+                        <tr>
+                            <td colspan="5" class="loading">
+                                <span class="spinner"></span> Loading missing tracks...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Kept Downloads Section -->
+            <div class="card">
+                <h2>
+                    Kept Downloads
+                    <div class="actions">
+                        <button onclick="fetchDownloads()">Refresh</button>
+                    </div>
+                </h2>
+                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                    Downloaded files stored permanently. Download or delete individual tracks.
+                </p>
+                <div id="downloads-summary" style="display: flex; gap: 20px; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 6px;">
+                    <div>
+                        <span style="color: var(--text-secondary);">Total Files:</span>
+                        <span style="font-weight: 600; margin-left: 8px; color: var(--accent);" id="downloads-count">0</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">Total Size:</span>
+                        <span style="font-weight: 600; margin-left: 8px; color: var(--accent);" id="downloads-size">0 B</span>
+                    </div>
+                </div>
+                <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Artist</th>
+                            <th>Album</th>
+                            <th>File</th>
+                            <th>Size</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="downloads-table-body">
+                        <tr>
+                            <td colspan="5" class="loading">
+                                <span class="spinner"></span> Loading downloads...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Configuration Tab -->
+        <div class="tab-content" id="tab-config">
+            <div class="card">
+                <h2>Spotify API Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">API Enabled</span>
+                        <span class="value" id="config-spotify-enabled">-</span>
+                        <button onclick="openEditSetting('SPOTIFY_API_ENABLED', 'Spotify API Enabled', 'toggle')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Session Cookie (sp_dc)</span>
+                        <span class="value" id="config-spotify-cookie">-</span>
+                        <button onclick="openEditSetting('SPOTIFY_API_SESSION_COOKIE', 'Spotify Session Cookie', 'password', 'Get from browser dev tools while logged into Spotify. Cookie typically lasts ~1 year.')">Update</button>
+                    </div>
+                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
+                        <span class="label">Cookie Age</span>
+                        <span class="value" id="config-cookie-age">-</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Cache Duration</span>
+                        <span class="value" id="config-cache-duration">-</span>
+                        <button onclick="openEditSetting('SPOTIFY_API_CACHE_DURATION_MINUTES', 'Cache Duration (minutes)', 'number')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">ISRC Matching</span>
+                        <span class="value" id="config-isrc-matching">-</span>
+                        <button onclick="openEditSetting('SPOTIFY_API_PREFER_ISRC_MATCHING', 'Prefer ISRC Matching', 'toggle')">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Deezer Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">ARL Token</span>
+                        <span class="value" id="config-deezer-arl">-</span>
+                        <button onclick="openEditSetting('DEEZER_ARL', 'Deezer ARL Token', 'password', 'Get from browser cookies while logged into Deezer')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Quality</span>
+                        <span class="value" id="config-deezer-quality">-</span>
+                        <button onclick="openEditSetting('DEEZER_QUALITY', 'Deezer Quality', 'select', '', ['FLAC', 'MP3_320', 'MP3_128'])">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>SquidWTF / Tidal Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Quality</span>
+                        <span class="value" id="config-squid-quality">-</span>
+                        <button onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', '', ['LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>MusicBrainz Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Enabled</span>
+                        <span class="value" id="config-musicbrainz-enabled">-</span>
+                        <button onclick="openEditSetting('MUSICBRAINZ_ENABLED', 'MusicBrainz Enabled', 'select', '', ['true', 'false'])">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Username</span>
+                        <span class="value" id="config-musicbrainz-username">-</span>
+                        <button onclick="openEditSetting('MUSICBRAINZ_USERNAME', 'MusicBrainz Username', 'text', 'Your MusicBrainz username')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Password</span>
+                        <span class="value" id="config-musicbrainz-password">-</span>
+                        <button onclick="openEditSetting('MUSICBRAINZ_PASSWORD', 'MusicBrainz Password', 'password', 'Your MusicBrainz password')">Update</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Qobuz Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">User Auth Token</span>
+                        <span class="value" id="config-qobuz-token">-</span>
+                        <button onclick="openEditSetting('QOBUZ_USER_AUTH_TOKEN', 'Qobuz User Auth Token', 'password', 'Get from browser while logged into Qobuz')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Quality</span>
+                        <span class="value" id="config-qobuz-quality">-</span>
+                        <button onclick="openEditSetting('QOBUZ_QUALITY', 'Qobuz Quality', 'select', '', ['FLAC_24_192', 'FLAC_24_96', 'FLAC_16_44', 'MP3_320'])">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Jellyfin Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">URL</span>
+                        <span class="value" id="config-jellyfin-url">-</span>
+                        <button onclick="openEditSetting('JELLYFIN_URL', 'Jellyfin URL', 'text')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">API Key</span>
+                        <span class="value" id="config-jellyfin-api-key">-</span>
+                        <button onclick="openEditSetting('JELLYFIN_API_KEY', 'Jellyfin API Key', 'password')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">User ID</span>
+                        <span class="value" id="config-jellyfin-user-id">-</span>
+                        <button onclick="openEditSetting('JELLYFIN_USER_ID', 'Jellyfin User ID', 'text', 'Required for playlist operations. Get from Jellyfin user profile URL: userId=...')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Library ID</span>
+                        <span class="value" id="config-jellyfin-library-id">-</span>
+                        <button onclick="openEditSetting('JELLYFIN_LIBRARY_ID', 'Jellyfin Library ID', 'text')">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Library Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Download Path (Cache)</span>
+                        <span class="value" id="config-download-path">-</span>
+                        <button onclick="openEditSetting('LIBRARY_DOWNLOAD_PATH', 'Download Path', 'text')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Kept Path (Favorited)</span>
+                        <span class="value" id="config-kept-path">-</span>
+                        <button onclick="openEditSetting('LIBRARY_KEPT_PATH', 'Kept Path', 'text')">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Sync Schedule</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Sync Start Time</span>
+                        <span class="value" id="config-sync-time">-</span>
+                        <button onclick="openEditSetting('SPOTIFY_IMPORT_SYNC_START_HOUR', 'Sync Start Hour (0-23)', 'number')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Sync Window</span>
+                        <span class="value" id="config-sync-window">-</span>
+                        <button onclick="openEditSetting('SPOTIFY_IMPORT_SYNC_WINDOW_HOURS', 'Sync Window (hours)', 'number')">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Configuration Backup</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Export your .env configuration for backup or import a previously saved configuration.
+                </p>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <button onclick="exportEnv()">📥 Export .env</button>
+                    <button onclick="document.getElementById('import-env-input').click()">📤 Import .env</button>
+                    <input type="file" id="import-env-input" accept=".env" style="display:none" onchange="importEnv(event)">
+                </div>
+            </div>
+            
+            <div class="card" style="background: rgba(248, 81, 73, 0.1); border-color: var(--error);">
+                <h2 style="color: var(--error);">Danger Zone</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    These actions can affect your data. Use with caution.
+                </p>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    <button class="danger" onclick="clearCache()">Clear All Cache</button>
+                    <button class="danger" onclick="restartContainer()">Restart Container</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- API Analytics Tab -->
+        <div class="tab-content" id="tab-endpoints">
+            <div class="card">
+                <h2>
+                    API Endpoint Usage
+                    <div class="actions">
+                        <button onclick="fetchEndpointUsage()">Refresh</button>
+                        <button class="danger" onclick="clearEndpointUsage()">Clear Data</button>
+                    </div>
+                </h2>
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Track which Jellyfin API endpoints are being called most frequently. Useful for debugging and understanding client behavior.
+                </p>
+                
+                <div id="endpoints-summary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px;">
+                    <div style="background: var(--bg-tertiary); padding: 16px; border-radius: 8px;">
+                        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 4px;">Total Requests</div>
+                        <div style="font-size: 1.8rem; font-weight: 600; color: var(--accent);" id="endpoints-total-requests">0</div>
+                    </div>
+                    <div style="background: var(--bg-tertiary); padding: 16px; border-radius: 8px;">
+                        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 4px;">Unique Endpoints</div>
+                        <div style="font-size: 1.8rem; font-weight: 600; color: var(--success);" id="endpoints-unique-count">0</div>
+                    </div>
+                    <div style="background: var(--bg-tertiary); padding: 16px; border-radius: 8px;">
+                        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 4px;">Most Called</div>
+                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary); word-break: break-all;" id="endpoints-most-called">-</div>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 0.9rem;">Show Top</label>
+                    <select id="endpoints-top-select" onchange="fetchEndpointUsage()" style="padding: 8px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);">
+                        <option value="25">Top 25</option>
+                        <option value="50" selected>Top 50</option>
+                        <option value="100">Top 100</option>
+                        <option value="500">Top 500</option>
+                    </select>
+                </div>
+                
+                <div style="max-height: 600px; overflow-y: auto;">
+                    <table class="playlist-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 60px;">#</th>
+                                <th>Endpoint</th>
+                                <th style="width: 120px; text-align: right;">Requests</th>
+                                <th style="width: 120px; text-align: right;">% of Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="endpoints-table-body">
+                            <tr>
+                                <td colspan="4" class="loading">
+                                    <span class="spinner"></span> Loading endpoint usage data...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>About Endpoint Tracking</h2>
+                <p style="color: var(--text-secondary); line-height: 1.6;">
+                    Allstarr logs every Jellyfin API endpoint call to help you understand how clients interact with your server. 
+                    This data is stored in <code style="background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px;">/app/cache/endpoint-usage/endpoints.csv</code> 
+                    and persists across restarts.
+                    <br><br>
+                    <strong>Common Endpoints:</strong>
+                    <ul style="margin-top: 8px; margin-left: 20px;">
+                        <li><code>/Users/{userId}/Items</code> - Browse library items</li>
+                        <li><code>/Items/{itemId}</code> - Get item details</li>
+                        <li><code>/Audio/{itemId}/stream</code> - Stream audio</li>
+                        <li><code>/Sessions/Playing</code> - Report playback status</li>
+                        <li><code>/Search/Hints</code> - Search functionality</li>
+                    </ul>
+                </p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add Playlist Modal -->
+    <div class="modal" id="add-playlist-modal">
+        <div class="modal-content">
+            <h3>Add Playlist</h3>
+            <div class="form-group">
+                <label>Playlist Name</label>
+                <input type="text" id="new-playlist-name" placeholder="e.g., Release Radar">
+            </div>
+            <div class="form-group">
+                <label>Spotify Playlist ID</label>
+                <input type="text" id="new-playlist-id" placeholder="Get from Spotify Import plugin">
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeModal('add-playlist-modal')">Cancel</button>
+                <button class="primary" onclick="addPlaylist()">Add Playlist</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Edit Setting Modal -->
+    <div class="modal" id="edit-setting-modal">
+        <div class="modal-content">
+            <h3 id="edit-setting-title">Edit Setting</h3>
+            <p id="edit-setting-help" style="color: var(--text-secondary); margin-bottom: 16px; display: none;"></p>
+            <div class="form-group">
+                <label id="edit-setting-label">Value</label>
+                <div id="edit-setting-input-container">
+                    <input type="text" id="edit-setting-value" placeholder="Enter value">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeModal('edit-setting-modal')">Cancel</button>
+                <button class="primary" onclick="saveEditSetting()">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Track List Modal -->
+    <div class="modal" id="tracks-modal">
+        <div class="modal-content" style="max-width: 90%; width: 90%;">
+            <h3 id="tracks-modal-title">Playlist Tracks</h3>
+            <div class="tracks-list" id="tracks-list">
+                <div class="loading">
+                    <span class="spinner"></span> Loading tracks...
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeModal('tracks-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Manual Track Mapping Modal -->
+    <div class="modal" id="manual-map-modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h3>Map Track to External Provider</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                Map this track to an external provider (SquidWTF, Deezer, or Qobuz). For local Jellyfin tracks, use the Spotify Import plugin instead.
+            </p>
+            
+            <!-- Track Info -->
+            <div class="form-group">
+                <label>Spotify Track (Position <span id="map-position"></span>)</label>
+                <div style="background: var(--bg-primary); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+                    <strong id="map-spotify-title"></strong><br>
+                    <span style="color: var(--text-secondary);" id="map-spotify-artist"></span>
+                </div>
+            </div>
+            
+            <!-- External Mapping Section -->
+            <div id="external-mapping-section">
+                <div class="form-group">
+                    <label>External Provider</label>
+                    <select id="map-external-provider" style="width: 100%;">
+                        <option value="SquidWTF">SquidWTF</option>
+                        <option value="Deezer">Deezer</option>
+                        <option value="Qobuz">Qobuz</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>External Provider ID</label>
+                    <input type="text" id="map-external-id" placeholder="Enter the provider-specific track ID..." oninput="validateExternalMapping()">
+                    <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+                        For SquidWTF: Use the track ID from the search results or URL<br>
+                        For Deezer: Use the track ID from Deezer URLs<br>
+                        For Qobuz: Use the track ID from Qobuz URLs
+                    </small>
+                </div>
+            </div>
+            
+            <input type="hidden" id="map-playlist-name">
+            <input type="hidden" id="map-spotify-id">
+            <div class="modal-actions">
+                <button onclick="closeModal('manual-map-modal')">Cancel</button>
+                <button class="primary" onclick="saveManualMapping()" id="map-save-btn" disabled>Save Mapping</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Link Playlist Modal -->
+    <div class="modal" id="link-playlist-modal">
+        <div class="modal-content">
+            <h3>Link to Spotify Playlist</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                Enter the Spotify playlist ID or URL. Allstarr will automatically download missing tracks from your configured music service.
+            </p>
+            <div class="form-group">
+                <label>Jellyfin Playlist</label>
+                <input type="text" id="link-jellyfin-name" readonly style="background: var(--bg-primary);">
+                <input type="hidden" id="link-jellyfin-id">
+            </div>
+            <div class="form-group">
+                <label>Spotify Playlist ID or URL</label>
+                <input type="text" id="link-spotify-id" placeholder="37i9dQZF1DXcBWIGoYBM5M or spotify:playlist:... or full URL">
+                <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+                    Accepts: <code>37i9dQZF1DXcBWIGoYBM5M</code>, <code>spotify:playlist:37i9dQZF1DXcBWIGoYBM5M</code>, or full Spotify URL
+                </small>
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeModal('link-playlist-modal')">Cancel</button>
+                <button class="primary" onclick="linkPlaylist()">Link Playlist</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Lyrics ID Mapping Modal -->
+    <div class="modal" id="lyrics-map-modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h3>Map Lyrics ID</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                Manually map a track to a specific lyrics ID from lrclib.net. You can find lyrics IDs by searching on <a href="https://lrclib.net" target="_blank" style="color: var(--accent);">lrclib.net</a>.
+            </p>
+            
+            <!-- Track Info -->
+            <div class="form-group">
+                <label>Track</label>
+                <div style="background: var(--bg-primary); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+                    <strong id="lyrics-map-title"></strong><br>
+                    <span style="color: var(--text-secondary);" id="lyrics-map-artist"></span><br>
+                    <small style="color: var(--text-secondary);" id="lyrics-map-album"></small>
+                </div>
+            </div>
+            
+            <!-- Lyrics ID Input -->
+            <div class="form-group">
+                <label>Lyrics ID from lrclib.net</label>
+                <input type="number" id="lyrics-map-id" placeholder="Enter lyrics ID (e.g., 5929990)" min="1">
+                <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
+                    Search for the track on <a href="https://lrclib.net" target="_blank" style="color: var(--accent);">lrclib.net</a> and copy the ID from the URL or API response
+                </small>
+            </div>
+            
+            <input type="hidden" id="lyrics-map-artist-value">
+            <input type="hidden" id="lyrics-map-title-value">
+            <input type="hidden" id="lyrics-map-album-value">
+            <input type="hidden" id="lyrics-map-duration">
+            
+            <div class="modal-actions">
+                <button onclick="closeModal('lyrics-map-modal')">Cancel</button>
+                <button class="primary" onclick="saveLyricsMapping()" id="lyrics-map-save-btn">Save Mapping</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Restart Overlay -->
+    <div class="restart-overlay" id="restart-overlay">
+        <div class="spinner-large"></div>
+        <h2>Restarting Container</h2>
+        <p id="restart-status">Applying configuration changes...</p>
+    </div>
+    
+    <script>
+        // Current edit setting state
+        let currentEditKey = null;
+        let currentEditType = null;
+        let currentEditOptions = null;
+        
+        // Track if we've already initialized the cookie date to prevent infinite loop
+        let cookieDateInitialized = false;
+        
+        // Track if restart is required
+        let restartRequired = false;
+        
+        function showRestartBanner() {
+            restartRequired = true;
+            document.getElementById('restart-banner').classList.add('active');
+        }
+        
+        function dismissRestartBanner() {
+            document.getElementById('restart-banner').classList.remove('active');
+        }
+        
+        // Tab switching with URL hash support
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            const tab = document.querySelector(`.tab[data-tab="${tabName}"]`);
+            const content = document.getElementById('tab-' + tabName);
+            
+            if (tab && content) {
+                tab.classList.add('active');
+                content.classList.add('active');
+                window.location.hash = tabName;
+            }
+        }
+        
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                switchTab(tab.dataset.tab);
+            });
+        });
+        
+        // Restore tab from URL hash on page load
+        window.addEventListener('load', () => {
+            const hash = window.location.hash.substring(1);
+            if (hash) {
+                switchTab(hash);
+            }
+            
+            // Start auto-refresh for playlists tab (every 5 seconds)
+            startPlaylistAutoRefresh();
+        });
+        
+        // Auto-refresh functionality for playlists
+        let playlistAutoRefreshInterval = null;
+        
+        function startPlaylistAutoRefresh() {
+            // Clear any existing interval
+            if (playlistAutoRefreshInterval) {
+                clearInterval(playlistAutoRefreshInterval);
+            }
+            
+            // Refresh every 5 seconds when on playlists tab
+            playlistAutoRefreshInterval = setInterval(() => {
+                const playlistsTab = document.getElementById('tab-playlists');
+                if (playlistsTab && playlistsTab.classList.contains('active')) {
+                    // Silently refresh without showing loading state
+                    fetchPlaylists(true);
+                }
+            }, 5000);
+        }
+        
+        function stopPlaylistAutoRefresh() {
+            if (playlistAutoRefreshInterval) {
+                clearInterval(playlistAutoRefreshInterval);
+                playlistAutoRefreshInterval = null;
+            }
+        }
+        
+        // Toast notification
+        function showToast(message, type = 'success', duration = 3000) {
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), duration);
+        }
+        
+        // Modal helpers
+        function openModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+        
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+        
+        // Close modals on backdrop click
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', e => {
+                if (e.target === modal) closeModal(modal.id);
+            });
+        });
+        
+        // Format cookie age with color coding
+        function formatCookieAge(setDateStr, hasCookie = false) {
+            if (!setDateStr) {
+                if (hasCookie) {
+                    return { text: 'Unknown age', class: 'warning', detail: 'Cookie date not tracked', needsInit: true };
+                }
+                return { text: 'No cookie', class: '', detail: '', needsInit: false };
+            }
+            
+            const setDate = new Date(setDateStr);
+            const now = new Date();
+            const diffMs = now - setDate;
+            const daysAgo = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const monthsAgo = daysAgo / 30;
+            
+            let status = 'success';  // green: < 6 months
+            if (monthsAgo >= 10) status = 'error';  // red: > 10 months
+            else if (monthsAgo >= 6) status = 'warning';  // yellow: 6-10 months
+            
+            let text;
+            if (daysAgo === 0) text = 'Set today';
+            else if (daysAgo === 1) text = 'Set yesterday';
+            else if (daysAgo < 30) text = `Set ${daysAgo} days ago`;
+            else if (daysAgo < 60) text = 'Set ~1 month ago';
+            else text = `Set ~${Math.floor(monthsAgo)} months ago`;
+            
+            const remaining = 12 - monthsAgo;
+            let detail;
+            if (remaining > 6) detail = 'Cookie typically lasts ~1 year';
+            else if (remaining > 2) detail = `~${Math.floor(remaining)} months until expiration`;
+            else if (remaining > 0) detail = 'Cookie may expire soon!';
+            else detail = 'Cookie may have expired - update if having issues';
+            
+            return { text, class: status, detail, needsInit: false };
+        }
+        
+        // Initialize cookie date if cookie exists but date is not set
+        async function initCookieDate() {
+            if (cookieDateInitialized) {
+                console.log('Cookie date already initialized, skipping');
+                return;
+            }
+            
+            cookieDateInitialized = true;
+            
+            try {
+                const res = await fetch('/api/admin/config/init-cookie-date', { method: 'POST' });
+                if (res.ok) {
+                    console.log('Cookie date initialized successfully - restart container to apply');
+                    showToast('Cookie date set. Restart container to apply changes.', 'success');
+                } else {
+                    const data = await res.json();
+                    console.log('Cookie date init response:', data);
+                }
+            } catch (error) {
+                console.error('Failed to init cookie date:', error);
+                cookieDateInitialized = false; // Allow retry on error
+            }
+        }
+        
+        // API calls
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/admin/status');
+                const data = await res.json();
+                
+                document.getElementById('version').textContent = 'v' + data.version;
+                document.getElementById('backend-type').textContent = data.backendType;
+                document.getElementById('jellyfin-url').textContent = data.jellyfinUrl || '-';
+                document.getElementById('playlist-count').textContent = data.spotifyImport.playlistCount;
+                document.getElementById('cache-duration').textContent = data.spotify.cacheDurationMinutes + ' min';
+                document.getElementById('isrc-matching').textContent = data.spotify.preferIsrcMatching ? 'Enabled' : 'Disabled';
+                document.getElementById('spotify-user').textContent = data.spotify.user || '-';
+                
+                // Update status badge and cookie age
+                const statusBadge = document.getElementById('spotify-status');
+                const authStatus = document.getElementById('spotify-auth-status');
+                const cookieAgeEl = document.getElementById('spotify-cookie-age');
+                
+                if (data.spotify.authStatus === 'configured') {
+                    statusBadge.className = 'status-badge success';
+                    statusBadge.innerHTML = '<span class="status-dot"></span>Spotify Ready';
+                    authStatus.textContent = 'Cookie Set';
+                    authStatus.className = 'stat-value success';
+                } else if (data.spotify.authStatus === 'missing_cookie') {
+                    statusBadge.className = 'status-badge warning';
+                    statusBadge.innerHTML = '<span class="status-dot"></span>Cookie Missing';
+                    authStatus.textContent = 'No Cookie';
+                    authStatus.className = 'stat-value warning';
+                } else {
+                    statusBadge.className = 'status-badge';
+                    statusBadge.innerHTML = '<span class="status-dot"></span>Not Configured';
+                    authStatus.textContent = 'Not Configured';
+                    authStatus.className = 'stat-value';
+                }
+                
+                // Update cookie age display
+                if (cookieAgeEl) {
+                    const hasCookie = data.spotify.hasCookie;
+                    const age = formatCookieAge(data.spotify.cookieSetDate, hasCookie);
+                    cookieAgeEl.innerHTML = `<span class="${age.class}">${age.text}</span><br><small style="color:var(--text-secondary)">${age.detail}</small>`;
+                    
+                    // Auto-init cookie date if cookie exists but date is not set
+                    if (age.needsInit) {
+                        console.log('Cookie exists but date not set, initializing...');
+                        initCookieDate();
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+                showToast('Failed to fetch status', 'error');
+            }
+        }
+        
+        async function fetchPlaylists(silent = false) {
+            try {
+                const res = await fetch('/api/admin/playlists');
+                const data = await res.json();
+                
+                const tbody = document.getElementById('playlist-table-body');
+                
+                if (data.playlists.length === 0) {
+                    if (!silent) {
+                        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:40px;">No playlists configured. Link playlists from the Jellyfin Playlists tab.</td></tr>';
+                    }
+                    return;
+                }
+                
+                tbody.innerHTML = data.playlists.map(p => {
+                    // Enhanced statistics display
+                    const spotifyTotal = p.trackCount || 0;
+                    const localCount = p.localTracks || 0;
+                    const externalMatched = p.externalMatched || 0;
+                    const externalMissing = p.externalMissing || 0;
+                    const totalInJellyfin = p.totalInJellyfin || 0;
+                    const totalPlayable = p.totalPlayable || (localCount + externalMatched); // Total tracks that will be served
+                    
+                    // Debug: Log the raw data
+                    console.log(`Playlist ${p.name}:`, {
+                        spotifyTotal,
+                        localCount,
+                        externalMatched,
+                        externalMissing,
+                        totalInJellyfin,
+                        totalPlayable,
+                        rawData: p
+                    });
+                    
+                    // Build detailed stats string - show total playable tracks prominently
+                    let statsHtml = `<span class="track-count">${totalPlayable}/${spotifyTotal}</span>`;
+                    
+                    // Show breakdown with color coding
+                    let breakdownParts = [];
+                    if (localCount > 0) {
+                        breakdownParts.push(`<span style="color:var(--success)">${localCount} local</span>`);
+                    }
+                    if (externalMatched > 0) {
+                        breakdownParts.push(`<span style="color:var(--accent)">${externalMatched} matched</span>`);
+                    }
+                    if (externalMissing > 0) {
+                        breakdownParts.push(`<span style="color:var(--warning)">${externalMissing} missing</span>`);
+                    }
+                    
+                    const breakdown = breakdownParts.length > 0 
+                        ? `<br><small style="color:var(--text-secondary)">${breakdownParts.join(' • ')}</small>`
+                        : '';
+                    
+                    // Calculate completion percentage based on playable tracks
+                    const completionPct = spotifyTotal > 0 ? Math.round((totalPlayable / spotifyTotal) * 100) : 0;
+                    const localPct = spotifyTotal > 0 ? Math.round((localCount / spotifyTotal) * 100) : 0;
+                    const externalPct = spotifyTotal > 0 ? Math.round((externalMatched / spotifyTotal) * 100) : 0;
+                    const missingPct = spotifyTotal > 0 ? Math.round((externalMissing / spotifyTotal) * 100) : 0;
+                    const completionColor = completionPct === 100 ? 'var(--success)' : completionPct >= 80 ? 'var(--accent)' : 'var(--warning)';
+                    
+                    // Debug logging
+                    console.log(`Progress bar for ${p.name}: local=${localPct}%, external=${externalPct}%, missing=${missingPct}%, total=${completionPct}%`);
+                    
+                    return `
+                        <tr>
+                            <td><strong>${escapeHtml(p.name)}</strong></td>
+                            <td style="font-family:monospace;font-size:0.85rem;color:var(--text-secondary);">${p.id || '-'}</td>
+                            <td>${statsHtml}${breakdown}</td>
+                            <td>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <div style="flex:1;background:var(--bg-tertiary);height:12px;border-radius:6px;overflow:hidden;display:flex;">
+                                        <div style="width:${localPct}%;height:100%;background:#10b981;transition:width 0.3s;" title="${localCount} local tracks"></div>
+                                        <div style="width:${externalPct}%;height:100%;background:#f59e0b;transition:width 0.3s;" title="${externalMatched} external matched tracks"></div>
+                                        <div style="width:${missingPct}%;height:100%;background:#6b7280;transition:width 0.3s;" title="${externalMissing} missing tracks"></div>
+                                    </div>
+                                    <span style="font-size:0.85rem;color:${completionColor};font-weight:500;min-width:40px;">${completionPct}%</span>
+                                </div>
+                            </td>
+                            <td class="cache-age">${p.cacheAge || '-'}</td>
+                            <td>
+                                <button onclick="clearPlaylistCache('${escapeJs(p.name)}')">Clear Cache & Rebuild</button>
+                                <button onclick="matchPlaylistTracks('${escapeJs(p.name)}')">Match Tracks</button>
+                                <button onclick="viewTracks('${escapeJs(p.name)}')">View</button>
+                                <button class="danger" onclick="removePlaylist('${escapeJs(p.name)}')">Remove</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to fetch playlists:', error);
+                showToast('Failed to fetch playlists', 'error');
+            }
+        }
+        
+        async function fetchTrackMappings() {
+            try {
+                const res = await fetch('/api/admin/mappings/tracks');
+                const data = await res.json();
+                
+                // Update summary (only external now)
+                document.getElementById('mappings-total').textContent = data.externalCount || 0;
+                document.getElementById('mappings-external').textContent = data.externalCount || 0;
+                
+                const tbody = document.getElementById('mappings-table-body');
+                
+                if (data.mappings.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:40px;">No manual mappings found.</td></tr>';
+                    return;
+                }
+                
+                // Filter to only show external mappings
+                const externalMappings = data.mappings.filter(m => m.type === 'external');
+                
+                if (externalMappings.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:40px;">No external mappings found. Local Jellyfin mappings should be managed via Spotify Import plugin.</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = externalMappings.map((m, index) => {
+                    const typeColor = 'var(--success)';
+                    const typeBadge = `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.8rem;background:${typeColor}20;color:${typeColor};font-weight:500;">external</span>`;
+                    
+                    const targetDisplay = `<span style="font-family:monospace;font-size:0.85rem;color:var(--success);">${m.externalProvider}/${m.externalId}</span>`;
+                    
+                    const createdDate = m.createdAt ? new Date(m.createdAt).toLocaleString() : '-';
+                    
+                    return `
+                        <tr>
+                            <td><strong>${escapeHtml(m.playlist)}</strong></td>
+                            <td style="font-family:monospace;font-size:0.85rem;color:var(--text-secondary);">${m.spotifyId}</td>
+                            <td>${typeBadge}</td>
+                            <td>${targetDisplay}</td>
+                            <td style="color:var(--text-secondary);font-size:0.85rem;">${createdDate}</td>
+                            <td>
+                                <button class="danger delete-mapping-btn" style="padding:4px 12px;font-size:0.8rem;" data-playlist="${escapeHtml(m.playlist)}" data-spotify-id="${m.spotifyId}">Remove</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+                
+                // Add event listeners to all delete buttons
+                document.querySelectorAll('.delete-mapping-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const playlist = this.getAttribute('data-playlist');
+                        const spotifyId = this.getAttribute('data-spotify-id');
+                        deleteTrackMapping(playlist, spotifyId);
+                    });
+                });
+            } catch (error) {
+                console.error('Failed to fetch track mappings:', error);
+                showToast('Failed to fetch track mappings', 'error');
+            }
+        }
+        
+        async function deleteTrackMapping(playlist, spotifyId) {
+            if (!confirm(`Remove manual external mapping for ${spotifyId} in playlist "${playlist}"?\n\nThis will:\n• Delete the manual mapping from the cache\n• Allow the track to be matched automatically again\n• The track may be re-matched with potentially better results\n\nThis action cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/admin/mappings/tracks?playlist=${encodeURIComponent(playlist)}&spotifyId=${encodeURIComponent(spotifyId)}`, {
+                    method: 'DELETE'
+                });
+                
+                if (res.ok) {
+                    showToast('Mapping removed successfully', 'success');
+                    await fetchTrackMappings();
+                } else {
+                    const error = await res.json();
+                    showToast(error.error || 'Failed to remove mapping', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to delete mapping:', error);
+                showToast('Failed to remove mapping', 'error');
+            }
+        }
+        
+        async function fetchMissingTracks() {
+            try {
+                const res = await fetch('/api/admin/playlists');
+                const data = await res.json();
+                
+                const tbody = document.getElementById('missing-tracks-table-body');
+                const missingTracks = [];
+                
+                // Collect all missing tracks from all playlists
+                for (const playlist of data.playlists) {
+                    if (playlist.externalMissing > 0) {
+                        // Fetch tracks for this playlist
+                        try {
+                            const tracksRes = await fetch(`/api/admin/playlists/${encodeURIComponent(playlist.name)}/tracks`);
+                            const tracksData = await tracksRes.json();
+                            
+                            // Filter to only missing tracks (isLocal === null)
+                            const missing = tracksData.tracks.filter(t => t.isLocal === null);
+                            missing.forEach(t => {
+                                missingTracks.push({
+                                    playlist: playlist.name,
+                                    ...t
+                                });
+                            });
+                        } catch (err) {
+                            console.error(`Failed to fetch tracks for ${playlist.name}:`, err);
+                        }
+                    }
+                }
+                
+                // Update summary
+                document.getElementById('missing-total').textContent = missingTracks.length;
+                
+                if (missingTracks.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:40px;">🎉 No missing tracks! All tracks are matched.</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = missingTracks.map(t => {
+                    const artist = (t.artists && t.artists.length > 0) ? t.artists.join(', ') : '';
+                    const searchQuery = `${t.title} ${artist}`;
+                    return `
+                        <tr>
+                            <td><strong>${escapeHtml(t.playlist)}</strong></td>
+                            <td>${escapeHtml(t.title)}</td>
+                            <td>${escapeHtml(artist)}</td>
+                            <td style="color:var(--text-secondary);">${t.album ? escapeHtml(t.album) : '-'}</td>
+                            <td>
+                                <button onclick="searchProvider('${escapeJs(searchQuery)}', 'squidwtf')" 
+                                    style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:#3b82f6;border-color:#3b82f6;color:white;">🔍 Search</button>
+                                <button onclick="openMapToLocal('${escapeJs(t.playlist)}', '${escapeJs(t.spotifyId)}', '${escapeJs(t.title)}', '${escapeJs(artist)}')" 
+                                    style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:var(--success);border-color:var(--success);">Map to Local</button>
+                                <button onclick="openMapToExternal('${escapeJs(t.playlist)}', '${escapeJs(t.spotifyId)}', '${escapeJs(t.title)}', '${escapeJs(artist)}')" 
+                                    style="font-size:0.75rem;padding:4px 8px;background:var(--warning);border-color:var(--warning);">Map to External</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to fetch missing tracks:', error);
+                showToast('Failed to fetch missing tracks', 'error');
+            }
+        }
+        
+        async function fetchDownloads() {
+            try {
+                const res = await fetch('/api/admin/downloads');
+                const data = await res.json();
+                
+                const tbody = document.getElementById('downloads-table-body');
+                
+                // Update summary
+                document.getElementById('downloads-count').textContent = data.count;
+                document.getElementById('downloads-size').textContent = data.totalSizeFormatted;
+                
+                if (data.count === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:40px;">No downloaded files found.</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.files.map(f => {
+                    return `
+                        <tr data-path="${escapeHtml(f.path)}">
+                            <td><strong>${escapeHtml(f.artist)}</strong></td>
+                            <td>${escapeHtml(f.album)}</td>
+                            <td style="font-family:monospace;font-size:0.85rem;">${escapeHtml(f.fileName)}</td>
+                            <td style="color:var(--text-secondary);">${f.sizeFormatted}</td>
+                            <td>
+                                <button onclick="downloadFile('${escapeJs(f.path)}')" 
+                                    style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:var(--accent);border-color:var(--accent);">Download</button>
+                                <button onclick="deleteDownload('${escapeJs(f.path)}')" 
+                                    class="danger" style="font-size:0.75rem;padding:4px 8px;">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to fetch downloads:', error);
+                showToast('Failed to fetch downloads', 'error');
+            }
+        }
+        
+        async function downloadFile(path) {
+            try {
+                window.open(`/api/admin/downloads/file?path=${encodeURIComponent(path)}`, '_blank');
+            } catch (error) {
+                console.error('Failed to download file:', error);
+                showToast('Failed to download file', 'error');
+            }
+        }
+        
+        async function deleteDownload(path) {
+            if (!confirm(`Delete this file?\n\n${path}\n\nThis action cannot be undone.`)) {
+                return;
+            }
+            
+            try {
+                const res = await fetch(`/api/admin/downloads?path=${encodeURIComponent(path)}`, {
+                    method: 'DELETE'
+                });
+                
+                if (res.ok) {
+                    showToast('File deleted successfully', 'success');
+                    
+                    // Remove the row immediately for live update
+                    const escapedPath = path.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                    const row = document.querySelector(`tr[data-path="${escapedPath}"]`);
+                    if (row) {
+                        row.remove();
+                    }
+                    
+                    // Refresh to update counts
+                    await fetchDownloads();
+                } else {
+                    const error = await res.json();
+                    showToast(error.error || 'Failed to delete file', 'error');
+                }
+            } catch (error) {
+                console.error('Failed to delete file:', error);
+                showToast('Failed to delete file', 'error');
+            }
+        }
+        
+        async function fetchConfig() {
+            try {
+                const res = await fetch('/api/admin/config');
+                const data = await res.json();
+                
+                // Spotify API settings
+                document.getElementById('config-spotify-enabled').textContent = data.spotifyApi.enabled ? 'Yes' : 'No';
+                document.getElementById('config-spotify-cookie').textContent = data.spotifyApi.sessionCookie;
+                document.getElementById('config-cache-duration').textContent = data.spotifyApi.cacheDurationMinutes + ' minutes';
+                document.getElementById('config-isrc-matching').textContent = data.spotifyApi.preferIsrcMatching ? 'Enabled' : 'Disabled';
+                
+                // Cookie age in config tab
+                const configCookieAge = document.getElementById('config-cookie-age');
+                if (configCookieAge) {
+                    const hasCookie = data.spotifyApi.sessionCookie && data.spotifyApi.sessionCookie !== '(not set)';
+                    const age = formatCookieAge(data.spotifyApi.sessionCookieSetDate, hasCookie);
+                    configCookieAge.innerHTML = `<span class="${age.class}">${age.text}</span> - ${age.detail}`;
+                }
+                
+                // Deezer settings
+                document.getElementById('config-deezer-arl').textContent = data.deezer.arl || '(not set)';
+                document.getElementById('config-deezer-quality').textContent = data.deezer.quality;
+                
+                // SquidWTF settings
+                document.getElementById('config-squid-quality').textContent = data.squidWtf.quality;
+                
+                // MusicBrainz settings
+                document.getElementById('config-musicbrainz-enabled').textContent = data.musicBrainz.enabled ? 'Yes' : 'No';
+                document.getElementById('config-musicbrainz-username').textContent = data.musicBrainz.username || '(not set)';
+                document.getElementById('config-musicbrainz-password').textContent = data.musicBrainz.password || '(not set)';
+                
+                // Qobuz settings
+                document.getElementById('config-qobuz-token').textContent = data.qobuz.userAuthToken || '(not set)';
+                document.getElementById('config-qobuz-quality').textContent = data.qobuz.quality || 'FLAC';
+                
+                // Jellyfin settings
+                document.getElementById('config-jellyfin-url').textContent = data.jellyfin.url || '-';
+                document.getElementById('config-jellyfin-api-key').textContent = data.jellyfin.apiKey;
+                document.getElementById('config-jellyfin-user-id').textContent = data.jellyfin.userId || '(not set)';
+                document.getElementById('config-jellyfin-library-id').textContent = data.jellyfin.libraryId || '-';
+                
+                // Library settings
+                document.getElementById('config-download-path').textContent = data.library?.downloadPath || './downloads';
+                document.getElementById('config-kept-path').textContent = data.library?.keptPath || '/app/kept';
+                
+                // Sync settings
+                const syncHour = data.spotifyImport.syncStartHour;
+                const syncMin = data.spotifyImport.syncStartMinute;
+                document.getElementById('config-sync-time').textContent = `${String(syncHour).padStart(2, '0')}:${String(syncMin).padStart(2, '0')}`;
+                document.getElementById('config-sync-window').textContent = data.spotifyImport.syncWindowHours + ' hours';
+            } catch (error) {
+                console.error('Failed to fetch config:', error);
+            }
+        }
+        
+        async function fetchJellyfinUsers() {
+            try {
+                const res = await fetch('/api/admin/jellyfin/users');
+                if (!res.ok) return;
+                const data = await res.json();
+                const select = document.getElementById('jellyfin-user-select');
+                select.innerHTML = '<option value="">All Users</option>' + 
+                    data.users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+            } catch (error) {
+                console.error('Failed to fetch users:', error);
+            }
+        }
+        
+        
+        async function fetchJellyfinPlaylists() {
+            const tbody = document.getElementById('jellyfin-playlist-table-body');
+            tbody.innerHTML = '<tr><td colspan="6" class="loading"><span class="spinner"></span> Loading Jellyfin playlists...</td></tr>';
+            
+            try {
+                // Build URL with optional user filter
+                const userId = document.getElementById('jellyfin-user-select').value;
+                
+                let url = '/api/admin/jellyfin/playlists';
+                if (userId) url += '?userId=' + encodeURIComponent(userId);
+                
+                const res = await fetch(url);
+                
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--error);padding:40px;">${errorData.error || 'Failed to fetch playlists'}</td></tr>`;
+                    return;
+                }
+                
+                const data = await res.json();
+                
+                if (data.playlists.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:40px;">No playlists found in Jellyfin</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.playlists.map(p => {
+                    const statusBadge = p.isConfigured 
+                        ? '<span class="status-badge success"><span class="status-dot"></span>Linked</span>'
+                        : '<span class="status-badge"><span class="status-dot"></span>Not Linked</span>';
+                    
+                    const actionButton = p.isConfigured
+                        ? `<button class="danger" onclick="unlinkPlaylist('${escapeJs(p.name)}')">Unlink</button>`
+                        : `<button class="primary" onclick="openLinkPlaylist('${escapeJs(p.id)}', '${escapeJs(p.name)}')">Link to Spotify</button>`;
+                    
+                    const localCount = p.localTracks || 0;
+                    const externalCount = p.externalTracks || 0;
+                    const externalAvail = p.externalAvailable || 0;
+                    
+                    return `
+                        <tr data-playlist-id="${escapeHtml(p.id)}">
+                            <td><strong>${escapeHtml(p.name)}</strong></td>
+                            <td class="track-count">${localCount}</td>
+                            <td class="track-count">${externalCount > 0 ? `${externalAvail}/${externalCount}` : '-'}</td>
+                            <td style="font-family:monospace;font-size:0.85rem;color:var(--text-secondary);">${p.linkedSpotifyId || '-'}</td>
+                            <td>${statusBadge}</td>
+                            <td>${actionButton}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to fetch Jellyfin playlists:', error);
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--error);padding:40px;">Failed to fetch playlists</td></tr>';
+            }
+        }
+        
+        function openLinkPlaylist(jellyfinId, name) {
+            document.getElementById('link-jellyfin-id').value = jellyfinId;
+            document.getElementById('link-jellyfin-name').value = name;
+            document.getElementById('link-spotify-id').value = '';
+            openModal('link-playlist-modal');
+        }
+        
+        async function linkPlaylist() {
+            const jellyfinId = document.getElementById('link-jellyfin-id').value;
+            const name = document.getElementById('link-jellyfin-name').value;
+            const spotifyId = document.getElementById('link-spotify-id').value.trim();
+            
+            if (!spotifyId) {
+                showToast('Spotify Playlist ID is required', 'error');
+                return;
+            }
+            
+            // Extract ID from various Spotify formats:
+            // - spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
+            // - https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
+            // - 37i9dQZF1DXcBWIGoYBM5M
+            let cleanSpotifyId = spotifyId;
+            
+            // Handle spotify: URI format
+            if (spotifyId.startsWith('spotify:playlist:')) {
+                cleanSpotifyId = spotifyId.replace('spotify:playlist:', '');
+            }
+            // Handle URL format
+            else if (spotifyId.includes('spotify.com/playlist/')) {
+                const match = spotifyId.match(/playlist\/([a-zA-Z0-9]+)/);
+                if (match) cleanSpotifyId = match[1];
+            }
+            // Remove any query parameters or trailing slashes
+            cleanSpotifyId = cleanSpotifyId.split('?')[0].split('#')[0].replace(/\/$/, '');
+            
+            try {
+                const res = await fetch(`/api/admin/jellyfin/playlists/${encodeURIComponent(jellyfinId)}/link`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, spotifyPlaylistId: cleanSpotifyId })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast('Playlist linked!', 'success');
+                    showRestartBanner();
+                    closeModal('link-playlist-modal');
+                    
+                    // Update UI state without refetching all playlists
+                    const playlistsTable = document.getElementById('jellyfinPlaylistsTable');
+                    if (playlistsTable) {
+                        const rows = playlistsTable.querySelectorAll('tr');
+                        rows.forEach(row => {
+                            if (row.dataset.playlistId === jellyfinId) {
+                                const actionCell = row.querySelector('td:last-child');
+                                if (actionCell) {
+                                    actionCell.innerHTML = `<button class="danger" onclick="unlinkPlaylist('${escapeJs(name)}')">Unlink</button>`;
+                                }
+                            }
+                        });
+                    }
+                    
+                    fetchPlaylists(); // Only refresh the Active Playlists tab
+                } else {
+                    showToast(data.error || 'Failed to link playlist', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to link playlist', 'error');
+            }
+        }
+        
+        async function unlinkPlaylist(name) {
+            if (!confirm(`Unlink playlist "${name}"? This will stop filling in missing tracks.`)) return;
+            
+            try {
+                const res = await fetch(`/api/admin/jellyfin/playlists/${encodeURIComponent(name)}/unlink`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast('Playlist unlinked.', 'success');
+                    showRestartBanner();
+                    
+                    // Update UI state without refetching all playlists
+                    const playlistsTable = document.getElementById('jellyfinPlaylistsTable');
+                    if (playlistsTable) {
+                        const rows = playlistsTable.querySelectorAll('tr');
+                        rows.forEach(row => {
+                            const nameCell = row.querySelector('td:first-child');
+                            if (nameCell && nameCell.textContent === name) {
+                                const actionCell = row.querySelector('td:last-child');
+                                if (actionCell) {
+                                    const playlistId = row.dataset.playlistId;
+                                    actionCell.innerHTML = `<button class="primary" onclick="openLinkPlaylist('${escapeJs(playlistId)}', '${escapeJs(name)}')">Link to Spotify</button>`;
+                                }
+                            }
+                        });
+                    }
+                    
+                    fetchPlaylists(); // Only refresh the Active Playlists tab
+                } else {
+                    showToast(data.error || 'Failed to unlink playlist', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to unlink playlist', 'error');
+            }
+        }
+        
+        async function refreshPlaylists() {
+            try {
+                showToast('Refreshing playlists...', 'success');
+                const res = await fetch('/api/admin/playlists/refresh', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.message, 'success');
+                setTimeout(fetchPlaylists, 2000);
+            } catch (error) {
+                showToast('Failed to refresh playlists', 'error');
+            }
+        }
+        
+        async function clearPlaylistCache(name) {
+            if (!confirm(`Clear cache and rebuild for "${name}"?\n\nThis will:\n• Clear Redis cache\n• Delete file caches\n• Rebuild with latest Spotify IDs\n\nThis may take a minute.`)) return;
+            
+            try {
+                // Show warning banner
+                document.getElementById('matching-warning-banner').style.display = 'block';
+                
+                showToast(`Clearing cache for ${name}...`, 'info');
+                const res = await fetch(`/api/admin/playlists/${encodeURIComponent(name)}/clear-cache`, { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(`✓ ${data.message} (Cleared ${data.clearedKeys} cache keys, ${data.clearedFiles} files)`, 'success', 5000);
+                    // Refresh the playlists table after a delay to show updated counts
+                    setTimeout(() => {
+                        fetchPlaylists();
+                        // Hide warning banner after refresh
+                        document.getElementById('matching-warning-banner').style.display = 'none';
+                    }, 3000);
+                } else {
+                    showToast(data.error || 'Failed to clear cache', 'error');
+                    document.getElementById('matching-warning-banner').style.display = 'none';
+                }
+            } catch (error) {
+                showToast('Failed to clear cache', 'error');
+                document.getElementById('matching-warning-banner').style.display = 'none';
+            }
+        }
+        
+        async function matchPlaylistTracks(name) {
+            try {
+                // Show warning banner
+                document.getElementById('matching-warning-banner').style.display = 'block';
+                
+                showToast(`Matching tracks for ${name}...`, 'success');
+                const res = await fetch(`/api/admin/playlists/${encodeURIComponent(name)}/match`, { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(`✓ ${data.message}`, 'success');
+                    // Refresh the playlists table after a delay to show updated counts
+                    setTimeout(() => {
+                        fetchPlaylists();
+                        // Hide warning banner after refresh
+                        document.getElementById('matching-warning-banner').style.display = 'none';
+                    }, 2000);
+                } else {
+                    showToast(data.error || 'Failed to match tracks', 'error');
+                    document.getElementById('matching-warning-banner').style.display = 'none';
+                }
+            } catch (error) {
+                showToast('Failed to match tracks', 'error');
+                document.getElementById('matching-warning-banner').style.display = 'none';
+            }
+        }
+        
+        async function matchAllPlaylists() {
+            if (!confirm('Match tracks for ALL playlists? This may take a few minutes.')) return;
+            
+            try {
+                // Show warning banner
+                document.getElementById('matching-warning-banner').style.display = 'block';
+                
+                showToast('Matching tracks for all playlists...', 'success');
+                const res = await fetch('/api/admin/playlists/match-all', { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(`✓ ${data.message}`, 'success');
+                    // Refresh the playlists table after a delay to show updated counts
+                    setTimeout(() => {
+                        fetchPlaylists();
+                        // Hide warning banner after refresh
+                        document.getElementById('matching-warning-banner').style.display = 'none';
+                    }, 2000);
+                } else {
+                    showToast(data.error || 'Failed to match tracks', 'error');
+                    document.getElementById('matching-warning-banner').style.display = 'none';
+                }
+            } catch (error) {
+                showToast('Failed to match tracks', 'error');
+                document.getElementById('matching-warning-banner').style.display = 'none';
+            }
+        }
+        
+        async function refreshAndMatchAll() {
+            if (!confirm('Clear caches, refresh from Spotify, and match all tracks?\n\nThis will:\n• Clear all playlist caches\n• Fetch fresh data from Spotify\n• Match all tracks against local library and external providers\n\nThis may take several minutes.')) return;
+            
+            try {
+                // Show warning banner
+                document.getElementById('matching-warning-banner').style.display = 'block';
+                
+                showToast('Starting full refresh and match...', 'info', 3000);
+                
+                // Step 1: Clear all caches
+                showToast('Step 1/3: Clearing caches...', 'info', 2000);
+                await fetch('/api/admin/cache/clear', { method: 'POST' });
+                
+                // Wait for cache to be fully cleared
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Step 2: Refresh playlists from Spotify
+                showToast('Step 2/3: Fetching from Spotify...', 'info', 2000);
+                await fetch('/api/admin/playlists/refresh', { method: 'POST' });
+                
+                // Wait for Spotify fetch to complete
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                // Step 3: Match all tracks
+                showToast('Step 3/3: Matching all tracks (this may take several minutes)...', 'info', 3000);
+                const res = await fetch('/api/admin/playlists/match-all', { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(`✓ Full refresh and match complete!`, 'success', 5000);
+                    // Refresh the playlists table after a delay
+                    setTimeout(() => {
+                        fetchPlaylists();
+                        // Hide warning banner after refresh
+                        document.getElementById('matching-warning-banner').style.display = 'none';
+                    }, 3000);
+                } else {
+                    showToast(data.error || 'Failed to match tracks', 'error');
+                    document.getElementById('matching-warning-banner').style.display = 'none';
+                }
+            } catch (error) {
+                showToast('Failed to complete refresh and match', 'error');
+                document.getElementById('matching-warning-banner').style.display = 'none';
+            }
+        }
+        
+        
+        async function searchProvider(query, provider) {
+            // Use SquidWTF HiFi API with round-robin base URLs for all searches
+            // Get a random base URL from the backend
+            try {
+                const response = await fetch('/api/admin/squidwtf-base-url');
+                const data = await response.json();
+                
+                if (data.baseUrl) {
+                    // Use the HiFi API search endpoint: /search/?s=query
+                    const searchUrl = `${data.baseUrl}/search/?s=${encodeURIComponent(query)}`;
+                    window.open(searchUrl, '_blank');
+                } else {
+                    showToast('Failed to get search URL', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to get search URL', 'error');
+            }
+        }
+        
+        function capitalizeProvider(provider) {
+            // Capitalize provider names for display
+            const providerMap = {
+                'squidwtf': 'SquidWTF',
+                'deezer': 'Deezer',
+                'qobuz': 'Qobuz'
+            };
+            return providerMap[provider?.toLowerCase()] || provider;
+        }
+        
+        async function clearCache() {
+            if (!confirm('Clear all cached playlist data?')) return;
+            
+            try {
+                const res = await fetch('/api/admin/cache/clear', { method: 'POST' });
+                const data = await res.json();
+                showToast(data.message, 'success');
+                fetchPlaylists();
+            } catch (error) {
+                showToast('Failed to clear cache', 'error');
+            }
+        }
+        
+        async function exportEnv() {
+            try {
+                const res = await fetch('/api/admin/export-env');
+                if (!res.ok) {
+                    throw new Error('Export failed');
+                }
+                
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `.env.backup.${new Date().toISOString().split('T')[0]}`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showToast('.env file exported successfully', 'success');
+            } catch (error) {
+                showToast('Failed to export .env file', 'error');
+            }
+        }
+        
+        async function importEnv(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!confirm('Import this .env file? This will replace your current configuration.\n\nA backup will be created automatically.\n\nYou will need to restart the container for changes to take effect.')) {
+                event.target.value = '';
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const res = await fetch('/api/admin/import-env', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(data.message, 'success');
+                } else {
+                    showToast(data.error || 'Failed to import .env file', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to import .env file', 'error');
+            }
+            
+            event.target.value = '';
+        }
+        
+        async function restartContainer() {
+            if (!confirm('Restart the container to apply configuration changes?\n\nThe dashboard will be temporarily unavailable.')) {
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/admin/restart', { method: 'POST' });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    // Show the restart overlay
+                    document.getElementById('restart-overlay').classList.add('active');
+                    document.getElementById('restart-status').textContent = 'Stopping container...';
+                    
+                    // Wait a bit then start checking if the server is back
+                    setTimeout(() => {
+                        document.getElementById('restart-status').textContent = 'Waiting for server to come back...';
+                        checkServerAndReload();
+                    }, 3000);
+                } else {
+                    showToast(data.message || data.error || 'Failed to restart', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to restart container', 'error');
+            }
+        }
+        
+        async function checkServerAndReload() {
+            let attempts = 0;
+            const maxAttempts = 60; // Try for 60 seconds
+            
+            const checkHealth = async () => {
+                try {
+                    const res = await fetch('/api/admin/status', { 
+                        method: 'GET',
+                        cache: 'no-store'
+                    });
+                    if (res.ok) {
+                        document.getElementById('restart-status').textContent = 'Server is back! Reloading...';
+                        dismissRestartBanner();
+                        setTimeout(() => window.location.reload(), 500);
+                        return;
+                    }
+                } catch (e) {
+                    // Server still restarting
+                }
+                
+                attempts++;
+                document.getElementById('restart-status').textContent = `Waiting for server to come back... (${attempts}s)`;
+                
+                if (attempts < maxAttempts) {
+                    setTimeout(checkHealth, 1000);
+                } else {
+                    document.getElementById('restart-overlay').classList.remove('active');
+                    showToast('Server may still be restarting. Please refresh manually.', 'warning');
+                }
+            };
+            
+            checkHealth();
+        }
+        
+        function openAddPlaylist() {
+            document.getElementById('new-playlist-name').value = '';
+            document.getElementById('new-playlist-id').value = '';
+            openModal('add-playlist-modal');
+        }
+        
+        async function addPlaylist() {
+            const name = document.getElementById('new-playlist-name').value.trim();
+            const id = document.getElementById('new-playlist-id').value.trim();
+            
+            if (!name || !id) {
+                showToast('Name and ID are required', 'error');
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/admin/playlists', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, spotifyId: id })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast('Playlist added.', 'success');
+                    showRestartBanner();
+                    closeModal('add-playlist-modal');
+                } else {
+                    showToast(data.error || 'Failed to add playlist', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to add playlist', 'error');
+            }
+        }
+        
+        async function removePlaylist(name) {
+            if (!confirm(`Remove playlist "${name}"?`)) return;
+            
+            try {
+                const res = await fetch('/api/admin/playlists/' + encodeURIComponent(name), {
+                    method: 'DELETE'
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast('Playlist removed.', 'success');
+                    showRestartBanner();
+                    fetchPlaylists();
+                } else {
+                    showToast(data.error || 'Failed to remove playlist', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to remove playlist', 'error');
+            }
+        }
+        
+        async function viewTracks(name) {
+            document.getElementById('tracks-modal-title').textContent = name + ' - Tracks';
+            document.getElementById('tracks-list').innerHTML = '<div class="loading"><span class="spinner"></span> Loading tracks...</div>';
+            openModal('tracks-modal');
+            
+            try {
+                const res = await fetch('/api/admin/playlists/' + encodeURIComponent(name) + '/tracks');
+                const data = await res.json();
+                
+                if (data.tracks.length === 0) {
+                    document.getElementById('tracks-list').innerHTML = '<p style="text-align:center;color:var(--text-secondary);padding:40px;">No tracks found</p>';
+                    return;
+                }
+                
+                document.getElementById('tracks-list').innerHTML = data.tracks.map(t => {
+                    let statusBadge = '';
+                    let mapButton = '';
+                    let lyricsBadge = '';
+                    
+                    // Add lyrics status badge
+                    if (t.hasLyrics) {
+                        lyricsBadge = '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:4px;background:#3b82f6;color:white;"><span class="status-dot" style="background:white;"></span>Lyrics</span>';
+                    }
+                    
+                    if (t.isLocal === true) {
+                        statusBadge = '<span class="status-badge success" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;"><span class="status-dot"></span>Local</span>';
+                        // Add manual mapping indicator for local tracks
+                        if (t.isManualMapping && t.manualMappingType === 'jellyfin') {
+                            statusBadge += '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:4px;background:var(--info);color:white;"><span class="status-dot" style="background:white;"></span>Manual</span>';
+                        }
+                    } else if (t.isLocal === false) {
+                        const provider = capitalizeProvider(t.externalProvider) || 'External';
+                        statusBadge = `<span class="status-badge warning" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;"><span class="status-dot"></span>${escapeHtml(provider)}</span>`;
+                        // Add manual mapping indicator for external tracks
+                        if (t.isManualMapping && t.manualMappingType === 'external') {
+                            statusBadge += '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:4px;background:var(--info);color:white;"><span class="status-dot" style="background:white;"></span>Manual</span>';
+                        }
+                        // Add both mapping buttons for external tracks using data attributes
+                        const firstArtist = (t.artists && t.artists.length > 0) ? t.artists[0] : '';
+                        mapButton = `<button class="small map-track-btn" 
+                            data-playlist-name="${escapeHtml(name)}" 
+                            data-position="${t.position}" 
+                            data-title="${escapeHtml(t.title || '')}" 
+                            data-artist="${escapeHtml(firstArtist)}" 
+                            data-spotify-id="${escapeHtml(t.spotifyId || '')}" 
+                            style="margin-left:8px;font-size:0.75rem;padding:4px 8px;">Map to Local</button>
+                            <button class="small map-external-btn" 
+                            data-playlist-name="${escapeHtml(name)}" 
+                            data-position="${t.position}" 
+                            data-title="${escapeHtml(t.title || '')}" 
+                            data-artist="${escapeHtml(firstArtist)}" 
+                            data-spotify-id="${escapeHtml(t.spotifyId || '')}" 
+                            style="margin-left:4px;font-size:0.75rem;padding:4px 8px;background:var(--warning);border-color:var(--warning);">Map to External</button>`;
+                    } else {
+                        // isLocal is null/undefined - track is missing (not found locally or externally)
+                        statusBadge = '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;background:var(--bg-tertiary);color:var(--text-secondary);"><span class="status-dot" style="background:var(--text-secondary);"></span>Missing</span>';
+                        // Add both mapping buttons for missing tracks
+                        const firstArtist = (t.artists && t.artists.length > 0) ? t.artists[0] : '';
+                        mapButton = `<button class="small map-track-btn" 
+                            data-playlist-name="${escapeHtml(name)}" 
+                            data-position="${t.position}" 
+                            data-title="${escapeHtml(t.title || '')}" 
+                            data-artist="${escapeHtml(firstArtist)}" 
+                            data-spotify-id="${escapeHtml(t.spotifyId || '')}" 
+                            style="margin-left:8px;font-size:0.75rem;padding:4px 8px;">Map to Local</button>
+                            <button class="small map-external-btn" 
+                            data-playlist-name="${escapeHtml(name)}" 
+                            data-position="${t.position}" 
+                            data-title="${escapeHtml(t.title || '')}" 
+                            data-artist="${escapeHtml(firstArtist)}" 
+                            data-spotify-id="${escapeHtml(t.spotifyId || '')}" 
+                            style="margin-left:4px;font-size:0.75rem;padding:4px 8px;background:var(--warning);border-color:var(--warning);">Map to External</button>`;
+                    }
+                    
+                    // Build search link with track name and artist
+                    const firstArtist = (t.artists && t.artists.length > 0) ? t.artists[0] : '';
+                    const searchLinkText = `${t.title} - ${firstArtist}`;
+                    const durationSeconds = Math.floor((t.durationMs || 0) / 1000);
+                    
+                    // Add lyrics mapping button
+                    const lyricsMapButton = `<button class="small" onclick="openLyricsMap('${escapeJs(firstArtist)}', '${escapeJs(t.title)}', '${escapeJs(t.album || '')}', ${durationSeconds})" style="margin-left:4px;font-size:0.75rem;padding:4px 8px;background:#3b82f6;border-color:#3b82f6;color:white;">Map Lyrics ID</button>`;
+                    
+                    return `
+                        <div class="track-item" data-position="${t.position}">
+                            <span class="track-position">${t.position + 1}</span>
+                            <div class="track-info">
+                                <h4>${escapeHtml(t.title)}${statusBadge}${lyricsBadge}${mapButton}${lyricsMapButton}</h4>
+                                <span class="artists">${escapeHtml((t.artists || []).join(', '))}</span>
+                            </div>
+                            <div class="track-meta">
+                                ${t.album ? escapeHtml(t.album) : ''}
+                                ${t.isrc ? '<br><small>ISRC: ' + t.isrc + '</small>' : ''}
+                                ${t.isLocal === false && t.searchQuery && t.externalProvider ? '<br><small style="color:var(--accent)"><a href="#" onclick="searchProvider(\'' + escapeJs(t.searchQuery) + '\', \'' + escapeJs(t.externalProvider) + '\'); return false;" style="color:var(--accent);text-decoration:underline;">🔍 Search: ' + escapeHtml(searchLinkText) + '</a></small>' : ''}
+                                ${t.isLocal === null && t.searchQuery ? '<br><small style="color:var(--text-secondary)"><a href="#" onclick="searchProvider(\'' + escapeJs(t.searchQuery) + '\', \'squidwtf\'); return false;" style="color:var(--text-secondary);text-decoration:underline;">🔍 Search: ' + escapeHtml(searchLinkText) + '</a></small>' : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                // Add event listeners to map buttons
+                document.querySelectorAll('.map-track-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const playlistName = this.getAttribute('data-playlist-name');
+                        const position = parseInt(this.getAttribute('data-position'));
+                        const title = this.getAttribute('data-title');
+                        const artist = this.getAttribute('data-artist');
+                        const spotifyId = this.getAttribute('data-spotify-id');
+                        openManualMap(playlistName, position, title, artist, spotifyId);
+                    });
+                });
+                
+                // Add event listeners to external map buttons
+                document.querySelectorAll('.map-external-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const playlistName = this.getAttribute('data-playlist-name');
+                        const position = parseInt(this.getAttribute('data-position'));
+                        const title = this.getAttribute('data-title');
+                        const artist = this.getAttribute('data-artist');
+                        const spotifyId = this.getAttribute('data-spotify-id');
+                        openExternalMap(playlistName, position, title, artist, spotifyId);
+                    });
+                });
+            } catch (error) {
+                document.getElementById('tracks-list').innerHTML = '<p style="text-align:center;color:var(--error);padding:40px;">Failed to load tracks</p>';
+            }
+        }
+        
+        // Generic edit setting modal
+        function openEditSetting(envKey, label, inputType, helpText = '', options = []) {
+            currentEditKey = envKey;
+            currentEditType = inputType;
+            currentEditOptions = options;
+            
+            document.getElementById('edit-setting-title').textContent = 'Edit ' + label;
+            document.getElementById('edit-setting-label').textContent = label;
+            
+            const helpEl = document.getElementById('edit-setting-help');
+            if (helpText) {
+                helpEl.textContent = helpText;
+                helpEl.style.display = 'block';
+            } else {
+                helpEl.style.display = 'none';
+            }
+            
+            const container = document.getElementById('edit-setting-input-container');
+            
+            if (inputType === 'toggle') {
+                container.innerHTML = `
+                    <select id="edit-setting-value">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
+                `;
+            } else if (inputType === 'select') {
+                container.innerHTML = `
+                    <select id="edit-setting-value">
+                        ${options.map(opt => `<option value="${opt}">${opt}</option>`).join('')}
+                    </select>
+                `;
+            } else if (inputType === 'password') {
+                container.innerHTML = `<input type="password" id="edit-setting-value" placeholder="Enter new value" autocomplete="off">`;
+            } else if (inputType === 'number') {
+                container.innerHTML = `<input type="number" id="edit-setting-value" placeholder="Enter value">`;
+            } else {
+                container.innerHTML = `<input type="text" id="edit-setting-value" placeholder="Enter value">`;
+            }
+            
+            openModal('edit-setting-modal');
+        }
+        
+        async function saveEditSetting() {
+            const value = document.getElementById('edit-setting-value').value.trim();
+            
+            if (!value && currentEditType !== 'toggle') {
+                showToast('Value is required', 'error');
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/admin/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ updates: { [currentEditKey]: value } })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast('Setting updated.', 'success');
+                    showRestartBanner();
+                    closeModal('edit-setting-modal');
+                    fetchConfig();
+                    fetchStatus();
+                } else {
+                    showToast(data.error || 'Failed to update setting', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to update setting', 'error');
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Manual track mapping
+        let searchTimeout = null;
+        
+        async function searchJellyfinTracks() {
+            const query = document.getElementById('map-search-query').value.trim();
+            
+            if (!query) {
+                document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">Type to search for local tracks or paste a Jellyfin URL...</p>';
+                return;
+            }
+            
+            // Clear URL input when searching
+            document.getElementById('map-jellyfin-url').value = '';
+            
+            // Debounce search
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                document.getElementById('map-search-results').innerHTML = '<div class="loading"><span class="spinner"></span> Searching...</div>';
+                
+                try {
+                    const res = await fetch('/api/admin/jellyfin/search?query=' + encodeURIComponent(query));
+                    const data = await res.json();
+                    
+                    if (data.tracks.length === 0) {
+                        document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No tracks found</p>';
+                        return;
+                    }
+                    
+                    document.getElementById('map-search-results').innerHTML = data.tracks.map(t => `
+                        <div class="track-item" style="cursor: pointer; border: 2px solid transparent;" onclick="selectJellyfinTrack('${t.id}', this)">
+                            <div class="track-info">
+                                <h4>${escapeHtml(t.title)}</h4>
+                                <span class="artists">${escapeHtml(t.artist)}</span>
+                            </div>
+                            <div class="track-meta">
+                                ${t.album ? escapeHtml(t.album) : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                } catch (error) {
+                    document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--error); padding: 20px;">Search failed</p>';
+                }
+            }, 300);
+        }
+        
+        async function extractJellyfinId() {
+            const url = document.getElementById('map-jellyfin-url').value.trim();
+            
+            if (!url) {
+                document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">Type to search for local tracks or paste a Jellyfin URL...</p>';
+                document.getElementById('map-selected-jellyfin-id').value = '';
+                document.getElementById('map-save-btn').disabled = true;
+                return;
+            }
+            
+            // Clear search input when using URL
+            document.getElementById('map-search-query').value = '';
+            
+            // Extract ID from URL patterns:
+            // https://jellyfin.example.com/web/#/details?id=XXXXX&serverId=...
+            // https://jellyfin.example.com/web/index.html#!/details?id=XXXXX
+            let jellyfinId = null;
+            
+            try {
+                const idMatch = url.match(/[?&]id=([a-f0-9]+)/i);
+                if (idMatch) {
+                    jellyfinId = idMatch[1];
+                }
+            } catch (e) {
+                // Invalid URL format
+            }
+            
+            if (!jellyfinId) {
+                document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--error); padding: 20px;">Could not extract track ID from URL. Make sure it contains "?id=..."</p>';
+                document.getElementById('map-selected-jellyfin-id').value = '';
+                document.getElementById('map-save-btn').disabled = true;
+                return;
+            }
+            
+            // Fetch track details to show preview
+            document.getElementById('map-search-results').innerHTML = '<div class="loading"><span class="spinner"></span> Loading track details...</div>';
+            
+            try {
+                const res = await fetch('/api/admin/jellyfin/track/' + jellyfinId);
+                const track = await res.json();
+                
+                if (res.ok && track.id) {
+                    document.getElementById('map-selected-jellyfin-id').value = track.id;
+                    document.getElementById('map-save-btn').disabled = false;
+                    
+                    document.getElementById('map-search-results').innerHTML = `
+                        <div class="track-item" style="border: 2px solid var(--accent); background: var(--bg-tertiary);">
+                            <div class="track-info">
+                                <h4>${escapeHtml(track.title)}</h4>
+                                <span class="artists">${escapeHtml(track.artist)}</span>
+                            </div>
+                            <div class="track-meta">
+                                ${track.album ? escapeHtml(track.album) : ''}
+                            </div>
+                        </div>
+                        <p style="text-align: center; color: var(--success); padding: 12px; margin-top: 8px;">
+                            ✓ Track loaded from URL. Click "Save Mapping" to confirm.
+                        </p>
+                    `;
+                } else {
+                    document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--error); padding: 20px;">Track not found in Jellyfin</p>';
+                    document.getElementById('map-selected-jellyfin-id').value = '';
+                    document.getElementById('map-save-btn').disabled = true;
+                }
+            } catch (error) {
+                document.getElementById('map-search-results').innerHTML = '<p style="text-align: center; color: var(--error); padding: 20px;">Failed to load track details</p>';
+                document.getElementById('map-selected-jellyfin-id').value = '';
+                document.getElementById('map-save-btn').disabled = true;
+            }
+        }
+        
+        function selectJellyfinTrack(jellyfinId, element) {
+            // Remove selection from all tracks
+            document.querySelectorAll('#map-search-results .track-item').forEach(el => {
+                el.style.border = '2px solid transparent';
+                el.style.background = '';
+            });
+            
+            // Highlight selected track
+            element.style.border = '2px solid var(--accent)';
+            element.style.background = 'var(--bg-tertiary)';
+            
+            // Store selected ID and enable save button
+            document.getElementById('map-selected-jellyfin-id').value = jellyfinId;
+            document.getElementById('map-save-btn').disabled = false;
+        }
+        
+        // Validate external mapping input
+        function validateExternalMapping() {
+            const externalId = document.getElementById('map-external-id').value.trim();
+            const saveBtn = document.getElementById('map-save-btn');
+            
+            // Enable save button if external ID is provided
+            saveBtn.disabled = !externalId;
+        }
+        
+        // Open manual mapping modal (external only)
+        function openManualMap(playlistName, position, title, artist, spotifyId) {
+            document.getElementById('map-playlist-name').value = playlistName;
+            document.getElementById('map-position').textContent = position + 1;
+            document.getElementById('map-spotify-title').textContent = title;
+            document.getElementById('map-spotify-artist').textContent = artist;
+            document.getElementById('map-spotify-id').value = spotifyId;
+            
+            // Reset fields
+            document.getElementById('map-external-id').value = '';
+            document.getElementById('map-external-provider').value = 'SquidWTF';
+            document.getElementById('map-save-btn').disabled = true;
+            
+            openModal('manual-map-modal');
+        }
+        
+        // Alias for backward compatibility
+        function openExternalMap(playlistName, position, title, artist, spotifyId) {
+            openManualMap(playlistName, position, title, artist, spotifyId);
+        }
+        
+        // Save manual mapping (external only)
+        async function saveManualMapping() {
+            const playlistName = document.getElementById('map-playlist-name').value;
+            const spotifyId = document.getElementById('map-spotify-id').value;
+            const position = parseInt(document.getElementById('map-position').textContent) - 1; // Convert back to 0-indexed
+            
+            const externalProvider = document.getElementById('map-external-provider').value;
+            const externalId = document.getElementById('map-external-id').value.trim();
+            
+            if (!externalId) {
+                showToast('Please enter an external provider ID', 'error');
+                return;
+            }
+            
+            const requestBody = {
+                spotifyId,
+                externalProvider,
+                externalId
+            };
+            
+            // Show loading state
+            const saveBtn = document.getElementById('map-save-btn');
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+            
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+                
+                const res = await fetch('/api/admin/playlists/' + encodeURIComponent(playlistName) + '/map', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(`✓ Track mapped to ${requestBody.externalProvider} - rebuilding playlist...`, 'success');
+                    closeModal('manual-map-modal');
+                    
+                    // Show rebuilding indicator
+                    showPlaylistRebuildingIndicator(playlistName);
+                    
+                    // Show detailed info toast after a moment
+                    setTimeout(() => {
+                        showToast(`🔄 Rebuilding playlist with your ${requestBody.externalProvider} mapping...`, 'info', 8000);
+                    }, 1000);
+                    
+                    // Update the track in the UI without refreshing
+                    const trackItem = document.querySelector(`.track-item[data-position="${position}"]`);
+                    if (trackItem) {
+                        const titleEl = trackItem.querySelector('.track-info h4');
+                        if (titleEl) {
+                            // Update status badge to show provider
+                            const currentTitle = titleEl.textContent.split(' - ')[0]; // Remove old status
+                            const capitalizedProvider = capitalizeProvider(requestBody.externalProvider);
+                            const newStatusBadge = `<span class="status-badge warning" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;"><span class="status-dot"></span>${escapeHtml(capitalizedProvider)}</span>`;
+                            titleEl.innerHTML = escapeHtml(currentTitle) + newStatusBadge;
+                        }
+                        
+                        // Remove search link since it's now mapped
+                        const searchLink = trackItem.querySelector('.track-meta a');
+                        if (searchLink) {
+                            searchLink.remove();
+                        }
+                    }
+                    
+                    // Also refresh the playlist counts in the background
+                    fetchPlaylists();
+                } else {
+                    showToast(data.error || 'Failed to save mapping', 'error');
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    showToast('Request timed out - mapping may still be processing', 'warning');
+                } else {
+                    showToast('Failed to save mapping', 'error');
+                }
+            } finally {
+                // Reset button state
+                saveBtn.textContent = originalText;
+                saveBtn.disabled = false;
+            }
+        }
+        
+        function showPlaylistRebuildingIndicator(playlistName) {
+            // Find the playlist in the UI and show rebuilding state
+            const playlistCards = document.querySelectorAll('.playlist-card');
+            for (const card of playlistCards) {
+                const nameEl = card.querySelector('h3');
+                if (nameEl && nameEl.textContent.trim() === playlistName) {
+                    // Add rebuilding indicator
+                    const existingIndicator = card.querySelector('.rebuilding-indicator');
+                    if (!existingIndicator) {
+                        const indicator = document.createElement('div');
+                        indicator.className = 'rebuilding-indicator';
+                        indicator.style.cssText = `
+                            position: absolute;
+                            top: 8px;
+                            right: 8px;
+                            background: var(--warning);
+                            color: white;
+                            padding: 4px 8px;
+                            border-radius: 12px;
+                            font-size: 0.7rem;
+                            font-weight: 500;
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                            z-index: 10;
+                        `;
+                        indicator.innerHTML = '<span class="spinner" style="width: 10px; height: 10px;"></span>Rebuilding...';
+                        card.style.position = 'relative';
+                        card.appendChild(indicator);
+                        
+                        // Auto-remove after 30 seconds and refresh
+                        setTimeout(() => {
+                            indicator.remove();
+                            fetchPlaylists(); // Refresh to get updated counts
+                        }, 30000);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        function escapeJs(text) {
+            if (!text) return '';
+            return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+        }
+        
+        // Lyrics ID mapping functions
+        function openLyricsMap(artist, title, album, durationSeconds) {
+            document.getElementById('lyrics-map-artist').textContent = artist;
+            document.getElementById('lyrics-map-title').textContent = title;
+            document.getElementById('lyrics-map-album').textContent = album || '(No album)';
+            document.getElementById('lyrics-map-artist-value').value = artist;
+            document.getElementById('lyrics-map-title-value').value = title;
+            document.getElementById('lyrics-map-album-value').value = album || '';
+            document.getElementById('lyrics-map-duration').value = durationSeconds;
+            document.getElementById('lyrics-map-id').value = '';
+            
+            openModal('lyrics-map-modal');
+        }
+        
+        async function saveLyricsMapping() {
+            const artist = document.getElementById('lyrics-map-artist-value').value;
+            const title = document.getElementById('lyrics-map-title-value').value;
+            const album = document.getElementById('lyrics-map-album-value').value;
+            const durationSeconds = parseInt(document.getElementById('lyrics-map-duration').value);
+            const lyricsId = parseInt(document.getElementById('lyrics-map-id').value);
+            
+            if (!lyricsId || lyricsId <= 0) {
+                showToast('Please enter a valid lyrics ID', 'error');
+                return;
+            }
+            
+            const saveBtn = document.getElementById('lyrics-map-save-btn');
+            const originalText = saveBtn.textContent;
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/admin/lyrics/map', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        artist,
+                        title,
+                        album,
+                        durationSeconds,
+                        lyricsId
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    if (data.cached && data.lyrics) {
+                        showToast(`✓ Lyrics mapped and cached: ${data.lyrics.trackName} by ${data.lyrics.artistName}`, 'success', 5000);
+                    } else {
+                        showToast('✓ Lyrics mapping saved successfully', 'success');
+                    }
+                    closeModal('lyrics-map-modal');
+                } else {
+                    showToast(data.error || 'Failed to save lyrics mapping', 'error');
+                }
+            } catch (error) {
+                showToast('Failed to save lyrics mapping', 'error');
+            } finally {
+                saveBtn.textContent = originalText;
+                saveBtn.disabled = false;
+            }
+        }
+        
+        // Initial load
+        fetchStatus();
+        fetchPlaylists();
+        fetchTrackMappings();
+        fetchMissingTracks();
+        fetchDownloads();
+        fetchJellyfinUsers();
+        fetchJellyfinPlaylists();
+        fetchConfig();
+        fetchEndpointUsage();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            fetchStatus();
+            fetchPlaylists();
+            fetchTrackMappings();
+            fetchMissingTracks();
+            fetchDownloads();
+            
+            // Refresh endpoint usage if on that tab
+            const endpointsTab = document.getElementById('tab-endpoints');
+            if (endpointsTab && endpointsTab.classList.contains('active')) {
+                fetchEndpointUsage();
+            }
+        }, 30000);
+        
+        // Endpoint Usage Functions
+        async function fetchEndpointUsage() {
+            try {
+                const topSelect = document.getElementById('endpoints-top-select');
+                const top = topSelect ? topSelect.value : 50;
+                
+                const res = await fetch(`/api/admin/debug/endpoint-usage?top=${top}`);
+                const data = await res.json();
+                
+                // Update summary stats
+                document.getElementById('endpoints-total-requests').textContent = data.totalRequests?.toLocaleString() || '0';
+                document.getElementById('endpoints-unique-count').textContent = data.totalEndpoints?.toLocaleString() || '0';
+                
+                const mostCalled = data.endpoints && data.endpoints.length > 0 
+                    ? data.endpoints[0].endpoint 
+                    : '-';
+                document.getElementById('endpoints-most-called').textContent = mostCalled;
+                
+                // Update table
+                const tbody = document.getElementById('endpoints-table-body');
+                
+                if (!data.endpoints || data.endpoints.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:40px;">No endpoint usage data available yet. Data will appear as clients make requests.</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.endpoints.map((ep, index) => {
+                    const percentage = data.totalRequests > 0 
+                        ? ((ep.count / data.totalRequests) * 100).toFixed(1) 
+                        : '0.0';
+                    
+                    // Color code based on usage
+                    let countColor = 'var(--text-primary)';
+                    if (ep.count > 1000) countColor = 'var(--error)';
+                    else if (ep.count > 100) countColor = 'var(--warning)';
+                    else if (ep.count > 10) countColor = 'var(--accent)';
+                    
+                    // Highlight common patterns
+                    let endpointDisplay = ep.endpoint;
+                    if (ep.endpoint.includes('/stream')) {
+                        endpointDisplay = `<span style="color:var(--success)">${escapeHtml(ep.endpoint)}</span>`;
+                    } else if (ep.endpoint.includes('/Playing')) {
+                        endpointDisplay = `<span style="color:var(--accent)">${escapeHtml(ep.endpoint)}</span>`;
+                    } else if (ep.endpoint.includes('/Search')) {
+                        endpointDisplay = `<span style="color:var(--warning)">${escapeHtml(ep.endpoint)}</span>`;
+                    } else {
+                        endpointDisplay = escapeHtml(ep.endpoint);
+                    }
+                    
+                    return `
+                        <tr>
+                            <td style="color:var(--text-secondary);text-align:center;">${index + 1}</td>
+                            <td style="font-family:monospace;font-size:0.85rem;">${endpointDisplay}</td>
+                            <td style="text-align:right;font-weight:600;color:${countColor}">${ep.count.toLocaleString()}</td>
+                            <td style="text-align:right;color:var(--text-secondary)">${percentage}%</td>
+                        </tr>
+                    `;
+                }).join('');
+                
+            } catch (error) {
+                console.error('Failed to fetch endpoint usage:', error);
+                const tbody = document.getElementById('endpoints-table-body');
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--error);padding:40px;">Failed to load endpoint usage data</td></tr>';
+            }
+        }
+        
+        async function clearEndpointUsage() {
+            if (!confirm('Are you sure you want to clear all endpoint usage data? This cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/admin/debug/endpoint-usage', { method: 'DELETE' });
+                const data = await res.json();
+                
+                showToast(data.message || 'Endpoint usage data cleared', 'success');
+                fetchEndpointUsage();
+            } catch (error) {
+                console.error('Failed to clear endpoint usage:', error);
+                showToast('Failed to clear endpoint usage data', 'error');
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -63,11 +63,12 @@ public class JellyfinProxyServiceTests
         SetupMockResponse(HttpStatusCode.OK, jsonResponse, "application/json");
 
         // Act
-        var result = await _service.GetJsonAsync("Items");
+        var (body, statusCode) = await _service.GetJsonAsync("Items");
 
         // Assert
-        Assert.NotNull(result);
-        Assert.True(result.RootElement.TryGetProperty("Items", out var items));
+        Assert.NotNull(body);
+        Assert.Equal(200, statusCode);
+        Assert.True(body.RootElement.TryGetProperty("Items", out var items));
         Assert.Equal(1, items.GetArrayLength());
     }
 
@@ -78,14 +79,15 @@ public class JellyfinProxyServiceTests
         SetupMockResponse(HttpStatusCode.InternalServerError, "", "text/plain");
 
         // Act
-        var result = await _service.GetJsonAsync("Items");
+        var (body, statusCode) = await _service.GetJsonAsync("Items");
 
         // Assert
-        Assert.Null(result);
+        Assert.Null(body);
+        Assert.Equal(500, statusCode);
     }
 
     [Fact]
-    public async Task GetJsonAsync_IncludesAuthHeader()
+    public async Task GetJsonAsync_WithoutClientHeaders_SendsNoAuth()
     {
         // Arrange
         HttpRequestMessage? captured = null;
@@ -102,13 +104,10 @@ public class JellyfinProxyServiceTests
         // Act
         await _service.GetJsonAsync("Items");
 
-        // Assert
+        // Assert - Should NOT include auth when no client headers provided
         Assert.NotNull(captured);
-        Assert.True(captured!.Headers.Contains("Authorization"));
-        var authHeader = captured.Headers.GetValues("Authorization").First();
-        Assert.Contains("MediaBrowser", authHeader);
-        Assert.Contains(_settings.ApiKey!, authHeader);
-        Assert.Contains(_settings.ClientName!, authHeader);
+        Assert.False(captured!.Headers.Contains("Authorization"));
+        Assert.False(captured.Headers.Contains("X-Emby-Authorization"));
     }
 
     [Fact]
@@ -210,12 +209,13 @@ public class JellyfinProxyServiceTests
             });
 
         // Act
-        var result = await _service.GetItemAsync("abc-123");
+        var (body, statusCode) = await _service.GetItemAsync("abc-123");
 
         // Assert
         Assert.NotNull(captured);
         Assert.Contains("/Items/abc-123", captured!.RequestUri!.ToString());
-        Assert.NotNull(result);
+        Assert.NotNull(body);
+        Assert.Equal(200, statusCode);
     }
 
     [Fact]

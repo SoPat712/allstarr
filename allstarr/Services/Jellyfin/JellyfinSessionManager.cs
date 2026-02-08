@@ -1,0 +1,591 @@
+using System.Collections.Concurrent;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
+using allstarr.Models.Settings;
+
+namespace allstarr.Services.Jellyfin;
+
+/// <summary>
+/// Manages Jellyfin sessions for connected clients.
+/// Creates sessions on first playback and keeps them alive with periodic pings.
+/// Also maintains server-side WebSocket connections to Jellyfin on behalf of clients.
+/// </summary>
+public class JellyfinSessionManager : IDisposable
+{
+    private readonly JellyfinProxyService _proxyService;
+    private readonly JellyfinSettings _settings;
+    private readonly ILogger<JellyfinSessionManager> _logger;
+    private readonly ConcurrentDictionary<string, SessionInfo> _sessions = new();
+    private readonly Timer _keepAliveTimer;
+
+    public JellyfinSessionManager(
+        JellyfinProxyService proxyService,
+        IOptions<JellyfinSettings> settings,
+        ILogger<JellyfinSessionManager> logger)
+    {
+        _proxyService = proxyService;
+        _settings = settings.Value;
+        _logger = logger;
+
+        // Keep sessions alive every 10 seconds (Jellyfin considers sessions stale after ~15 seconds of inactivity)
+        _keepAliveTimer = new Timer(KeepSessionsAlive, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+        
+        _logger.LogDebug("🔧 SESSION: JellyfinSessionManager initialized with 10-second keep-alive and WebSocket support");
+    }
+
+    /// <summary>
+    /// Ensures a session exists for the given device. Creates one if needed.
+    /// Returns false if token is expired (401), indicating client needs to re-authenticate.
+    /// </summary>
+    public async Task<bool> EnsureSessionAsync(string deviceId, string client, string device, string version, IHeaderDictionary headers)
+    {
+        if (string.IsNullOrEmpty(deviceId))
+        {
+            _logger.LogWarning("Cannot create session - no device ID");
+            return false;
+        }
+
+        // Check if we already have this session tracked
+        if (_sessions.TryGetValue(deviceId, out var existingSession))
+        {
+            existingSession.LastActivity = DateTime.UtcNow;
+            _logger.LogTrace("Session already exists for device {DeviceId}", deviceId);
+            
+            // Refresh capabilities to keep session alive
+            // If this returns false (401), the token expired and client needs to re-auth
+            var success = await PostCapabilitiesAsync(headers);
+            if (!success)
+            {
+                // Token expired - remove the stale session
+                _logger.LogInformation("Token expired for device {DeviceId} - removing session", deviceId);
+                await RemoveSessionAsync(deviceId);
+                return false;
+            }
+            
+            return true;
+        }
+
+        _logger.LogDebug("Creating new session for device: {DeviceId} ({Client} on {Device})", deviceId, client, device);
+
+        try
+        {
+            // Post session capabilities to Jellyfin - this creates the session
+            var success = await PostCapabilitiesAsync(headers);
+            
+            if (!success)
+            {
+                // Token expired or invalid - client needs to re-authenticate
+                _logger.LogInformation("Failed to create session for {DeviceId} - token may be expired", deviceId);
+                return false;
+            }
+
+            _logger.LogDebug("Session created for {DeviceId}", deviceId);
+
+            // Track this session
+            _sessions[deviceId] = new SessionInfo
+            {
+                DeviceId = deviceId,
+                Client = client,
+                Device = device,
+                Version = version,
+                LastActivity = DateTime.UtcNow,
+                Headers = CloneHeaders(headers)
+            };
+
+            // Start a WebSocket connection to Jellyfin on behalf of this client
+            _ = Task.Run(() => MaintainWebSocketForSessionAsync(deviceId, headers));
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating session for {DeviceId}", deviceId);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Posts session capabilities to Jellyfin.
+    /// Returns true if successful, false if token expired (401).
+    /// </summary>
+    private async Task<bool> PostCapabilitiesAsync(IHeaderDictionary headers)
+    {
+        var capabilities = new
+        {
+            PlayableMediaTypes = new[] { "Audio" },
+            SupportedCommands = new[]
+            {
+                "Play",
+                "Playstate",
+                "PlayNext"
+            },
+            SupportsMediaControl = true,
+            SupportsPersistentIdentifier = true,
+            SupportsSync = false
+        };
+
+        var json = JsonSerializer.Serialize(capabilities);
+        var (result, statusCode) = await _proxyService.PostJsonAsync("Sessions/Capabilities/Full", json, headers);
+
+        if (statusCode == 204 || statusCode == 200)
+        {
+            _logger.LogTrace("Posted capabilities successfully ({StatusCode})", statusCode);
+            return true;
+        }
+        else if (statusCode == 401)
+        {
+            // Token expired - this is expected, client needs to re-authenticate
+            _logger.LogDebug("Capabilities returned 401 (token expired) - client should re-authenticate");
+            return false;
+        }
+        else
+        {
+            _logger.LogDebug("Capabilities post returned {StatusCode}", statusCode);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Updates session activity timestamp.
+    /// </summary>
+    public void UpdateActivity(string deviceId)
+    {
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            session.LastActivity = DateTime.UtcNow;
+            _logger.LogDebug("🔄 SESSION: Updated activity for {DeviceId}", deviceId);
+        }
+        else
+        {
+            _logger.LogDebug("⚠️ SESSION: Cannot update activity - device {DeviceId} not found", deviceId);
+        }
+    }
+    
+    /// <summary>
+    /// Updates the currently playing item for a session (for scrobbling on cleanup).
+    /// </summary>
+    public void UpdatePlayingItem(string deviceId, string? itemId, long? positionTicks)
+    {
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            session.LastPlayingItemId = itemId;
+            session.LastPlayingPositionTicks = positionTicks;
+            session.LastActivity = DateTime.UtcNow;
+            _logger.LogDebug("🎵 SESSION: Updated playing item for {DeviceId}: {ItemId} at {Position}", 
+                deviceId, itemId, positionTicks);
+        }
+    }
+
+    /// <summary>
+    /// Marks a session as potentially ended (e.g., after playback stops).
+    /// The session will be cleaned up if no new activity occurs within the timeout.
+    /// </summary>
+    public void MarkSessionPotentiallyEnded(string deviceId, TimeSpan timeout)
+    {
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            _logger.LogDebug("⏰ SESSION: Marking session {DeviceId} as potentially ended, will cleanup in {Seconds}s if no activity", 
+                deviceId, timeout.TotalSeconds);
+            
+            _ = Task.Run(async () =>
+            {
+                var markedTime = DateTime.UtcNow;
+                await Task.Delay(timeout);
+                
+                // Check if there's been activity since we marked it
+                if (_sessions.TryGetValue(deviceId, out var currentSession) && 
+                    currentSession.LastActivity <= markedTime)
+                {
+                    _logger.LogDebug("🧹 SESSION: Auto-removing inactive session {DeviceId} after playback stop", deviceId);
+                    await RemoveSessionAsync(deviceId);
+                }
+                else
+                {
+                    _logger.LogDebug("✓ SESSION: Session {DeviceId} had activity, keeping alive", deviceId);
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Gets information about current active sessions for debugging.
+    /// </summary>
+    public object GetSessionsInfo()
+    {
+        var now = DateTime.UtcNow;
+        var sessions = _sessions.Values.Select(s => new
+        {
+            DeviceId = s.DeviceId,
+            Client = s.Client,
+            Device = s.Device,
+            Version = s.Version,
+            LastActivity = s.LastActivity,
+            InactiveMinutes = Math.Round((now - s.LastActivity).TotalMinutes, 1),
+            HasWebSocket = s.WebSocket != null,
+            WebSocketState = s.WebSocket?.State.ToString() ?? "None"
+        }).ToList();
+
+        return new
+        {
+            TotalSessions = sessions.Count,
+            ActiveSessions = sessions.Count(s => s.InactiveMinutes < 2),
+            StaleSessions = sessions.Count(s => s.InactiveMinutes >= 2),
+            Sessions = sessions.OrderBy(s => s.InactiveMinutes)
+        };
+    }
+
+    /// <summary>
+    /// Removes a session when the client disconnects.
+    /// </summary>
+    public async Task RemoveSessionAsync(string deviceId)
+    {
+        if (_sessions.TryRemove(deviceId, out var session))
+        {
+            _logger.LogDebug("🗑️ SESSION: Removing session for device {DeviceId}", deviceId);
+
+            // Close WebSocket if it exists
+            if (session.WebSocket != null && session.WebSocket.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await session.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+                    _logger.LogDebug("🔌 WEBSOCKET: Closed WebSocket for device {DeviceId}", deviceId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "WEBSOCKET: Error closing WebSocket for {DeviceId}", deviceId);
+                }
+                finally
+                {
+                    session.WebSocket?.Dispose();
+                }
+            }
+
+            try
+            {
+                // Report playback stopped to Jellyfin if we have a playing item (for scrobbling)
+                if (!string.IsNullOrEmpty(session.LastPlayingItemId))
+                {
+                    var stopPayload = new
+                    {
+                        ItemId = session.LastPlayingItemId,
+                        PositionTicks = session.LastPlayingPositionTicks ?? 0
+                    };
+                    var stopJson = JsonSerializer.Serialize(stopPayload);
+                    await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, session.Headers);
+                    _logger.LogDebug("🛑 SESSION: Reported playback stopped for {DeviceId} (ItemId: {ItemId}, Position: {Position})", 
+                        deviceId, session.LastPlayingItemId, session.LastPlayingPositionTicks);
+                }
+                
+                // Notify Jellyfin that the session is ending
+                await _proxyService.PostJsonAsync("Sessions/Logout", "{}", session.Headers);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("⚠️ SESSION: Error removing session for {DeviceId}: {Message}", deviceId, ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Maintains a WebSocket connection to Jellyfin on behalf of a client session.
+    /// This allows the session to appear in Jellyfin's dashboard.
+    /// </summary>
+    private async Task MaintainWebSocketForSessionAsync(string deviceId, IHeaderDictionary headers)
+    {
+        if (!_sessions.TryGetValue(deviceId, out var session))
+        {
+            _logger.LogDebug("⚠️ WEBSOCKET: Cannot create WebSocket - session {DeviceId} not found", deviceId);
+            return;
+        }
+
+        ClientWebSocket? webSocket = null;
+
+        try
+        {
+            // Build Jellyfin WebSocket URL
+            var jellyfinUrl = _settings.Url?.TrimEnd('/') ?? "";
+            var wsScheme = jellyfinUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss://" : "ws://";
+            var jellyfinHost = jellyfinUrl.Replace("https://", "").Replace("http://", "");
+            var jellyfinWsUrl = $"{wsScheme}{jellyfinHost}/socket";
+
+            // IMPORTANT: Do NOT add api_key to URL - we want to authenticate as the CLIENT, not the server
+            // The client's token is passed via X-Emby-Authorization header
+            // Using api_key would create a session for the server/admin, not the actual user's client
+
+            webSocket = new ClientWebSocket();
+            session.WebSocket = webSocket;
+
+            // Use stored session headers instead of parameter (parameter might be disposed)
+            var sessionHeaders = session.Headers;
+            
+            // Log available headers for debugging
+            _logger.LogDebug("🔍 WEBSOCKET: Available headers for {DeviceId}: {Headers}", 
+                deviceId, string.Join(", ", sessionHeaders.Keys));
+
+            // Forward authentication headers from the CLIENT - this is critical for session to appear under the right user
+            bool authFound = false;
+            if (sessionHeaders.TryGetValue("X-Emby-Authorization", out var embyAuth))
+            {
+                webSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuth.ToString());
+                _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Authorization for {DeviceId}: {Auth}", 
+                    deviceId, embyAuth.ToString().Length > 50 ? embyAuth.ToString()[..50] + "..." : embyAuth.ToString());
+                authFound = true;
+            }
+            else if (sessionHeaders.TryGetValue("Authorization", out var auth))
+            {
+                var authValue = auth.ToString();
+                if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
+                {
+                    webSocket.Options.SetRequestHeader("X-Emby-Authorization", authValue);
+                    _logger.LogDebug("🔑 WEBSOCKET: Converted Authorization to X-Emby-Authorization for {DeviceId}: {Auth}", 
+                        deviceId, authValue.Length > 50 ? authValue[..50] + "..." : authValue);
+                    authFound = true;
+                }
+                else
+                {
+                    webSocket.Options.SetRequestHeader("Authorization", authValue);
+                    _logger.LogDebug("🔑 WEBSOCKET: Using Authorization for {DeviceId}: {Auth}", 
+                        deviceId, authValue.Length > 50 ? authValue[..50] + "..." : authValue);
+                    authFound = true;
+                }
+            }
+            
+            if (!authFound)
+            {
+                // No client auth found - fall back to server API key as last resort
+                if (!string.IsNullOrEmpty(_settings.ApiKey))
+                {
+                    jellyfinWsUrl += $"?api_key={_settings.ApiKey}";
+                    _logger.LogDebug("WEBSOCKET: No client auth found in headers, falling back to server API key for {DeviceId}", deviceId);
+                }
+                else
+                {
+                    _logger.LogWarning("❌ WEBSOCKET: No authentication available for {DeviceId} - WebSocket will fail", deviceId);
+                }
+            }
+
+            _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin for device {DeviceId}: {Url}", deviceId, jellyfinWsUrl);
+
+            // Set user agent
+            webSocket.Options.SetRequestHeader("User-Agent", $"Allstarr-Proxy/{session.Client}");
+
+            // Connect to Jellyfin
+            await webSocket.ConnectAsync(new Uri(jellyfinWsUrl), CancellationToken.None);
+            _logger.LogDebug("✓ WEBSOCKET: Connected to Jellyfin for device {DeviceId}", deviceId);
+
+            // CRITICAL: Send ForceKeepAlive message to initialize session in Jellyfin
+            // This tells Jellyfin to create/show the session in the dashboard
+            // Without this message, the WebSocket is connected but no session appears
+            var forceKeepAliveMessage = "{\"MessageType\":\"ForceKeepAlive\",\"Data\":100}";
+            var messageBytes = Encoding.UTF8.GetBytes(forceKeepAliveMessage);
+            await webSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+            _logger.LogDebug("📤 WEBSOCKET: Sent ForceKeepAlive to initialize session for {DeviceId}", deviceId);
+
+            // Also send SessionsStart to subscribe to session updates
+            var sessionsStartMessage = "{\"MessageType\":\"SessionsStart\",\"Data\":\"0,1500\"}";
+            messageBytes = Encoding.UTF8.GetBytes(sessionsStartMessage);
+            await webSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+            _logger.LogDebug("📤 WEBSOCKET: Sent SessionsStart for {DeviceId}", deviceId);
+
+            // Keep the WebSocket alive by reading messages and sending periodic keep-alive
+            var buffer = new byte[1024 * 4];
+            var lastKeepAlive = DateTime.UtcNow;
+            using var cts = new CancellationTokenSource();
+            
+            while (webSocket.State == WebSocketState.Open && _sessions.ContainsKey(deviceId))
+            {
+                try
+                {
+                    // Use a timeout so we can send keep-alive messages periodically
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+                    
+                    try
+                    {
+                        var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), timeoutCts.Token);
+
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            _logger.LogDebug("🔌 WEBSOCKET: Jellyfin closed WebSocket for device {DeviceId}", deviceId);
+                            break;
+                        }
+
+                        // Log received messages for debugging (only non-routine messages)
+                        if (result.MessageType == WebSocketMessageType.Text)
+                        {
+                            var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                            
+                            // Respond to KeepAlive requests from Jellyfin
+                            if (message.Contains("\"MessageType\":\"KeepAlive\""))
+                            {
+                                _logger.LogDebug("💓 WEBSOCKET: Received KeepAlive from Jellyfin for {DeviceId}", deviceId);
+                            }
+                            else if (message.Contains("\"MessageType\":\"Sessions\""))
+                            {
+                                // Session updates are routine, log at debug level
+                                _logger.LogDebug("📥 WEBSOCKET: Session update for {DeviceId}", deviceId);
+                            }
+                            else
+                            {
+                                // Log other message types at trace level
+                                _logger.LogTrace("📥 WEBSOCKET: {DeviceId}: {Message}", 
+                                    deviceId, message.Length > 100 ? message[..100] + "..." : message);
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (!cts.IsCancellationRequested)
+                    {
+                        // Timeout - this is expected, send keep-alive if needed
+                    }
+                    
+                    // Send periodic keep-alive every 30 seconds
+                    if (DateTime.UtcNow - lastKeepAlive > TimeSpan.FromSeconds(30))
+                    {
+                        var keepAliveMsg = "{\"MessageType\":\"KeepAlive\"}";
+                        var keepAliveBytes = Encoding.UTF8.GetBytes(keepAliveMsg);
+                        await webSocket.SendAsync(new ArraySegment<byte>(keepAliveBytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                        _logger.LogDebug("💓 WEBSOCKET: Sent KeepAlive for {DeviceId}", deviceId);
+                        lastKeepAlive = DateTime.UtcNow;
+                    }
+                }
+                catch (WebSocketException wsEx)
+                {
+                    _logger.LogDebug(wsEx, "WEBSOCKET: Connection closed for device {DeviceId}", deviceId);
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ WEBSOCKET: Failed to maintain WebSocket for device {DeviceId}", deviceId);
+        }
+        finally
+        {
+            if (webSocket != null)
+            {
+                if (webSocket.State == WebSocketState.Open)
+                {
+                    try
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+                    }
+                    catch { }
+                }
+                webSocket.Dispose();
+                _logger.LogDebug("🧹 WEBSOCKET: Cleaned up WebSocket for device {DeviceId}", deviceId);
+            }
+
+            // Clear WebSocket reference from session
+            if (_sessions.TryGetValue(deviceId, out var sess))
+            {
+                sess.WebSocket = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Periodically pings Jellyfin to keep sessions alive.
+    /// Note: This is a backup mechanism. The WebSocket connection is the primary keep-alive.
+    /// Removes sessions with expired tokens (401 responses).
+    /// </summary>
+    private async void KeepSessionsAlive(object? state)
+    {
+        var now = DateTime.UtcNow;
+        var activeSessions = _sessions.Values.Where(s => now - s.LastActivity < TimeSpan.FromMinutes(5)).ToList();
+
+        if (activeSessions.Count == 0)
+        {
+            return;
+        }
+
+        _logger.LogTrace("Keeping {Count} sessions alive", activeSessions.Count);
+
+        var expiredSessions = new List<string>();
+
+        foreach (var session in activeSessions)
+        {
+            try
+            {
+                // Post capabilities again to keep session alive
+                // If this returns false (401), the token has expired
+                var success = await PostCapabilitiesAsync(session.Headers);
+                
+                if (!success)
+                {
+                    _logger.LogInformation("Token expired for device {DeviceId} during keep-alive - marking for removal", session.DeviceId);
+                    expiredSessions.Add(session.DeviceId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error keeping session alive for {DeviceId}", session.DeviceId);
+            }
+        }
+
+        // Remove sessions with expired tokens
+        foreach (var deviceId in expiredSessions)
+        {
+            _logger.LogInformation("Removing session with expired token: {DeviceId}", deviceId);
+            await RemoveSessionAsync(deviceId);
+        }
+
+        // Clean up stale sessions after 3 minutes of inactivity
+        // This balances cleaning up finished sessions with allowing brief pauses/network issues
+        var staleSessions = _sessions.Where(kvp => now - kvp.Value.LastActivity > TimeSpan.FromMinutes(3)).ToList();
+        foreach (var stale in staleSessions)
+        {
+            _logger.LogDebug("Removing stale session for {DeviceId} (inactive for {Minutes:F1} minutes)", 
+                stale.Key, (now - stale.Value.LastActivity).TotalMinutes);
+            await RemoveSessionAsync(stale.Key);
+        }
+    }
+
+    private static IHeaderDictionary CloneHeaders(IHeaderDictionary headers)
+    {
+        var cloned = new HeaderDictionary();
+        foreach (var header in headers)
+        {
+            cloned[header.Key] = header.Value;
+        }
+        return cloned;
+    }
+
+    private class SessionInfo
+    {
+        public required string DeviceId { get; init; }
+        public required string Client { get; init; }
+        public required string Device { get; init; }
+        public required string Version { get; init; }
+        public DateTime LastActivity { get; set; }
+        public required IHeaderDictionary Headers { get; init; }
+        public ClientWebSocket? WebSocket { get; set; }
+        public string? LastPlayingItemId { get; set; }
+        public long? LastPlayingPositionTicks { get; set; }
+    }
+
+    public void Dispose()
+    {
+        _keepAliveTimer?.Dispose();
+        
+        // Close all WebSocket connections
+        foreach (var session in _sessions.Values)
+        {
+            if (session.WebSocket != null && session.WebSocket.State == WebSocketState.Open)
+            {
+                try
+                {
+                    session.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Service stopping", CancellationToken.None).Wait(TimeSpan.FromSeconds(5));
+                }
+                catch { }
+                finally
+                {
+                    session.WebSocket?.Dispose();
+                }
+            }
+        }
+    }
+}

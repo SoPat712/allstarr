@@ -38,6 +38,46 @@ docker-compose logs -f
 
 The proxy will be available at `http://localhost:5274`.
 
+## Web Dashboard
+
+Allstarr includes a web-based dashboard for easy configuration and playlist management, accessible at `http://localhost:5275` (internal port, not exposed through reverse proxy).
+
+### Features
+
+- **Real-time Status**: Monitor Spotify authentication, cookie age, and playlist sync status
+- **Playlist Management**: Link Jellyfin playlists to Spotify playlists with a few clicks
+- **Configuration Editor**: Update settings without manually editing .env files
+- **Track Viewer**: Browse tracks in your configured playlists
+- **Cache Management**: Clear cached data and restart the container
+
+### Quick Setup with Web UI
+
+1. **Access the dashboard** at `http://localhost:5275`
+2. **Configure Spotify** (Configuration tab):
+   - Enable Spotify API
+   - Add your `sp_dc` cookie from Spotify (see instructions in UI)
+   - The cookie age is automatically tracked
+3. **Link playlists** (Link Playlists tab):
+   - View all your Jellyfin playlists
+   - Click "Link to Spotify" on any playlist
+   - Paste the Spotify playlist ID, URL, or `spotify:playlist:` URI
+   - Accepts formats like:
+     - `37i9dQZF1DXcBWIGoYBM5M` (just the ID)
+     - `spotify:playlist:37i9dQZF1DXcBWIGoYBM5M` (Spotify URI)
+     - `https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M` (full URL)
+4. **Restart** to apply changes (button in Configuration tab)
+
+### Why Two Playlist Tabs?
+
+- **Link Playlists**: Shows all Jellyfin playlists and lets you connect them to Spotify
+- **Active Playlists**: Shows which Spotify playlists are currently being monitored and filled with tracks
+
+### Configuration Persistence
+
+The web UI updates your `.env` file directly. Changes persist across container restarts, but require a restart to take effect. In development mode, the `.env` file is in your project root. In Docker, it's at `/app/.env`.
+
+**Recommended workflow**: Use the `sp_dc` cookie method (simpler and more reliable than the Jellyfin Spotify Import plugin).
+
 ### Nginx Proxy Setup (Required)
 
 This service only exposes ports internally. You can use nginx to proxy to it, however PLEASE take significant precautions before exposing this! Everyone decides their own level of risk, but this is currently untested, potentially dangerous software, with almost unfettered access to your Jellyfin server. My recommendation is use Tailscale or something similar!
@@ -83,6 +123,7 @@ This project brings together all the music streaming providers into one unified 
 - **Transparent Proxy**: Sits between your music clients and media server
 - **Automatic Search**: Searches streaming providers when songs aren't local
 - **On-the-Fly Downloads**: Songs download and cache for future use
+- **Favorite to Keep**: When you favorite an external track, it's automatically copied to a permanent `/kept` folder separate from the cache
 - **External Playlist Support**: Search and download playlists from Deezer, Qobuz, and SquidWTF with M3U generation
 - **Hi-Res Audio**: SquidWTF supports up to 24-bit/192kHz FLAC
 - **Full Metadata**: Downloaded files include complete ID3 tags (title, artist, album, track number, year, genre, BPM, ISRC, etc.) and cover art
@@ -90,6 +131,7 @@ This project brings together all the music streaming providers into one unified 
 - **Artist Deduplication**: Merges local and streaming artists to avoid duplicates
 - **Album Enrichment**: Adds missing tracks to local albums from streaming providers
 - **Cover Art Proxy**: Serves cover art for external content
+- **Spotify Playlist Injection** (Jellyfin only): Intercepts Spotify Import plugin playlists (Release Radar, Discover Weekly) and fills them with tracks auto-matched from streaming providers
 
 ## Supported Backends
 
@@ -248,6 +290,10 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 |---------|-------------|
 | `SquidWTF:Quality` | Preferred audio quality: `FLAC`, `MP3_320`, `MP3_128`. If not specified, the highest available quality for your account will be used |
 
+**Load Balancing & Reliability:**
+
+SquidWTF uses a round-robin load balancing strategy across multiple backup API endpoints to distribute requests evenly and prevent overwhelming any single provider. Each request automatically rotates to the next endpoint in the pool, with automatic fallback to other endpoints if one fails. This ensures high availability and prevents rate limiting by distributing load across multiple providers.
+
 ### Deezer Settings
 
 | Setting | Description |
@@ -286,6 +332,154 @@ Subsonic__EnableExternalPlaylists=false
 ```
 
 > **Note**: Due to client-side filtering, playlists from streaming providers may not appear in the "Playlists" tab of some clients, but will show up in global search results.
+
+### Spotify Playlist Injection (Jellyfin Only)
+
+Allstarr can automatically fill your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This feature works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
+
+#### Prerequisites
+
+1. **Install the Jellyfin Spotify Import Plugin**
+   - Navigate to Jellyfin Dashboard → Plugins → Catalog
+   - Search for "Spotify Import" by Viperinius
+   - Install and restart Jellyfin
+   - Plugin repository: [Viperinius/jellyfin-plugin-spotify-import](https://github.com/Viperinius/jellyfin-plugin-spotify-import)
+
+2. **Configure the Spotify Import Plugin**
+   - Go to Jellyfin Dashboard → Plugins → Spotify Import
+   - Connect your Spotify account
+   - Select which playlists to sync (e.g., Release Radar, Discover Weekly)
+   - Set a daily sync schedule (e.g., 4:15 PM daily)
+   - The plugin will create playlists in Jellyfin and generate "missing tracks" files for songs not in your library
+
+3. **Configure Allstarr**
+   - Allstarr needs to know when the plugin runs and which playlists to intercept
+   - Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings (no additional credentials needed)
+
+#### Configuration
+
+| Setting | Description |
+|---------|-------------|
+| `SpotifyImport:Enabled` | Enable Spotify playlist injection (default: `false`) |
+| `SpotifyImport:SyncStartHour` | Hour when the Spotify Import plugin runs (24-hour format, 0-23) |
+| `SpotifyImport:SyncStartMinute` | Minute when the plugin runs (0-59) |
+| `SpotifyImport:SyncWindowHours` | Hours to search for missing tracks files after sync time (default: 2) |
+| `SpotifyImport:PlaylistIds` | Comma-separated Jellyfin playlist IDs to intercept |
+| `SpotifyImport:PlaylistNames` | Comma-separated playlist names (must match order of IDs) |
+
+**Environment variables example:**
+```bash
+# Enable the feature
+SPOTIFY_IMPORT_ENABLED=true
+
+# Sync window settings (optional - used to prevent fetching too frequently)
+# The fetcher searches backwards from current time for the last 48 hours
+SPOTIFY_IMPORT_SYNC_START_HOUR=16
+SPOTIFY_IMPORT_SYNC_START_MINUTE=15
+SPOTIFY_IMPORT_SYNC_WINDOW_HOURS=2
+
+# Get playlist IDs from Jellyfin URLs: https://jellyfin.example.com/web/#/details?id=PLAYLIST_ID
+SPOTIFY_IMPORT_PLAYLIST_IDS=ba50e26c867ec9d57ab2f7bf24cfd6b0,4383a46d8bcac3be2ef9385053ea18df
+
+# Names must match exactly as they appear in Jellyfin (used to find missing tracks files)
+SPOTIFY_IMPORT_PLAYLIST_NAMES=Release Radar,Discover Weekly
+```
+
+#### How It Works
+
+1. **Spotify Import Plugin Runs** (e.g., daily at 4:15 PM)
+   - Plugin fetches your Spotify playlists
+   - Creates/updates playlists in Jellyfin with tracks already in your library
+   - Generates "missing tracks" JSON files for songs not found locally
+   - Files are named like: `Release Radar_missing_2026-02-01_16-15.json`
+
+2. **Allstarr Fetches Missing Tracks** (within sync window)
+   - Searches for missing tracks files from the Jellyfin plugin
+   - Searches **+24 hours forward first** (newest files), then **-48 hours backward** if not found
+   - This efficiently finds the most recent file regardless of timezone differences
+   - Example: Server time 12 PM EST, file timestamped 9 PM UTC (same day) → Found in forward search
+   - Caches the list of missing tracks in Redis + file cache
+   - Runs automatically on startup (if needed) and every 5 minutes during the sync window
+
+3. **Allstarr Matches Tracks** (2 minutes after startup, then configurable interval)
+   - For each missing track, searches your streaming provider (SquidWTF, Deezer, or Qobuz)
+   - Uses fuzzy matching to find the best match (title + artist similarity)
+   - Rate-limited to avoid overwhelming the service (150ms delay between searches)
+   - Caches matched results for 1 hour
+   - **Pre-builds playlist items cache** for instant serving (no "on the fly" building)
+   - Default interval: 24 hours (configurable via `SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS`)
+   - Set to 0 to only run once on startup (manual trigger via admin UI still works)
+
+4. **You Open the Playlist in Jellyfin**
+   - Allstarr intercepts the request
+   - Returns a merged list: local tracks + matched streaming tracks
+   - Loads instantly from cache (no searching needed!)
+
+5. **You Play a Track**
+   - If it's a local track, streams from Jellyfin normally
+   - If it's a matched track, downloads from streaming provider on-demand
+   - Downloaded tracks are saved to your library for future use
+
+#### Manual Triggers
+
+You can manually trigger syncing and matching via API:
+
+```bash
+# Fetch missing tracks from Jellyfin plugin
+curl "https://your-jellyfin-proxy.com/spotify/sync?api_key=YOUR_API_KEY"
+
+# Trigger track matching (searches streaming provider)
+curl "https://your-jellyfin-proxy.com/spotify/match?api_key=YOUR_API_KEY"
+
+# Clear cache to force re-matching
+curl "https://your-jellyfin-proxy.com/spotify/clear-cache?api_key=YOUR_API_KEY"
+```
+
+#### Startup Behavior
+
+When Allstarr starts with Spotify Import enabled:
+
+**Smart Cache Check:**
+- Checks if today's sync window has passed (e.g., if sync is at 4 PM + 2 hour window = 6 PM)
+- If before 6 PM and yesterday's cache exists → **Skips fetch** (cache is still current)
+- If after 6 PM or no cache exists → **Fetches missing tracks** from Jellyfin plugin
+
+**Track Matching:**
+- **T+2min**: Matches tracks with streaming provider (with rate limiting)
+- Only matches playlists that don't already have cached matches
+- **Result**: Playlists load instantly when you open them!
+
+**Example Timeline:**
+- Plugin runs daily at 4:15 PM, creates files at ~4:16 PM
+- You restart Allstarr at 12:00 PM (noon) the next day
+- Startup check: "Today's sync window ends at 6 PM, and I have yesterday's 4:16 PM file"
+- **Decision**: Skip fetch, use existing cache
+- At 6:01 PM: Next scheduled check will search for new files
+
+#### Troubleshooting
+
+**Playlists are empty:**
+- Check that the Spotify Import plugin is running and creating playlists
+- Verify `SPOTIFY_IMPORT_PLAYLIST_IDS` match your Jellyfin playlist IDs
+- Check logs: `docker-compose logs -f allstarr | grep -i spotify`
+
+**Tracks aren't matching:**
+- Ensure your streaming provider is configured (`MUSIC_SERVICE`, credentials)
+- Check that playlist names in `SPOTIFY_IMPORT_PLAYLIST_NAMES` match exactly
+- Manually trigger matching: `curl "https://your-proxy.com/spotify/match?api_key=KEY"`
+
+**Sync timing issues:**
+- Set `SPOTIFY_IMPORT_SYNC_START_HOUR/MINUTE` to match your plugin schedule
+- Increase `SPOTIFY_IMPORT_SYNC_WINDOW_HOURS` if files aren't being found
+- Check Jellyfin plugin logs to confirm when it runs
+
+#### Notes
+
+- This feature uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
+- Matched tracks are cached for 1 hour to avoid repeated searches
+- Missing tracks cache persists across restarts (stored in Redis + file cache)
+- Rate limiting prevents overwhelming your streaming provider (150ms between searches)
+- Only works with Jellyfin backend (not Subsonic/Navidrome)
 
 ### Getting Credentials
 

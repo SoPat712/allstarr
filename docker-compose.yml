@@ -6,12 +6,25 @@ services:
     # Redis is only accessible internally - no external port exposure
     expose:
       - "6379"
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
+    volumes:
+      - ${REDIS_DATA_PATH:-./redis-data}:/data
+    networks:
+      - allstarr-network
+
+  spotify-lyrics:
+    image: akashrchandran/spotify-lyrics-api:latest
+    container_name: allstarr-spotify-lyrics
+    restart: unless-stopped
+    ports:
+      - "8365:8080"
+    environment:
+      - SP_DC=${SPOTIFY_API_SESSION_COOKIE:-}
     networks:
       - allstarr-network
 
@@ -32,9 +45,14 @@ services:
     restart: unless-stopped
     ports:
       - "5274:8080"
+      # Admin UI on port 5275 - for local/Tailscale access only
+      # DO NOT expose through reverse proxy - contains sensitive config
+      - "5275:5275"
     depends_on:
       redis:
         condition: service_healthy
+      spotify-lyrics:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -74,6 +92,28 @@ services:
       - Jellyfin__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
       - Jellyfin__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
       
+      # ===== SPOTIFY PLAYLIST INJECTION (JELLYFIN ONLY) =====
+      - SpotifyImport__Enabled=${SPOTIFY_IMPORT_ENABLED:-false}
+      - SpotifyImport__SyncStartHour=${SPOTIFY_IMPORT_SYNC_START_HOUR:-16}
+      - SpotifyImport__SyncStartMinute=${SPOTIFY_IMPORT_SYNC_START_MINUTE:-15}
+      - SpotifyImport__SyncWindowHours=${SPOTIFY_IMPORT_SYNC_WINDOW_HOURS:-2}
+      - SpotifyImport__Playlists=${SPOTIFY_IMPORT_PLAYLISTS:-}
+      - SpotifyImport__PlaylistIds=${SPOTIFY_IMPORT_PLAYLIST_IDS:-}
+      - SpotifyImport__PlaylistNames=${SPOTIFY_IMPORT_PLAYLIST_NAMES:-}
+      - SpotifyImport__PlaylistLocalTracksPositions=${SPOTIFY_IMPORT_PLAYLIST_LOCAL_TRACKS_POSITIONS:-}
+      
+      # ===== SPOTIFY DIRECT API (for lyrics, ISRC matching, track ordering) =====
+      - SpotifyApi__Enabled=${SPOTIFY_API_ENABLED:-false}
+      - SpotifyApi__ClientId=${SPOTIFY_API_CLIENT_ID:-}
+      - SpotifyApi__ClientSecret=${SPOTIFY_API_CLIENT_SECRET:-}
+      - SpotifyApi__SessionCookie=${SPOTIFY_API_SESSION_COOKIE:-}
+      - SpotifyApi__SessionCookieSetDate=${SPOTIFY_API_SESSION_COOKIE_SET_DATE:-}
+      - SpotifyApi__CacheDurationMinutes=${SPOTIFY_API_CACHE_DURATION_MINUTES:-60}
+      - SpotifyApi__RateLimitDelayMs=${SPOTIFY_API_RATE_LIMIT_DELAY_MS:-100}
+      - SpotifyApi__PreferIsrcMatching=${SPOTIFY_API_PREFER_ISRC_MATCHING:-true}
+      # Spotify Lyrics API sidecar service URL (internal)
+      - SpotifyApi__LyricsApiUrl=${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}
+      
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
       - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
@@ -85,6 +125,12 @@ services:
       - Qobuz__Quality=${QOBUZ_QUALITY:-FLAC}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
+      - ${KEPT_PATH:-./kept}:/app/kept
+      - ${CACHE_PATH:-./cache}:/app/cache
+      # Mount .env file for runtime configuration updates from admin UI
+      - ./.env:/app/.env
+      # Docker socket for self-restart capability (admin UI only)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
 networks:
   allstarr-network:

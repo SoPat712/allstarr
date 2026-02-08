@@ -22,9 +22,13 @@ public class StartupValidationOrchestrator : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        // Get version from assembly
+        var version = typeof(StartupValidationOrchestrator).Assembly
+            .GetName().Version?.ToString(3) ?? "unknown";
+        
         Console.WriteLine();
         Console.WriteLine("========================================");
-        Console.WriteLine("       allstarr starting up...       ");
+        Console.WriteLine($"       allstarr v{version}       ");
         Console.WriteLine("========================================");
         Console.WriteLine();
 

@@ -7,6 +7,7 @@ using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Local;
 using allstarr.Services.Common;
+using allstarr.Services.Lyrics;
 using Microsoft.Extensions.Options;
 using IOFile = System.IO.File;
 using Microsoft.Extensions.Logging;
@@ -14,20 +15,48 @@ using Microsoft.Extensions.Logging;
 namespace allstarr.Services.SquidWTF;
 
 /// <summary>
-/// Handles track downloading from tidal.squid.wtf (no encryption, no auth required)
-/// Downloads are direct from Tidal's CDN via the squid.wtf proxy
+/// Handles track downloading from tidal.squid.wtf (no encryption, no auth required).
+/// 
+/// Downloads are direct from Tidal's CDN via the squid.wtf proxy. The service:
+/// 1. Fetches download info from hifi-api /track/ endpoint
+/// 2. Decodes base64 manifest to get actual Tidal CDN URL
+/// 3. Downloads directly from Tidal CDN (no decryption needed)
+/// 4. Converts Tidal track ID to Spotify ID in parallel (for lyrics matching)
+/// 5. Writes ID3/FLAC metadata tags and embeds cover art
+/// 
+/// Per hifi-api spec, the /track/ endpoint returns:
+/// { "version": "2.0", "data": { 
+///     trackId, assetPresentation, audioMode, audioQuality,
+///     manifestMimeType: "application/vnd.tidal.bts",
+///     manifest: "base64-encoded-json",
+///     albumReplayGain, trackReplayGain, bitDepth, sampleRate
+/// }}
+/// 
+/// The manifest decodes to:
+/// { "mimeType": "audio/flac", "codecs": "flac", "encryptionType": "NONE",
+///   "urls": ["https://lgf.audio.tidal.com/mediatracks/..."] }
+/// 
+/// Quality Mapping:
+/// - HI_RES → HI_RES_LOSSLESS (24-bit/192kHz FLAC)
+/// - FLAC/LOSSLESS → LOSSLESS (16-bit/44.1kHz FLAC)
+/// - HIGH → HIGH (320kbps AAC)
+/// - LOW → LOW (96kbps AAC)
+/// 
+/// Features:
+/// - Racing multiple endpoints for fastest download
+/// - Automatic failover to backup endpoints
+/// - Parallel Spotify ID conversion via Odesli
+/// - Organized folder structure: Artist/Album/Track
+/// - Unique filename resolution for duplicates
+/// - Support for both cache and permanent storage modes
 /// </summary>
 public class SquidWTFDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
-    private readonly SemaphoreSlim _requestLock = new(1, 1);
     private readonly SquidWTFSettings _squidwtfSettings;
-	
-    private DateTime _lastRequestTime = DateTime.MinValue;
-    private readonly int _minRequestIntervalMs = 200;
-    
-	private readonly List<string> _apiUrls;
-    private int _currentUrlIndex = 0;
+    private readonly OdesliService _odesliService;
+    private readonly RoundRobinFallbackHelper _fallbackHelper;
+    private readonly IServiceProvider _serviceProvider;
 
     protected override string ProviderName => "squidwtf";
 
@@ -40,43 +69,26 @@ public class SquidWTFDownloadService : BaseDownloadService
         IOptions<SquidWTFSettings> SquidWTFSettings,
 		IServiceProvider serviceProvider,
         ILogger<SquidWTFDownloadService> logger,
+        OdesliService odesliService,
         List<string> apiUrls)
         : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
         _httpClient = httpClientFactory.CreateClient();
         _squidwtfSettings = SquidWTFSettings.Value;
-        _apiUrls = apiUrls;
+        _odesliService = odesliService;
+        _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
+        _serviceProvider = serviceProvider;
+        
+        // Increase timeout for large downloads and slow endpoints
+        _httpClient.Timeout = TimeSpan.FromMinutes(5);
     }
     
-    private async Task<T> TryWithFallbackAsync<T>(Func<string, Task<T>> action)
-    {
-        for (int attempt = 0; attempt < _apiUrls.Count; attempt++)
-        {
-            try
-            {
-                var baseUrl = _apiUrls[_currentUrlIndex];
-                return await action(baseUrl);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Request failed with endpoint {Endpoint}, trying next...", _apiUrls[_currentUrlIndex]);
-                _currentUrlIndex = (_currentUrlIndex + 1) % _apiUrls.Count;
-                
-                if (attempt == _apiUrls.Count - 1)
-                {
-                    Logger.LogError("All SquidWTF endpoints failed");
-                    throw;
-                }
-            }
-        }
-        throw new Exception("All SquidWTF endpoints failed");
-    }
 	
     #region BaseDownloadService Implementation
 
     public override async Task<bool> IsAvailableAsync()
     {
-        return await TryWithFallbackAsync(async (baseUrl) =>
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             var response = await _httpClient.GetAsync(baseUrl);
 			Console.WriteLine($"Response code from is available async: {response.IsSuccessStatusCode}");
@@ -99,8 +111,8 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken);
         
-		Logger.LogInformation("Track token obtained: {Url}", downloadInfo.DownloadUrl);
-        Logger.LogInformation("Using format: {Format}", downloadInfo.MimeType);
+        Logger.LogInformation("Track download URL obtained from hifi-api: {Url}", downloadInfo.DownloadUrl);
+        Logger.LogInformation("Using format: {Format} (Quality: {Quality})", downloadInfo.MimeType, downloadInfo.AudioQuality);
 
         // Determine extension from MIME type
         var extension = downloadInfo.MimeType?.ToLower() switch
@@ -113,7 +125,11 @@ public class SquidWTFDownloadService : BaseDownloadService
 		
         // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        var outputPath = PathHelper.BuildTrackPath(DownloadPath, artistForPath, song.Album, song.Title, song.Track, extension);
+        // Cache mode uses cache/Music folder (cleaned up after 24h), Permanent mode uses downloads folder
+        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
+            ? Path.Combine("cache", "Music")
+            : "downloads";
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
         
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;
@@ -122,10 +138,53 @@ public class SquidWTFDownloadService : BaseDownloadService
         // Resolve unique path if file already exists
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
-        // Download from Tidal CDN (no authentication needed, token is in URL)
-        var response = await QueueRequestAsync(async () =>
+        // Use round-robin with fallback for downloads to reduce CPU usage
+        Logger.LogDebug("Using round-robin endpoint selection for download");
+        
+        var response = await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
+            // Map quality settings to Tidal's quality levels per hifi-api spec
+            var quality = _squidwtfSettings.Quality?.ToUpperInvariant() switch
+            {
+                "FLAC" => "LOSSLESS",
+                "HI_RES" => "HI_RES_LOSSLESS",
+                "LOSSLESS" => "LOSSLESS",
+                "HIGH" => "HIGH",
+                "LOW" => "LOW",
+                _ => "LOSSLESS"
+            };
+            
+            var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
+            
+            // Get download info from this endpoint
+            var infoResponse = await _httpClient.GetAsync(url, cancellationToken);
+            infoResponse.EnsureSuccessStatusCode();
+            
+            var json = await infoResponse.Content.ReadAsStringAsync(cancellationToken);
+            var doc = JsonDocument.Parse(json);
+            
+            if (!doc.RootElement.TryGetProperty("data", out var data))
+            {
+                throw new Exception("Invalid response from API");
+            }
+            
+            var manifestBase64 = data.GetProperty("manifest").GetString()
+                ?? throw new Exception("No manifest in response");
+            
+            // Decode base64 manifest to get actual CDN URL
+            var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
+            var manifest = JsonDocument.Parse(manifestJson);
+            
+            if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
+            {
+                throw new Exception("No download URLs in manifest");
+            }
+            
+            var downloadUrl = urls[0].GetString()
+                ?? throw new Exception("Download URL is null");
+            
+            // Start the actual download from Tidal CDN (no encryption - squid.wtf handles everything)
+            using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
             
@@ -143,7 +202,26 @@ public class SquidWTFDownloadService : BaseDownloadService
         // Close file before writing metadata
         await outputFile.DisposeAsync();
         
-        // Write metadata and cover art
+		// Start Spotify ID conversion in background (for lyrics support)
+		// This doesn't block streaming - lyrics endpoint will fetch it on-demand if needed
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				var spotifyId = await _odesliService.ConvertTidalToSpotifyIdAsync(trackId, CancellationToken.None);
+				if (!string.IsNullOrEmpty(spotifyId))
+				{
+					Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", trackId, spotifyId);
+					// Spotify ID is cached by Odesli service for future lyrics requests
+				}
+			}
+			catch (Exception ex)
+			{
+				Logger.LogDebug(ex, "Background Spotify ID conversion failed for Tidal/{TrackId}", trackId);
+			}
+		});
+
+        // Write metadata and cover art (without Spotify ID - it's only needed for lyrics)
         await WriteMetadataAsync(outputPath, song, cancellationToken);
 
         return outputPath;
@@ -153,13 +231,22 @@ public class SquidWTFDownloadService : BaseDownloadService
 	
 	#region SquidWTF API Methods
 	
+    /// <summary>
+    /// Gets track download information from hifi-api /track/ endpoint.
+    /// Per hifi-api spec: GET /track/?id={trackId}&quality={quality}
+    /// Returns: { "version": "2.0", "data": { trackId, assetPresentation, audioMode, audioQuality,
+    ///   manifestMimeType, manifestHash, manifest (base64), albumReplayGain, trackReplayGain, bitDepth, sampleRate } }
+    /// The manifest is base64-encoded JSON containing: { mimeType, codecs, encryptionType, urls: [downloadUrl] }
+    /// Quality options: HI_RES_LOSSLESS (24-bit/192kHz FLAC), LOSSLESS (16-bit/44.1kHz FLAC), HIGH (320kbps AAC), LOW (96kbps AAC)
+    /// </summary>
 	private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken)
     {
         return await QueueRequestAsync(async () =>
         {
-            return await TryWithFallbackAsync(async (baseUrl) =>
+            // Use round-robin with fallback instead of racing to reduce CPU usage
+            return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
             {
-                // Map quality settings to Tidal's quality levels
+                // Map quality settings to Tidal's quality levels per hifi-api spec
                 var quality = _squidwtfSettings.Quality?.ToUpperInvariant() switch
                 {
                     "FLAC" => "LOSSLESS",
@@ -172,7 +259,7 @@ public class SquidWTFDownloadService : BaseDownloadService
                 
                 var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
 
-                Console.WriteLine($"%%%%%%%%%%%%%%%%%%% URL For downloads??: {url}");
+                Logger.LogDebug("Fetching track download info from: {Url}", url);
 
                 var response = await _httpClient.GetAsync(url, cancellationToken);
                 response.EnsureSuccessStatusCode();
@@ -210,8 +297,7 @@ public class SquidWTFDownloadService : BaseDownloadService
                     ? audioQualityEl.GetString()
                     : "LOSSLESS";
                 
-                Logger.LogDebug("Decoded manifest - URL: {Url}, MIME: {MimeType}, Quality: {Quality}", 
-                    downloadUrl, mimeType, audioQuality);
+                Logger.LogInformation("Track download URL obtained from hifi-api: {Url}", downloadUrl);
                 
                 return new DownloadResult
                 {
@@ -222,30 +308,57 @@ public class SquidWTFDownloadService : BaseDownloadService
             });
         });
     }
+
 	
 	#endregion
 	
     #region Utility Methods
 
-    private async Task<T> QueueRequestAsync<T>(Func<Task<T>> action)
+    /// <summary>
+    /// Converts Tidal track ID to Spotify ID for lyrics support.
+    /// Called in background after streaming starts.
+    /// Also prefetches lyrics immediately after conversion.
+    /// </summary>
+    protected override async Task ConvertToSpotifyIdAsync(string externalProvider, string externalId)
     {
-        await _requestLock.WaitAsync();
-        try
+        if (externalProvider != "squidwtf")
         {
-            var now = DateTime.UtcNow;
-            var timeSinceLastRequest = (now - _lastRequestTime).TotalMilliseconds;
-            
-            if (timeSinceLastRequest < _minRequestIntervalMs)
-            {
-                await Task.Delay((int)(_minRequestIntervalMs - timeSinceLastRequest));
-            }
-
-            _lastRequestTime = DateTime.UtcNow;
-            return await action();
+            return;
         }
-        finally
+
+        var spotifyId = await _odesliService.ConvertTidalToSpotifyIdAsync(externalId, CancellationToken.None);
+        if (!string.IsNullOrEmpty(spotifyId))
         {
-            _requestLock.Release();
+            Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", externalId, spotifyId);
+            
+            // Immediately prefetch lyrics now that we have the Spotify ID
+            // This ensures lyrics are cached and ready when the client requests them
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = _serviceProvider.CreateScope();
+                    var spotifyLyricsService = scope.ServiceProvider.GetService<SpotifyLyricsService>();
+                    
+                    if (spotifyLyricsService != null)
+                    {
+                        var lyrics = await spotifyLyricsService.GetLyricsByTrackIdAsync(spotifyId);
+                        if (lyrics != null && lyrics.Lines.Count > 0)
+                        {
+                            Logger.LogDebug("Background lyrics prefetched for Spotify/{SpotifyId}: {LineCount} lines", 
+                                spotifyId, lyrics.Lines.Count);
+                        }
+                        else
+                        {
+                            Logger.LogDebug("No lyrics available for Spotify/{SpotifyId}", spotifyId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "Background lyrics prefetch failed for Spotify/{SpotifyId}", spotifyId);
+                }
+            });
         }
     }
 

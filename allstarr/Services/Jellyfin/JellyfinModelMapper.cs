@@ -186,6 +186,14 @@ public class JellyfinModelMapper
 
         // Cover art URL construction
         song.CoverArtUrl = $"/Items/{id}/Images/Primary";
+        
+        // Preserve Jellyfin metadata (MediaSources, etc.) for local tracks
+        // This ensures bitrate and other technical details are maintained
+        song.JellyfinMetadata = new Dictionary<string, object?>();
+        if (item.TryGetProperty("MediaSources", out var mediaSources))
+        {
+            song.JellyfinMetadata["MediaSources"] = JsonSerializer.Deserialize<object>(mediaSources.GetRawText());
+        }
 
         return song;
     }

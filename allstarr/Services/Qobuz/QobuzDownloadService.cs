@@ -110,7 +110,10 @@ public class QobuzDownloadService : BaseDownloadService
 
         // Build organized folder structure using AlbumArtist (fallback to Artist for singles)
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache ? CachePath : DownloadPath;
+        // Cache mode uses cache/Music folder (cleaned up after 24h), Permanent mode uses downloads folder
+        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
+            ? Path.Combine("cache", "Music")
+            : "downloads";
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
         
         var albumFolder = Path.GetDirectoryName(outputPath)!;

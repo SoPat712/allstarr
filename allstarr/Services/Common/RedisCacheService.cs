@@ -57,13 +57,14 @@ public class RedisCacheService
         try
         {
             var value = await _db!.StringGetAsync(key);
+            
             if (value.HasValue)
             {
-                _logger.LogInformation("Redis cache HIT: {Key}", key);
+                _logger.LogDebug("Redis cache HIT: {Key}", key);
             }
             else
             {
-                _logger.LogInformation("Redis cache MISS: {Key}", key);
+                _logger.LogDebug("Redis cache MISS: {Key}", key);
             }
             return value;
         }
@@ -105,7 +106,7 @@ public class RedisCacheService
             var result = await _db!.StringSetAsync(key, value, expiry);
             if (result)
             {
-                _logger.LogInformation("Redis cache SET: {Key} (TTL: {Expiry})", key, expiry?.ToString() ?? "none");
+                _logger.LogDebug("Redis cache SET: {Key} (TTL: {Expiry})", key, expiry?.ToString() ?? "none");
             }
             return result;
         }
@@ -166,6 +167,36 @@ public class RedisCacheService
         {
             _logger.LogWarning(ex, "Redis EXISTS failed for key: {Key}", key);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Deletes all keys matching a pattern (e.g., "search:*").
+    /// WARNING: Use with caution as this scans all keys.
+    /// </summary>
+    public async Task<int> DeleteByPatternAsync(string pattern)
+    {
+        if (!IsEnabled) return 0;
+
+        try
+        {
+            var server = _redis!.GetServer(_redis.GetEndPoints().First());
+            var keys = server.Keys(pattern: pattern).ToArray();
+            
+            if (keys.Length == 0)
+            {
+                _logger.LogDebug("No keys found matching pattern: {Pattern}", pattern);
+                return 0;
+            }
+
+            var deleted = await _db!.KeyDeleteAsync(keys);
+            _logger.LogInformation("Deleted {Count} Redis keys matching pattern: {Pattern}", deleted, pattern);
+            return (int)deleted;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Redis DELETE BY PATTERN failed for pattern: {Pattern}", pattern);
+            return 0;
         }
     }
 }

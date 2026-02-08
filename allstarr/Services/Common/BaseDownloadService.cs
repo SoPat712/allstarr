@@ -5,6 +5,7 @@ using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Local;
 using allstarr.Services.Subsonic;
+using System.Collections.Concurrent;
 using TagLib;
 using IOFile = System.IO.File;
 
@@ -27,8 +28,13 @@ public abstract class BaseDownloadService : IDownloadService
     protected readonly string DownloadPath;
     protected readonly string CachePath;
     
-    protected readonly Dictionary<string, DownloadInfo> ActiveDownloads = new();
+    protected readonly ConcurrentDictionary<string, DownloadInfo> ActiveDownloads = new();
     protected readonly SemaphoreSlim DownloadLock = new(1, 1);
+    
+    // Rate limiting fields
+    private readonly SemaphoreSlim _requestLock = new(1, 1);
+    private DateTime _lastRequestTime = DateTime.MinValue;
+    private readonly int _minRequestIntervalMs = 200;
     
     /// <summary>
     /// Lazy-loaded PlaylistSyncService to avoid circular dependency
@@ -89,22 +95,88 @@ public abstract class BaseDownloadService : IDownloadService
     
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
+        var startTime = DateTime.UtcNow;
+        
         // Check if already downloaded locally
         var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
         if (localPath != null && IOFile.Exists(localPath))
         {
-            Logger.LogInformation("Streaming from local cache: {Path}", localPath);
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
+            
+            // Update access time for cache cleanup
+            if (SubsonicSettings.StorageMode == StorageMode.Cache)
+            {
+                IOFile.SetLastAccessTime(localPath, DateTime.UtcNow);
+            }
+            
+            // Start background Odesli conversion for lyrics (if not already cached)
+            StartBackgroundOdesliConversion(externalProvider, externalId);
+            
             return IOFile.OpenRead(localPath);
         }
 
-        // For on-demand streaming, download to disk first to ensure complete file
+        // Download to disk first to ensure complete file with metadata
         // This is necessary because:
         // 1. Clients may seek to arbitrary positions (requires full file)
         // 2. Metadata embedding requires complete file
         // 3. Caching for future plays
         Logger.LogInformation("Downloading song for streaming: {Provider}:{ExternalId}", externalProvider, externalId);
-        localPath = await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
-        return IOFile.OpenRead(localPath);
+        
+        try
+        {
+            localPath = await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
+            
+            // Start background Odesli conversion for lyrics (after stream starts)
+            StartBackgroundOdesliConversion(externalProvider, externalId);
+            
+            return IOFile.OpenRead(localPath);
+        }
+        catch (OperationCanceledException)
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogWarning("Download cancelled by client after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogError(ex, "Download failed after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
+            throw;
+        }
+    }
+    
+    /// <summary>
+    /// Starts background Odesli conversion for lyrics support.
+    /// This is called AFTER streaming starts so it doesn't block the client.
+    /// </summary>
+    private void StartBackgroundOdesliConversion(string externalProvider, string externalId)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Provider-specific conversion (override in subclasses if needed)
+                await ConvertToSpotifyIdAsync(externalProvider, externalId);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Background Spotify ID conversion failed for {Provider}:{ExternalId}", externalProvider, externalId);
+            }
+        });
+    }
+    
+    /// <summary>
+    /// Converts external track ID to Spotify ID for lyrics support.
+    /// Override in provider-specific services if needed.
+    /// </summary>
+    protected virtual Task ConvertToSpotifyIdAsync(string externalProvider, string externalId)
+    {
+        // Default implementation does nothing
+        // Provider-specific services can override this
+        return Task.CompletedTask;
     }
     
     public DownloadInfo? GetDownloadStatus(string songId)
@@ -120,18 +192,11 @@ public abstract class BaseDownloadService : IDownloadService
             return null;
         }
         
-        // Check local library
+        // Check local library (works for both cache and permanent storage)
         var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
         if (localPath != null && IOFile.Exists(localPath))
         {
             return localPath;
-        }
-        
-        // Check cache directory
-        var cachedPath = GetCachedFilePath(externalProvider, externalId);
-        if (cachedPath != null && IOFile.Exists(cachedPath))
-        {
-            return cachedPath;
         }
         
         return null;
@@ -202,47 +267,44 @@ public abstract class BaseDownloadService : IDownloadService
         
         try
         {
-            // Check if already downloaded (skip for cache mode as we want to check cache folder)
-            if (!isCache)
+            // Check if already downloaded (works for both cache and permanent modes)
+            var existingPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
+            if (existingPath != null && IOFile.Exists(existingPath))
             {
-                var existingPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-                if (existingPath != null && IOFile.Exists(existingPath))
+                Logger.LogInformation("Song already downloaded: {Path}", existingPath);
+                
+                // For cache mode, update file access time for cache cleanup logic
+                if (isCache)
                 {
-                    Logger.LogInformation("Song already downloaded: {Path}", existingPath);
-                    return existingPath;
+                    IOFile.SetLastAccessTime(existingPath, DateTime.UtcNow);
                 }
-            }
-            else
-            {
-                // For cache mode, check if file exists in cache directory
-                var cachedPath = GetCachedFilePath(externalProvider, externalId);
-                if (cachedPath != null && IOFile.Exists(cachedPath))
-                {
-                    Logger.LogInformation("Song found in cache: {Path}", cachedPath);
-                    // Update file access time for cache cleanup logic
-                    IOFile.SetLastAccessTime(cachedPath, DateTime.UtcNow);
-                    return cachedPath;
-                }
+                
+                return existingPath;
             }
 
             // Check if download in progress
             if (ActiveDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
             {
-                Logger.LogInformation("Download already in progress for {SongId}, waiting...", songId);
+                Logger.LogDebug("Download already in progress for {SongId}, waiting for completion...", songId);
                 // Release lock while waiting
                 DownloadLock.Release();
                 
+                // Wait for download to complete, checking every 100ms (faster than 500ms)
+                // Also respect cancellation token so client timeouts are handled immediately
                 while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
                 {
-                    await Task.Delay(500, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await Task.Delay(100, cancellationToken);
                 }
                 
                 if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
                 {
+                    Logger.LogDebug("Download completed while waiting, returning path: {Path}", activeDownload.LocalPath);
                     return activeDownload.LocalPath;
                 }
                 
-                throw new Exception(activeDownload?.ErrorMessage ?? "Download failed");
+                // Download failed or was cancelled
+                throw new Exception(activeDownload?.ErrorMessage ?? "Download failed while waiting");
             }
 
             // Get metadata
@@ -297,6 +359,14 @@ public abstract class BaseDownloadService : IDownloadService
             downloadInfo.CompletedAt = DateTime.UtcNow;
             
             song.LocalPath = localPath;
+            
+            // Clean up completed download from tracking after a short delay
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromMinutes(5)); // Keep for 5 minutes for status checks
+                ActiveDownloads.TryRemove(songId, out _);
+                Logger.LogDebug("Cleaned up completed download tracking for {SongId}", songId);
+            });
             
             // Register BEFORE releasing lock to prevent race conditions (both cache and download modes)
             await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
@@ -360,6 +430,14 @@ public abstract class BaseDownloadService : IDownloadService
             {
                 downloadInfo.Status = DownloadStatus.Failed;
                 downloadInfo.ErrorMessage = ex.Message;
+                
+                // Clean up failed download from tracking after a short delay
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(2)); // Keep for 2 minutes for error reporting
+                    ActiveDownloads.TryRemove(songId, out _);
+                    Logger.LogDebug("Cleaned up failed download tracking for {SongId}", songId);
+                });
             }
             Logger.LogError(ex, "Download failed for {SongId}", songId);
             throw;
@@ -560,29 +638,34 @@ public abstract class BaseDownloadService : IDownloadService
         }
     }
     
+    
+    #endregion
+    
+    #region Rate Limiting
+    
     /// <summary>
-    /// Gets the cached file path for a given provider and external ID
-    /// Returns null if no cached file exists
+    /// Queues a request with rate limiting to prevent overwhelming the API.
+    /// Ensures minimum interval between requests.
     /// </summary>
-    protected string? GetCachedFilePath(string provider, string externalId)
+    protected async Task<T> QueueRequestAsync<T>(Func<Task<T>> action)
     {
+        await _requestLock.WaitAsync();
         try
         {
-            // Search for cached files matching the pattern: {provider}_{externalId}.*
-            var pattern = $"{provider}_{externalId}.*";
-            var files = Directory.GetFiles(CachePath, pattern, SearchOption.AllDirectories);
+            var now = DateTime.UtcNow;
+            var timeSinceLastRequest = (now - _lastRequestTime).TotalMilliseconds;
             
-            if (files.Length > 0)
+            if (timeSinceLastRequest < _minRequestIntervalMs)
             {
-                return files[0]; // Return first match
+                await Task.Delay((int)(_minRequestIntervalMs - timeSinceLastRequest));
             }
-            
-            return null;
+
+            _lastRequestTime = DateTime.UtcNow;
+            return await action();
         }
-        catch (Exception ex)
+        finally
         {
-            Logger.LogWarning(ex, "Failed to search for cached file: {Provider}_{ExternalId}", provider, externalId);
-            return null;
+            _requestLock.Release();
         }
     }
     

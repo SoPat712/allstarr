@@ -24,7 +24,8 @@ RUN mkdir -p /app/downloads
 
 COPY --from=build /app/publish .
 
+# Only expose the main proxy port (8080)
+# Admin UI runs on 5275 but is NOT exposed - access via docker exec or SSH tunnel
 EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080
 
 ENTRYPOINT ["dotnet", "allstarr.dll"]

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Services.Validation;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.SquidWTF;
 
@@ -12,40 +13,26 @@ namespace allstarr.Services.SquidWTF;
 public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
-	private readonly List<string> _apiUrls;
-    private int _currentUrlIndex = 0;
+    private readonly RoundRobinFallbackHelper _fallbackHelper;
+    private readonly EndpointBenchmarkService _benchmarkService;
+    private readonly ILogger<SquidWTFStartupValidator> _logger;
 
     public override string ServiceName => "SquidWTF";
 
-    public SquidWTFStartupValidator(IOptions<SquidWTFSettings> settings, HttpClient httpClient, List<string> apiUrls)
+    public SquidWTFStartupValidator(
+        IOptions<SquidWTFSettings> settings, 
+        HttpClient httpClient, 
+        List<string> apiUrls, 
+        EndpointBenchmarkService benchmarkService,
+        ILogger<SquidWTFStartupValidator> logger)
         : base(httpClient)
     {
         _settings = settings.Value;
-        _apiUrls = apiUrls;
+        _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
+        _benchmarkService = benchmarkService;
+        _logger = logger;
     }
     
-    private async Task<T> TryWithFallbackAsync<T>(Func<string, Task<T>> action, T defaultValue)
-    {
-        for (int attempt = 0; attempt < _apiUrls.Count; attempt++)
-        {
-            try
-            {
-                var baseUrl = _apiUrls[_currentUrlIndex];
-                return await action(baseUrl);
-            }
-            catch
-            {
-                WriteDetail($"Endpoint {_apiUrls[_currentUrlIndex]} failed, trying next...");
-                _currentUrlIndex = (_currentUrlIndex + 1) % _apiUrls.Count;
-                
-                if (attempt == _apiUrls.Count - 1)
-                {
-                    return defaultValue;
-                }
-            }
-        }
-        return defaultValue;
-    }	
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
@@ -63,8 +50,49 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 
         WriteStatus("SquidWTF Quality", quality, ConsoleColor.Cyan);
 
+        // Benchmark all endpoints to determine fastest
+        var apiUrls = _fallbackHelper.EndpointCount > 0 
+            ? Enumerable.Range(0, _fallbackHelper.EndpointCount).Select(_ => "").ToList() // Placeholder, we'll get actual URLs from fallback helper
+            : new List<string>();
+
+        // Get the actual API URLs by reflection (not ideal, but works for now)
+        var fallbackHelperType = _fallbackHelper.GetType();
+        var apiUrlsField = fallbackHelperType.GetField("_apiUrls", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (apiUrlsField != null)
+        {
+            apiUrls = (List<string>)apiUrlsField.GetValue(_fallbackHelper)!;
+        }
+
+        if (apiUrls.Count > 1)
+        {
+            WriteStatus("Benchmarking Endpoints", $"{apiUrls.Count} endpoints", ConsoleColor.Cyan);
+            
+            var orderedEndpoints = await _benchmarkService.BenchmarkEndpointsAsync(
+                apiUrls,
+                async (endpoint, ct) =>
+                {
+                    try
+                    {
+                        var response = await _httpClient.GetAsync(endpoint, ct);
+                        return response.IsSuccessStatusCode;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                },
+                pingCount: 2,
+                cancellationToken);
+
+            if (orderedEndpoints.Count > 0)
+            {
+                _fallbackHelper.SetEndpointOrder(orderedEndpoints);
+                WriteDetail($"Fastest endpoint: {orderedEndpoints.First()}");
+            }
+        }
+
         // Test connectivity with fallback
-        var result = await TryWithFallbackAsync(async (baseUrl) =>
+        var result = await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
@@ -91,8 +119,8 @@ public class SquidWTFStartupValidator : BaseStartupValidator
     {
         try
         {
-            // Test search with a simple query
-            var searchUrl = $"{baseUrl}/search/?s=Taylor%20Swift";
+            // Test search with "22" by Taylor Swift
+            var searchUrl = $"{baseUrl}/search/?s=22%20Taylor%20Swift";
             var searchResponse = await _httpClient.GetAsync(searchUrl, cancellationToken);
 
             if (searchResponse.IsSuccessStatusCode)
@@ -105,7 +133,36 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                 {
                     var itemCount = items.GetArrayLength();
                     WriteStatus("Search Functionality", "WORKING", ConsoleColor.Green);
-                    WriteDetail($"Test search returned {itemCount} results");
+                    WriteDetail($"Test search for '22' by Taylor Swift returned {itemCount} results");
+                    
+                    // Check if we found the actual song
+                    bool foundTaylorSwift22 = false;
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        if (item.TryGetProperty("title", out var title) &&
+                            item.TryGetProperty("artists", out var artists) &&
+                            artists.GetArrayLength() > 0)
+                        {
+                            var titleStr = title.GetString() ?? "";
+                            var artistName = artists[0].TryGetProperty("name", out var name) 
+                                ? name.GetString() ?? "" 
+                                : "";
+                            
+                            if (titleStr.Contains("22", StringComparison.OrdinalIgnoreCase) &&
+                                artistName.Contains("Taylor Swift", StringComparison.OrdinalIgnoreCase))
+                            {
+                                foundTaylorSwift22 = true;
+                                var trackId = item.TryGetProperty("id", out var id) ? id.GetInt64() : 0;
+                                WriteDetail($"✓ Found: '{titleStr}' by {artistName} (ID: {trackId})");
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!foundTaylorSwift22)
+                    {
+                        WriteDetail("⚠ Could not find exact match for '22' by Taylor Swift in results");
+                    }
                 }
                 else
                 {

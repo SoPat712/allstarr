@@ -1,0 +1,288 @@
+using System.Net.WebSockets;
+using Microsoft.Extensions.Options;
+using allstarr.Models.Settings;
+using allstarr.Services.Jellyfin;
+
+namespace allstarr.Middleware;
+
+/// <summary>
+/// Middleware that proxies WebSocket connections to Jellyfin server.
+/// This enables real-time features like session tracking, remote control, and live updates.
+/// </summary>
+public class WebSocketProxyMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly JellyfinSettings _settings;
+    private readonly ILogger<WebSocketProxyMiddleware> _logger;
+    private readonly JellyfinSessionManager _sessionManager;
+
+    public WebSocketProxyMiddleware(
+        RequestDelegate next,
+        IOptions<JellyfinSettings> settings,
+        ILogger<WebSocketProxyMiddleware> logger,
+        JellyfinSessionManager sessionManager)
+    {
+        _next = next;
+        _settings = settings.Value;
+        _logger = logger;
+        _sessionManager = sessionManager;
+        
+        _logger.LogDebug("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        // Log ALL requests for debugging
+        var path = context.Request.Path.Value ?? "";
+        var isWebSocket = context.WebSockets.IsWebSocketRequest;
+        
+        // Log any request that might be WebSocket-related
+        if (path.Contains("socket", StringComparison.OrdinalIgnoreCase) || 
+            path.Contains("ws", StringComparison.OrdinalIgnoreCase) ||
+            isWebSocket ||
+            context.Request.Headers.ContainsKey("Upgrade"))
+        {
+            _logger.LogDebug("🔍 WEBSOCKET: Potential WebSocket request: Path={Path}, IsWs={IsWs}, Method={Method}, Upgrade={Upgrade}, Connection={Connection}",
+                path,
+                isWebSocket,
+                context.Request.Method,
+                context.Request.Headers["Upgrade"].ToString(),
+                context.Request.Headers["Connection"].ToString());
+        }
+
+        // Check if this is a WebSocket request to /socket
+        if (context.Request.Path.StartsWithSegments("/socket", StringComparison.OrdinalIgnoreCase) &&
+            context.WebSockets.IsWebSocketRequest)
+        {
+            _logger.LogDebug("🔌 WEBSOCKET: WebSocket connection request received from {RemoteIp}", 
+                context.Connection.RemoteIpAddress);
+
+            await HandleWebSocketProxyAsync(context);
+            return;
+        }
+
+        // Not a WebSocket request, pass to next middleware
+        await _next(context);
+    }
+
+    private async Task HandleWebSocketProxyAsync(HttpContext context)
+    {
+        ClientWebSocket? serverWebSocket = null;
+        WebSocket? clientWebSocket = null;
+        string? deviceId = null;
+
+        try
+        {
+            // Extract device ID from query string or headers for session tracking
+            deviceId = context.Request.Query["deviceId"].ToString();
+            if (string.IsNullOrEmpty(deviceId))
+            {
+                // Try to extract from X-Emby-Authorization header
+                if (context.Request.Headers.TryGetValue("X-Emby-Authorization", out var authHeader))
+                {
+                    var authValue = authHeader.ToString();
+                    var deviceIdMatch = System.Text.RegularExpressions.Regex.Match(authValue, @"DeviceId=""([^""]+)""");
+                    if (deviceIdMatch.Success)
+                    {
+                        deviceId = deviceIdMatch.Groups[1].Value;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(deviceId))
+            {
+                _logger.LogDebug("🔍 WEBSOCKET: Client WebSocket for device {DeviceId}", deviceId);
+            }
+
+            // Accept the WebSocket connection from the client
+            clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
+            _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
+
+            // Build Jellyfin WebSocket URL
+            var jellyfinUrl = _settings.Url?.TrimEnd('/') ?? "";
+            var wsScheme = jellyfinUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss://" : "ws://";
+            var jellyfinHost = jellyfinUrl.Replace("https://", "").Replace("http://", "");
+            var jellyfinWsUrl = $"{wsScheme}{jellyfinHost}/socket";
+
+            // Add query parameters if present (e.g., ?api_key=xxx or ?deviceId=xxx)
+            if (context.Request.QueryString.HasValue)
+            {
+                jellyfinWsUrl += context.Request.QueryString.Value;
+            }
+
+            _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin WebSocket: {Url}", jellyfinWsUrl);
+
+            // Connect to Jellyfin WebSocket
+            serverWebSocket = new ClientWebSocket();
+
+            // Forward authentication headers - check X-Emby-Authorization FIRST
+            // Most Jellyfin clients use X-Emby-Authorization, not Authorization
+            if (context.Request.Headers.TryGetValue("X-Emby-Authorization", out var embyAuthHeader))
+            {
+                serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuthHeader.ToString());
+                _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Authorization header");
+            }
+            else if (context.Request.Headers.TryGetValue("Authorization", out var authHeader2))
+            {
+                var authValue = authHeader2.ToString();
+                // If it's a MediaBrowser auth header, use X-Emby-Authorization
+                if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase))
+                {
+                    serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", authValue);
+                    _logger.LogDebug("🔑 WEBSOCKET: Converted Authorization to X-Emby-Authorization header");
+                }
+                else
+                {
+                    serverWebSocket.Options.SetRequestHeader("Authorization", authValue);
+                    _logger.LogDebug("🔑 WEBSOCKET: Forwarded Authorization header");
+                }
+            }
+
+            // Set user agent
+            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0");
+
+            await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
+            _logger.LogDebug("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
+
+            // Start bidirectional proxying
+            var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", context.RequestAborted);
+            var serverToClient = ProxyMessagesAsync(serverWebSocket, clientWebSocket, "Server→Client", context.RequestAborted);
+
+            // Wait for either direction to complete
+            await Task.WhenAny(clientToServer, serverToClient);
+
+            _logger.LogDebug("🔌 WEBSOCKET: WebSocket proxy connection closed");
+        }
+        catch (WebSocketException wsEx)
+        {
+            // 403 is expected when tokens expire or session ends - don't spam logs
+            if (wsEx.Message.Contains("403"))
+            {
+                _logger.LogDebug("WEBSOCKET: Connection rejected with 403 (token expired or session ended)");
+            }
+            else
+            {
+                _logger.LogWarning(wsEx, "⚠️ WEBSOCKET: WebSocket error: {Message}", wsEx.Message);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ WEBSOCKET: Error in WebSocket proxy");
+        }
+        finally
+        {
+            // Clean up connections
+            if (clientWebSocket?.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await clientWebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Proxy closing", CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error closing client WebSocket");
+                }
+            }
+
+            if (serverWebSocket?.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await serverWebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Proxy closing", CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error closing server WebSocket");
+                }
+            }
+
+            clientWebSocket?.Dispose();
+            serverWebSocket?.Dispose();
+
+            // CRITICAL: Notify session manager that client disconnected
+            if (!string.IsNullOrEmpty(deviceId))
+            {
+                _logger.LogDebug("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
+                await _sessionManager.RemoveSessionAsync(deviceId);
+            }
+
+            _logger.LogDebug("🧹 WEBSOCKET: WebSocket connections cleaned up");
+        }
+    }
+
+    private async Task ProxyMessagesAsync(
+        WebSocket source,
+        WebSocket destination,
+        string direction,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[1024 * 4]; // 4KB buffer
+        var messageBuffer = new List<byte>();
+
+        try
+        {
+            while (source.State == WebSocketState.Open && destination.State == WebSocketState.Open)
+            {
+                var result = await source.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    _logger.LogDebug("🔌 WEBSOCKET {Direction}: Close message received", direction);
+                    await destination.CloseAsync(
+                        result.CloseStatus ?? WebSocketCloseStatus.NormalClosure,
+                        result.CloseStatusDescription,
+                        cancellationToken);
+                    break;
+                }
+
+                // Accumulate message fragments
+                messageBuffer.AddRange(buffer.Take(result.Count));
+
+                // If this is the end of the message, forward it
+                if (result.EndOfMessage)
+                {
+                    var messageBytes = messageBuffer.ToArray();
+                    
+                    // Log message for Server→Client direction to see remote control commands
+                    if (direction == "Server→Client")
+                    {
+                        var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
+                        _logger.LogTrace("📥 WEBSOCKET {Direction}: {Preview}",
+                            direction,
+                            messageText.Length > 500 ? messageText[..500] + "..." : messageText);
+                    }
+                    else if (_logger.IsEnabled(LogLevel.Debug))
+                    {
+                        var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
+                        _logger.LogDebug("{Direction}: {MessageType} message ({Size} bytes): {Preview}",
+                            direction,
+                            result.MessageType,
+                            messageBytes.Length,
+                            messageText.Length > 200 ? messageText[..200] + "..." : messageText);
+                    }
+
+                    // Forward the complete message
+                    await destination.SendAsync(
+                        new ArraySegment<byte>(messageBytes),
+                        result.MessageType,
+                        true,
+                        cancellationToken);
+
+                    messageBuffer.Clear();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("⚠️ WEBSOCKET {Direction}: Operation cancelled", direction);
+        }
+        catch (WebSocketException wsEx) when (wsEx.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
+        {
+            _logger.LogDebug("⚠️ WEBSOCKET {Direction}: Connection closed prematurely", direction);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "WEBSOCKET {Direction}: Error proxying messages (connection closed)", direction);
+        }
+    }
+}

@@ -186,7 +186,7 @@ public class JellyfinResponseBuilder
                 ["Type"] = "Audio",
                 ["Album"] = song.Album,
                 ["AlbumArtist"] = song.Artist,
-                ["Artists"] = new[] { song.Artist },
+                ["Artists"] = song.Artists.Count > 0 ? song.Artists.ToArray() : new[] { song.Artist },
                 ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
                 ["ImageTags"] = new Dictionary<string, string>
                 {
@@ -231,47 +231,113 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song)
     {
+        // Add " [S]" suffix to external song titles (S = streaming source)
+        var songTitle = song.Title;
+        var artistName = song.Artist;
+        var albumName = song.Album;
+        var artistNames = song.Artists.ToList();
+        
+        if (!song.IsLocal)
+        {
+            songTitle = $"{song.Title} [S]";
+            
+            // Also add [S] to artist and album names for consistency
+            if (!string.IsNullOrEmpty(artistName) && !artistName.EndsWith(" [S]"))
+            {
+                artistName = $"{artistName} [S]";
+            }
+            
+            if (!string.IsNullOrEmpty(albumName) && !albumName.EndsWith(" [S]"))
+            {
+                albumName = $"{albumName} [S]";
+            }
+            
+            // Add [S] to all artist names in the list
+            artistNames = artistNames.Select(a => 
+                !string.IsNullOrEmpty(a) && !a.EndsWith(" [S]") ? $"{a} [S]" : a
+            ).ToList();
+        }
+        
         var item = new Dictionary<string, object?>
         {
-            ["Id"] = song.Id,
-            ["Name"] = song.Title,
+            ["Name"] = songTitle,
             ["ServerId"] = "allstarr",
-            ["Type"] = "Audio",
-            ["MediaType"] = "Audio",
-            ["IsFolder"] = false,
-            ["Album"] = song.Album,
-            ["AlbumId"] = song.AlbumId ?? song.Id,
-            ["AlbumArtist"] = song.AlbumArtist ?? song.Artist,
-            ["Artists"] = new[] { song.Artist },
-            ["ArtistItems"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["Id"] = song.ArtistId ?? song.Id,
-                    ["Name"] = song.Artist
-                }
-            },
+            ["Id"] = song.Id,
+            ["HasLyrics"] = false, // Could be enhanced to check if lyrics exist
+            ["Container"] = "flac",
+            ["PremiereDate"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null,
+            ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
+            ["ProductionYear"] = song.Year,
             ["IndexNumber"] = song.Track,
             ["ParentIndexNumber"] = song.DiscNumber ?? 1,
-            ["ProductionYear"] = song.Year,
-            ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
-            ["ImageTags"] = new Dictionary<string, string>
-            {
-                ["Primary"] = song.Id
-            },
-            ["BackdropImageTags"] = new string[0],
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
-            ["LocationType"] = "FileSystem", // External content appears as local files to clients
-            ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac", // Fake path for client compatibility
-            ["ChannelId"] = (object?)null, // Match Jellyfin structure
+            ["IsFolder"] = false,
+            ["Type"] = "Audio",
+            ["ChannelId"] = (object?)null,
+            ["Genres"] = !string.IsNullOrEmpty(song.Genre) 
+                ? new[] { song.Genre } 
+                : new string[0],
+            ["GenreItems"] = !string.IsNullOrEmpty(song.Genre)
+                ? new[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["Name"] = song.Genre,
+                        ["Id"] = $"genre-{song.Genre?.ToLowerInvariant()}"
+                    }
+                }
+                : new Dictionary<string, object?>[0],
+            ["ParentLogoItemId"] = song.AlbumId,
+            ["ParentBackdropItemId"] = song.AlbumId,
+            ["ParentBackdropImageTags"] = new string[0],
             ["UserData"] = new Dictionary<string, object>
             {
                 ["PlaybackPositionTicks"] = 0,
                 ["PlayCount"] = 0,
                 ["IsFavorite"] = false,
                 ["Played"] = false,
-                ["Key"] = $"Audio-{song.Id}"
+                ["Key"] = $"Audio-{song.Id}",
+                ["ItemId"] = song.Id
             },
+            ["Artists"] = artistNames.Count > 0 ? artistNames.ToArray() : new[] { artistName ?? "" },
+            ["ArtistItems"] = artistNames.Count > 0 
+                ? artistNames.Select((name, index) => new Dictionary<string, object?>
+                {
+                    ["Name"] = name,
+                    ["Id"] = index == 0 && song.ArtistId != null 
+                        ? song.ArtistId 
+                        : $"{song.Id}-artist-{index}"
+                }).ToArray()
+                : new[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["Id"] = song.ArtistId ?? song.Id,
+                        ["Name"] = artistName ?? ""
+                    }
+                },
+            ["Album"] = albumName,
+            ["AlbumId"] = song.AlbumId ?? song.Id,
+            ["AlbumPrimaryImageTag"] = song.AlbumId ?? song.Id,
+            ["AlbumArtist"] = song.AlbumArtist ?? artistName,
+            ["AlbumArtists"] = new[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["Name"] = song.AlbumArtist ?? artistName ?? "",
+                    ["Id"] = song.ArtistId ?? song.Id
+                }
+            },
+            ["ImageTags"] = new Dictionary<string, string>
+            {
+                ["Primary"] = song.Id
+            },
+            ["BackdropImageTags"] = new string[0],
+            ["ParentLogoImageTag"] = song.AlbumId ?? song.Id,
+            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["LocationType"] = "FileSystem",
+            ["MediaType"] = "Audio",
+            ["NormalizationGain"] = 0.0,
+            ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
             ["CanDownload"] = true,
             ["SupportsSync"] = true
         };
@@ -289,11 +355,79 @@ public class JellyfinResponseBuilder
                 var providerIds = (Dictionary<string, string>)item["ProviderIds"]!;
                 providerIds["ISRC"] = song.Isrc;
             }
+            
+            // Add MediaSources with complete structure matching real Jellyfin
+            item["MediaSources"] = new[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["Protocol"] = "File",
+                    ["Id"] = song.Id,
+                    ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
+                    ["Type"] = "Default",
+                    ["Container"] = "flac",
+                    ["Size"] = (song.Duration ?? 180) * 1337 * 128,
+                    ["Name"] = song.Title,
+                    ["IsRemote"] = false,
+                    ["ETag"] = song.Id, // Use song ID as ETag
+                    ["RunTimeTicks"] = (song.Duration ?? 180) * 10000000L,
+                    ["ReadAtNativeFramerate"] = false,
+                    ["IgnoreDts"] = false,
+                    ["IgnoreIndex"] = false,
+                    ["GenPtsInput"] = false,
+                    ["SupportsTranscoding"] = true,
+                    ["SupportsDirectStream"] = true,
+                    ["SupportsDirectPlay"] = true,
+                    ["IsInfiniteStream"] = false,
+                    ["UseMostCompatibleTranscodingProfile"] = false,
+                    ["RequiresOpening"] = false,
+                    ["RequiresClosing"] = false,
+                    ["RequiresLooping"] = false,
+                    ["SupportsProbing"] = true,
+                    ["MediaStreams"] = new[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["Codec"] = "flac",
+                            ["TimeBase"] = "1/44100",
+                            ["VideoRange"] = "Unknown",
+                            ["VideoRangeType"] = "Unknown",
+                            ["AudioSpatialFormat"] = "None",
+                            ["LocalizedDefault"] = "Default",
+                            ["LocalizedExternal"] = "External",
+                            ["DisplayTitle"] = "FLAC - Stereo",
+                            ["IsInterlaced"] = false,
+                            ["IsAVC"] = false,
+                            ["ChannelLayout"] = "stereo",
+                            ["BitRate"] = 1337000,
+                            ["BitDepth"] = 16,
+                            ["Channels"] = 2,
+                            ["SampleRate"] = 44100,
+                            ["IsDefault"] = false,
+                            ["IsForced"] = false,
+                            ["IsHearingImpaired"] = false,
+                            ["Type"] = "Audio",
+                            ["Index"] = 0,
+                            ["IsExternal"] = false,
+                            ["IsTextSubtitleStream"] = false,
+                            ["SupportsExternalStream"] = false,
+                            ["Level"] = 0
+                        }
+                    },
+                    ["MediaAttachments"] = new List<object>(),
+                    ["Formats"] = new List<string>(),
+                    ["Bitrate"] = 1337000,
+                    ["RequiredHttpHeaders"] = new Dictionary<string, string>(),
+                    ["TranscodingSubProtocol"] = "http",
+                    ["DefaultAudioStreamIndex"] = 0,
+                    ["HasSegments"] = false
+                }
+            };
         }
-
-        if (!string.IsNullOrEmpty(song.Genre))
+        else if (song.IsLocal && song.JellyfinMetadata != null && song.JellyfinMetadata.ContainsKey("MediaSources"))
         {
-            item["Genres"] = new[] { song.Genre };
+            // Use preserved Jellyfin metadata for local tracks to maintain bitrate info
+            item["MediaSources"] = song.JellyfinMetadata["MediaSources"];
         }
 
         return item;
@@ -304,49 +438,77 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album)
     {
-        // Add " - S" suffix to external album names (S = SquidWTF)
+        // Add " [S]" suffix to external album names (S = streaming source)
         var albumName = album.Title;
         if (!album.IsLocal)
         {
-            albumName = $"{album.Title} - S";
+            albumName = $"{album.Title} [S]";
         }
         
         var item = new Dictionary<string, object?>
         {
-            ["Id"] = album.Id,
             ["Name"] = albumName,
             ["ServerId"] = "allstarr",
-            ["Type"] = "MusicAlbum",
-            ["IsFolder"] = true,
-            ["AlbumArtist"] = album.Artist,
-            ["AlbumArtists"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["Id"] = album.ArtistId ?? album.Id,
-                    ["Name"] = album.Artist
-                }
-            },
-            ["ProductionYear"] = album.Year,
-            ["ChildCount"] = album.SongCount ?? album.Songs.Count,
-            ["ImageTags"] = new Dictionary<string, string>
-            {
-                ["Primary"] = album.Id
-            },
-            ["BackdropImageTags"] = new string[0],
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
-            ["LocationType"] = "FileSystem",
-            ["MediaType"] = (object?)null,
+            ["Id"] = album.Id,
+            ["PremiereDate"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : null,
             ["ChannelId"] = (object?)null,
-            ["CollectionType"] = (object?)null,
+            ["Genres"] = !string.IsNullOrEmpty(album.Genre) 
+                ? new[] { album.Genre } 
+                : new string[0],
+            ["RunTimeTicks"] = 0, // Could calculate from songs
+            ["ProductionYear"] = album.Year,
+            ["IsFolder"] = true,
+            ["Type"] = "MusicAlbum",
+            ["GenreItems"] = !string.IsNullOrEmpty(album.Genre)
+                ? new[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["Name"] = album.Genre,
+                        ["Id"] = $"genre-{album.Genre?.ToLowerInvariant()}"
+                    }
+                }
+                : new Dictionary<string, object?>[0],
+            ["ParentLogoItemId"] = album.ArtistId ?? album.Id,
+            ["ParentBackdropItemId"] = album.ArtistId ?? album.Id,
+            ["ParentBackdropImageTags"] = new string[0],
             ["UserData"] = new Dictionary<string, object>
             {
                 ["PlaybackPositionTicks"] = 0,
                 ["PlayCount"] = 0,
                 ["IsFavorite"] = false,
                 ["Played"] = false,
-                ["Key"] = album.Id
-            }
+                ["Key"] = $"{album.Artist}-{album.Title}",
+                ["ItemId"] = album.Id
+            },
+            ["Artists"] = new[] { album.Artist },
+            ["ArtistItems"] = new[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["Name"] = album.Artist,
+                    ["Id"] = album.ArtistId ?? album.Id
+                }
+            },
+            ["AlbumArtist"] = album.Artist,
+            ["AlbumArtists"] = new[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["Name"] = album.Artist,
+                    ["Id"] = album.ArtistId ?? album.Id
+                }
+            },
+            ["ImageTags"] = new Dictionary<string, string>
+            {
+                ["Primary"] = album.Id
+            },
+            ["BackdropImageTags"] = new string[0],
+            ["ParentLogoImageTag"] = album.ArtistId ?? album.Id,
+            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["LocationType"] = "FileSystem",
+            ["MediaType"] = "Unknown",
+            ["ChildCount"] = album.SongCount ?? album.Songs.Count
         };
 
         // Add provider IDs for external content
@@ -358,11 +520,6 @@ public class JellyfinResponseBuilder
             };
         }
 
-        if (!string.IsNullOrEmpty(album.Genre))
-        {
-            item["Genres"] = new[] { album.Genre };
-        }
-
         return item;
     }
 
@@ -371,39 +528,42 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist)
     {
-        // Add " - S" suffix to external artist names (S = SquidWTF)
+        // Add " [S]" suffix to external artist names (S = streaming source)
         var artistName = artist.Name;
         if (!artist.IsLocal)
         {
-            artistName = $"{artist.Name} - S";
+            artistName = $"{artist.Name} [S]";
         }
         
         var item = new Dictionary<string, object?>
         {
-            ["Id"] = artist.Id,
             ["Name"] = artistName,
             ["ServerId"] = "allstarr",
-            ["Type"] = "MusicArtist",
+            ["Id"] = artist.Id,
+            ["ChannelId"] = (object?)null,
+            ["Genres"] = new string[0], // Artists aggregate genres from albums/tracks
+            ["RunTimeTicks"] = 0,
             ["IsFolder"] = true,
-            ["AlbumCount"] = artist.AlbumCount ?? 0,
-            ["ImageTags"] = new Dictionary<string, string>
-            {
-                ["Primary"] = artist.Id
-            },
-            ["BackdropImageTags"] = new string[0],
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
-            ["LocationType"] = "FileSystem", // External content appears as local files to clients
-            ["MediaType"] = (object?)null, // Match Jellyfin structure
-            ["ChannelId"] = (object?)null, // Match Jellyfin structure
-            ["CollectionType"] = (object?)null, // Match Jellyfin structure
+            ["Type"] = "MusicArtist",
+            ["GenreItems"] = new Dictionary<string, object?>[0],
             ["UserData"] = new Dictionary<string, object>
             {
                 ["PlaybackPositionTicks"] = 0,
                 ["PlayCount"] = 0,
                 ["IsFavorite"] = false,
                 ["Played"] = false,
-                ["Key"] = artist.Id
-            }
+                ["Key"] = $"Artist-{artist.Name}",
+                ["ItemId"] = artist.Id
+            },
+            ["ImageTags"] = new Dictionary<string, string>
+            {
+                ["Primary"] = artist.Id
+            },
+            ["BackdropImageTags"] = new string[0],
+            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["LocationType"] = "FileSystem",
+            ["MediaType"] = "Unknown",
+            ["AlbumCount"] = artist.AlbumCount ?? 0
         };
 
         // Add provider IDs for external content
@@ -440,7 +600,7 @@ public class JellyfinResponseBuilder
     }
 
     /// <summary>
-    /// Converts an ExternalPlaylist to a Jellyfin album item.
+    /// Converts an ExternalPlaylist to a Jellyfin playlist item.
     /// </summary>
     public Dictionary<string, object?> ConvertPlaylistToJellyfinItem(ExternalPlaylist playlist)
     {
@@ -450,13 +610,24 @@ public class JellyfinResponseBuilder
         
         var item = new Dictionary<string, object?>
         {
-            ["Id"] = playlist.Id,
             ["Name"] = playlist.Name,
             ["ServerId"] = "allstarr",
-            ["Type"] = "Playlist",
+            ["Id"] = playlist.Id,
+            ["ChannelId"] = (object?)null,
+            ["Genres"] = new string[0], // Playlists aggregate genres from tracks
+            ["RunTimeTicks"] = playlist.Duration * TimeSpan.TicksPerSecond,
             ["IsFolder"] = true,
-            ["AlbumArtist"] = curatorName,
-            ["Genres"] = new[] { "Playlist" },
+            ["Type"] = "Playlist",
+            ["GenreItems"] = new Dictionary<string, object?>[0],
+            ["UserData"] = new Dictionary<string, object>
+            {
+                ["PlaybackPositionTicks"] = 0,
+                ["PlayCount"] = 0,
+                ["IsFavorite"] = false,
+                ["Played"] = false,
+                ["Key"] = playlist.Id,
+                ["ItemId"] = playlist.Id
+            },
             ["ChildCount"] = playlist.TrackCount,
             ["ImageTags"] = new Dictionary<string, string>
             {
@@ -465,20 +636,10 @@ public class JellyfinResponseBuilder
             ["BackdropImageTags"] = new string[0],
             ["ImageBlurHashes"] = new Dictionary<string, object>(),
             ["LocationType"] = "FileSystem",
-            ["MediaType"] = (object?)null,
-            ["ChannelId"] = (object?)null,
-            ["CollectionType"] = (object?)null,
+            ["MediaType"] = "Audio",
             ["ProviderIds"] = new Dictionary<string, string>
             {
                 [playlist.Provider] = playlist.ExternalId
-            },
-            ["UserData"] = new Dictionary<string, object>
-            {
-                ["PlaybackPositionTicks"] = 0,
-                ["PlayCount"] = 0,
-                ["IsFavorite"] = false,
-                ["Played"] = false,
-                ["Key"] = playlist.Id
             }
         };
 

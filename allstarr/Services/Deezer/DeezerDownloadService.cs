@@ -24,7 +24,6 @@ namespace allstarr.Services.Deezer;
 public class DeezerDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
-    private readonly SemaphoreSlim _requestLock = new(1, 1);
     
     private readonly string? _arl;
     private readonly string? _arlFallback;
@@ -32,9 +31,6 @@ public class DeezerDownloadService : BaseDownloadService
     
     private string? _apiToken;
     private string? _licenseToken;
-    
-    private DateTime _lastRequestTime = DateTime.MinValue;
-    private readonly int _minRequestIntervalMs = 200;
     
     private const string DeezerApiBase = "https://api.deezer.com";
     
@@ -111,7 +107,10 @@ public class DeezerDownloadService : BaseDownloadService
 
         // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache ? CachePath : DownloadPath;
+        // Cache mode uses cache/Music folder (cleaned up after 24h), Permanent mode uses downloads folder
+        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
+            ? Path.Combine("cache", "Music")
+            : "downloads";
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
         
         // Create directories if they don't exist
@@ -494,27 +493,6 @@ public class DeezerDownloadService : BaseDownloadService
         await RetryWithBackoffAsync<bool>(action, maxRetries, initialDelayMs);
     }
 
-    private async Task<T> QueueRequestAsync<T>(Func<Task<T>> action)
-    {
-        await _requestLock.WaitAsync();
-        try
-        {
-            var now = DateTime.UtcNow;
-            var timeSinceLastRequest = (now - _lastRequestTime).TotalMilliseconds;
-            
-            if (timeSinceLastRequest < _minRequestIntervalMs)
-            {
-                await Task.Delay((int)(_minRequestIntervalMs - timeSinceLastRequest));
-            }
-
-            _lastRequestTime = DateTime.UtcNow;
-            return await action();
-        }
-        finally
-        {
-            _requestLock.Release();
-        }
-    }
 
     #endregion
 

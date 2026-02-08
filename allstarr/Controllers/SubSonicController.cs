@@ -28,6 +28,7 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicModelMapper _modelMapper;
     private readonly SubsonicProxyService _proxyService;
     private readonly PlaylistSyncService? _playlistSyncService;
+    private readonly RedisCacheService _cache;
     private readonly ILogger<SubsonicController> _logger;
     
     public SubsonicController(
@@ -39,6 +40,7 @@ public class SubsonicController : ControllerBase
         SubsonicResponseBuilder responseBuilder,
         SubsonicModelMapper modelMapper,
         SubsonicProxyService proxyService,
+        RedisCacheService cache,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null)
     {
@@ -51,6 +53,7 @@ public class SubsonicController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _playlistSyncService = playlistSyncService;
+        _cache = cache;
         _logger = logger;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
@@ -559,6 +562,16 @@ public class SubsonicController : ControllerBase
         {
             try
             {
+                // Check cache first (1 hour TTL for playlist images since they can change)
+                var cacheKey = $"playlist:image:{id}";
+                var cachedImage = await _cache.GetAsync<byte[]>(cacheKey);
+                
+                if (cachedImage != null)
+                {
+                    _logger.LogDebug("Serving cached playlist cover art for {Id}", id);
+                    return File(cachedImage, "image/jpeg");
+                }
+                
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
                 var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
                 
@@ -576,6 +589,11 @@ public class SubsonicController : ControllerBase
                 
                 var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync();
                 var contentType = imageResponse.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
+                
+                // Cache for 1 hour (playlists can change, so don't cache too long)
+                await _cache.SetAsync(cacheKey, imageBytes, TimeSpan.FromHours(1));
+                _logger.LogDebug("Cached playlist cover art for {Id}", id);
+                
                 return File(imageBytes, contentType);
             }
             catch (Exception ex)

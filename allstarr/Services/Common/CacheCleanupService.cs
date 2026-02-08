@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
+using allstarr.Controllers;
 
 namespace allstarr.Services.Common;
 
@@ -11,16 +12,19 @@ public class CacheCleanupService : BackgroundService
 {
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
+    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<CacheCleanupService> _logger;
     private readonly TimeSpan _cleanupInterval = TimeSpan.FromHours(1);
 
     public CacheCleanupService(
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,
+        IServiceProvider serviceProvider,
         ILogger<CacheCleanupService> logger)
     {
         _configuration = configuration;
         _subsonicSettings = subsonicSettings.Value;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -41,6 +45,7 @@ public class CacheCleanupService : BackgroundService
             try
             {
                 await CleanupOldCachedFilesAsync(stoppingToken);
+                await ProcessPendingDeletionsAsync(stoppingToken);
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }
             catch (OperationCanceledException)
@@ -89,16 +94,16 @@ public class CacheCleanupService : BackgroundService
                 {
                     var fileInfo = new FileInfo(filePath);
 
-                    // Use last access time to determine if file should be deleted
-                    // This gets updated when a cached file is streamed
-                    if (fileInfo.LastAccessTimeUtc < cutoffTime)
+                    // Use last write time (when file was created/downloaded) to determine if file should be deleted
+                    // LastAccessTime is unreliable on many filesystems (noatime mount option)
+                    if (fileInfo.LastWriteTimeUtc < cutoffTime)
                     {
                         var size = fileInfo.Length;
                         File.Delete(filePath);
                         deletedCount++;
                         totalSize += size;
-                        _logger.LogDebug("Deleted cached file: {Path} (last accessed: {LastAccess})",
-                            filePath, fileInfo.LastAccessTimeUtc);
+                        _logger.LogDebug("Deleted cached file: {Path} (age: {Age:F1} hours)",
+                            filePath, (DateTime.UtcNow - fileInfo.LastWriteTimeUtc).TotalHours);
                     }
                 }
                 catch (Exception ex)
@@ -159,5 +164,31 @@ public class CacheCleanupService : BackgroundService
         }
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Processes pending track deletions from the kept folder.
+    /// </summary>
+    private async Task ProcessPendingDeletionsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Create a scope to get the JellyfinController
+            using var scope = _serviceProvider.CreateScope();
+            var jellyfinController = scope.ServiceProvider.GetService<JellyfinController>();
+            
+            if (jellyfinController != null)
+            {
+                await jellyfinController.ProcessPendingDeletionsAsync();
+            }
+            else
+            {
+                _logger.LogWarning("Could not resolve JellyfinController for pending deletions processing");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing pending deletions");
+        }
     }
 }

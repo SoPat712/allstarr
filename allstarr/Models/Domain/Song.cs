@@ -14,6 +14,11 @@ public class Song
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
+    
+    /// <summary>
+    /// All artists for this track (main + featured). For display in Jellyfin clients.
+    /// </summary>
+    public List<string> Artists { get; set; } = new();
     public string Album { get; set; } = string.Empty;
     public string? AlbumId { get; set; }
     public int? Duration { get; set; } // In seconds
@@ -38,6 +43,11 @@ public class Song
     /// ISRC (International Standard Recording Code)
     /// </summary>
     public string? Isrc { get; set; }
+    
+    /// <summary>
+    /// Spotify track ID (for lyrics and matching)
+    /// </summary>
+    public string? SpotifyId { get; set; }
     
     /// <summary>
     /// Full release date (format: YYYY-MM-DD)
@@ -94,4 +104,10 @@ public class Song
     /// 0 = Naturally clean, 1 = Explicit, 2 = Not applicable, 3 = Clean/edited version, 6/7 = Unknown
     /// </summary>
     public int? ExplicitContentLyrics { get; set; }
+    
+    /// <summary>
+    /// Raw Jellyfin metadata (MediaSources, etc.) for local tracks
+    /// Preserved to maintain bitrate and other technical details
+    /// </summary>
+    public Dictionary<string, object?>? JellyfinMetadata { get; set; }
 }
