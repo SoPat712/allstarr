@@ -359,7 +359,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
     }
     
     // Log configuration at startup
-    Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, SyncHour={options.SyncStartHour}:{options.SyncStartMinute:D2}, WindowHours={options.SyncWindowHours}");
+    Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, MatchingInterval={options.MatchingIntervalHours}h");
     Console.WriteLine($"Spotify Import Playlists: {options.Playlists.Count} configured");
     foreach (var playlist in options.Playlists)
     {

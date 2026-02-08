@@ -60,27 +60,6 @@ public class SpotifyImportSettings
     public bool Enabled { get; set; }
     
     /// <summary>
-    /// Hour when Spotify Import plugin runs (24-hour format, 0-23)
-    /// NOTE: This setting is now optional and only used for the sync window check.
-    /// The fetcher will search backwards from current time for the last 48 hours,
-    /// so timezone confusion is avoided.
-    /// </summary>
-    public int SyncStartHour { get; set; } = 16;
-    
-    /// <summary>
-    /// Minute when Spotify Import plugin runs (0-59)
-    /// NOTE: This setting is now optional and only used for the sync window check.
-    /// </summary>
-    public int SyncStartMinute { get; set; } = 15;
-    
-    /// <summary>
-    /// How many hours to search for missing tracks files after sync start time
-    /// This prevents the fetcher from running too frequently.
-    /// Set to 0 to disable the sync window check and always search on startup.
-    /// </summary>
-    public int SyncWindowHours { get; set; } = 2;
-    
-    /// <summary>
     /// How often to run track matching in hours.
     /// Spotify playlists like Discover Weekly update once per week, Release Radar updates weekly.
     /// Most playlists don't change frequently, so running every 24 hours is reasonable.

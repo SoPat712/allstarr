@@ -99,15 +99,11 @@ apis/api-calls/*.log
 apis/api-calls/endpoint-usage.json
 /app/cache/endpoint-usage/
 
-# Log files for debugging
-apis/*.log
-
-# Endpoint usage tracking
-apis/endpoint-usage.json
-/app/cache/endpoint-usage/
-
 # Original source code for reference
 originals/
 
 # Sample missing playlists for Spotify integration testing
 sampleMissingPlaylists/
+
+# Migration guide (local only)
+MIGRATION.md

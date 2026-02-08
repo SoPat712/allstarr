@@ -166,8 +166,7 @@ public class AdminController : ControllerBase
             spotifyImport = new
             {
                 enabled = _spotifyImportSettings.Enabled,
-                syncTime = $"{_spotifyImportSettings.SyncStartHour:D2}:{_spotifyImportSettings.SyncStartMinute:D2}",
-                syncWindowHours = _spotifyImportSettings.SyncWindowHours,
+                matchingIntervalHours = _spotifyImportSettings.MatchingIntervalHours,
                 playlistCount = _spotifyImportSettings.Playlists.Count
             },
             deezer = new
@@ -1392,9 +1391,7 @@ public class AdminController : ControllerBase
             spotifyImport = new
             {
                 enabled = _spotifyImportSettings.Enabled,
-                syncStartHour = _spotifyImportSettings.SyncStartHour,
-                syncStartMinute = _spotifyImportSettings.SyncStartMinute,
-                syncWindowHours = _spotifyImportSettings.SyncWindowHours,
+                matchingIntervalHours = _spotifyImportSettings.MatchingIntervalHours,
                 playlists = _spotifyImportSettings.Playlists.Select(p => new
                 {
                     name = p.Name,
@@ -1414,7 +1411,7 @@ public class AdminController : ControllerBase
                 downloadPath = _subsonicSettings.StorageMode == StorageMode.Cache 
                     ? Path.Combine("cache", "Music")
                     : (_configuration["Library:DownloadPath"] ?? "./downloads"),
-                keptPath = _configuration["Library:KeptPath"] ?? "/app/kept",
+                keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept"),
                 storageMode = _subsonicSettings.StorageMode.ToString(),
                 cacheDurationHours = _subsonicSettings.CacheDurationHours,
                 downloadMode = _subsonicSettings.DownloadMode.ToString()
@@ -3309,7 +3306,7 @@ public class LinkPlaylistRequest
     {
         try
         {
-            var keptPath = _configuration["Library:KeptPath"] ?? "/app/kept";
+            var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             
             _logger.LogInformation("📂 Checking kept folder: {Path}", keptPath);
             _logger.LogInformation("📂 Directory exists: {Exists}", Directory.Exists(keptPath));
@@ -3392,7 +3389,7 @@ public class LinkPlaylistRequest
                 return BadRequest(new { error = "Path is required" });
             }
             
-            var keptPath = _configuration["Library:KeptPath"] ?? "/app/kept";
+            var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             var fullPath = Path.Combine(keptPath, path);
             
             _logger.LogInformation("🗑️ Delete request for: {Path}", fullPath);
@@ -3456,7 +3453,7 @@ public class LinkPlaylistRequest
                 return BadRequest(new { error = "Path is required" });
             }
             
-            var keptPath = _configuration["Library:KeptPath"] ?? "/app/kept";
+            var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             var fullPath = Path.Combine(keptPath, path);
             
             // Security: Ensure the path is within the kept directory

@@ -44,7 +44,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     public async Task TriggerFetchAsync()
     {
         _logger.LogInformation("Manual fetch triggered");
-        await FetchMissingTracksAsync(CancellationToken.None, bypassSyncWindowCheck: true);
+        await FetchMissingTracksAsync(CancellationToken.None);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -84,20 +84,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         _logger.LogInformation("Spotify Import ENABLED");
         _logger.LogInformation("Configured Playlists: {Count}", _spotifySettings.Value.Playlists.Count);
-        
-        // Log the search schedule
-        var settings = _spotifySettings.Value;
-        var syncTime = DateTime.Today
-            .AddHours(settings.SyncStartHour)
-            .AddMinutes(settings.SyncStartMinute);
-        var syncEndTime = syncTime.AddHours(settings.SyncWindowHours);
-        
-        _logger.LogInformation("Search Schedule:");
-        _logger.LogInformation("  Plugin sync time: {Time:HH:mm} UTC (configured)", syncTime);
-        _logger.LogInformation("  Search window: {Start:HH:mm} - {End:HH:mm} UTC ({Hours}h window)", 
-            syncTime, syncEndTime, settings.SyncWindowHours);
-        _logger.LogInformation("  Will search for new files once per day after sync window ends");
-        _logger.LogInformation("  Background check interval: 5 minutes");
+        _logger.LogInformation("Background check interval: 5 minutes");
         
         // Fetch playlist names from Jellyfin
         await LoadPlaylistNamesAsync();
@@ -109,7 +96,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
         _logger.LogInformation("========================================");
 
-        // Check if we should run on startup
+        // Run on startup if we don't have cache
         if (!_hasRunOnce)
         {
             var shouldRun = await ShouldRunOnStartupAsync();
@@ -118,7 +105,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 _logger.LogInformation("Running initial fetch on startup");
                 try
                 {
-                    await FetchMissingTracksAsync(stoppingToken, bypassSyncWindowCheck: true);
+                    await FetchMissingTracksAsync(stoppingToken);
                     _hasRunOnce = true;
                 }
                 catch (Exception ex)
@@ -128,21 +115,20 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             }
             else
             {
-                _logger.LogInformation("Skipping startup fetch - already have current files");
+                _logger.LogInformation("Skipping startup fetch - already have cached files");
                 _hasRunOnce = true;
             }
         }
 
+        // Background loop - check for new files every 5 minutes
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                // Only fetch if we're past today's sync window AND we haven't fetched today yet
                 var shouldFetch = await ShouldFetchNowAsync();
                 if (shouldFetch)
                 {
                     await FetchMissingTracksAsync(stoppingToken);
-                    _hasRunOnce = true;
                 }
             }
             catch (Exception ex)
@@ -156,42 +142,29 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
     private async Task<bool> ShouldFetchNowAsync()
     {
-        var settings = _spotifySettings.Value;
+        // Check if we have recent cache files (within last 24 hours)
         var now = DateTime.UtcNow;
+        var cacheThreshold = now.AddHours(-24);
         
-        // Calculate today's sync window
-        var todaySync = now.Date
-            .AddHours(settings.SyncStartHour)
-            .AddMinutes(settings.SyncStartMinute);
-        var todaySyncEnd = todaySync.AddHours(settings.SyncWindowHours);
-        
-        // Only fetch if we're past today's sync window
-        if (now < todaySyncEnd)
-        {
-            return false;
-        }
-        
-        // Check if we already have today's files
         foreach (var playlistName in _playlistIdToName.Values)
         {
             var filePath = GetCacheFilePath(playlistName);
             
-            if (File.Exists(filePath))
+            if (!File.Exists(filePath))
             {
-                var fileTime = File.GetLastWriteTimeUtc(filePath);
-                
-                // If file is from today's sync or later, we already have it
-                if (fileTime >= todaySync)
-                {
-                    continue;
-                }
+                // Missing cache file for this playlist
+                return true;
             }
             
-            // Missing today's file for this playlist
-            return true;
+            var fileTime = File.GetLastWriteTimeUtc(filePath);
+            if (fileTime < cacheThreshold)
+            {
+                // Cache file is older than 24 hours
+                return true;
+            }
         }
         
-        // All playlists have today's files
+        // All playlists have recent cache files
         return false;
     }
 
@@ -210,120 +183,43 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     {
         _logger.LogInformation("=== STARTUP CACHE CHECK ===");
         
-        var settings = _spotifySettings.Value;
-        var now = DateTime.UtcNow;
+        var allPlaylistsHaveCache = true;
         
-        // Calculate today's sync window
-        var todaySync = now.Date
-            .AddHours(settings.SyncStartHour)
-            .AddMinutes(settings.SyncStartMinute);
-        var todaySyncEnd = todaySync.AddHours(settings.SyncWindowHours);
-        
-        _logger.LogInformation("Today's sync window: {Start:yyyy-MM-dd HH:mm} - {End:yyyy-MM-dd HH:mm} UTC", 
-            todaySync, todaySyncEnd);
-        _logger.LogInformation("Current time: {Now:yyyy-MM-dd HH:mm} UTC", now);
-        
-        // If we're still before today's sync window end, we should have yesterday's or today's file
-        // Don't search again until after today's sync window ends
-        if (now < todaySyncEnd)
+        foreach (var playlistName in _playlistIdToName.Values)
         {
-            _logger.LogInformation("We're before today's sync window end - checking if we have recent cache...");
+            var filePath = GetCacheFilePath(playlistName);
+            var cacheKey = $"spotify:missing:{playlistName}";
             
-            var allPlaylistsHaveCache = true;
-            
-            foreach (var playlistName in _playlistIdToName.Values)
+            // Check file cache
+            if (File.Exists(filePath))
             {
-                var filePath = GetCacheFilePath(playlistName);
-                var cacheKey = $"spotify:missing:{playlistName}";
+                var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
+                _logger.LogInformation("  {Playlist}: Found file cache (age: {Age:F1}h)", playlistName, fileAge.TotalHours);
                 
-                // Check file cache
-                if (File.Exists(filePath))
+                // Load into Redis if not already there
+                if (!await _cache.ExistsAsync(cacheKey))
                 {
-                    var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
-                    _logger.LogInformation("  {Playlist}: Found file cache (age: {Age:F1}h)", playlistName, fileAge.TotalHours);
-                    
-                    // Load into Redis if not already there
-                    if (!await _cache.ExistsAsync(cacheKey))
-                    {
-                        await LoadFromFileCache(playlistName);
-                    }
-                    continue;
+                    await LoadFromFileCache(playlistName);
                 }
-                
-                // Check Redis cache
-                if (await _cache.ExistsAsync(cacheKey))
-                {
-                    _logger.LogInformation("  {Playlist}: Found in Redis cache", playlistName);
-                    continue;
-                }
-                
-                // No cache found for this playlist
-                _logger.LogInformation("  {Playlist}: No cache found", playlistName);
-                allPlaylistsHaveCache = false;
+                continue;
             }
             
-            if (allPlaylistsHaveCache)
+            // Check Redis cache
+            if (await _cache.ExistsAsync(cacheKey))
             {
-                _logger.LogInformation("=== ALL PLAYLISTS HAVE CACHE - SKIPPING STARTUP FETCH ===");
-                _logger.LogInformation("Will search again after {Time:yyyy-MM-dd HH:mm} UTC", todaySyncEnd);
-                return false;
+                _logger.LogInformation("  {Playlist}: Found in Redis cache", playlistName);
+                continue;
             }
+            
+            // No cache found for this playlist
+            _logger.LogInformation("  {Playlist}: No cache found", playlistName);
+            allPlaylistsHaveCache = false;
         }
         
-        // If we're after today's sync window end, check if we already have today's file
-        if (now >= todaySyncEnd)
+        if (allPlaylistsHaveCache)
         {
-            _logger.LogInformation("We're after today's sync window end - checking if we already fetched today's files...");
-            
-            var allPlaylistsHaveTodaysFile = true;
-            
-            foreach (var playlistName in _playlistIdToName.Values)
-            {
-                var filePath = GetCacheFilePath(playlistName);
-                var cacheKey = $"spotify:missing:{playlistName}";
-                
-                // Check if file exists and was created today (after sync start)
-                if (File.Exists(filePath))
-                {
-                    var fileTime = File.GetLastWriteTimeUtc(filePath);
-                    
-                    // File should be from today's sync window or later
-                    if (fileTime >= todaySync)
-                    {
-                        var fileAge = DateTime.UtcNow - fileTime;
-                        _logger.LogInformation("  {Playlist}: Have today's file (created {Time:yyyy-MM-dd HH:mm}, age: {Age:F1}h)", 
-                            playlistName, fileTime, fileAge.TotalHours);
-                        
-                        // Load into Redis if not already there
-                        if (!await _cache.ExistsAsync(cacheKey))
-                        {
-                            await LoadFromFileCache(playlistName);
-                        }
-                        continue;
-                    }
-                    else
-                    {
-                        _logger.LogInformation("  {Playlist}: File is old (from {Time:yyyy-MM-dd HH:mm}, before today's sync)", 
-                            playlistName, fileTime);
-                    }
-                }
-                else
-                {
-                    _logger.LogInformation("  {Playlist}: No file found", playlistName);
-                }
-                
-                allPlaylistsHaveTodaysFile = false;
-            }
-            
-            if (allPlaylistsHaveTodaysFile)
-            {
-                _logger.LogInformation("=== ALL PLAYLISTS HAVE TODAY'S FILES - SKIPPING STARTUP FETCH ===");
-                
-                // Calculate when to search next (tomorrow after sync window)
-                var tomorrowSyncEnd = todaySyncEnd.AddDays(1);
-                _logger.LogInformation("Will search again after {Time:yyyy-MM-dd HH:mm} UTC", tomorrowSyncEnd);
-                return false;
-            }
+            _logger.LogInformation("=== ALL PLAYLISTS HAVE CACHE - SKIPPING STARTUP FETCH ===");
+            return false;
         }
         
         _logger.LogInformation("=== WILL FETCH ON STARTUP ===");
@@ -380,32 +276,9 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
     }
 
-    private async Task FetchMissingTracksAsync(CancellationToken cancellationToken, bool bypassSyncWindowCheck = false)
+    private async Task FetchMissingTracksAsync(CancellationToken cancellationToken)
     {
-        var settings = _spotifySettings.Value;
-        var now = DateTime.UtcNow;
-        var syncStart = now.Date
-            .AddHours(settings.SyncStartHour)
-            .AddMinutes(settings.SyncStartMinute);
-        var syncEnd = syncStart.AddHours(settings.SyncWindowHours);
-
-        // Only run after the sync window has passed (unless bypassing for startup)
-        if (!bypassSyncWindowCheck && now < syncEnd)
-        {
-            _logger.LogInformation("Skipping fetch - sync window not passed yet (now: {Now}, window ends: {End})", 
-                now, syncEnd);
-            return;
-        }
-
-        if (bypassSyncWindowCheck)
-        {
-            _logger.LogInformation("=== FETCHING MISSING TRACKS (STARTUP MODE) ===");
-        }
-        else
-        {
-            _logger.LogInformation("=== FETCHING MISSING TRACKS (SYNC WINDOW PASSED) ===");
-        }
-
+        _logger.LogInformation("=== FETCHING MISSING TRACKS ===");
         _logger.LogInformation("Processing {Count} playlists", _playlistIdToName.Count);
         
         // Track when we find files to optimize search for other playlists

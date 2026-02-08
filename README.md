@@ -5,11 +5,7 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fsopat712%2Fallstarr-blue)](https://github.com/SoPat712/allstarr/pkgs/container/allstarr)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-A media server proxy that integrates music streaming providers with your local library. Works with **Jellyfin** and **Subsonic-compatible** servers (Navidrome). When a song isn't in your local library, it gets fetched from your configured provider, downloaded, and served to your client. The downloaded song then lives in your library for next time.
-
-**THIS IS UNDER ACTIVE DEVELOPMENT**
-
-Please report all bugs as soon as possible, as the Jellyfin addition is entirely a test at this point
+A media server proxy that integrates music streaming providers with your local library. Works with **Jellyfin** and **Subsonic-compatible** servers. When a song isn't in your local library, it gets fetched from your configured provider, downloaded, and served to your client. The downloaded song then lives in your library for next time.
 
 ## Quick Start
 
@@ -40,15 +36,15 @@ The proxy will be available at `http://localhost:5274`.
 
 ## Web Dashboard
 
-Allstarr includes a web-based dashboard for easy configuration and playlist management, accessible at `http://localhost:5275` (internal port, not exposed through reverse proxy).
+Allstarr includes a web UI for easy configuration and playlist management, accessible at `http://localhost:5275`
 
 ### Features
 
-- **Real-time Status**: Monitor Spotify authentication, cookie age, and playlist sync status
-- **Playlist Management**: Link Jellyfin playlists to Spotify playlists with a few clicks
-- **Configuration Editor**: Update settings without manually editing .env files
-- **Track Viewer**: Browse tracks in your configured playlists
-- **Cache Management**: Clear cached data and restart the container
+- **Playlist Management**: Link Jellyfin playlists to Spotify playlists with just a few clicks
+- **Provider Matching**: It should fill in the gaps of your Jellyfin library with tracks from your selected provider
+- **WebUI**: Update settings without manually editing .env files
+- **Music**: Using multiple sources for music (optimized for SquidWTF right now, though)
+- **Lyrics**: Using multiple sources for lyrics, first Jellyfin Lyrics, then Spotify Lyrics, then LrcLib as a last resort
 
 ### Quick Setup with Web UI
 
@@ -65,18 +61,20 @@ Allstarr includes a web-based dashboard for easy configuration and playlist mana
      - `37i9dQZF1DXcBWIGoYBM5M` (just the ID)
      - `spotify:playlist:37i9dQZF1DXcBWIGoYBM5M` (Spotify URI)
      - `https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M` (full URL)
-4. **Restart** to apply changes (button in Configuration tab)
+4. **Restart** to apply changes (should be a banner)
 
-### Why Two Playlist Tabs?
-
-- **Link Playlists**: Shows all Jellyfin playlists and lets you connect them to Spotify
-- **Active Playlists**: Shows which Spotify playlists are currently being monitored and filled with tracks
+Then, proceeed to **Active Playlists**, which shows you which Spotify playlists are currently being monitored and filled with tracks, and lets you do a bunch of useful operations on them.
 
 ### Configuration Persistence
 
 The web UI updates your `.env` file directly. Changes persist across container restarts, but require a restart to take effect. In development mode, the `.env` file is in your project root. In Docker, it's at `/app/.env`.
 
-**Recommended workflow**: Use the `sp_dc` cookie method (simpler and more reliable than the Jellyfin Spotify Import plugin).
+There's an environment variable to modify this.
+
+
+**Recommended workflow**: Use the `sp_dc` cookie method alongside the [Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file).
+
+
 
 ### Nginx Proxy Setup (Required)
 
@@ -142,6 +140,7 @@ This project brings together all the music streaming providers into one unified 
 
 - [Feishin](https://github.com/jeffvli/feishin) (Mac/Windows/Linux)
 - [Musiver](https://music.aqzscn.cn/en/) (Android/IOS/Windows/Android)
+- [Finamp](https://github.com/jmshrv/finamp) ()
 
 _Working on getting more currently_
 
@@ -335,7 +334,7 @@ Subsonic__EnableExternalPlaylists=false
 
 ### Spotify Playlist Injection (Jellyfin Only)
 
-Allstarr can automatically fill your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This feature works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
+Allstarr automatically fills your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
 
 #### Prerequisites
 
@@ -349,136 +348,112 @@ Allstarr can automatically fill your Spotify playlists (like Release Radar and D
    - Go to Jellyfin Dashboard → Plugins → Spotify Import
    - Connect your Spotify account
    - Select which playlists to sync (e.g., Release Radar, Discover Weekly)
-   - Set a daily sync schedule (e.g., 4:15 PM daily)
-   - The plugin will create playlists in Jellyfin and generate "missing tracks" files for songs not in your library
+   - Set a sync schedule (the plugin will create playlists in Jellyfin)
 
 3. **Configure Allstarr**
-   - Allstarr needs to know when the plugin runs and which playlists to intercept
-   - Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings (no additional credentials needed)
+   - Enable Spotify Import in Allstarr (see configuration below)
+   - Link your Jellyfin playlists to Spotify playlists via the Web UI
+   - Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
 
 #### Configuration
 
 | Setting | Description |
 |---------|-------------|
 | `SpotifyImport:Enabled` | Enable Spotify playlist injection (default: `false`) |
-| `SpotifyImport:SyncStartHour` | Hour when the Spotify Import plugin runs (24-hour format, 0-23) |
-| `SpotifyImport:SyncStartMinute` | Minute when the plugin runs (0-59) |
-| `SpotifyImport:SyncWindowHours` | Hours to search for missing tracks files after sync time (default: 2) |
-| `SpotifyImport:PlaylistIds` | Comma-separated Jellyfin playlist IDs to intercept |
-| `SpotifyImport:PlaylistNames` | Comma-separated playlist names (must match order of IDs) |
+| `SpotifyImport:MatchingIntervalHours` | How often to run track matching in hours (default: 24, set to 0 for startup only) |
+| `SpotifyImport:Playlists` | JSON array of playlists (managed via Web UI) |
 
 **Environment variables example:**
 ```bash
 # Enable the feature
 SPOTIFY_IMPORT_ENABLED=true
 
-# Sync window settings (optional - used to prevent fetching too frequently)
-# The fetcher searches backwards from current time for the last 48 hours
-SPOTIFY_IMPORT_SYNC_START_HOUR=16
-SPOTIFY_IMPORT_SYNC_START_MINUTE=15
-SPOTIFY_IMPORT_SYNC_WINDOW_HOURS=2
+# Matching interval (24 hours = once per day)
+SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS=24
 
-# Get playlist IDs from Jellyfin URLs: https://jellyfin.example.com/web/#/details?id=PLAYLIST_ID
-SPOTIFY_IMPORT_PLAYLIST_IDS=ba50e26c867ec9d57ab2f7bf24cfd6b0,4383a46d8bcac3be2ef9385053ea18df
-
-# Names must match exactly as they appear in Jellyfin (used to find missing tracks files)
-SPOTIFY_IMPORT_PLAYLIST_NAMES=Release Radar,Discover Weekly
+# Playlists (use Web UI to manage instead of editing manually)
+SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","37i9dQZEVXcV6s7Dm7RXsU","first"],["Release Radar","37i9dQZEVXbng2vDHnfQlC","first"]]
 ```
 
 #### How It Works
 
-1. **Spotify Import Plugin Runs** (e.g., daily at 4:15 PM)
+1. **Spotify Import Plugin Runs**
    - Plugin fetches your Spotify playlists
    - Creates/updates playlists in Jellyfin with tracks already in your library
    - Generates "missing tracks" JSON files for songs not found locally
-   - Files are named like: `Release Radar_missing_2026-02-01_16-15.json`
 
-2. **Allstarr Fetches Missing Tracks** (within sync window)
-   - Searches for missing tracks files from the Jellyfin plugin
-   - Searches **+24 hours forward first** (newest files), then **-48 hours backward** if not found
-   - This efficiently finds the most recent file regardless of timezone differences
-   - Example: Server time 12 PM EST, file timestamped 9 PM UTC (same day) → Found in forward search
-   - Caches the list of missing tracks in Redis + file cache
-   - Runs automatically on startup (if needed) and every 5 minutes during the sync window
-
-3. **Allstarr Matches Tracks** (2 minutes after startup, then configurable interval)
+2. **Allstarr Matches Tracks** (on startup + every 24 hours by default)
+   - Reads missing tracks files from the Jellyfin plugin
    - For each missing track, searches your streaming provider (SquidWTF, Deezer, or Qobuz)
    - Uses fuzzy matching to find the best match (title + artist similarity)
    - Rate-limited to avoid overwhelming the service (150ms delay between searches)
-   - Caches matched results for 1 hour
-   - **Pre-builds playlist items cache** for instant serving (no "on the fly" building)
-   - Default interval: 24 hours (configurable via `SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS`)
-   - Set to 0 to only run once on startup (manual trigger via admin UI still works)
+   - Pre-builds playlist cache for instant loading
 
-4. **You Open the Playlist in Jellyfin**
+3. **You Open the Playlist in Jellyfin**
    - Allstarr intercepts the request
    - Returns a merged list: local tracks + matched streaming tracks
-   - Loads instantly from cache (no searching needed!)
+   - Loads instantly from cache!
 
-5. **You Play a Track**
-   - If it's a local track, streams from Jellyfin normally
-   - If it's a matched track, downloads from streaming provider on-demand
+4. **You Play a Track**
+   - Local tracks stream from Jellyfin normally
+   - Matched tracks download from streaming provider on-demand
    - Downloaded tracks are saved to your library for future use
 
-#### Manual Triggers
+#### Manual API Triggers
 
-You can manually trigger syncing and matching via API:
+You can manually trigger operations via the admin API:
 
 ```bash
+# Get API key from your .env file
+API_KEY="your-api-key-here"
+
 # Fetch missing tracks from Jellyfin plugin
-curl "https://your-jellyfin-proxy.com/spotify/sync?api_key=YOUR_API_KEY"
+curl "http://localhost:5274/spotify/sync?api_key=$API_KEY"
 
 # Trigger track matching (searches streaming provider)
-curl "https://your-jellyfin-proxy.com/spotify/match?api_key=YOUR_API_KEY"
+curl "http://localhost:5274/spotify/match?api_key=$API_KEY"
 
-# Clear cache to force re-matching
-curl "https://your-jellyfin-proxy.com/spotify/clear-cache?api_key=YOUR_API_KEY"
+# Match all playlists (refresh all matches)
+curl "http://localhost:5274/spotify/match-all?api_key=$API_KEY"
+
+# Clear cache and rebuild
+curl "http://localhost:5274/spotify/clear-cache?api_key=$API_KEY"
+
+# Refresh specific playlist
+curl "http://localhost:5274/spotify/refresh-playlist?playlistId=PLAYLIST_ID&api_key=$API_KEY"
 ```
 
-#### Startup Behavior
+#### Web UI Management
 
-When Allstarr starts with Spotify Import enabled:
+The easiest way to manage Spotify playlists is through the Web UI at `http://localhost:5275`:
 
-**Smart Cache Check:**
-- Checks if today's sync window has passed (e.g., if sync is at 4 PM + 2 hour window = 6 PM)
-- If before 6 PM and yesterday's cache exists → **Skips fetch** (cache is still current)
-- If after 6 PM or no cache exists → **Fetches missing tracks** from Jellyfin plugin
-
-**Track Matching:**
-- **T+2min**: Matches tracks with streaming provider (with rate limiting)
-- Only matches playlists that don't already have cached matches
-- **Result**: Playlists load instantly when you open them!
-
-**Example Timeline:**
-- Plugin runs daily at 4:15 PM, creates files at ~4:16 PM
-- You restart Allstarr at 12:00 PM (noon) the next day
-- Startup check: "Today's sync window ends at 6 PM, and I have yesterday's 4:16 PM file"
-- **Decision**: Skip fetch, use existing cache
-- At 6:01 PM: Next scheduled check will search for new files
+1. **Link Playlists Tab**: Link Jellyfin playlists to Spotify playlists
+2. **Active Playlists Tab**: View status, trigger matching, and manage playlists
+3. **Configuration Tab**: Enable/disable Spotify Import and adjust settings
 
 #### Troubleshooting
 
 **Playlists are empty:**
 - Check that the Spotify Import plugin is running and creating playlists
-- Verify `SPOTIFY_IMPORT_PLAYLIST_IDS` match your Jellyfin playlist IDs
+- Verify playlists are linked in the Web UI
 - Check logs: `docker-compose logs -f allstarr | grep -i spotify`
 
 **Tracks aren't matching:**
 - Ensure your streaming provider is configured (`MUSIC_SERVICE`, credentials)
-- Check that playlist names in `SPOTIFY_IMPORT_PLAYLIST_NAMES` match exactly
-- Manually trigger matching: `curl "https://your-proxy.com/spotify/match?api_key=KEY"`
+- Manually trigger matching via Web UI or API
+- Check that the Jellyfin plugin generated missing tracks files
 
-**Sync timing issues:**
-- Set `SPOTIFY_IMPORT_SYNC_START_HOUR/MINUTE` to match your plugin schedule
-- Increase `SPOTIFY_IMPORT_SYNC_WINDOW_HOURS` if files aren't being found
-- Check Jellyfin plugin logs to confirm when it runs
+**Performance:**
+- Matching runs in background with rate limiting (150ms between searches)
+- First match may take a few minutes for large playlists
+- Subsequent loads are instant (served from cache)
 
 #### Notes
 
-- This feature uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
-- Matched tracks are cached for 1 hour to avoid repeated searches
-- Missing tracks cache persists across restarts (stored in Redis + file cache)
-- Rate limiting prevents overwhelming your streaming provider (150ms between searches)
+- Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
+- Matched tracks cached for fast loading
+- Missing tracks cache persists across restarts (Redis + file cache)
+- Rate limiting prevents overwhelming your streaming provider
 - Only works with Jellyfin backend (not Subsonic/Navidrome)
 
 ### Getting Credentials
@@ -592,9 +567,46 @@ If you prefer to run Allstarr without Docker:
 
 ## API Endpoints
 
+### Jellyfin Backend (Primary Focus)
+
+The proxy provides comprehensive Jellyfin API support with streaming provider integration:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /Items` | Search and browse library items (local + streaming providers) |
+| `GET /Artists` | Browse artists with merged results from local + streaming |
+| `GET /Artists/AlbumArtists` | Album artists with streaming provider results |
+| `GET /Users/{userId}/Items` | User library items with external content |
+| `GET /Audio/{id}/stream` | Stream audio, downloading from provider on-demand |
+| `GET /Audio/{id}/Lyrics` | Lyrics from Jellyfin, Spotify, or LRCLib |
+| `GET /Items/{id}/Images/{type}` | Proxy cover art for external content |
+| `GET /Playlists/{id}/Items` | Playlist items (Spotify Import integration) |
+| `POST /UserFavoriteItems/{id}` | Favorite items; copies external tracks to kept folder |
+| `DELETE /UserFavoriteItems/{id}` | Unfavorite items |
+| `POST /Sessions/Playing` | Playback reporting for external tracks |
+| `POST /Sessions/Playing/Progress` | Playback progress tracking |
+| `POST /Sessions/Playing/Stopped` | Playback stopped reporting |
+| `WebSocket /socket` | Real-time session management and remote control |
+
+**Admin API (Port 5275):**
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/config` | Get current configuration |
+| `POST /api/config` | Update configuration |
+| `GET /api/playlists` | List Spotify Import playlists |
+| `POST /api/playlists/link` | Link Jellyfin playlist to Spotify |
+| `DELETE /api/playlists/{id}` | Unlink playlist |
+| `POST /spotify/sync` | Fetch missing tracks from Jellyfin plugin |
+| `POST /spotify/match` | Trigger track matching |
+| `POST /spotify/match-all` | Match all playlists |
+| `POST /spotify/clear-cache` | Clear playlist cache |
+| `POST /spotify/refresh-playlist` | Refresh specific playlist |
+
+All other Jellyfin API endpoints are passed through unchanged.
+
 ### Subsonic Backend
 
-The proxy implements the Subsonic API and adds transparent streaming provider integration:
+The proxy implements the Subsonic API with streaming provider integration:
 
 | Endpoint | Description |
 |----------|-------------|
@@ -607,20 +619,6 @@ The proxy implements the Subsonic API and adds transparent streaming provider in
 | `GET /rest/star` | Stars items; triggers automatic playlist download for external playlists |
 
 All other Subsonic API endpoints are passed through to Navidrome unchanged.
-
-### Jellyfin Backend
-
-The proxy implements a subset of the Jellyfin API:
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /Items` | Search and browse library items |
-| `GET /Artists` | Browse artists with streaming provider results |
-| `GET /Audio/{id}/stream` | Stream audio, downloading from provider if needed |
-| `GET /Items/{id}/Images/{type}` | Proxy cover art for external content |
-| `POST /UserFavoriteItems/{id}` | Favorite items; triggers playlist download |
-
-All other Jellyfin API endpoints are passed through unchanged.
 
 ## External ID Format
 
@@ -636,25 +634,37 @@ Legacy format `ext-deezer-{id}` is also supported (assumes song type).
 
 ## Download Folder Structure
 
-Downloaded music is organized as:
+All downloads are organized under a single base directory (default: `./downloads`):
+
 ```
 downloads/
-├── Artist Name/
-│   ├── Album Title/
-│   │   ├── 01 - Track One.mp3
-│   │   ├── 02 - Track Two.mp3
-│   │   └── ...
-│   └── Another Album/
-│       └── ...
-├── Another Artist/
-│   └── ...
-└── playlists/
-    ├── My Favorite Songs.m3u
-    ├── Chill Vibes.m3u
-    └── ...
+├── permanent/                    # Permanent downloads (STORAGE_MODE=Permanent)
+│   ├── Artist Name/
+│   │   ├── Album Title/
+│   │   │   ├── 01 - Track One.flac
+│   │   │   ├── 02 - Track Two.flac
+│   │   │   └── ...
+│   │   └── Another Album/
+│   │       └── ...
+│   └── playlists/
+│       ├── My Favorite Songs.m3u
+│       └── Chill Vibes.m3u
+├── cache/                        # Temporary cache (STORAGE_MODE=Cache)
+│   └── Artist Name/
+│       └── Album Title/
+│           └── Track.flac
+└── kept/                         # Favorited external tracks (always permanent)
+    └── Artist Name/
+        └── Album Title/
+            └── Track.flac
 ```
 
-Playlists are stored as M3U files with relative paths to downloaded tracks, making them portable and compatible with most music players.
+**Storage modes:**
+- **Permanent** (`downloads/permanent/`): Files saved permanently and registered in your media server
+- **Cache** (`downloads/cache/`): Temporary files, auto-cleaned after `CACHE_DURATION_HOURS`
+- **Kept** (`downloads/kept/`): External tracks you've favorited - always permanent, separate from cache
+
+Playlists are stored as M3U files with relative paths, making them portable and compatible with most music players.
 
 ## Metadata Embedding
 
@@ -685,10 +695,17 @@ dotnet test
 ```
 allstarr/
 ├── Controllers/
-│   ├── JellyfinController.cs              # Jellyfin API controller (registered when Backend:Type=Jellyfin)
-│   └── SubsonicController.cs              # Subsonic API controller (registered when Backend:Type=Subsonic)
+│   ├── AdminController.cs                 # Admin dashboard API
+│   ├── JellyfinController.cs              # Jellyfin API controller
+│   └── SubsonicController.cs              # Subsonic API controller
+├── Filters/
+│   ├── AdminPortFilter.cs                 # Admin port access control
+│   ├── ApiKeyAuthFilter.cs                # API key authentication
+│   └── JellyfinAuthFilter.cs              # Jellyfin authentication
 ├── Middleware/
-│   └── GlobalExceptionHandler.cs          # Global error handling
+│   ├── AdminStaticFilesMiddleware.cs      # Admin UI static file serving
+│   ├── GlobalExceptionHandler.cs          # Global error handling
+│   └── WebSocketProxyMiddleware.cs        # WebSocket proxying for Jellyfin
 ├── Models/
 │   ├── Domain/                            # Domain entities
 │   │   ├── Song.cs
@@ -697,18 +714,39 @@ allstarr/
 │   ├── Settings/                          # Configuration models
 │   │   ├── SubsonicSettings.cs
 │   │   ├── DeezerSettings.cs
-│   │   └── QobuzSettings.cs
+│   │   ├── QobuzSettings.cs
+│   │   ├── SquidWTFSettings.cs
+│   │   ├── SpotifyApiSettings.cs
+│   │   ├── SpotifyImportSettings.cs
+│   │   ├── MusicBrainzSettings.cs
+│   │   └── RedisSettings.cs
 │   ├── Download/                          # Download-related models
 │   │   ├── DownloadInfo.cs
 │   │   └── DownloadStatus.cs
+│   ├── Lyrics/
+│   │   └── LyricsInfo.cs
 │   ├── Search/
 │   │   └── SearchResult.cs
+│   ├── Spotify/
+│   │   ├── MissingTrack.cs
+│   │   └── SpotifyPlaylistTrack.cs
 │   └── Subsonic/
+│       ├── ExternalPlaylist.cs
 │       └── ScanStatus.cs
 ├── Services/
 │   ├── Common/                            # Shared services
 │   │   ├── BaseDownloadService.cs         # Template method base class
+│   │   ├── CacheCleanupService.cs         # Cache cleanup background service
+│   │   ├── CacheWarmingService.cs         # Startup cache warming
+│   │   ├── EndpointBenchmarkService.cs    # Endpoint performance benchmarking
+│   │   ├── FuzzyMatcher.cs                # Fuzzy string matching
+│   │   ├── GenreEnrichmentService.cs      # MusicBrainz genre enrichment
+│   │   ├── OdesliService.cs               # Odesli/song.link conversion
+│   │   ├── ParallelMetadataService.cs     # Parallel metadata fetching
 │   │   ├── PathHelper.cs                  # Path utilities
+│   │   ├── PlaylistIdHelper.cs            # Playlist ID helpers
+│   │   ├── RedisCacheService.cs           # Redis caching
+│   │   ├── RoundRobinFallbackHelper.cs    # Load balancing and failover
 │   │   ├── Result.cs                      # Result<T> pattern
 │   │   └── Error.cs                       # Error types
 │   ├── Deezer/                            # Deezer provider
@@ -720,12 +758,35 @@ allstarr/
 │   │   ├── QobuzMetadataService.cs
 │   │   ├── QobuzBundleService.cs
 │   │   └── QobuzStartupValidator.cs
+│   ├── SquidWTF/                          # SquidWTF provider
+│   │   ├── SquidWTFDownloadService.cs
+│   │   ├── SquidWTFMetadataService.cs
+│   │   └── SquidWTFStartupValidator.cs
+│   ├── Jellyfin/                          # Jellyfin integration
+│   │   ├── JellyfinModelMapper.cs         # Model mapping
+│   │   ├── JellyfinProxyService.cs        # Request proxying
+│   │   ├── JellyfinResponseBuilder.cs     # Response building
+│   │   ├── JellyfinSessionManager.cs      # Session management
+│   │   └── JellyfinStartupValidator.cs    # Startup validation
+│   ├── Lyrics/                            # Lyrics services
+│   │   ├── LrclibService.cs               # LRCLIB lyrics
+│   │   ├── LyricsPrefetchService.cs       # Background lyrics prefetching
+│   │   ├── LyricsStartupValidator.cs      # Lyrics validation
+│   │   └── SpotifyLyricsService.cs        # Spotify lyrics
+│   ├── MusicBrainz/
+│   │   └── MusicBrainzService.cs          # MusicBrainz metadata
+│   ├── Spotify/                           # Spotify integration
+│   │   ├── SpotifyApiClient.cs            # Spotify API client
+│   │   ├── SpotifyMissingTracksFetcher.cs # Missing tracks fetcher
+│   │   ├── SpotifyPlaylistFetcher.cs      # Playlist fetcher
+│   │   └── SpotifyTrackMatchingService.cs # Track matching
 │   ├── Local/                             # Local library
 │   │   ├── ILocalLibraryService.cs
 │   │   └── LocalLibraryService.cs
 │   ├── Subsonic/                          # Subsonic API logic
-│   │   ├── SubsonicProxyService.cs        # Request proxying
+│   │   ├── PlaylistSyncService.cs         # Playlist synchronization
 │   │   ├── SubsonicModelMapper.cs         # Model mapping
+│   │   ├── SubsonicProxyService.cs        # Request proxying
 │   │   ├── SubsonicRequestParser.cs       # Request parsing
 │   │   └── SubsonicResponseBuilder.cs     # Response building
 │   ├── Validation/                        # Startup validation
@@ -737,13 +798,17 @@ allstarr/
 │   ├── IDownloadService.cs                # Download interface
 │   ├── IMusicMetadataService.cs           # Metadata interface
 │   └── StartupValidationService.cs
+├── wwwroot/                               # Admin UI static files
+│   ├── index.html                         # Admin dashboard
+│   └── placeholder.png                    # Placeholder image
 ├── Program.cs                             # Application entry point
 └── appsettings.json                       # Configuration
 
 allstarr.Tests/
 ├── DeezerDownloadServiceTests.cs          # Deezer download tests
 ├── DeezerMetadataServiceTests.cs          # Deezer metadata tests
-├── QobuzDownloadServiceTests.cs           # Qobuz download tests (127 tests)
+├── JellyfinResponseStructureTests.cs      # Jellyfin response tests
+├── QobuzDownloadServiceTests.cs           # Qobuz download tests
 ├── LocalLibraryServiceTests.cs            # Local library tests
 ├── SubsonicModelMapperTests.cs            # Model mapping tests
 ├── SubsonicProxyServiceTests.cs           # Proxy service tests
@@ -817,7 +882,7 @@ We welcome contributions! Here's how to get started:
 - Follow existing code patterns and conventions
 - Add tests for new features
 - Update documentation as needed
-- Keep commits focused and atomic
+- Keep commits feature focused
 
 ### Testing
 
@@ -839,8 +904,14 @@ GPL-3.0
 
 ## Acknowledgments
 
-- [Navidrome](https://www.navidrome.org/) - The excellent self-hosted music server
+- [octo-fiesta](https://github.com/V1ck3s/octo-fiesta) - The original
+- [octo-fiestarr](https://github.com/bransoned/octo-fiestarr) - The fork that introduced me to this idea based on the above
+- [Jellyfin Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file) - The plugin that I **strongly** recommend using alongside this repo
 - [Jellyfin](https://jellyfin.org/) - The free and open-source media server
+- [Navidrome](https://www.navidrome.org/) - The excellent self-hosted music server
+- [Subsonic API](http://www.subsonic.org/pages/api.jsp) - The API specification
+- [Hi-Fi API](https://github.com/binimum/hifi-api) - These people do some great work, and you should thank them for this even existing!
 - [Deezer](https://www.deezer.com/) - Music streaming service
 - [Qobuz](https://www.qobuz.com/) - Hi-Res music streaming service
-- [Subsonic API](http://www.subsonic.org/pages/api.jsp) - The API specification
+- [spotify-lyrics-api](https://github.com/akashrchandran/spotify-lyrics-api) - Thank them for the fact that we have access to Spotify's lyrics!
+- [LRCLIB](https://github.com/tranxuanthang/lrclib) - The GOATS for giving us a free api for lyrics! They power LRCGET, which I'm sure some of you have heard of

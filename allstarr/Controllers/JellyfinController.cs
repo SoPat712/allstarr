@@ -3916,7 +3916,7 @@ public class JellyfinController : ControllerBase
             }
 
             // Build kept folder path: Artist/Album/
-            var keptBasePath = _configuration["Library:KeptPath"] ?? "/app/kept";
+            var keptBasePath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             var keptArtistPath = Path.Combine(keptBasePath, PathHelper.SanitizeFileName(song.Artist));
             var keptAlbumPath = Path.Combine(keptArtistPath, PathHelper.SanitizeFileName(song.Album));
             
@@ -4212,7 +4212,7 @@ public class JellyfinController : ControllerBase
             var song = await _metadataService.GetSongAsync(provider!, externalId!);
             if (song == null) return;
 
-            var keptBasePath = _configuration["Library:KeptPath"] ?? "/app/kept";
+            var keptBasePath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             var keptArtistPath = Path.Combine(keptBasePath, PathHelper.SanitizeFileName(song.Artist));
             var keptAlbumPath = Path.Combine(keptArtistPath, PathHelper.SanitizeFileName(song.Album));
             
