@@ -36,7 +36,6 @@ static List<string> DecodeSquidWtfUrls()
         "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",              // us-west.monochrome.tf
         "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",                  // arran.monochrome.tf
         "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",                  // api.monochrome.tf
-        "aHR0cHM6Ly9tb25vY2hyb21lLWFwaS5zYW1pZHkuY29t",          // monochrome-api.samidy.com
         "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="                       // hund.qqdl.site (https)
     };
     

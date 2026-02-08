@@ -1409,8 +1409,8 @@ public class AdminController : ControllerBase
             library = new
             {
                 downloadPath = _subsonicSettings.StorageMode == StorageMode.Cache 
-                    ? Path.Combine("cache", "Music")
-                    : (_configuration["Library:DownloadPath"] ?? "./downloads"),
+                    ? Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "cache")
+                    : Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "permanent"),
                 keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept"),
                 storageMode = _subsonicSettings.StorageMode.ToString(),
                 cacheDurationHours = _subsonicSettings.CacheDurationHours,

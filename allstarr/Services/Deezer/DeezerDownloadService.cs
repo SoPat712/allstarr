@@ -107,10 +107,10 @@ public class DeezerDownloadService : BaseDownloadService
 
         // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        // Cache mode uses cache/Music folder (cleaned up after 24h), Permanent mode uses downloads folder
+        // Cache mode uses downloads/cache/ folder, Permanent mode uses downloads/permanent/
         var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
-            ? Path.Combine("cache", "Music")
-            : "downloads";
+            ? Path.Combine("downloads", "cache")
+            : Path.Combine("downloads", "permanent");
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
         
         // Create directories if they don't exist
