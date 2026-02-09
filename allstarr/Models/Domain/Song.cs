@@ -14,11 +14,26 @@ public class Song
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
+<<<<<<< HEAD
     
     /// <summary>
     /// All artists for this track (main + featured). For display in Jellyfin clients.
     /// </summary>
     public List<string> Artists { get; set; } = new();
+||||||| bc4e5d9
+=======
+    
+    /// <summary>
+    /// All artists for this track (main + featured). For display in Jellyfin clients.
+    /// </summary>
+    public List<string> Artists { get; set; } = new();
+    
+    /// <summary>
+    /// All artist IDs corresponding to the Artists list. Index-matched with Artists.
+    /// </summary>
+    public List<string> ArtistIds { get; set; } = new();
+    
+>>>>>>> dev
     public string Album { get; set; } = string.Empty;
     public string? AlbumId { get; set; }
     public int? Duration { get; set; } // In seconds

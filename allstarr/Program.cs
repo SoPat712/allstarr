@@ -13,8 +13,27 @@ using allstarr.Middleware;
 using allstarr.Filters;
 using Microsoft.Extensions.Http;
 using System.Text;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure forwarded headers for reverse proxy support (nginx, etc.)
+// This allows ASP.NET Core to read X-Forwarded-For, X-Real-IP, etc.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor 
+                             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+                             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
+    
+    // Clear known networks and proxies to accept headers from any proxy
+    // This is safe when running behind a trusted reverse proxy (nginx)
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+    
+    // Trust X-Forwarded-* headers from any source
+    // Only do this if your reverse proxy is properly configured and trusted
+    options.ForwardLimit = null;
+});
 
 // Decode SquidWTF API base URLs once at startup
 var squidWtfApiUrls = DecodeSquidWtfUrls();
@@ -626,7 +645,23 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Migrate old .env file format on startup
+try
+{
+    var migrationService = new EnvMigrationService(app.Services.GetRequiredService<ILogger<EnvMigrationService>>());
+    migrationService.MigrateEnvFile();
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "Failed to run .env migration");
+}
+
 // Configure the HTTP request pipeline.
+
+// IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
+// This processes X-Forwarded-For, X-Real-IP, etc. from nginx
+app.UseForwardedHeaders();
+
 app.UseExceptionHandler(_ => { }); // Global exception handler
 
 // Enable response compression EARLY in the pipeline

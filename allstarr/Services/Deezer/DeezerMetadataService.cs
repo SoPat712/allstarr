@@ -384,17 +384,23 @@ public class DeezerMetadataService : IMusicMetadataService
             }
         }
         
-        // Contributors
+        // Contributors (all artists including features)
         var contributors = new List<string>();
+        var contributorIds = new List<string>();
         if (track.TryGetProperty("contributors", out var contribs))
         {
             foreach (var contrib in contribs.EnumerateArray())
             {
-                if (contrib.TryGetProperty("name", out var contribName))
+                if (contrib.TryGetProperty("name", out var contribName) && 
+                    contrib.TryGetProperty("id", out var contribId))
                 {
                     var name = contribName.GetString();
+                    var id = contribId.GetInt64();
                     if (!string.IsNullOrEmpty(name))
+                    {
                         contributors.Add(name);
+                        contributorIds.Add($"ext-deezer-artist-{id}");
+                    }
                 }
             }
         }
@@ -437,6 +443,8 @@ public class DeezerMetadataService : IMusicMetadataService
             ArtistId = track.TryGetProperty("artist", out var artistForId) 
                 ? $"ext-deezer-artist-{artistForId.GetProperty("id").GetInt64()}" 
                 : null,
+            Artists = contributors.Count > 0 ? contributors : new List<string>(),
+            ArtistIds = contributorIds.Count > 0 ? contributorIds : new List<string>(),
             Album = track.TryGetProperty("album", out var album) 
                 ? album.GetProperty("title").GetString() ?? "" 
                 : "",

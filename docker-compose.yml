@@ -12,6 +12,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+<<<<<<< HEAD
     volumes:
       - ${REDIS_DATA_PATH:-./redis-data}:/data
     networks:
@@ -25,6 +26,25 @@ services:
       - "8365:8080"
     environment:
       - SP_DC=${SPOTIFY_API_SESSION_COOKIE:-}
+||||||| bc4e5d9
+=======
+    volumes:
+      - ${REDIS_DATA_PATH:-./redis-data}:/data
+    networks:
+      - allstarr-network
+
+  # Spotify Lyrics API sidecar service
+  # Note: This image only supports AMD64. On ARM64 systems, Docker will use emulation.
+  spotify-lyrics:
+    image: akashrchandran/spotify-lyrics-api:latest
+    platform: linux/amd64
+    container_name: allstarr-spotify-lyrics
+    restart: unless-stopped
+    ports:
+      - "8365:8080"
+    environment:
+      - SP_DC=${SPOTIFY_API_SESSION_COOKIE:-}
+>>>>>>> dev
     networks:
       - allstarr-network
 

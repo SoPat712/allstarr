@@ -66,7 +66,9 @@ public class CacheCleanupService : BackgroundService
 
     private async Task CleanupOldCachedFilesAsync(CancellationToken cancellationToken)
     {
-        var cachePath = PathHelper.GetCachePath();
+        // Get the actual cache path used by download services
+        var downloadPath = _configuration["Library:DownloadPath"] ?? "downloads";
+        var cachePath = Path.Combine(downloadPath, "cache");
 
         if (!Directory.Exists(cachePath))
         {
@@ -78,7 +80,7 @@ public class CacheCleanupService : BackgroundService
         var deletedCount = 0;
         var totalSize = 0L;
 
-        _logger.LogInformation("Starting cache cleanup: deleting files older than {CutoffTime}", cutoffTime);
+        _logger.LogInformation("Starting cache cleanup: deleting files older than {CutoffTime} from {Path}", cutoffTime, cachePath);
 
         try
         {

@@ -264,6 +264,7 @@ public abstract class BaseDownloadService : IDownloadService
         
         // Acquire lock BEFORE checking existence to prevent race conditions with concurrent requests
         await DownloadLock.WaitAsync(cancellationToken);
+        var lockHeld = true;
         
         try
         {
@@ -288,6 +289,7 @@ public abstract class BaseDownloadService : IDownloadService
                 Logger.LogDebug("Download already in progress for {SongId}, waiting for completion...", songId);
                 // Release lock while waiting
                 DownloadLock.Release();
+                lockHeld = false;
                 
                 // Wait for download to complete, checking every 100ms (faster than 500ms)
                 // Also respect cancellation token so client timeouts are handled immediately
@@ -444,7 +446,10 @@ public abstract class BaseDownloadService : IDownloadService
         }
         finally
         {
-            DownloadLock.Release();
+            if (lockHeld)
+            {
+                DownloadLock.Release();
+            }
         }
     }
     
