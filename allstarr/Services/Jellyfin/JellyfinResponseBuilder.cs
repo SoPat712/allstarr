@@ -263,9 +263,11 @@ public class JellyfinResponseBuilder
             ["Name"] = songTitle,
             ["ServerId"] = "allstarr",
             ["Id"] = song.Id,
+            ["PlaylistItemId"] = song.Id, // Required for playlist items
             ["HasLyrics"] = false, // Could be enhanced to check if lyrics exist
             ["Container"] = "flac",
             ["PremiereDate"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null,
+            ["DateCreated"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
             ["RunTimeTicks"] = (song.Duration ?? 0) * TimeSpan.TicksPerSecond,
             ["ProductionYear"] = song.Year,
             ["IndexNumber"] = song.Track,
@@ -273,6 +275,7 @@ public class JellyfinResponseBuilder
             ["IsFolder"] = false,
             ["Type"] = "Audio",
             ["ChannelId"] = (object?)null,
+            ["ParentId"] = song.AlbumId,
             ["Genres"] = !string.IsNullOrEmpty(song.Genre) 
                 ? new[] { song.Genre } 
                 : new string[0],
@@ -286,6 +289,9 @@ public class JellyfinResponseBuilder
                     }
                 }
                 : new Dictionary<string, object?>[0],
+            ["Tags"] = new string[0],
+            ["People"] = new object[0],
+            ["SortName"] = songTitle,
             ["ParentLogoItemId"] = song.AlbumId,
             ["ParentBackdropItemId"] = song.AlbumId,
             ["ParentBackdropImageTags"] = new string[0],
