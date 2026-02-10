@@ -86,19 +86,19 @@ public class SquidWTFMetadataService : IMusicMetadataService
 	
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
     {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
+        // Use round-robin to distribute load across endpoints (allows parallel processing of multiple tracks)
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Use 's' parameter for track search as per hifi-api spec
             var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url, ct);
+            var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync();
             
             // Check for error in response body
             var result = JsonDocument.Parse(json);
@@ -132,19 +132,19 @@ public class SquidWTFMetadataService : IMusicMetadataService
 	
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
     {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
+        // Use round-robin to distribute load across endpoints (allows parallel processing)
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Note: hifi-api doesn't document album search, but 'al' parameter is commonly used
             var url = $"{baseUrl}/search/?al={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url, ct);
+            var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
             
             var albums = new List<Album>();
@@ -169,14 +169,14 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
     {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
+        // Use round-robin to distribute load across endpoints (allows parallel processing)
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Per hifi-api spec: use 'a' parameter for artist search
             var url = $"{baseUrl}/search/?a={Uri.EscapeDataString(query)}";
             _logger.LogInformation("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
             
-            var response = await _httpClient.GetAsync(url, ct);
+            var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
             {
@@ -184,7 +184,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
             
             var artists = new List<Artist>();

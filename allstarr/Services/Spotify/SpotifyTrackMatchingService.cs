@@ -992,7 +992,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                 headers["X-Emby-Authorization"] = $"MediaBrowser Token=\"{jellyfinSettings.ApiKey}\"";
             }
             
-            var playlistItemsUrl = $"Playlists/{jellyfinPlaylistId}/Items?UserId={userId}&Fields=MediaSources";
+            // Request all fields that clients typically need (not just MediaSources)
+            var playlistItemsUrl = $"Playlists/{jellyfinPlaylistId}/Items?UserId={userId}&Fields=Genres,DateCreated,MediaSources,ParentId,People,Tags,SortName,ProviderIds";
             var (existingTracksResponse, statusCode) = await proxyService.GetJsonAsync(playlistItemsUrl, null, headers);
             
             if (statusCode != 200 || existingTracksResponse == null)
