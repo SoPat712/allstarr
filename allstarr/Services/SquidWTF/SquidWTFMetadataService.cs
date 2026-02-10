@@ -292,7 +292,18 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			// Enrich with MusicBrainz genres if missing (SquidWTF/Tidal doesn't provide genres)
 			if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
 			{
-				await _genreEnrichment.EnrichSongGenreAsync(song);
+				// Fire-and-forget: don't block the response waiting for genre enrichment
+				_ = Task.Run(async () =>
+				{
+					try
+					{
+						await _genreEnrichment.EnrichSongGenreAsync(song);
+					}
+					catch (Exception ex)
+					{
+						_logger.LogDebug(ex, "Failed to enrich genre for {Title}", song.Title);
+					}
+				});
 			}
 			
 			// NOTE: Spotify ID conversion happens during download (in SquidWTFDownloadService)

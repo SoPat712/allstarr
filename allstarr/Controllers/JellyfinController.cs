@@ -283,22 +283,23 @@ public class JellyfinController : ControllerBase
         // Just interleave local and external results based on which source has better overall match
         
         // Calculate average match score for each source to determine which should come first
+        // Give local tracks a +10 boost to prioritize them
         var localSongsAvgScore = localSongs.Any() 
-            ? localSongs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title)) 
+            ? localSongs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title) + 10.0) 
             : 0.0;
         var externalSongsAvgScore = externalResult.Songs.Any() 
             ? externalResult.Songs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title)) 
             : 0.0;
 
         var localAlbumsAvgScore = localAlbums.Any() 
-            ? localAlbums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title)) 
+            ? localAlbums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title) + 10.0) 
             : 0.0;
         var externalAlbumsAvgScore = externalResult.Albums.Any() 
             ? externalResult.Albums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title)) 
             : 0.0;
 
         var localArtistsAvgScore = localArtists.Any() 
-            ? localArtists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name)) 
+            ? localArtists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name) + 10.0) 
             : 0.0;
         var externalArtistsAvgScore = externalResult.Artists.Any() 
             ? externalResult.Artists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name)) 

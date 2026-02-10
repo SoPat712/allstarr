@@ -186,7 +186,18 @@ public class QobuzMetadataService : IMusicMetadataService
             // Enrich with MusicBrainz genres if missing
             if (_genreEnrichment != null && song != null && string.IsNullOrEmpty(song.Genre))
             {
-                await _genreEnrichment.EnrichSongGenreAsync(song);
+                // Fire-and-forget: don't block the response waiting for genre enrichment
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _genreEnrichment.EnrichSongGenreAsync(song);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to enrich genre for {Title}", song.Title);
+                    }
+                });
             }
             
             return song;

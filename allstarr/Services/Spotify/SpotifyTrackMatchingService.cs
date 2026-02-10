@@ -1302,6 +1302,61 @@ public class SpotifyTrackMatchingService : BackgroundService
             
             if (finalItems.Count > 0)
             {
+                // Enrich external tracks with genres from MusicBrainz
+                if (externalUsedCount > 0)
+                {
+                    try
+                    {
+                        var genreEnrichment = _serviceProvider.GetService<GenreEnrichmentService>();
+                        if (genreEnrichment != null)
+                        {
+                            _logger.LogInformation("🎨 Enriching {Count} external tracks with genres from MusicBrainz...", externalUsedCount);
+                            
+                            // Extract external songs from matched tracks
+                            var externalSongs = matchedTracks
+                                .Where(t => t.MatchedSong != null && !t.MatchedSong.IsLocal)
+                                .Select(t => t.MatchedSong!)
+                                .ToList();
+                            
+                            // Enrich genres in parallel
+                            await genreEnrichment.EnrichSongsGenresAsync(externalSongs);
+                            
+                            // Update the genres in finalItems
+                            foreach (var item in finalItems)
+                            {
+                                if (item.TryGetValue("Id", out var idObj) && idObj is string id && id.StartsWith("ext-"))
+                                {
+                                    // Find the corresponding song
+                                    var song = externalSongs.FirstOrDefault(s => s.Id == id);
+                                    if (song != null && !string.IsNullOrEmpty(song.Genre))
+                                    {
+                                        // Update Genres array
+                                        item["Genres"] = new[] { song.Genre };
+                                        
+                                        // Update GenreItems array
+                                        item["GenreItems"] = new[]
+                                        {
+                                            new Dictionary<string, object?>
+                                            {
+                                                ["Name"] = song.Genre,
+                                                ["Id"] = $"genre-{song.Genre.ToLowerInvariant()}"
+                                            }
+                                        };
+                                        
+                                        _logger.LogDebug("✓ Enriched {Title} with genre: {Genre}", song.Title, song.Genre);
+                                    }
+                                }
+                            }
+                            
+                            _logger.LogInformation("✅ Genre enrichment complete for {Playlist}", playlistName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to enrich genres for {Playlist}, continuing without genres", playlistName);
+                    }
+                }
+                
                 // Save to Redis cache with same expiration as matched tracks (until next cron run)
                 var cacheKey = $"spotify:playlist:items:{playlistName}";
                 await _cache.SetAsync(cacheKey, finalItems, cacheExpiration);
