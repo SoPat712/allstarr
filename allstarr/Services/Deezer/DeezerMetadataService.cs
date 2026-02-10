@@ -219,9 +219,9 @@ public class DeezerMetadataService : IMusicMetadataService
                 {
                     await _genreEnrichment.EnrichSongGenreAsync(song);
                 }
-                catch (Exception ex)
+                catch
                 {
-                    _logger.LogDebug(ex, "Failed to enrich genre for {Title}", song.Title);
+                    // Silently ignore genre enrichment failures
                 }
             });
         }
