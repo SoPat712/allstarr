@@ -34,51 +34,6 @@ docker-compose logs -f
 
 The proxy will be available at `http://localhost:5274`.
 
-<<<<<<< HEAD
-## Web Dashboard
-
-Allstarr includes a web UI for easy configuration and playlist management, accessible at `http://localhost:5275`
-
-### Features
-
-- **Playlist Management**: Link Jellyfin playlists to Spotify playlists with just a few clicks
-- **Provider Matching**: It should fill in the gaps of your Jellyfin library with tracks from your selected provider
-- **WebUI**: Update settings without manually editing .env files
-- **Music**: Using multiple sources for music (optimized for SquidWTF right now, though)
-- **Lyrics**: Using multiple sources for lyrics, first Jellyfin Lyrics, then Spotify Lyrics, then LrcLib as a last resort
-
-### Quick Setup with Web UI
-
-1. **Access the dashboard** at `http://localhost:5275`
-2. **Configure Spotify** (Configuration tab):
-   - Enable Spotify API
-   - Add your `sp_dc` cookie from Spotify (see instructions in UI)
-   - The cookie age is automatically tracked
-3. **Link playlists** (Link Playlists tab):
-   - View all your Jellyfin playlists
-   - Click "Link to Spotify" on any playlist
-   - Paste the Spotify playlist ID, URL, or `spotify:playlist:` URI
-   - Accepts formats like:
-     - `37i9dQZF1DXcBWIGoYBM5M` (just the ID)
-     - `spotify:playlist:37i9dQZF1DXcBWIGoYBM5M` (Spotify URI)
-     - `https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M` (full URL)
-4. **Restart** to apply changes (should be a banner)
-
-Then, proceeed to **Active Playlists**, which shows you which Spotify playlists are currently being monitored and filled with tracks, and lets you do a bunch of useful operations on them.
-
-### Configuration Persistence
-
-The web UI updates your `.env` file directly. Changes persist across container restarts, but require a restart to take effect. In development mode, the `.env` file is in your project root. In Docker, it's at `/app/.env`.
-
-There's an environment variable to modify this.
-
-
-**Recommended workflow**: Use the `sp_dc` cookie method alongside the [Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file).
-
-
-
-||||||| bc4e5d9
-=======
 ## Web Dashboard
 
 Allstarr includes a web UI for easy configuration and playlist management, accessible at `http://localhost:5275`
@@ -121,7 +76,6 @@ There's an environment variable to modify this.
 
 **Recommended workflow**: Use the `sp_dc` cookie method alongside the [Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file).
 
->>>>>>> dev
 ### Nginx Proxy Setup (Required)
 
 This service only exposes ports internally. You can use nginx to proxy to it, however PLEASE take significant precautions before exposing this! Everyone decides their own level of risk, but this is currently untested, potentially dangerous software, with almost unfettered access to your Jellyfin server. My recommendation is use Tailscale or something similar!
@@ -185,12 +139,6 @@ This project brings together all the music streaming providers into one unified 
 **Compatible Jellyfin clients:**
 
 - [Feishin](https://github.com/jeffvli/feishin) (Mac/Windows/Linux)
-<<<<<<< HEAD
-- [Musiver](https://music.aqzscn.cn/en/) (Android/IOS/Windows/Android)
-- [Finamp](https://github.com/jmshrv/finamp) ()
-||||||| bc4e5d9
-- [Musiver](https://music.aqzscn.cn/en/) (Android/IOS/Windows/Android)
-=======
 <img width="1691" height="1128" alt="image" src="https://github.com/user-attachments/assets/c602f71c-c4dd-49a9-b533-1558e24a9f45" />
 
 
@@ -199,7 +147,6 @@ This project brings together all the music streaming providers into one unified 
 
 
 - [Finamp](https://github.com/jmshrv/finamp) (Android/iOS)
->>>>>>> dev
 
 _Working on getting more currently_
 
@@ -391,133 +338,6 @@ Subsonic__EnableExternalPlaylists=false
 
 > **Note**: Due to client-side filtering, playlists from streaming providers may not appear in the "Playlists" tab of some clients, but will show up in global search results.
 
-<<<<<<< HEAD
-### Spotify Playlist Injection (Jellyfin Only)
-
-Allstarr automatically fills your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
-
-#### Prerequisites
-
-1. **Install the Jellyfin Spotify Import Plugin**
-   - Navigate to Jellyfin Dashboard → Plugins → Catalog
-   - Search for "Spotify Import" by Viperinius
-   - Install and restart Jellyfin
-   - Plugin repository: [Viperinius/jellyfin-plugin-spotify-import](https://github.com/Viperinius/jellyfin-plugin-spotify-import)
-
-2. **Configure the Spotify Import Plugin**
-   - Go to Jellyfin Dashboard → Plugins → Spotify Import
-   - Connect your Spotify account
-   - Select which playlists to sync (e.g., Release Radar, Discover Weekly)
-   - Set a sync schedule (the plugin will create playlists in Jellyfin)
-
-3. **Configure Allstarr**
-   - Enable Spotify Import in Allstarr (see configuration below)
-   - Link your Jellyfin playlists to Spotify playlists via the Web UI
-   - Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
-
-#### Configuration
-
-| Setting | Description |
-|---------|-------------|
-| `SpotifyImport:Enabled` | Enable Spotify playlist injection (default: `false`) |
-| `SpotifyImport:MatchingIntervalHours` | How often to run track matching in hours (default: 24, set to 0 for startup only) |
-| `SpotifyImport:Playlists` | JSON array of playlists (managed via Web UI) |
-
-**Environment variables example:**
-```bash
-# Enable the feature
-SPOTIFY_IMPORT_ENABLED=true
-
-# Matching interval (24 hours = once per day)
-SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS=24
-
-# Playlists (use Web UI to manage instead of editing manually)
-SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","37i9dQZEVXcV6s7Dm7RXsU","first"],["Release Radar","37i9dQZEVXbng2vDHnfQlC","first"]]
-```
-
-#### How It Works
-
-1. **Spotify Import Plugin Runs**
-   - Plugin fetches your Spotify playlists
-   - Creates/updates playlists in Jellyfin with tracks already in your library
-   - Generates "missing tracks" JSON files for songs not found locally
-
-2. **Allstarr Matches Tracks** (on startup + every 24 hours by default)
-   - Reads missing tracks files from the Jellyfin plugin
-   - For each missing track, searches your streaming provider (SquidWTF, Deezer, or Qobuz)
-   - Uses fuzzy matching to find the best match (title + artist similarity)
-   - Rate-limited to avoid overwhelming the service (150ms delay between searches)
-   - Pre-builds playlist cache for instant loading
-
-3. **You Open the Playlist in Jellyfin**
-   - Allstarr intercepts the request
-   - Returns a merged list: local tracks + matched streaming tracks
-   - Loads instantly from cache!
-
-4. **You Play a Track**
-   - Local tracks stream from Jellyfin normally
-   - Matched tracks download from streaming provider on-demand
-   - Downloaded tracks are saved to your library for future use
-
-#### Manual API Triggers
-
-You can manually trigger operations via the admin API:
-
-```bash
-# Get API key from your .env file
-API_KEY="your-api-key-here"
-
-# Fetch missing tracks from Jellyfin plugin
-curl "http://localhost:5274/spotify/sync?api_key=$API_KEY"
-
-# Trigger track matching (searches streaming provider)
-curl "http://localhost:5274/spotify/match?api_key=$API_KEY"
-
-# Match all playlists (refresh all matches)
-curl "http://localhost:5274/spotify/match-all?api_key=$API_KEY"
-
-# Clear cache and rebuild
-curl "http://localhost:5274/spotify/clear-cache?api_key=$API_KEY"
-
-# Refresh specific playlist
-curl "http://localhost:5274/spotify/refresh-playlist?playlistId=PLAYLIST_ID&api_key=$API_KEY"
-```
-
-#### Web UI Management
-
-The easiest way to manage Spotify playlists is through the Web UI at `http://localhost:5275`:
-
-1. **Link Playlists Tab**: Link Jellyfin playlists to Spotify playlists
-2. **Active Playlists Tab**: View status, trigger matching, and manage playlists
-3. **Configuration Tab**: Enable/disable Spotify Import and adjust settings
-
-#### Troubleshooting
-
-**Playlists are empty:**
-- Check that the Spotify Import plugin is running and creating playlists
-- Verify playlists are linked in the Web UI
-- Check logs: `docker-compose logs -f allstarr | grep -i spotify`
-
-**Tracks aren't matching:**
-- Ensure your streaming provider is configured (`MUSIC_SERVICE`, credentials)
-- Manually trigger matching via Web UI or API
-- Check that the Jellyfin plugin generated missing tracks files
-
-**Performance:**
-- Matching runs in background with rate limiting (150ms between searches)
-- First match may take a few minutes for large playlists
-- Subsequent loads are instant (served from cache)
-
-#### Notes
-
-- Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
-- Matched tracks cached for fast loading
-- Missing tracks cache persists across restarts (Redis + file cache)
-- Rate limiting prevents overwhelming your streaming provider
-- Only works with Jellyfin backend (not Subsonic/Navidrome)
-
-||||||| bc4e5d9
-=======
 ### Spotify Playlist Injection (Jellyfin Only)
 
 Allstarr automatically fills your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
@@ -645,7 +465,6 @@ The easiest way to manage Spotify playlists is through the Web UI at `http://loc
 - Rate limiting prevents overwhelming your streaming provider
 - Only works with Jellyfin backend (not Subsonic/Navidrome)
 
->>>>>>> dev
 ### Getting Credentials
 
 #### Deezer ARL Token
@@ -1103,12 +922,5 @@ GPL-3.0
 - [Hi-Fi API](https://github.com/binimum/hifi-api) - These people do some great work, and you should thank them for this even existing!
 - [Deezer](https://www.deezer.com/) - Music streaming service
 - [Qobuz](https://www.qobuz.com/) - Hi-Res music streaming service
-<<<<<<< HEAD
 - [spotify-lyrics-api](https://github.com/akashrchandran/spotify-lyrics-api) - Thank them for the fact that we have access to Spotify's lyrics!
 - [LRCLIB](https://github.com/tranxuanthang/lrclib) - The GOATS for giving us a free api for lyrics! They power LRCGET, which I'm sure some of you have heard of
-||||||| bc4e5d9
-- [Subsonic API](http://www.subsonic.org/pages/api.jsp) - The API specification
-=======
-- [spotify-lyrics-api](https://github.com/akashrchandran/spotify-lyrics-api) - Thank them for the fact that we have access to Spotify's lyrics!
-- [LRCLIB](https://github.com/tranxuanthang/lrclib) - The GOATS for giving us a free api for lyrics! They power LRCGET, which I'm sure some of you have heard of
->>>>>>> dev

@@ -50,50 +50,6 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 
         WriteStatus("SquidWTF Quality", quality, ConsoleColor.Cyan);
 
-<<<<<<< HEAD
-        // Benchmark all endpoints to determine fastest
-        var apiUrls = _fallbackHelper.EndpointCount > 0 
-            ? Enumerable.Range(0, _fallbackHelper.EndpointCount).Select(_ => "").ToList() // Placeholder, we'll get actual URLs from fallback helper
-            : new List<string>();
-
-        // Get the actual API URLs by reflection (not ideal, but works for now)
-        var fallbackHelperType = _fallbackHelper.GetType();
-        var apiUrlsField = fallbackHelperType.GetField("_apiUrls", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (apiUrlsField != null)
-        {
-            apiUrls = (List<string>)apiUrlsField.GetValue(_fallbackHelper)!;
-        }
-
-        if (apiUrls.Count > 1)
-        {
-            WriteStatus("Benchmarking Endpoints", $"{apiUrls.Count} endpoints", ConsoleColor.Cyan);
-            
-            var orderedEndpoints = await _benchmarkService.BenchmarkEndpointsAsync(
-                apiUrls,
-                async (endpoint, ct) =>
-                {
-                    try
-                    {
-                        var response = await _httpClient.GetAsync(endpoint, ct);
-                        return response.IsSuccessStatusCode;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                },
-                pingCount: 2,
-                cancellationToken);
-
-            if (orderedEndpoints.Count > 0)
-            {
-                _fallbackHelper.SetEndpointOrder(orderedEndpoints);
-                WriteDetail($"Fastest endpoint: {orderedEndpoints.First()}");
-            }
-        }
-
-||||||| bc4e5d9
-=======
         // Benchmark all endpoints to determine fastest
         var apiUrls = _fallbackHelper.EndpointCount > 0 
             ? Enumerable.Range(0, _fallbackHelper.EndpointCount).Select(_ => "").ToList() // Placeholder, we'll get actual URLs from fallback helper
@@ -139,7 +95,6 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             }
         }
 
->>>>>>> dev
         // Test connectivity with fallback
         var result = await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {

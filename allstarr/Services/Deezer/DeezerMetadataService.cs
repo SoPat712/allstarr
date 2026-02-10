@@ -3,6 +3,7 @@ using allstarr.Models.Settings;
 using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -15,12 +16,17 @@ public class DeezerMetadataService : IMusicMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
+    private readonly GenreEnrichmentService _genreEnrichment;
     private const string BaseUrl = "https://api.deezer.com";
 
-    public DeezerMetadataService(IHttpClientFactory httpClientFactory, IOptions<SubsonicSettings> settings)
+    public DeezerMetadataService(
+        IHttpClientFactory httpClientFactory, 
+        IOptions<SubsonicSettings> settings,
+        GenreEnrichmentService genreEnrichment)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
+        _genreEnrichment = genreEnrichment;
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
@@ -201,6 +207,12 @@ public class DeezerMetadataService : IMusicMetadataService
             {
                 // If we can't get the album, continue with track info only
             }
+        }
+        
+        // Enrich with MusicBrainz genres if missing
+        if (string.IsNullOrEmpty(song.Genre))
+        {
+            await _genreEnrichment.EnrichSongGenreAsync(song);
         }
         
         return song;

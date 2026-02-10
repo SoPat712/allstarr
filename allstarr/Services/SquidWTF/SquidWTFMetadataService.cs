@@ -56,6 +56,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
     private readonly RoundRobinFallbackHelper _fallbackHelper;
+    private readonly GenreEnrichmentService _genreEnrichment;
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -63,13 +64,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
         IOptions<SquidWTFSettings> squidwtfSettings,
         ILogger<SquidWTFMetadataService> logger,
         RedisCacheService cache,
-        List<string> apiUrls)
+        List<string> apiUrls,
+        GenreEnrichmentService genreEnrichment)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
         _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
+        _genreEnrichment = genreEnrichment;
         
         // Set up default headers
         _httpClient.DefaultRequestHeaders.Add("User-Agent", 
@@ -285,6 +288,12 @@ public class SquidWTFMetadataService : IMusicMetadataService
 				return null;
 
 			var song = ParseTidalTrackFull(track);
+			
+			// Enrich with MusicBrainz genres if missing (SquidWTF/Tidal doesn't provide genres)
+			if (string.IsNullOrEmpty(song.Genre))
+			{
+				await _genreEnrichment.EnrichSongGenreAsync(song);
+			}
 			
 			// NOTE: Spotify ID conversion happens during download (in SquidWTFDownloadService)
 			// This avoids redundant conversions and ensures it's done in parallel with the download
@@ -593,44 +602,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
             ? volNum.GetInt32()
             : null;
         
-<<<<<<< HEAD
-        // Get all artists - Tidal provides both "artist" (singular) and "artists" (plural array)
-        var allArtists = new List<string>();
-||||||| bc4e5d9
-        // Get artist name - handle both single artist and artists array
-=======
         // Get all artists - Tidal provides both "artist" (singular) and "artists" (plural array)
         var allArtists = new List<string>();
         var allArtistIds = new List<string>();
->>>>>>> dev
         string artistName = "";
-<<<<<<< HEAD
-        string? artistId = null;
-        
-        // Prefer the "artists" array as it includes all collaborators
-        if (track.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
-        {
-            foreach (var artistEl in artists.EnumerateArray())
-            {
-                var name = artistEl.GetProperty("name").GetString();
-                if (!string.IsNullOrEmpty(name))
-                {
-                    allArtists.Add(name);
-                }
-            }
-            
-            // First artist is the main artist
-            if (allArtists.Count > 0)
-            {
-                artistName = allArtists[0];
-                artistId = $"ext-squidwtf-artist-{artists[0].GetProperty("id").GetInt64()}";
-            }
-        }
-        // Fallback to singular "artist" field
-        else if (track.TryGetProperty("artist", out var artist))
-||||||| bc4e5d9
-        if (track.TryGetProperty("artist", out var artist))
-=======
         string? artistId = null;
         
         // Prefer the "artists" array as it includes all collaborators
@@ -656,33 +631,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
         }
         // Fallback to singular "artist" field
         else if (track.TryGetProperty("artist", out var artist))
->>>>>>> dev
         {
             artistName = artist.GetProperty("name").GetString() ?? "";
-<<<<<<< HEAD
-            artistId = $"ext-squidwtf-artist-{artist.GetProperty("id").GetInt64()}";
-            allArtists.Add(artistName);
-||||||| bc4e5d9
-        }
-        else if (track.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
-        {
-            artistName = artists[0].GetProperty("name").GetString() ?? "";
-        }
-        
-        // Get artist ID
-        string? artistId = null;
-        if (track.TryGetProperty("artist", out var artistForId))
-        {
-            artistId = $"ext-squidwtf-artist-{artistForId.GetProperty("id").GetInt64()}";
-        }
-        else if (track.TryGetProperty("artists", out var artistsForId) && artistsForId.GetArrayLength() > 0)
-        {
-            artistId = $"ext-squidwtf-artist-{artistsForId[0].GetProperty("id").GetInt64()}";
-=======
             artistId = $"ext-squidwtf-artist-{artist.GetProperty("id").GetInt64()}";
             allArtists.Add(artistName);
             allArtistIds.Add(artistId);
->>>>>>> dev
         }
         
         // Get album info
@@ -708,13 +661,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Title = track.GetProperty("title").GetString() ?? "",
             Artist = artistName,
             ArtistId = artistId,
-<<<<<<< HEAD
-            Artists = allArtists,
-||||||| bc4e5d9
-=======
             Artists = allArtists,
             ArtistIds = allArtistIds,
->>>>>>> dev
             Album = albumTitle,
             AlbumId = albumId,
             Duration = track.TryGetProperty("duration", out var duration) 
@@ -775,40 +723,6 @@ public class SquidWTFMetadataService : IMusicMetadataService
             }
         }
         
-<<<<<<< HEAD
-        // Get all artists - prefer "artists" array for collaborations
-        var allArtists = new List<string>();
-        string artistName = "";
-        long artistIdNum = 0;
-        
-        if (track.TryGetProperty("artists", out var artists) && artists.GetArrayLength() > 0)
-        {
-            foreach (var artistEl in artists.EnumerateArray())
-            {
-                var name = artistEl.GetProperty("name").GetString();
-                if (!string.IsNullOrEmpty(name))
-                {
-                    allArtists.Add(name);
-                }
-            }
-            
-            if (allArtists.Count > 0)
-            {
-                artistName = allArtists[0];
-                artistIdNum = artists[0].GetProperty("id").GetInt64();
-            }
-        }
-        else if (track.TryGetProperty("artist", out var artist))
-        {
-            artistName = artist.GetProperty("name").GetString() ?? "";
-            artistIdNum = artist.GetProperty("id").GetInt64();
-            allArtists.Add(artistName);
-        }
-||||||| bc4e5d9
-        // Get artist info
-        string artistName = track.GetProperty("artist").GetProperty("name").GetString() ?? "";
-        long artistIdNum = track.GetProperty("artist").GetProperty("id").GetInt64();
-=======
         // Get all artists - prefer "artists" array for collaborations
         var allArtists = new List<string>();
         var allArtistIds = new List<string>();
@@ -841,7 +755,6 @@ public class SquidWTFMetadataService : IMusicMetadataService
             allArtists.Add(artistName);
             allArtistIds.Add($"ext-squidwtf-artist-{artistIdNum}");
         }
->>>>>>> dev
         
         // Album artist - same as main artist for Tidal tracks
         string? albumArtist = artistName;
@@ -875,13 +788,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Title = track.GetProperty("title").GetString() ?? "",
             Artist = artistName,
             ArtistId = $"ext-squidwtf-artist-{artistIdNum}",
-<<<<<<< HEAD
-            Artists = allArtists,
-||||||| bc4e5d9
-=======
             Artists = allArtists,
             ArtistIds = allArtistIds,
->>>>>>> dev
             Album = albumTitle,
             AlbumId = $"ext-squidwtf-album-{albumIdNum}",
             AlbumArtist = albumArtist,

@@ -298,49 +298,6 @@ public class JellyfinResponseBuilder
                 ["Key"] = $"Audio-{song.Id}",
                 ["ItemId"] = song.Id
             },
-<<<<<<< HEAD
-            ["Artists"] = artistNames.Count > 0 ? artistNames.ToArray() : new[] { artistName ?? "" },
-            ["ArtistItems"] = artistNames.Count > 0 
-                ? artistNames.Select((name, index) => new Dictionary<string, object?>
-                {
-                    ["Name"] = name,
-                    ["Id"] = index == 0 && song.ArtistId != null 
-                        ? song.ArtistId 
-                        : $"{song.Id}-artist-{index}"
-                }).ToArray()
-                : new[]
-                {
-                    new Dictionary<string, object?>
-                    {
-                        ["Id"] = song.ArtistId ?? song.Id,
-                        ["Name"] = artistName ?? ""
-                    }
-                },
-            ["Album"] = albumName,
-            ["AlbumId"] = song.AlbumId ?? song.Id,
-            ["AlbumPrimaryImageTag"] = song.AlbumId ?? song.Id,
-            ["AlbumArtist"] = song.AlbumArtist ?? artistName,
-            ["AlbumArtists"] = new[]
-            {
-                new Dictionary<string, object?>
-                {
-                    ["Name"] = song.AlbumArtist ?? artistName ?? "",
-                    ["Id"] = song.ArtistId ?? song.Id
-                }
-            },
-            ["ImageTags"] = new Dictionary<string, string>
-            {
-                ["Primary"] = song.Id
-            },
-            ["BackdropImageTags"] = new string[0],
-            ["ParentLogoImageTag"] = song.AlbumId ?? song.Id,
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
-            ["LocationType"] = "FileSystem",
-            ["MediaType"] = "Audio",
-            ["NormalizationGain"] = 0.0,
-            ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
-||||||| bc4e5d9
-=======
             ["Artists"] = artistNames.Count > 0 ? artistNames.ToArray() : new[] { artistName ?? "" },
             ["ArtistItems"] = artistNames.Count > 0 && song.ArtistIds.Count == artistNames.Count
                 ? artistNames.Select((name, index) => new Dictionary<string, object?>
@@ -379,7 +336,6 @@ public class JellyfinResponseBuilder
             ["MediaType"] = "Audio",
             ["NormalizationGain"] = 0.0,
             ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
->>>>>>> dev
             ["CanDownload"] = true,
             ["SupportsSync"] = true
         };

@@ -167,16 +167,14 @@ public class LyricsStartupValidator : BaseStartupValidator
     {
         try
         {
-            if (string.IsNullOrEmpty(_spotifySettings.ClientId))
+            if (!_spotifySettings.Enabled)
             {
-                WriteStatus("Spotify API", "NOT CONFIGURED", ConsoleColor.Yellow);
-                WriteDetail("Set SpotifyApi__ClientId to enable");
+                WriteStatus("Spotify API", "DISABLED", ConsoleColor.Gray);
                 return true;
             }
 
             WriteStatus("Spotify API", "CONFIGURED", ConsoleColor.Green);
-            WriteDetail($"Client ID: {_spotifySettings.ClientId.Substring(0, Math.Min(8, _spotifySettings.ClientId.Length))}...");
-            WriteDetail("Note: Spotify API is used for track matching, not lyrics");
+            WriteDetail("Note: Spotify API is used for track matching and lyrics");
             return true;
         }
         catch (Exception ex)

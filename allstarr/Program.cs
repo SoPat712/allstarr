@@ -473,7 +473,8 @@ else if (musicService == MusicService.SquidWTF)
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
             sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
             sp.GetRequiredService<RedisCacheService>(),
-            squidWtfApiUrls));
+            squidWtfApiUrls,
+            sp.GetRequiredService<GenreEnrichmentService>()));
     builder.Services.AddSingleton<IDownloadService>(sp =>
         new SquidWTFDownloadService(
             sp.GetRequiredService<IHttpClientFactory>(),
@@ -537,18 +538,6 @@ builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options 
         options.Enabled = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
     }
     
-    var clientId = builder.Configuration.GetValue<string>("SpotifyApi:ClientId");
-    if (!string.IsNullOrEmpty(clientId))
-    {
-        options.ClientId = clientId;
-    }
-    
-    var clientSecret = builder.Configuration.GetValue<string>("SpotifyApi:ClientSecret");
-    if (!string.IsNullOrEmpty(clientSecret))
-    {
-        options.ClientSecret = clientSecret;
-    }
-    
     var sessionCookie = builder.Configuration.GetValue<string>("SpotifyApi:SessionCookie");
     if (!string.IsNullOrEmpty(sessionCookie))
     {
@@ -576,7 +565,6 @@ builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options 
     // Log configuration (mask sensitive values)
     Console.WriteLine($"SpotifyApi Configuration:");
     Console.WriteLine($"  Enabled: {options.Enabled}");
-    Console.WriteLine($"  ClientId: {(string.IsNullOrEmpty(options.ClientId) ? "(not set)" : options.ClientId[..8] + "...")}");
     Console.WriteLine($"  SessionCookie: {(string.IsNullOrEmpty(options.SessionCookie) ? "(not set)" : "***" + options.SessionCookie[^8..])}");
     Console.WriteLine($"  SessionCookieSetDate: {options.SessionCookieSetDate ?? "(not set)"}");
     Console.WriteLine($"  CacheDurationMinutes: {options.CacheDurationMinutes}");
