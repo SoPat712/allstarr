@@ -279,54 +279,50 @@ public class JellyfinController : ControllerBase
         // Parse Jellyfin results into domain models
         var (localSongs, localAlbums, localArtists) = _modelMapper.ParseItemsResponse(jellyfinResult);
 
-        // Respect source ordering (SquidWTF/Tidal has better search ranking than our fuzzy matching)
-        // Just interleave local and external results based on which source has better overall match
-        
-        // Calculate average match score for each source to determine which should come first
-        // Give local tracks a +10 boost to prioritize them
-        var localSongsAvgScore = localSongs.Any() 
-            ? localSongs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title) + 10.0) 
-            : 0.0;
-        var externalSongsAvgScore = externalResult.Songs.Any() 
-            ? externalResult.Songs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title)) 
-            : 0.0;
+        // Sort all results by match score (local tracks get +10 boost)
+        // This ensures best matches appear first regardless of source
+        var allSongs = localSongs.Concat(externalResult.Songs)
+            .Select(s => new { Song = s, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title) + (s.IsLocal ? 10.0 : 0.0) })
+            .OrderByDescending(x => x.Score)
+            .Select(x => x.Song)
+            .ToList();
 
-        var localAlbumsAvgScore = localAlbums.Any() 
-            ? localAlbums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title) + 10.0) 
-            : 0.0;
-        var externalAlbumsAvgScore = externalResult.Albums.Any() 
-            ? externalResult.Albums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title)) 
-            : 0.0;
+        var allAlbums = localAlbums.Concat(externalResult.Albums)
+            .Select(a => new { Album = a, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title) + (a.IsLocal ? 10.0 : 0.0) })
+            .OrderByDescending(x => x.Score)
+            .Select(x => x.Album)
+            .ToList();
 
-        var localArtistsAvgScore = localArtists.Any() 
-            ? localArtists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name) + 10.0) 
-            : 0.0;
-        var externalArtistsAvgScore = externalResult.Artists.Any() 
-            ? externalResult.Artists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name)) 
-            : 0.0;
+        var allArtists = localArtists.Concat(externalResult.Artists)
+            .Select(a => new { Artist = a, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name) + (a.IsLocal ? 10.0 : 0.0) })
+            .OrderByDescending(x => x.Score)
+            .Select(x => x.Artist)
+            .ToList();
 
-        // Interleave results: put better-matching source first, preserve original ordering within each source
-        var allSongs = localSongsAvgScore >= externalSongsAvgScore
-            ? localSongs.Concat(externalResult.Songs).ToList()
-            : externalResult.Songs.Concat(localSongs).ToList();
-
-        var allAlbums = localAlbumsAvgScore >= externalAlbumsAvgScore
-            ? localAlbums.Concat(externalResult.Albums).ToList()
-            : externalResult.Albums.Concat(localAlbums).ToList();
-
-        var allArtists = localArtistsAvgScore >= externalArtistsAvgScore
-            ? localArtists.Concat(externalResult.Artists).ToList()
-            : externalResult.Artists.Concat(localArtists).ToList();
-
-        // Log results for debugging
+        // Log top results for debugging
         if (_logger.IsEnabled(LogLevel.Debug))
         {
-            _logger.LogDebug("🎵 Songs: Local avg score={LocalScore:F2}, External avg score={ExtScore:F2}, Local first={LocalFirst}",
-                localSongsAvgScore, externalSongsAvgScore, localSongsAvgScore >= externalSongsAvgScore);
-            _logger.LogDebug("💿 Albums: Local avg score={LocalScore:F2}, External avg score={ExtScore:F2}, Local first={LocalFirst}",
-                localAlbumsAvgScore, externalAlbumsAvgScore, localAlbumsAvgScore >= externalAlbumsAvgScore);
-            _logger.LogDebug("🎤 Artists: Local avg score={LocalScore:F2}, External avg score={ExtScore:F2}, Local first={LocalFirst}",
-                localArtistsAvgScore, externalArtistsAvgScore, localArtistsAvgScore >= externalArtistsAvgScore);
+            if (allSongs.Any())
+            {
+                var topSong = allSongs.First();
+                var topScore = FuzzyMatcher.CalculateSimilarity(cleanQuery, topSong.Title) + (topSong.IsLocal ? 10.0 : 0.0);
+                _logger.LogDebug("🎵 Top song: '{Title}' (local={IsLocal}, score={Score:F2})", 
+                    topSong.Title, topSong.IsLocal, topScore);
+            }
+            if (allAlbums.Any())
+            {
+                var topAlbum = allAlbums.First();
+                var topScore = FuzzyMatcher.CalculateSimilarity(cleanQuery, topAlbum.Title) + (topAlbum.IsLocal ? 10.0 : 0.0);
+                _logger.LogDebug("💿 Top album: '{Title}' (local={IsLocal}, score={Score:F2})", 
+                    topAlbum.Title, topAlbum.IsLocal, topScore);
+            }
+            if (allArtists.Any())
+            {
+                var topArtist = allArtists.First();
+                var topScore = FuzzyMatcher.CalculateSimilarity(cleanQuery, topArtist.Name) + (topArtist.IsLocal ? 10.0 : 0.0);
+                _logger.LogDebug("🎤 Top artist: '{Name}' (local={IsLocal}, score={Score:F2})", 
+                    topArtist.Name, topArtist.IsLocal, topScore);
+            }
         }
 
         // Convert to Jellyfin format
@@ -344,7 +340,7 @@ public class JellyfinController : ControllerBase
             mergedAlbums.AddRange(playlistItems);
         }
 
-        _logger.LogInformation("Merged results (preserving source order): Songs={Songs}, Albums={Albums}, Artists={Artists}",
+        _logger.LogInformation("Merged and sorted results by score: Songs={Songs}, Albums={Albums}, Artists={Artists}",
             mergedSongs.Count, mergedAlbums.Count, mergedArtists.Count);
 
         // Pre-fetch lyrics for top 3 songs in background (don't await)
