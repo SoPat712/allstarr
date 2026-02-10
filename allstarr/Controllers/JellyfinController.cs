@@ -3529,8 +3529,17 @@ public class JellyfinController : ControllerBase
             return null; // Fall back to legacy mode
         }
         
-        // Request MediaSources field to get bitrate info
-        var playlistItemsUrl = $"Playlists/{playlistId}/Items?UserId={userId}&Fields=MediaSources";
+        // Pass through all requested fields from the original request
+        var queryString = Request.QueryString.Value ?? "";
+        var playlistItemsUrl = $"Playlists/{playlistId}/Items?UserId={userId}";
+        
+        // Append the original query string (which includes Fields parameter)
+        if (!string.IsNullOrEmpty(queryString))
+        {
+            // Remove the leading ? if present
+            queryString = queryString.TrimStart('?');
+            playlistItemsUrl = $"{playlistItemsUrl}&{queryString}";
+        }
         
         _logger.LogInformation("🔍 Fetching existing tracks from Jellyfin playlist {PlaylistId} with UserId {UserId}", 
             playlistId, userId);
