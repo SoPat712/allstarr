@@ -19,7 +19,7 @@ public class QobuzMetadataService : IMusicMetadataService
     private readonly SubsonicSettings _settings;
     private readonly QobuzBundleService _bundleService;
     private readonly ILogger<QobuzMetadataService> _logger;
-    private readonly GenreEnrichmentService _genreEnrichment;
+    private readonly GenreEnrichmentService? _genreEnrichment;
     private readonly string? _userAuthToken;
     private readonly string? _userId;
     
@@ -31,7 +31,7 @@ public class QobuzMetadataService : IMusicMetadataService
         IOptions<QobuzSettings> qobuzSettings,
         QobuzBundleService bundleService,
         ILogger<QobuzMetadataService> logger,
-        GenreEnrichmentService genreEnrichment)
+        GenreEnrichmentService? genreEnrichment = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
@@ -184,7 +184,7 @@ public class QobuzMetadataService : IMusicMetadataService
             var song = ParseQobuzTrackFull(track);
             
             // Enrich with MusicBrainz genres if missing
-            if (song != null && string.IsNullOrEmpty(song.Genre))
+            if (_genreEnrichment != null && song != null && string.IsNullOrEmpty(song.Genre))
             {
                 await _genreEnrichment.EnrichSongGenreAsync(song);
             }

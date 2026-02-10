@@ -16,13 +16,13 @@ public class DeezerMetadataService : IMusicMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
-    private readonly GenreEnrichmentService _genreEnrichment;
+    private readonly GenreEnrichmentService? _genreEnrichment;
     private const string BaseUrl = "https://api.deezer.com";
 
     public DeezerMetadataService(
         IHttpClientFactory httpClientFactory, 
         IOptions<SubsonicSettings> settings,
-        GenreEnrichmentService genreEnrichment)
+        GenreEnrichmentService? genreEnrichment = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
@@ -210,7 +210,7 @@ public class DeezerMetadataService : IMusicMetadataService
         }
         
         // Enrich with MusicBrainz genres if missing
-        if (string.IsNullOrEmpty(song.Genre))
+        if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
         {
             await _genreEnrichment.EnrichSongGenreAsync(song);
         }

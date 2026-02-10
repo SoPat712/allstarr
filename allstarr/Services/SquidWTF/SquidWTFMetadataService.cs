@@ -56,7 +56,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
     private readonly RoundRobinFallbackHelper _fallbackHelper;
-    private readonly GenreEnrichmentService _genreEnrichment;
+    private readonly GenreEnrichmentService? _genreEnrichment;
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -65,7 +65,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         ILogger<SquidWTFMetadataService> logger,
         RedisCacheService cache,
         List<string> apiUrls,
-        GenreEnrichmentService genreEnrichment)
+        GenreEnrichmentService? genreEnrichment = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
@@ -290,7 +290,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			var song = ParseTidalTrackFull(track);
 			
 			// Enrich with MusicBrainz genres if missing (SquidWTF/Tidal doesn't provide genres)
-			if (string.IsNullOrEmpty(song.Genre))
+			if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
 			{
 				await _genreEnrichment.EnrichSongGenreAsync(song);
 			}
