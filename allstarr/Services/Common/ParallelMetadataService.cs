@@ -51,7 +51,7 @@ public class ParallelMetadataService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "❌ {Provider} search failed", providerName);
+                _logger.LogError(ex, "❌ {Provider} search failed", providerName);
                 return (Success: false, Result: new SearchResult(), Provider: providerName, ElapsedMs: 0L);
             }
         }).ToList();
@@ -64,7 +64,7 @@ public class ParallelMetadataService
 
             if (result.Success && (result.Result.Songs.Any() || result.Result.Albums.Any() || result.Result.Artists.Any()))
             {
-                _logger.LogInformation("🏆 Using results from {Provider} ({Ms}ms) - fastest with results",
+                _logger.LogDebug("🏆 Using results from {Provider} ({Ms}ms) - fastest with results",
                     result.Provider, result.ElapsedMs);
                 return result.Result;
             }
@@ -110,7 +110,7 @@ public class ParallelMetadataService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "❌ {Provider} song search failed", providerName);
+                _logger.LogError(ex, "❌ {Provider} song search failed", providerName);
                 return (Success: false, Song: (Song?)null, Provider: providerName, ElapsedMs: 0L);
             }
         }).ToList();

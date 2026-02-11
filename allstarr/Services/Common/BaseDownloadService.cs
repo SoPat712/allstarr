@@ -104,10 +104,10 @@ public abstract class BaseDownloadService : IDownloadService
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
             
-            // Update access time for cache cleanup
+            // Update write time for cache cleanup (extends cache lifetime)
             if (SubsonicSettings.StorageMode == StorageMode.Cache)
             {
-                IOFile.SetLastAccessTime(localPath, DateTime.UtcNow);
+                IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
             }
             
             // Start background Odesli conversion for lyrics (if not already cached)
@@ -274,10 +274,10 @@ public abstract class BaseDownloadService : IDownloadService
             {
                 Logger.LogInformation("Song already downloaded: {Path}", existingPath);
                 
-                // For cache mode, update file access time for cache cleanup logic
+                // For cache mode, update file write time to extend cache lifetime
                 if (isCache)
                 {
-                    IOFile.SetLastAccessTime(existingPath, DateTime.UtcNow);
+                    IOFile.SetLastWriteTime(existingPath, DateTime.UtcNow);
                 }
                 
                 return existingPath;

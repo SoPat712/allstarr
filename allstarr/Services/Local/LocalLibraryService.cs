@@ -213,7 +213,7 @@ public class LocalLibraryService : ILocalLibraryService
             }
             else
             {
-                _logger.LogWarning("Failed to trigger Subsonic scan: {StatusCode} - Server may require authentication", response.StatusCode);
+                _logger.LogError("Failed to trigger Subsonic scan: {StatusCode} - Server may require authentication", response.StatusCode);
                 return false;
             }
         }

@@ -39,7 +39,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis connection failed. Caching disabled.");
+            _logger.LogError(ex, "Redis connection failed. Caching disabled.");
             _redis = null;
             _db = null;
         }
@@ -70,7 +70,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis GET failed for key: {Key}", key);
+            _logger.LogError(ex, "Redis GET failed for key: {Key}", key);
             return null;
         }
     }
@@ -89,7 +89,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to deserialize cached value for key: {Key}", key);
+            _logger.LogError(ex, "Failed to deserialize cached value for key: {Key}", key);
             return null;
         }
     }
@@ -112,7 +112,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis SET failed for key: {Key}", key);
+            _logger.LogError(ex, "Redis SET failed for key: {Key}", key);
             return false;
         }
     }
@@ -129,7 +129,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to serialize value for key: {Key}", key);
+            _logger.LogError(ex, "Failed to serialize value for key: {Key}", key);
             return false;
         }
     }
@@ -147,7 +147,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis DELETE failed for key: {Key}", key);
+            _logger.LogError(ex, "Redis DELETE failed for key: {Key}", key);
             return false;
         }
     }
@@ -165,7 +165,7 @@ public class RedisCacheService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis EXISTS failed for key: {Key}", key);
+            _logger.LogError(ex, "Redis EXISTS failed for key: {Key}", key);
             return false;
         }
     }
@@ -190,12 +190,12 @@ public class RedisCacheService
             }
 
             var deleted = await _db!.KeyDeleteAsync(keys);
-            _logger.LogInformation("Deleted {Count} Redis keys matching pattern: {Pattern}", deleted, pattern);
+            _logger.LogDebug("Deleted {Count} Redis keys matching pattern: {Pattern}", deleted, pattern);
             return (int)deleted;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Redis DELETE BY PATTERN failed for pattern: {Pattern}", pattern);
+            _logger.LogError(ex, "Redis DELETE BY PATTERN failed for pattern: {Pattern}", pattern);
             return 0;
         }
     }

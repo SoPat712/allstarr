@@ -195,7 +195,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug(ex, "Failed to enrich genre for {Title}", song.Title);
+                        _logger.LogError(ex, "Failed to enrich genre for {Title}", song.Title);
                     }
                 });
             }

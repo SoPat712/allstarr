@@ -75,6 +75,7 @@
         .status-badge.success { background: rgba(63, 185, 80, 0.2); color: var(--success); }
         .status-badge.warning { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
         .status-badge.error { background: rgba(248, 81, 73, 0.2); color: var(--error); }
+        .status-badge.info { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
         
         .status-dot {
             width: 8px;
@@ -913,7 +914,7 @@
                     <div class="config-item">
                         <span class="label">Quality</span>
                         <span class="value" id="config-squid-quality">-</span>
-                        <button onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', '', ['LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
+                        <button onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', 'HI_RES_LOSSLESS: 24-bit/192kHz FLAC (highest)\\nLOSSLESS: 16-bit/44.1kHz FLAC (default)\\nHIGH: 320kbps AAC\\nLOW: 96kbps AAC', ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
                     </div>
                 </div>
             </div>
@@ -1009,6 +1010,60 @@
                         <span class="label">Matching Interval (hours)</span>
                         <span class="value" id="config-matching-interval">-</span>
                         <button onclick="openEditSetting('SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS', 'Matching Interval (hours)', 'number', 'How often to check for playlist updates')">Edit</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Cache Settings</h2>
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Configure how long different types of data are cached. Longer durations reduce API calls but may show stale data.
+                </p>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Search Results (minutes)</span>
+                        <span class="value" id="config-cache-search">-</span>
+                        <button onclick="openEditCacheSetting('SearchResultsMinutes', 'Search Results Cache (minutes)', 'How long to cache search results')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Playlist Images (hours)</span>
+                        <span class="value" id="config-cache-playlist-images">-</span>
+                        <button onclick="openEditCacheSetting('PlaylistImagesHours', 'Playlist Images Cache (hours)', 'How long to cache playlist cover images')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Spotify Playlist Items (hours)</span>
+                        <span class="value" id="config-cache-spotify-items">-</span>
+                        <button onclick="openEditCacheSetting('SpotifyPlaylistItemsHours', 'Spotify Playlist Items Cache (hours)', 'How long to cache Spotify playlist data')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Spotify Matched Tracks (days)</span>
+                        <span class="value" id="config-cache-matched-tracks">-</span>
+                        <button onclick="openEditCacheSetting('SpotifyMatchedTracksDays', 'Matched Tracks Cache (days)', 'How long to cache Spotify ID to track mappings')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Lyrics (days)</span>
+                        <span class="value" id="config-cache-lyrics">-</span>
+                        <button onclick="openEditCacheSetting('LyricsDays', 'Lyrics Cache (days)', 'How long to cache fetched lyrics')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Genre Data (days)</span>
+                        <span class="value" id="config-cache-genres">-</span>
+                        <button onclick="openEditCacheSetting('GenreDays', 'Genre Cache (days)', 'How long to cache genre information')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">External Metadata (days)</span>
+                        <span class="value" id="config-cache-metadata">-</span>
+                        <button onclick="openEditCacheSetting('MetadataDays', 'Metadata Cache (days)', 'How long to cache SquidWTF/Deezer/Qobuz metadata')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Odesli Lookups (days)</span>
+                        <span class="value" id="config-cache-odesli">-</span>
+                        <button onclick="openEditCacheSetting('OdesliLookupDays', 'Odesli Lookup Cache (days)', 'How long to cache Odesli URL conversions')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Proxy Images (days)</span>
+                        <span class="value" id="config-cache-proxy-images">-</span>
+                        <button onclick="openEditCacheSetting('ProxyImagesDays', 'Proxy Images Cache (days)', 'How long to cache proxied Jellyfin images')">Edit</button>
                     </div>
                 </div>
             </div>
@@ -1615,13 +1670,13 @@
                     // Show breakdown with color coding
                     let breakdownParts = [];
                     if (localCount > 0) {
-                        breakdownParts.push(`<span style="color:var(--success)">${localCount} local</span>`);
+                        breakdownParts.push(`<span style="color:var(--success)">${localCount} Local</span>`);
                     }
                     if (externalMatched > 0) {
-                        breakdownParts.push(`<span style="color:var(--accent)">${externalMatched} matched</span>`);
+                        breakdownParts.push(`<span style="color:var(--accent)">${externalMatched} External</span>`);
                     }
                     if (externalMissing > 0) {
-                        breakdownParts.push(`<span style="color:var(--warning)">${externalMissing} missing</span>`);
+                        breakdownParts.push(`<span style="color:var(--warning)">${externalMissing} Missing</span>`);
                     }
                     
                     const breakdown = breakdownParts.length > 0 
@@ -1653,8 +1708,8 @@
                                 <div style="display:flex;align-items:center;gap:8px;">
                                     <div style="flex:1;background:var(--bg-tertiary);height:12px;border-radius:6px;overflow:hidden;display:flex;">
                                         <div style="width:${localPct}%;height:100%;background:#10b981;transition:width 0.3s;" title="${localCount} local tracks"></div>
-                                        <div style="width:${externalPct}%;height:100%;background:#f59e0b;transition:width 0.3s;" title="${externalMatched} external matched tracks"></div>
-                                        <div style="width:${missingPct}%;height:100%;background:#6b7280;transition:width 0.3s;" title="${externalMissing} missing tracks"></div>
+                                        <div style="width:${externalPct}%;height:100%;background:#3b82f6;transition:width 0.3s;" title="${externalMatched} external tracks"></div>
+                                        <div style="width:${missingPct}%;height:100%;background:#f59e0b;transition:width 0.3s;" title="${externalMissing} missing tracks"></div>
                                     </div>
                                     <span style="font-size:0.85rem;color:${completionColor};font-weight:500;min-width:40px;">${completionPct}%</span>
                                 </div>
@@ -1966,6 +2021,19 @@
                 // Sync settings
                 document.getElementById('config-spotify-import-enabled').textContent = data.spotifyImport?.enabled ? 'Yes' : 'No';
                 document.getElementById('config-matching-interval').textContent = (data.spotifyImport?.matchingIntervalHours || 24) + ' hours';
+                
+                // Cache settings
+                if (data.cache) {
+                    document.getElementById('config-cache-search').textContent = data.cache.searchResultsMinutes || '120';
+                    document.getElementById('config-cache-playlist-images').textContent = data.cache.playlistImagesHours || '168';
+                    document.getElementById('config-cache-spotify-items').textContent = data.cache.spotifyPlaylistItemsHours || '168';
+                    document.getElementById('config-cache-matched-tracks').textContent = data.cache.spotifyMatchedTracksDays || '30';
+                    document.getElementById('config-cache-lyrics').textContent = data.cache.lyricsDays || '14';
+                    document.getElementById('config-cache-genres').textContent = data.cache.genreDays || '30';
+                    document.getElementById('config-cache-metadata').textContent = data.cache.metadataDays || '7';
+                    document.getElementById('config-cache-odesli').textContent = data.cache.odesliLookupDays || '60';
+                    document.getElementById('config-cache-proxy-images').textContent = data.cache.proxyImagesDays || '14';
+                }
             } catch (error) {
                 console.error('Failed to fetch config:', error);
             }
@@ -2717,7 +2785,7 @@
                         }
                     } else if (t.isLocal === false) {
                         const provider = capitalizeProvider(t.externalProvider) || 'External';
-                        statusBadge = `<span class="status-badge warning" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;"><span class="status-dot"></span>${escapeHtml(provider)}</span>`;
+                        statusBadge = `<span class="status-badge info" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;"><span class="status-dot"></span>${escapeHtml(provider)}</span>`;
                         // Add manual mapping indicator for external tracks
                         if (t.isManualMapping && t.manualMappingType === 'external') {
                             statusBadge += '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:4px;background:var(--info);color:white;"><span class="status-dot" style="background:white;"></span>Manual</span>';
@@ -2740,7 +2808,7 @@
                             style="margin-left:4px;font-size:0.75rem;padding:4px 8px;background:var(--warning);border-color:var(--warning);">Map to External</button>`;
                     } else {
                         // isLocal is null/undefined - track is missing (not found locally or externally)
-                        statusBadge = '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;background:var(--bg-tertiary);color:var(--text-secondary);"><span class="status-dot" style="background:var(--text-secondary);"></span>Missing</span>';
+                        statusBadge = '<span class="status-badge" style="font-size:0.75rem;padding:2px 8px;margin-left:8px;background:rgba(245, 158, 11, 0.2);color:#f59e0b;"><span class="status-dot" style="background:#f59e0b;"></span>Missing</span>';
                         // Add both mapping buttons for missing tracks
                         const firstArtist = (t.artists && t.artists.length > 0) ? t.artists[0] : '';
                         mapButton = `<button class="small map-track-btn" 
@@ -2885,6 +2953,28 @@
             } catch (error) {
                 showToast('Failed to update setting', 'error');
             }
+        }
+        
+        // Cache setting editor (uses appsettings.json instead of .env)
+        function openEditCacheSetting(settingKey, label, helpText) {
+            currentEditKey = settingKey;
+            currentEditType = 'number';
+            
+            document.getElementById('edit-setting-title').textContent = 'Edit ' + label;
+            document.getElementById('edit-setting-label').textContent = label;
+            
+            const helpEl = document.getElementById('edit-setting-help');
+            if (helpText) {
+                helpEl.textContent = helpText + ' (Requires restart to apply)';
+                helpEl.style.display = 'block';
+            } else {
+                helpEl.style.display = 'none';
+            }
+            
+            const container = document.getElementById('edit-setting-input-container');
+            container.innerHTML = `<input type="number" id="edit-setting-value" placeholder="Enter value" min="1">`;
+            
+            openModal('edit-setting-modal');
         }
         
         function escapeHtml(text) {

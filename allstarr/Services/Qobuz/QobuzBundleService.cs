@@ -92,18 +92,18 @@ public class QobuzBundleService
 
             // Step 1: Get the bundle URL from login page
             var bundleUrl = await GetBundleUrlAsync();
-            _logger.LogInformation("Found bundle URL: {BundleUrl}", bundleUrl);
+            _logger.LogDebug("Found bundle URL: {BundleUrl}", bundleUrl);
 
             // Step 2: Download the bundle JavaScript
             var bundleJs = await DownloadBundleAsync(bundleUrl);
 
             // Step 3: Extract App ID
             _cachedAppId = ExtractAppId(bundleJs);
-            _logger.LogInformation("Extracted App ID: {AppId}", _cachedAppId);
+            _logger.LogDebug("Extracted App ID: {AppId}", _cachedAppId);
 
             // Step 4: Extract secrets (they are base64 encoded in the bundle)
             _cachedSecrets = ExtractSecrets(bundleJs);
-            _logger.LogInformation("Extracted {Count} secrets", _cachedSecrets.Count);
+            _logger.LogDebug("Extracted {Count} secrets", _cachedSecrets.Count);
         }
         finally
         {
@@ -253,7 +253,7 @@ public class QobuzBundleService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to decode secret for timezone {Timezone}", kvp.Key);
+                _logger.LogError(ex, "Failed to decode secret for timezone {Timezone}", kvp.Key);
             }
         }
 

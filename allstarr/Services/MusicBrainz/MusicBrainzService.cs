@@ -25,7 +25,7 @@ public class MusicBrainzService
         ILogger<MusicBrainzService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.3.0 (https://github.com/SoPat712/allstarr)");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         
         _settings = settings.Value;
@@ -130,7 +130,7 @@ public class MusicBrainzService
                 return new List<MusicBrainzRecording>();
             }
 
-            _logger.LogInformation("Found {Count} MusicBrainz recordings for: {Title} - {Artist}",
+            _logger.LogDebug("Found {Count} MusicBrainz recordings for: {Title} - {Artist}",
                 result.Recordings.Count, title, artist);
 
             return result.Recordings;
@@ -241,7 +241,7 @@ public class MusicBrainzService
                 .ToList());
         }
 
-        _logger.LogInformation("Found {Count} genres for {Title} - {Artist}: {Genres}",
+        _logger.LogDebug("Found {Count} genres for {Title} - {Artist}: {Genres}",
             genres.Count, title, artist, string.Join(", ", genres));
 
         return genres;

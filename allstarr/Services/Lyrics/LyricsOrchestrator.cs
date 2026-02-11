@@ -129,7 +129,7 @@ public class LyricsOrchestrator
     {
         if (!_spotifySettings.Enabled)
         {
-            _logger.LogDebug("Spotify API not enabled, skipping Spotify lyrics");
+            _logger.LogWarning("Spotify API not enabled, skipping Spotify lyrics");
             return null;
         }
 
@@ -140,7 +140,7 @@ public class LyricsOrchestrator
             
             if (cleanSpotifyId.Length != 22 || cleanSpotifyId.Contains(":") || cleanSpotifyId.Contains("local"))
             {
-                _logger.LogDebug("Invalid Spotify ID format: {SpotifyId}, skipping", spotifyTrackId);
+                _logger.LogWarning("Invalid Spotify ID format: {SpotifyId}, skipping", spotifyTrackId);
                 return null;
             }
 
@@ -150,7 +150,7 @@ public class LyricsOrchestrator
             
             if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
             {
-                _logger.LogInformation("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines, type: {SyncType})", 
+                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines, type: {SyncType})", 
                     artistName, trackName, spotifyLyrics.Lines.Count, spotifyLyrics.SyncType);
                 
                 return _spotifyLyrics.ToLyricsInfo(spotifyLyrics);
@@ -161,7 +161,7 @@ public class LyricsOrchestrator
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error fetching Spotify lyrics for track ID {SpotifyId}", spotifyTrackId);
+            _logger.LogError(ex, "Error fetching Spotify lyrics for track ID {SpotifyId}", spotifyTrackId);
             return null;
         }
     }
@@ -190,7 +190,7 @@ public class LyricsOrchestrator
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error fetching LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
+            _logger.LogError(ex, "Error fetching LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
             return null;
         }
     }
@@ -219,7 +219,7 @@ public class LyricsOrchestrator
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error fetching LRCLib lyrics for {Artist} - {Track}", artistName, trackName);
+            _logger.LogError(ex, "Error fetching LRCLib lyrics for {Artist} - {Track}", artistName, trackName);
             return null;
         }
     }

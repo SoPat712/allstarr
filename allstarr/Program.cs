@@ -150,6 +150,8 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
+builder.Services.Configure<CacheSettings>(
+    builder.Configuration.GetSection("Cache"));
 // Configure Spotify Import settings with custom playlist parsing from env var
 builder.Services.Configure<SpotifyImportSettings>(options =>
 {
@@ -525,6 +527,9 @@ builder.Services.AddHostedService<CacheCleanupService>();
 // Register cache warming service (loads file caches into Redis on startup)
 builder.Services.AddHostedService<CacheWarmingService>();
 
+// Register Redis persistence service (snapshots Redis to files periodically)
+builder.Services.AddHostedService<RedisPersistenceService>();
+
 // Register Spotify API client, lyrics service, and settings for direct API access
 // Configure from environment variables with SPOTIFY_API_ prefix
 builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options =>
@@ -638,6 +643,9 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Initialize cache settings for static access
+CacheExtensions.InitializeCacheSettings(app.Services);
 
 // Migrate old .env file format on startup
 try

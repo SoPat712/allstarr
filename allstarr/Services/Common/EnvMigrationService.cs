@@ -18,7 +18,7 @@ public class EnvMigrationService
     {
         if (!File.Exists(_envFilePath))
         {
-            _logger.LogDebug("No .env file found, skipping migration");
+            _logger.LogWarning("No .env file found, skipping migration");
             return;
         }
 
@@ -41,7 +41,28 @@ public class EnvMigrationService
                     var value = line.Substring("DOWNLOAD_PATH=".Length);
                     lines[i] = $"Library__DownloadPath={value}";
                     modified = true;
-                    _logger.LogInformation("Migrated DOWNLOAD_PATH to Library__DownloadPath in .env file");
+                    _logger.LogDebug("Migrated DOWNLOAD_PATH to Library__DownloadPath in .env file");
+                }
+                
+                // Migrate old SquidWTF quality values to new format
+                if (line.StartsWith("SQUIDWTF_QUALITY="))
+                {
+                    var value = line.Substring("SQUIDWTF_QUALITY=".Length).Trim();
+                    var newValue = value.ToUpperInvariant() switch
+                    {
+                        "FLAC" => "LOSSLESS",
+                        "HI_RES" => "HI_RES_LOSSLESS",
+                        "MP3_320" => "HIGH",
+                        "MP3_128" => "LOW",
+                        _ => null // Keep as-is if already correct
+                    };
+                    
+                    if (newValue != null)
+                    {
+                        lines[i] = $"SQUIDWTF_QUALITY={newValue}";
+                        modified = true;
+                        _logger.LogInformation("Migrated SQUIDWTF_QUALITY from {Old} to {New} in .env file", value, newValue);
+                    }
                 }
             }
 
@@ -53,7 +74,7 @@ public class EnvMigrationService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to migrate .env file - please manually update DOWNLOAD_PATH to Library__DownloadPath");
+            _logger.LogError(ex, "Failed to migrate .env file - please manually update DOWNLOAD_PATH to Library__DownloadPath");
         }
     }
 }

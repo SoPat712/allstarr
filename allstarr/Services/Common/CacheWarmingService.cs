@@ -105,19 +105,19 @@ public class CacheWarmingService : IHostedService
                 if (cacheEntry != null && !string.IsNullOrEmpty(cacheEntry.CacheKey))
                 {
                     var redisKey = $"genre:{cacheEntry.CacheKey}";
-                    await _cache.SetAsync(redisKey, cacheEntry.Genre, TimeSpan.FromDays(30));
+                    await _cache.SetAsync(redisKey, cacheEntry.Genre, CacheExtensions.GenreTTL);
                     warmedCount++;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to warm genre cache from file: {File}", file);
+                _logger.LogError(ex, "Failed to warm genre cache from file: {File}", file);
             }
         }
 
         if (warmedCount > 0)
         {
-            _logger.LogInformation("🔥 Warmed {Count} genre entries from file cache", warmedCount);
+            _logger.LogDebug("🔥 Warmed {Count} genre entries from file cache", warmedCount);
         }
 
         return warmedCount;
@@ -162,7 +162,7 @@ public class CacheWarmingService : IHostedService
                     var playlistName = fileName.Replace("_items", "");
 
                     var redisKey = $"spotify:playlist:items:{playlistName}";
-                    await _cache.SetAsync(redisKey, items, TimeSpan.FromHours(24));
+                    await _cache.SetAsync(redisKey, items, CacheExtensions.SpotifyPlaylistItemsTTL);
                     warmedCount++;
 
                     _logger.LogDebug("🔥 Warmed playlist items cache for {Playlist} ({Count} items)", 
@@ -171,7 +171,7 @@ public class CacheWarmingService : IHostedService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to warm playlist items cache from file: {File}", file);
+                _logger.LogError(ex, "Failed to warm playlist items cache from file: {File}", file);
             }
         }
 
@@ -200,22 +200,22 @@ public class CacheWarmingService : IHostedService
                     var playlistName = fileName.Replace("_matched", "");
 
                     var redisKey = $"spotify:matched:ordered:{playlistName}";
-                    await _cache.SetAsync(redisKey, matchedTracks, TimeSpan.FromHours(1));
+                    await _cache.SetAsync(redisKey, matchedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
                     warmedCount++;
 
-                    _logger.LogDebug("🔥 Warmed matched tracks cache for {Playlist} ({Count} tracks)", 
+                    _logger.LogInformation("🔥 Warmed matched tracks cache for {Playlist} ({Count} tracks)", 
                         playlistName, matchedTracks.Count);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to warm matched tracks cache from file: {File}", file);
+                _logger.LogError(ex, "Failed to warm matched tracks cache from file: {File}", file);
             }
         }
 
         if (warmedCount > 0)
         {
-            _logger.LogInformation("🔥 Warmed {Count} playlist caches from file system", warmedCount);
+            _logger.LogDebug("🔥 Warmed {Count} playlist caches from file system", warmedCount);
         }
 
         return warmedCount;
@@ -276,13 +276,13 @@ public class CacheWarmingService : IHostedService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to warm manual mappings from file: {File}", file);
+                _logger.LogError(ex, "Failed to warm manual mappings from file: {File}", file);
             }
         }
 
         if (warmedCount > 0)
         {
-            _logger.LogInformation("🔥 Warmed {Count} manual mappings from file system", warmedCount);
+            _logger.LogDebug("🔥 Warmed {Count} manual mappings from file system", warmedCount);
         }
 
         return warmedCount;
@@ -318,13 +318,13 @@ public class CacheWarmingService : IHostedService
                     await _cache.SetStringAsync(redisKey, mapping.LyricsId.ToString());
                 }
 
-                _logger.LogInformation("🔥 Warmed {Count} lyrics mappings from file system", mappings.Count);
+                _logger.LogDebug("🔥 Warmed {Count} lyrics mappings from file system", mappings.Count);
                 return mappings.Count;
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to warm lyrics mappings from file: {File}", mappingsFile);
+            _logger.LogError(ex, "Failed to warm lyrics mappings from file: {File}", mappingsFile);
         }
 
         return 0;
@@ -356,7 +356,7 @@ public class CacheWarmingService : IHostedService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to warm lyrics cache");
+            _logger.LogError(ex, "Failed to warm lyrics cache");
             return 0;
         }
     }

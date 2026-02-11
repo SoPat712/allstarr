@@ -27,7 +27,7 @@ public class WebSocketProxyMiddleware
         _logger = logger;
         _sessionManager = sessionManager;
         
-        _logger.LogDebug("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
+        _logger.LogInformation("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -139,10 +139,10 @@ public class WebSocketProxyMiddleware
             }
 
             // Set user agent
-            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.3.0");
+            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0.1");
 
             await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
-            _logger.LogDebug("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
+            _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
 
             // Start bidirectional proxying
             var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", context.RequestAborted);
@@ -158,7 +158,7 @@ public class WebSocketProxyMiddleware
             // 403 is expected when tokens expire or session ends - don't spam logs
             if (wsEx.Message.Contains("403"))
             {
-                _logger.LogDebug("WEBSOCKET: Connection rejected with 403 (token expired or session ended)");
+                _logger.LogWarning("WEBSOCKET: Connection rejected with 403 (token expired or session ended)");
             }
             else
             {
@@ -180,7 +180,7 @@ public class WebSocketProxyMiddleware
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Error closing client WebSocket");
+                    _logger.LogError(ex, "Error closing client WebSocket");
                 }
             }
 
@@ -192,7 +192,7 @@ public class WebSocketProxyMiddleware
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Error closing server WebSocket");
+                    _logger.LogError(ex, "Error closing server WebSocket");
                 }
             }
 
@@ -202,7 +202,7 @@ public class WebSocketProxyMiddleware
             // CRITICAL: Notify session manager that client disconnected
             if (!string.IsNullOrEmpty(deviceId))
             {
-                _logger.LogDebug("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
+                _logger.LogInformation("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
                 await _sessionManager.RemoveSessionAsync(deviceId);
             }
 
@@ -247,7 +247,7 @@ public class WebSocketProxyMiddleware
                     if (direction == "Server→Client")
                     {
                         var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
-                        _logger.LogTrace("📥 WEBSOCKET {Direction}: {Preview}",
+                        _logger.LogDebug("📥 WEBSOCKET {Direction}: {Preview}",
                             direction,
                             messageText.Length > 500 ? messageText[..500] + "..." : messageText);
                     }
@@ -282,7 +282,7 @@ public class WebSocketProxyMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "WEBSOCKET {Direction}: Error proxying messages (connection closed)", direction);
+            _logger.LogError(ex, "WEBSOCKET {Direction}: Error proxying messages (connection closed)", direction);
         }
     }
 }

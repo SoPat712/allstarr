@@ -22,7 +22,7 @@ public class LyricsPlusService
         ILogger<LyricsPlusService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.3.0 (https://github.com/SoPat712/allstarr)");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
         _cache = cache;
         _logger = logger;
     }
@@ -55,7 +55,7 @@ public class LyricsPlusService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to deserialize cached LyricsPlus lyrics");
+                _logger.LogError(ex, "Failed to deserialize cached LyricsPlus lyrics");
             }
         }
 
@@ -103,7 +103,7 @@ public class LyricsPlusService
             
             if (result != null)
             {
-                await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), TimeSpan.FromDays(30));
+                await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), CacheExtensions.LyricsTTL);
                 _logger.LogInformation("✓ Retrieved lyrics from LyricsPlus for {Artist} - {Track} (type: {Type}, source: {Source})", 
                     artistName, trackName, lyricsResponse.Type, lyricsResponse.Metadata?.Source);
             }
@@ -112,7 +112,7 @@ public class LyricsPlusService
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogWarning(ex, "Failed to fetch lyrics from LyricsPlus for {Artist} - {Track}", artistName, trackName);
+            _logger.LogError(ex, "Failed to fetch lyrics from LyricsPlus for {Artist} - {Track}", artistName, trackName);
             return null;
         }
         catch (Exception ex)

@@ -91,7 +91,7 @@ public class SubsonicModelMapper
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error parsing Subsonic search response");
+            _logger.LogError(ex, "Error parsing Subsonic search response");
         }
 
         return (songs, albums, artists);

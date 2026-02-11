@@ -27,7 +27,6 @@ public class SpotifyPlaylistFetcher : BackgroundService
     private readonly SpotifyApiClient _spotifyClient;
     private readonly RedisCacheService _cache;
     
-    private const string CacheDirectory = "/app/cache/spotify";
     private const string CacheKeyPrefix = "spotify:playlist:";
     
     // Track Spotify playlist IDs after discovery
@@ -77,7 +76,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
                     if (nextRun.HasValue && DateTime.UtcNow >= nextRun.Value)
                     {
                         shouldRefresh = true;
-                        _logger.LogInformation("Cache expired for '{Name}' - next cron run was at {NextRun} UTC", 
+                        _logger.LogWarning("Cache expired for '{Name}' - next cron run was at {NextRun} UTC", 
                             playlistName, nextRun.Value);
                     }
                 }
@@ -101,32 +100,8 @@ public class SpotifyPlaylistFetcher : BackgroundService
             }
         }
         
-        // Try file cache
-        var filePath = GetCacheFilePath(playlistName);
-        if (File.Exists(filePath))
-        {
-            try
-            {
-                var json = await File.ReadAllTextAsync(filePath);
-                var filePlaylist = JsonSerializer.Deserialize<SpotifyPlaylist>(json);
-                if (filePlaylist != null && filePlaylist.Tracks.Count > 0)
-                {
-                    var age = DateTime.UtcNow - filePlaylist.FetchedAt;
-                    if (age.TotalMinutes < _spotifyApiSettings.CacheDurationMinutes)
-                    {
-                        _logger.LogDebug("Using file-cached playlist '{Name}' ({Count} tracks)", 
-                            playlistName, filePlaylist.Tracks.Count);
-                        return filePlaylist.Tracks;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to read file cache for '{Name}'", playlistName);
-            }
-        }
-        
-        // Need to fetch fresh - try to use cached or configured Spotify playlist ID
+        // Cache miss or expired - need to fetch fresh from Spotify
+        // Try to use cached or configured Spotify playlist ID
         if (!_playlistNameToSpotifyId.TryGetValue(playlistName, out var spotifyId))
         {
             // Check if we have a configured Spotify ID for this playlist
@@ -141,7 +116,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
             else
             {
                 // No configured ID, try searching by name (works for public/followed playlists)
-                _logger.LogDebug("No configured Spotify ID for '{Name}', searching...", playlistName);
+                _logger.LogInformation("No configured Spotify ID for '{Name}', searching...", playlistName);
                 var playlists = await _spotifyClient.SearchUserPlaylistsAsync(playlistName);
                 
                 var exactMatch = playlists.FirstOrDefault(p => 
@@ -149,21 +124,8 @@ public class SpotifyPlaylistFetcher : BackgroundService
                 
                 if (exactMatch == null)
                 {
-                    _logger.LogWarning("Could not find Spotify playlist named '{Name}' - try configuring the Spotify playlist ID", playlistName);
-                    
-                    // Return file cache even if expired, as a fallback
-                    if (File.Exists(filePath))
-                    {
-                        var json = await File.ReadAllTextAsync(filePath);
-                        var fallback = JsonSerializer.Deserialize<SpotifyPlaylist>(json);
-                        if (fallback != null)
-                        {
-                            _logger.LogWarning("Using expired file cache as fallback for '{Name}'", playlistName);
-                            return fallback.Tracks;
-                        }
-                    }
-                    
-                    return new List<SpotifyPlaylistTrack>();
+                    _logger.LogInformation("Could not find Spotify playlist named '{Name}' - try configuring the Spotify playlist ID", playlistName);
+                    return cached?.Tracks ?? new List<SpotifyPlaylistTrack>();
                 }
                 
                 spotifyId = exactMatch.SpotifyId;
@@ -176,7 +138,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
         var playlist = await _spotifyClient.GetPlaylistAsync(spotifyId);
         if (playlist == null || playlist.Tracks.Count == 0)
         {
-            _logger.LogWarning("Failed to fetch playlist '{Name}' from Spotify", playlistName);
+            _logger.LogError("Failed to fetch playlist '{Name}' from Spotify", playlistName);
             return cached?.Tracks ?? new List<SpotifyPlaylistTrack>();
         }
         
@@ -203,13 +165,12 @@ public class SpotifyPlaylistFetcher : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not calculate next cron run for '{Name}', using default cache duration", playlistName);
+                _logger.LogError(ex, "Could not calculate next cron run for '{Name}', using default cache duration", playlistName);
             }
         }
         
-        // Update cache with cron-based expiration
+        // Update Redis cache with cron-based expiration
         await _cache.SetAsync(cacheKey, playlist, cacheExpiration);
-        await SaveToFileCacheAsync(playlistName, playlist);
         
         _logger.LogInformation("Fetched and cached playlist '{Name}' with {Count} tracks (expires in {Hours:F1}h)", 
             playlistName, playlist.Tracks.Count, cacheExpiration.TotalHours);
@@ -269,9 +230,6 @@ public class SpotifyPlaylistFetcher : BackgroundService
         _logger.LogInformation("========================================");
         _logger.LogInformation("SpotifyPlaylistFetcher: Starting up...");
         
-        // Ensure cache directory exists
-        Directory.CreateDirectory(CacheDirectory);
-        
         if (!_spotifyApiSettings.Enabled)
         {
             _logger.LogInformation("Spotify API integration is DISABLED");
@@ -281,13 +239,13 @@ public class SpotifyPlaylistFetcher : BackgroundService
         
         if (string.IsNullOrEmpty(_spotifyApiSettings.SessionCookie))
         {
-            _logger.LogWarning("Spotify session cookie not configured - cannot access editorial playlists");
+            _logger.LogError("Spotify session cookie not configured - cannot access editorial playlists");
             _logger.LogInformation("========================================");
             return;
         }
         
         // Verify we can get an access token (the most reliable auth check)
-        _logger.LogInformation("Attempting Spotify authentication...");
+        _logger.LogDebug("Attempting Spotify authentication...");
         var token = await _spotifyClient.GetWebAccessTokenAsync(stoppingToken);
         if (string.IsNullOrEmpty(token))
         {
@@ -374,7 +332,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
                             // Rate limiting between playlists
                             if (playlistName != needsRefresh.Last())
                             {
-                                _logger.LogDebug("Waiting 3 seconds before next playlist to avoid rate limits...");
+                                _logger.LogWarning("Waiting 3 seconds before next playlist to avoid rate limits...");
                                 await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
                             }
                         }
@@ -409,7 +367,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
             try
             {
                 var tracks = await GetPlaylistTracksAsync(config.Name);
-                _logger.LogInformation("  {Name}: {Count} tracks", config.Name, tracks.Count);
+                _logger.LogDebug("  {Name}: {Count} tracks", config.Name, tracks.Count);
                 
                 // Log sample of track order for debugging
                 if (tracks.Count > 0)
@@ -434,36 +392,11 @@ public class SpotifyPlaylistFetcher : BackgroundService
             // Wait 3 seconds between each playlist to avoid 429 TooManyRequests errors
             if (config != _spotifyImportSettings.Playlists.Last())
             {
-                _logger.LogDebug("Waiting 3 seconds before next playlist to avoid rate limits...");
+                _logger.LogWarning("Waiting 3 seconds before next playlist to avoid rate limits...");
                 await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
             }
         }
         
         _logger.LogInformation("=== FINISHED FETCHING SPOTIFY PLAYLISTS ===");
-    }
-    
-    private string GetCacheFilePath(string playlistName)
-    {
-        var safeName = string.Join("_", playlistName.Split(Path.GetInvalidFileNameChars()));
-        return Path.Combine(CacheDirectory, $"{safeName}_spotify.json");
-    }
-    
-    private async Task SaveToFileCacheAsync(string playlistName, SpotifyPlaylist playlist)
-    {
-        try
-        {
-            var filePath = GetCacheFilePath(playlistName);
-            var json = JsonSerializer.Serialize(playlist, new JsonSerializerOptions 
-            { 
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
-            await File.WriteAllTextAsync(filePath, json);
-            _logger.LogDebug("Saved playlist '{Name}' to file cache", playlistName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to save file cache for '{Name}'", playlistName);
-        }
     }
 }

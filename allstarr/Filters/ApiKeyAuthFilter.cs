@@ -46,7 +46,7 @@ public class ApiKeyAuthFilter : IAsyncActionFilter
             return;
         }
 
-        _logger.LogDebug("API key authentication successful for {Path}", request.Path);
+        _logger.LogInformation("API key authentication successful for {Path}", request.Path);
         await next();
     }
 }

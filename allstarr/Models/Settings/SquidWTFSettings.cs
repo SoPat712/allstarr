@@ -6,12 +6,12 @@ namespace allstarr.Models.Settings;
 public class SquidWTFSettings
 {
     /// <summary>
-	/// No user auth should be needed for this site.
-	/// </summary>
-    
-    /// <summary>
-    /// Preferred audio quality: FLAC, MP3_320, MP3_128
-    /// If not specified or unavailable, the highest available quality will be used.
+    /// Preferred audio quality:
+    /// - HI_RES or HI_RES_LOSSLESS: 24-bit/192kHz FLAC (highest quality)
+    /// - FLAC or LOSSLESS: 16-bit/44.1kHz FLAC (CD quality, default)
+    /// - HIGH: 320kbps AAC (high quality, smaller files)
+    /// - LOW: 96kbps AAC (low quality, smallest files)
+    /// If not specified or unavailable, LOSSLESS will be used.
     /// </summary>
     public string? Quality { get; set; }	
 }

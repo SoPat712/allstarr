@@ -63,10 +63,10 @@ public class OdesliService
                         if (match.Success)
                         {
                             var spotifyId = match.Groups[1].Value;
-                            _logger.LogInformation("✓ Converted Tidal/{TidalId} → Spotify ID {SpotifyId}", tidalTrackId, spotifyId);
+                            _logger.LogDebug("✓ Converted Tidal/{TidalId} → Spotify ID {SpotifyId}", tidalTrackId, spotifyId);
                             
-                            // Cache for 7 days
-                            await _cache.SetAsync(cacheKey, spotifyId, TimeSpan.FromDays(7));
+                            // Cache for configurable duration
+                            await _cache.SetAsync(cacheKey, spotifyId, CacheExtensions.OdesliLookupTTL);
                             
                             return spotifyId;
                         }
@@ -76,7 +76,7 @@ public class OdesliService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to convert Tidal track to Spotify ID via Odesli");
+            _logger.LogError(ex, "Failed to convert Tidal track to Spotify ID via Odesli");
         }
 
         return null;
@@ -122,10 +122,10 @@ public class OdesliService
                         if (match.Success)
                         {
                             var spotifyId = match.Groups[1].Value;
-                            _logger.LogInformation("✓ Converted URL → Spotify ID {SpotifyId}", spotifyId);
+                            _logger.LogDebug("✓ Converted URL → Spotify ID {SpotifyId}", spotifyId);
                             
-                            // Cache for 7 days
-                            await _cache.SetAsync(cacheKey, spotifyId, TimeSpan.FromDays(7));
+                            // Cache for configurable duration
+                            await _cache.SetAsync(cacheKey, spotifyId, CacheExtensions.OdesliLookupTTL);
                             
                             return spotifyId;
                         }
@@ -135,7 +135,7 @@ public class OdesliService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to convert URL to Spotify ID via Odesli");
+            _logger.LogError(ex, "Failed to convert URL to Spotify ID via Odesli");
         }
 
         return null;

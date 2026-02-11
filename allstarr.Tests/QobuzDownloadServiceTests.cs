@@ -151,7 +151,7 @@ public class QobuzDownloadServiceTests : IDisposable
         var mockResponse = new HttpResponseMessage
         {
             StatusCode = HttpStatusCode.OK,
-            Content = new StringContent(@"<html><script src=""/resources/1.0.0-b001/bundle.js""></script></html>")
+            Content = new StringContent(@"<html><script src=""/resources/1.0.1-b001/bundle.js""></script></html>")
         };
         
         _httpMessageHandlerMock.Protected()

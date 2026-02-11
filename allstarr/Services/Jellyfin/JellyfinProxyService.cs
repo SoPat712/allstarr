@@ -222,7 +222,7 @@ public class JellyfinProxyService
                             // Forward as X-Emby-Authorization (Jellyfin's expected header)
                             request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
                             authHeaderAdded = true;
-                            _logger.LogTrace("Converted Authorization to X-Emby-Authorization");
+                            _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
                         }
                         else
                         {
@@ -265,11 +265,11 @@ public class JellyfinProxyService
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
                 // 401 means token expired or invalid - client needs to re-authenticate
-                _logger.LogInformation("Jellyfin returned 401 Unauthorized for {Url} - client should re-authenticate", url);
+                _logger.LogDebug("Jellyfin returned 401 Unauthorized for {Url} - client should re-authenticate", url);
             }
             else if (!isBrowserStaticRequest && !isPublicEndpoint)
             {
-                _logger.LogWarning("Jellyfin request failed: {StatusCode} for {Url}", response.StatusCode, url);
+                _logger.LogError("Jellyfin request failed: {StatusCode} for {Url}", response.StatusCode, url);
             }
             
             // Try to parse error response to pass through to client
@@ -374,7 +374,7 @@ public class JellyfinProxyService
                     {
                         // Forward as X-Emby-Authorization
                         request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                        _logger.LogTrace("Converted Authorization to X-Emby-Authorization");
+                        _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
                     }
                     else
                     {
@@ -418,11 +418,11 @@ public class JellyfinProxyService
             // 401 is expected when tokens expire - don't spam logs
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                _logger.LogInformation("Jellyfin POST returned 401 for {Url} - client should re-authenticate", url);
+                _logger.LogDebug("Jellyfin POST returned 401 for {Url} - client should re-authenticate", url);
             }
             else
             {
-                _logger.LogWarning("Jellyfin POST request failed: {StatusCode} for {Url}. Response: {Response}", 
+                _logger.LogError("Jellyfin POST request failed: {StatusCode} for {Url}. Response: {Response}", 
                     response.StatusCode, url, errorContent.Length > 200 ? errorContent[..200] + "..." : errorContent);
             }
             
@@ -579,12 +579,12 @@ public class JellyfinProxyService
         
         if (!authHeaderAdded)
         {
-            _logger.LogInformation("No client auth provided for DELETE {Url} - forwarding without auth", url);
+            _logger.LogDebug("No client auth provided for DELETE {Url} - forwarding without auth", url);
         }
         
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         
-        _logger.LogInformation("DELETE to Jellyfin: {Url}", url);
+        _logger.LogDebug("DELETE to Jellyfin: {Url}", url);
         
         var response = await _httpClient.SendAsync(request);
         
@@ -593,7 +593,7 @@ public class JellyfinProxyService
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-            _logger.LogWarning("Jellyfin DELETE request failed: {StatusCode} for {Url}. Response: {Response}", 
+            _logger.LogError("Jellyfin DELETE request failed: {StatusCode} for {Url}. Response: {Response}", 
                 response.StatusCode, url, errorContent);
             return (null, statusCode);
         }
@@ -629,7 +629,7 @@ public class JellyfinProxyService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get bytes from {Endpoint}", endpoint);
+            _logger.LogError(ex, "Failed to get bytes from {Endpoint}", endpoint);
             return (null, null, false);
         }
     }
@@ -662,7 +662,7 @@ public class JellyfinProxyService
         if (!string.IsNullOrEmpty(_settings.LibraryId))
         {
             queryParams["parentId"] = _settings.LibraryId;
-            _logger.LogDebug("Searching within configured LibraryId {LibraryId}", _settings.LibraryId);
+            _logger.LogInformation("Searching within configured LibraryId {LibraryId}", _settings.LibraryId);
         }
 
         if (includeItemTypes != null && includeItemTypes.Length > 0)
@@ -932,7 +932,7 @@ public class JellyfinProxyService
         if (result.Success && result.Body != null)
         {
             var cacheValue = $"{Convert.ToBase64String(result.Body)}|{result.ContentType}";
-            await _cache.SetStringAsync(cacheKey, cacheValue, TimeSpan.FromDays(7));
+            await _cache.SetStringAsync(cacheKey, cacheValue, CacheExtensions.ProxyImagesTTL);
         }
         
         return (result.Body, result.ContentType);

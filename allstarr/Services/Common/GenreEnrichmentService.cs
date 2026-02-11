@@ -93,7 +93,7 @@ public class GenreEnrichmentService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to enrich genre for {Title} - {Artist}", 
+            _logger.LogError(ex, "Failed to enrich genre for {Title} - {Artist}", 
                 song.Title, song.Artist);
         }
     }
@@ -170,7 +170,7 @@ public class GenreEnrichmentService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to read genre from file cache for {Key}", cacheKey);
+            _logger.LogError(ex, "Failed to read genre from file cache for {Key}", cacheKey);
             return null;
         }
     }
@@ -201,7 +201,7 @@ public class GenreEnrichmentService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to save genre to file cache for {Key}", cacheKey);
+            _logger.LogError(ex, "Failed to save genre to file cache for {Key}", cacheKey);
         }
     }
 

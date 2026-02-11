@@ -30,7 +30,7 @@ public class EndpointBenchmarkService
         int pingCount = 3,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("🏁 Benchmarking {Count} endpoints with {Pings} pings each...", endpoints.Count, pingCount);
+        _logger.LogDebug("🏁 Benchmarking {Count} endpoints with {Pings} pings each...", endpoints.Count, pingCount);
 
         var tasks = endpoints.Select(async endpoint =>
         {
@@ -54,7 +54,7 @@ public class EndpointBenchmarkService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Benchmark ping failed for {Endpoint}", endpoint);
+                    _logger.LogError(ex, "Benchmark ping failed for {Endpoint}", endpoint);
                 }
 
                 // Small delay between pings
@@ -85,7 +85,7 @@ public class EndpointBenchmarkService
                 _lock.Release();
             }
 
-            _logger.LogInformation("  {Endpoint}: {AvgMs}ms avg, {SuccessRate:P0} success rate", 
+            _logger.LogDebug("  {Endpoint}: {AvgMs}ms avg, {SuccessRate:P0} success rate", 
                 endpoint, avgMs, metrics.SuccessRate);
 
             return metrics;

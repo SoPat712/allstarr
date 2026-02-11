@@ -50,13 +50,13 @@ public class SpotifyLyricsService
     {
         if (!_settings.Enabled || string.IsNullOrEmpty(_settings.SessionCookie))
         {
-            _logger.LogDebug("Spotify API not enabled or no session cookie configured");
+            _logger.LogInformation("Spotify API not enabled or no session cookie configured");
             return null;
         }
         
         if (string.IsNullOrEmpty(_settings.LyricsApiUrl))
         {
-            _logger.LogWarning("Spotify lyrics API URL not configured");
+            _logger.LogInformation("Spotify lyrics API URL not configured");
             return null;
         }
         
@@ -84,7 +84,7 @@ public class SpotifyLyricsService
             
             if (result != null)
             {
-                _logger.LogInformation("Got Spotify lyrics from sidecar for track {TrackId} ({LineCount} lines)", 
+                _logger.LogDebug("Got Spotify lyrics from sidecar for track {TrackId} ({LineCount} lines)", 
                     spotifyTrackId, result.Lines.Count);
             }
             
@@ -92,7 +92,7 @@ public class SpotifyLyricsService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error fetching lyrics from sidecar API for track {TrackId}", spotifyTrackId);
+            _logger.LogError(ex, "Error fetching lyrics from sidecar API for track {TrackId}", spotifyTrackId);
             return null;
         }
     }
@@ -110,14 +110,14 @@ public class SpotifyLyricsService
     {
         if (!_settings.Enabled || string.IsNullOrEmpty(_settings.SessionCookie))
         {
-            _logger.LogDebug("Spotify lyrics search skipped: API not enabled or no session cookie");
+            _logger.LogInformation("Spotify lyrics search skipped: API not enabled or no session cookie");
             return null;
         }
         
         // The sidecar API only supports track ID, not search
         // So we skip Spotify lyrics for search-based requests
         // LRCLib will be used as fallback
-        _logger.LogDebug("Spotify lyrics search by metadata not supported with sidecar API, skipping");
+        _logger.LogWarning("Spotify lyrics search by metadata not supported with sidecar API, skipping");
         return null;
     }
     
@@ -169,7 +169,7 @@ public class SpotifyLyricsService
             // Check for error
             if (root.TryGetProperty("error", out var error) && error.GetBoolean())
             {
-                _logger.LogDebug("Sidecar API returned error for track {TrackId}", trackId);
+                _logger.LogError("Sidecar API returned error for track {TrackId}", trackId);
                 return null;
             }
             

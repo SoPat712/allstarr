@@ -98,7 +98,7 @@ public class SpotifyApiClient : IDisposable
     {
         if (string.IsNullOrEmpty(_settings.SessionCookie))
         {
-            _logger.LogWarning("No Spotify session cookie configured");
+            _logger.LogInformation("No Spotify session cookie configured");
             return null;
         }
         
@@ -530,7 +530,7 @@ public class SpotifyApiClient : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to parse GraphQL track");
+            _logger.LogError(ex, "Failed to parse GraphQL track");
             return null;
         }
     }
@@ -804,7 +804,7 @@ public class SpotifyApiClient : IDisposable
                 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("GraphQL user playlists request failed: {StatusCode}", response.StatusCode);
+                    _logger.LogError("GraphQL user playlists request failed: {StatusCode}", response.StatusCode);
                     break;
                 }
                 
@@ -956,7 +956,7 @@ public class SpotifyApiClient : IDisposable
                 await Task.Delay(delayMs, cancellationToken);
             }
             
-            _logger.LogInformation("Found {Count} playlists{Filter} via GraphQL", 
+            _logger.LogDebug("Found {Count} playlists{Filter} via GraphQL", 
                 playlists.Count, 
                 string.IsNullOrEmpty(searchName) ? "" : $" matching '{searchName}'");
             return playlists;
