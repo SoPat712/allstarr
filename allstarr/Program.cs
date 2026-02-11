@@ -575,6 +575,12 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClient>();
 // Register Spotify lyrics service (uses Spotify's color-lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
 
+// Register LyricsPlus service (multi-source lyrics API)
+builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
+
+// Register Lyrics Orchestrator (manages priority-based lyrics fetching)
+builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
+
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());

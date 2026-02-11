@@ -39,7 +39,9 @@ public class JellyfinController : ControllerBase
     private readonly PlaylistSyncService? _playlistSyncService;
     private readonly SpotifyPlaylistFetcher? _spotifyPlaylistFetcher;
     private readonly SpotifyLyricsService? _spotifyLyricsService;
+    private readonly LyricsPlusService? _lyricsPlusService;
     private readonly LrclibService? _lrclibService;
+    private readonly LyricsOrchestrator? _lyricsOrchestrator;
     private readonly OdesliService _odesliService;
     private readonly RedisCacheService _cache;
     private readonly IConfiguration _configuration;
@@ -64,7 +66,9 @@ public class JellyfinController : ControllerBase
         PlaylistSyncService? playlistSyncService = null,
         SpotifyPlaylistFetcher? spotifyPlaylistFetcher = null,
         SpotifyLyricsService? spotifyLyricsService = null,
-        LrclibService? lrclibService = null)
+        LyricsPlusService? lyricsPlusService = null,
+        LrclibService? lrclibService = null,
+        LyricsOrchestrator? lyricsOrchestrator = null)
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
@@ -80,7 +84,9 @@ public class JellyfinController : ControllerBase
         _playlistSyncService = playlistSyncService;
         _spotifyPlaylistFetcher = spotifyPlaylistFetcher;
         _spotifyLyricsService = spotifyLyricsService;
+        _lyricsPlusService = lyricsPlusService;
         _lrclibService = lrclibService;
+        _lyricsOrchestrator = lyricsOrchestrator;
         _odesliService = odesliService;
         _cache = cache;
         _configuration = configuration;
@@ -1271,50 +1277,53 @@ public class JellyfinController : ControllerBase
             searchArtists.Add(searchArtist);
         }
 
+        // Use orchestrator for clean, modular lyrics fetching
         LyricsInfo? lyrics = null;
         
-        // Try Spotify lyrics ONLY if we have a valid Spotify track ID
-        // Spotify lyrics only work for tracks from injected playlists that have been matched
-        if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
+        if (_lyricsOrchestrator != null)
         {
-            // Validate that this is a real Spotify ID (not spotify:local or other invalid formats)
-            var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
-            
-            // Spotify track IDs are 22 characters, base62 encoded
-            if (cleanSpotifyId.Length == 22 && !cleanSpotifyId.Contains(":") && !cleanSpotifyId.Contains("local"))
-            {
-                _logger.LogInformation("Trying Spotify lyrics for track ID: {SpotifyId} ({Artist} - {Title})", 
-                    cleanSpotifyId, searchArtist, searchTitle);
-                
-                var spotifyLyrics = await _spotifyLyricsService.GetLyricsByTrackIdAsync(cleanSpotifyId);
-                
-                if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
-                {
-                    _logger.LogInformation("Found Spotify lyrics for {Artist} - {Title} ({LineCount} lines, type: {SyncType})", 
-                        searchArtist, searchTitle, spotifyLyrics.Lines.Count, spotifyLyrics.SyncType);
-                    lyrics = _spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
-                }
-                else
-                {
-                    _logger.LogDebug("No Spotify lyrics found for track ID {SpotifyId}", cleanSpotifyId);
-                }
-            }
-            else
-            {
-                _logger.LogDebug("Invalid Spotify ID format: {SpotifyId}, skipping Spotify lyrics", spotifyTrackId);
-            }
+            lyrics = await _lyricsOrchestrator.GetLyricsAsync(
+                trackName: searchTitle,
+                artistNames: searchArtists.ToArray(),
+                albumName: searchAlbum,
+                durationSeconds: song.Duration ?? 0,
+                spotifyTrackId: spotifyTrackId);
         }
-        
-        // Fall back to LRCLIB if no Spotify lyrics
-        if (lyrics == null)
+        else
         {
-            _logger.LogInformation("Searching LRCLIB for lyrics: {Artists} - {Title}", 
-                string.Join(", ", searchArtists), 
-                searchTitle);
-            var lrclibService = HttpContext.RequestServices.GetService<LrclibService>();
-            if (lrclibService != null)
+            // Fallback to manual fetching if orchestrator not available
+            _logger.LogWarning("LyricsOrchestrator not available, using fallback method");
+            
+            // Try Spotify lyrics ONLY if we have a valid Spotify track ID
+            if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
             {
-                lyrics = await lrclibService.GetLyricsAsync(
+                var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
+                
+                if (cleanSpotifyId.Length == 22 && !cleanSpotifyId.Contains(":") && !cleanSpotifyId.Contains("local"))
+                {
+                    var spotifyLyrics = await _spotifyLyricsService.GetLyricsByTrackIdAsync(cleanSpotifyId);
+                    
+                    if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
+                    {
+                        lyrics = _spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
+                    }
+                }
+            }
+            
+            // Fall back to LyricsPlus
+            if (lyrics == null && _lyricsPlusService != null)
+            {
+                lyrics = await _lyricsPlusService.GetLyricsAsync(
+                    searchTitle,
+                    searchArtists.ToArray(),
+                    searchAlbum,
+                    song.Duration ?? 0);
+            }
+            
+            // Fall back to LRCLIB
+            if (lyrics == null && _lrclibService != null)
+            {
+                lyrics = await _lrclibService.GetLyricsAsync(
                     searchTitle,
                     searchArtists.ToArray(),
                     searchAlbum,
@@ -1495,6 +1504,21 @@ public class JellyfinController : ControllerBase
             
             _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Title}", searchArtist, searchTitle);
             
+            // Use orchestrator for prefetching
+            if (_lyricsOrchestrator != null)
+            {
+                await _lyricsOrchestrator.PrefetchLyricsAsync(
+                    trackName: searchTitle,
+                    artistNames: searchArtists.ToArray(),
+                    albumName: searchAlbum,
+                    durationSeconds: song.Duration ?? 0,
+                    spotifyTrackId: spotifyTrackId);
+                return;
+            }
+            
+            // Fallback to manual prefetching if orchestrator not available
+            _logger.LogWarning("LyricsOrchestrator not available for prefetch, using fallback method");
+            
             // Try Spotify lyrics if we have a valid Spotify track ID
             if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
             {
@@ -1510,6 +1534,22 @@ public class JellyfinController : ControllerBase
                             searchArtist, searchTitle, spotifyLyrics.Lines.Count);
                         return; // Success, lyrics are now cached
                     }
+                }
+            }
+            
+            // Fall back to LyricsPlus
+            if (_lyricsPlusService != null)
+            {
+                var lyrics = await _lyricsPlusService.GetLyricsAsync(
+                    searchTitle,
+                    searchArtists.ToArray(),
+                    searchAlbum,
+                    song.Duration ?? 0);
+                
+                if (lyrics != null)
+                {
+                    _logger.LogDebug("✓ Prefetched LyricsPlus lyrics for {Artist} - {Title}", searchArtist, searchTitle);
+                    return; // Success, lyrics are now cached
                 }
             }
             
