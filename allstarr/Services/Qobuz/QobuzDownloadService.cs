@@ -114,7 +114,7 @@ public class QobuzDownloadService : BaseDownloadService
         var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
             ? Path.Combine(DownloadPath, "cache")
             : Path.Combine(DownloadPath, "permanent");
-        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "qobuz", trackId);
         
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);

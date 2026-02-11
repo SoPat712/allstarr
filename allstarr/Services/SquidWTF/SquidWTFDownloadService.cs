@@ -129,7 +129,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
             ? Path.Combine("downloads", "cache")
             : Path.Combine("downloads", "permanent");
-        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension);
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "squidwtf", trackId);
         
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;
