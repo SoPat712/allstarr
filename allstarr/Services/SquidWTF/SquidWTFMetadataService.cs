@@ -56,6 +56,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private readonly ILogger<SquidWTFMetadataService> _logger;
     private readonly RedisCacheService _cache;
     private readonly RoundRobinFallbackHelper _fallbackHelper;
+    private readonly GenreEnrichmentService? _genreEnrichment;
 
     public SquidWTFMetadataService(
         IHttpClientFactory httpClientFactory, 
@@ -63,13 +64,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
         IOptions<SquidWTFSettings> squidwtfSettings,
         ILogger<SquidWTFMetadataService> logger,
         RedisCacheService cache,
-        List<string> apiUrls)
+        List<string> apiUrls,
+        GenreEnrichmentService? genreEnrichment = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
         _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
+        _genreEnrichment = genreEnrichment;
         
         // Set up default headers
         _httpClient.DefaultRequestHeaders.Add("User-Agent", 
@@ -83,19 +86,19 @@ public class SquidWTFMetadataService : IMusicMetadataService
 	
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
     {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
+        // Use round-robin to distribute load across endpoints (allows parallel processing of multiple tracks)
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Use 's' parameter for track search as per hifi-api spec
             var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url, ct);
+            var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync();
             
             // Check for error in response body
             var result = JsonDocument.Parse(json);
@@ -129,19 +132,19 @@ public class SquidWTFMetadataService : IMusicMetadataService
 	
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
     {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
+        // Use round-robin to distribute load across endpoints (allows parallel processing)
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Note: hifi-api doesn't document album search, but 'al' parameter is commonly used
             var url = $"{baseUrl}/search/?al={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url, ct);
+            var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
             
             var albums = new List<Album>();
@@ -166,14 +169,14 @@ public class SquidWTFMetadataService : IMusicMetadataService
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
     {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
+        // Use round-robin to distribute load across endpoints (allows parallel processing)
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Per hifi-api spec: use 'a' parameter for artist search
             var url = $"{baseUrl}/search/?a={Uri.EscapeDataString(query)}";
-            _logger.LogInformation("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
+            _logger.LogDebug("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
             
-            var response = await _httpClient.GetAsync(url, ct);
+            var response = await _httpClient.GetAsync(url);
             
             if (!response.IsSuccessStatusCode)
             {
@@ -181,7 +184,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
             
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var json = await response.Content.ReadAsStringAsync();
             var result = JsonDocument.Parse(json);
             
             var artists = new List<Artist>();
@@ -237,7 +240,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 					}
 					catch (Exception ex)
 					{
-						_logger.LogDebug(ex, "Failed to parse playlist, skipping");
+						_logger.LogWarning(ex, "Failed to parse playlist, skipping");
 						// Skip this playlist and continue with others
 					}
 				}
@@ -285,6 +288,23 @@ public class SquidWTFMetadataService : IMusicMetadataService
 				return null;
 
 			var song = ParseTidalTrackFull(track);
+			
+			// Enrich with MusicBrainz genres if missing (SquidWTF/Tidal doesn't provide genres)
+			if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
+			{
+				// Fire-and-forget: don't block the response waiting for genre enrichment
+				_ = Task.Run(async () =>
+				{
+					try
+					{
+						await _genreEnrichment.EnrichSongGenreAsync(song);
+					}
+					catch (Exception ex)
+					{
+						_logger.LogError(ex, "Failed to enrich genre for {Title}", song.Title);
+					}
+				});
+			}
 			
 			// NOTE: Spotify ID conversion happens during download (in SquidWTFDownloadService)
 			// This avoids redundant conversions and ensures it's done in parallel with the download
@@ -336,8 +356,8 @@ public class SquidWTFMetadataService : IMusicMetadataService
 				}
 			}
 			
-			// Cache for 24 hours
-			await _cache.SetAsync(cacheKey, album, TimeSpan.FromHours(24));
+			// Cache for configurable duration
+			await _cache.SetAsync(cacheKey, album, CacheExtensions.MetadataTTL);
 			
 			return album;	
 		}, (Album?)null);
@@ -347,14 +367,14 @@ public class SquidWTFMetadataService : IMusicMetadataService
     {
         if (externalProvider != "squidwtf") return null;
         
-        _logger.LogInformation("GetArtistAsync called for SquidWTF artist {ExternalId}", externalId);
+        _logger.LogDebug("GetArtistAsync called for SquidWTF artist {ExternalId}", externalId);
         
         // Try cache first
         var cacheKey = $"squidwtf:artist:{externalId}";
         var cached = await _cache.GetAsync<Artist>(cacheKey);
         if (cached != null)
         {
-            _logger.LogInformation("Returning cached artist {ArtistName}", cached.Name);
+            _logger.LogDebug("Returning cached artist {ArtistName}", cached.Name);
             return cached;
         }
   
@@ -362,12 +382,12 @@ public class SquidWTFMetadataService : IMusicMetadataService
         {
             // Note: hifi-api doesn't document artist endpoint, but /artist/?f={artistId} is commonly used
             var url = $"{baseUrl}/artist/?f={externalId}"; 
-            _logger.LogInformation("Fetching artist from {Url}", url);
+            _logger.LogDebug("Fetching artist from {Url}", url);
 
             var response = await _httpClient.GetAsync(url);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("SquidWTF artist request failed with status {StatusCode}", response.StatusCode);
+                _logger.LogError("SquidWTF artist request failed with status {StatusCode}", response.StatusCode);
                 return null;
             }
             
@@ -388,7 +408,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 				if (albumItems[0].TryGetProperty("artist", out var artistEl))
 				{
 					artistSource = artistEl;
-					_logger.LogInformation("Found artist from albums, albumCount={AlbumCount}", albumCount);
+					_logger.LogDebug("Found artist from albums, albumCount={AlbumCount}", albumCount);
 				}
             }
 			
@@ -423,10 +443,10 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			using var doc = JsonDocument.Parse(normalizedArtist.ToJsonString());
 			var artist = ParseTidalArtist(doc.RootElement);
 			
-            _logger.LogInformation("Successfully parsed artist {ArtistName} with {AlbumCount} albums", artist.Name, albumCount);
+            _logger.LogDebug("Successfully parsed artist {ArtistName} with {AlbumCount} albums", artist.Name, albumCount);
             
-			// Cache for 24 hours
-			await _cache.SetAsync(cacheKey, artist, TimeSpan.FromHours(24));
+			// Cache for configurable duration
+			await _cache.SetAsync(cacheKey, artist, CacheExtensions.MetadataTTL);
 			
 			return artist;
         }, (Artist?)null);
@@ -438,16 +458,16 @@ public class SquidWTFMetadataService : IMusicMetadataService
 		
 		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
 		{
-            _logger.LogInformation("GetArtistAlbumsAsync called for SquidWTF artist {ExternalId}", externalId);
+            _logger.LogDebug("GetArtistAlbumsAsync called for SquidWTF artist {ExternalId}", externalId);
             
             // Note: hifi-api doesn't document artist endpoint, but /artist/?f={artistId} is commonly used
 			var url = $"{baseUrl}/artist/?f={externalId}";
-			_logger.LogInformation("Fetching artist albums from URL: {Url}", url);
+			_logger.LogDebug("Fetching artist albums from URL: {Url}", url);
 			var response = await _httpClient.GetAsync(url);
 			
 			if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("SquidWTF artist albums request failed with status {StatusCode}", response.StatusCode);
+                _logger.LogError("SquidWTF artist albums request failed with status {StatusCode}", response.StatusCode);
                 return new List<Album>();
             }
 			
@@ -468,7 +488,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 						parsedAlbum.Title, parsedAlbum.Artist, parsedAlbum.ArtistId);
 					albums.Add(parsedAlbum);
 				}
-                _logger.LogInformation("Found {AlbumCount} albums for artist {ExternalId}", albums.Count, externalId);
+                _logger.LogDebug("Found {AlbumCount} albums for artist {ExternalId}", albums.Count, externalId);
 			}
             else
             {
@@ -595,6 +615,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         // Get all artists - Tidal provides both "artist" (singular) and "artists" (plural array)
         var allArtists = new List<string>();
+        var allArtistIds = new List<string>();
         string artistName = "";
         string? artistId = null;
         
@@ -604,9 +625,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
             foreach (var artistEl in artists.EnumerateArray())
             {
                 var name = artistEl.GetProperty("name").GetString();
+                var id = artistEl.GetProperty("id").GetInt64();
                 if (!string.IsNullOrEmpty(name))
                 {
                     allArtists.Add(name);
+                    allArtistIds.Add($"ext-squidwtf-artist-{id}");
                 }
             }
             
@@ -614,7 +637,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             if (allArtists.Count > 0)
             {
                 artistName = allArtists[0];
-                artistId = $"ext-squidwtf-artist-{artists[0].GetProperty("id").GetInt64()}";
+                artistId = allArtistIds[0];
             }
         }
         // Fallback to singular "artist" field
@@ -623,6 +646,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             artistName = artist.GetProperty("name").GetString() ?? "";
             artistId = $"ext-squidwtf-artist-{artist.GetProperty("id").GetInt64()}";
             allArtists.Add(artistName);
+            allArtistIds.Add(artistId);
         }
         
         // Get album info
@@ -649,6 +673,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Artist = artistName,
             ArtistId = artistId,
             Artists = allArtists,
+            ArtistIds = allArtistIds,
             Album = albumTitle,
             AlbumId = albumId,
             Duration = track.TryGetProperty("duration", out var duration) 
@@ -711,6 +736,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         
         // Get all artists - prefer "artists" array for collaborations
         var allArtists = new List<string>();
+        var allArtistIds = new List<string>();
         string artistName = "";
         long artistIdNum = 0;
         
@@ -719,9 +745,11 @@ public class SquidWTFMetadataService : IMusicMetadataService
             foreach (var artistEl in artists.EnumerateArray())
             {
                 var name = artistEl.GetProperty("name").GetString();
+                var id = artistEl.GetProperty("id").GetInt64();
                 if (!string.IsNullOrEmpty(name))
                 {
                     allArtists.Add(name);
+                    allArtistIds.Add($"ext-squidwtf-artist-{id}");
                 }
             }
             
@@ -736,6 +764,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             artistName = artist.GetProperty("name").GetString() ?? "";
             artistIdNum = artist.GetProperty("id").GetInt64();
             allArtists.Add(artistName);
+            allArtistIds.Add($"ext-squidwtf-artist-{artistIdNum}");
         }
         
         // Album artist - same as main artist for Tidal tracks
@@ -771,6 +800,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
             Artist = artistName,
             ArtistId = $"ext-squidwtf-artist-{artistIdNum}",
             Artists = allArtists,
+            ArtistIds = allArtistIds,
             Album = albumTitle,
             AlbumId = $"ext-squidwtf-album-{albumIdNum}",
             AlbumArtist = albumArtist,

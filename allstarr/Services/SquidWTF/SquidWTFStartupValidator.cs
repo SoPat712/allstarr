@@ -73,7 +73,11 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                 {
                     try
                     {
-                        var response = await _httpClient.GetAsync(endpoint, ct);
+                        // 5 second timeout per ping - mark slow endpoints as failed
+                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+                        
+                        var response = await _httpClient.GetAsync(endpoint, timeoutCts.Token);
                         return response.IsSuccessStatusCode;
                     }
                     catch

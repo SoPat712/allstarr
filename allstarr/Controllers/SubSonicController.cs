@@ -145,14 +145,14 @@ public class SubsonicController : ControllerBase
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
-            // Update last access time for cache cleanup
+            // Update last write time for cache cleanup (extends cache lifetime)
             try
             {
-                System.IO.File.SetLastAccessTimeUtc(localPath, DateTime.UtcNow);
+                System.IO.File.SetLastWriteTimeUtc(localPath, DateTime.UtcNow);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to update last access time for {Path}", localPath);
+                _logger.LogError(ex, "Failed to update last write time for {Path}", localPath);
             }
             
             var stream = System.IO.File.OpenRead(localPath);
@@ -590,8 +590,8 @@ public class SubsonicController : ControllerBase
                 var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync();
                 var contentType = imageResponse.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
                 
-                // Cache for 1 hour (playlists can change, so don't cache too long)
-                await _cache.SetAsync(cacheKey, imageBytes, TimeSpan.FromHours(1));
+                // Cache for configurable duration (playlists can change)
+                await _cache.SetAsync(cacheKey, imageBytes, CacheExtensions.PlaylistImagesTTL);
                 _logger.LogDebug("Cached playlist cover art for {Id}", id);
                 
                 return File(imageBytes, contentType);

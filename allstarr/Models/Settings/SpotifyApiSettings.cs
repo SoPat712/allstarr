@@ -19,18 +19,6 @@ public class SpotifyApiSettings
     public bool Enabled { get; set; }
     
     /// <summary>
-    /// Spotify Client ID from https://developer.spotify.com/dashboard
-    /// Used for OAuth token refresh and API access.
-    /// </summary>
-    public string ClientId { get; set; } = string.Empty;
-    
-    /// <summary>
-    /// Spotify Client Secret from https://developer.spotify.com/dashboard
-    /// Optional - only needed for certain OAuth flows.
-    /// </summary>
-    public string ClientSecret { get; set; } = string.Empty;
-    
-    /// <summary>
     /// Spotify session cookie (sp_dc).
     /// Required for accessing editorial/personalized playlists like Release Radar and Discover Weekly.
     /// These playlists are not available via the official API.

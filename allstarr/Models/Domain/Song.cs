@@ -19,6 +19,12 @@ public class Song
     /// All artists for this track (main + featured). For display in Jellyfin clients.
     /// </summary>
     public List<string> Artists { get; set; } = new();
+    
+    /// <summary>
+    /// All artist IDs corresponding to the Artists list. Index-matched with Artists.
+    /// </summary>
+    public List<string> ArtistIds { get; set; } = new();
+    
     public string Album { get; set; } = string.Empty;
     public string? AlbumId { get; set; }
     public int? Duration { get; set; } // In seconds

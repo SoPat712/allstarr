@@ -150,7 +150,7 @@ public class AdminController : ControllerBase
         
         return Ok(new
         {
-            version = "1.0.0",
+            version = "1.0.1",
             backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin",
             jellyfinUrl = _jellyfinSettings.Url,
             spotify = new
@@ -208,6 +208,10 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
+    /// Get current configuration including cache settings
+    /// </summary>
+    
+    /// <summary>
     /// Get list of configured playlists with their current data
     /// </summary>
     [HttpGet("playlists")]
@@ -232,17 +236,17 @@ public class AdminController : ControllerBase
                 }
                 else
                 {
-                    _logger.LogDebug("🔄 Cache expired (age: {Age:F1}m), refreshing...", age.TotalMinutes);
+                    _logger.LogWarning("🔄 Cache expired (age: {Age:F1}m), refreshing...", age.TotalMinutes);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to read cached playlist summary");
+                _logger.LogError(ex, "Failed to read cached playlist summary");
             }
         }
         else if (refresh)
         {
-            _logger.LogInformation("🔄 Force refresh requested for playlist summary");
+            _logger.LogDebug("🔄 Force refresh requested for playlist summary");
         }
         
         var playlists = new List<object>();
@@ -259,6 +263,7 @@ public class AdminController : ControllerBase
                 ["id"] = config.Id,
                 ["jellyfinId"] = config.JellyfinId,
                 ["localTracksPosition"] = config.LocalTracksPosition.ToString(),
+                ["syncSchedule"] = config.SyncSchedule ?? "0 8 * * 1",
                 ["trackCount"] = 0,
                 ["localTracks"] = 0,
                 ["externalTracks"] = 0,
@@ -296,7 +301,7 @@ public class AdminController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to read cache for playlist {Name}", config.Name);
+                    _logger.LogError(ex, "Failed to read cache for playlist {Name}", config.Name);
                 }
             }
             
@@ -363,7 +368,7 @@ public class AdminController : ControllerBase
                                     _logger.LogWarning(cacheEx, "Failed to deserialize playlist cache for {Playlist}", config.Name);
                                 }
                                 
-                                _logger.LogInformation("Checking cache for {Playlist}: {CacheKey}, Found: {Found}, Count: {Count}", 
+                                _logger.LogDebug("Checking cache for {Playlist}: {CacheKey}, Found: {Found}, Count: {Count}", 
                                     config.Name, playlistItemsCacheKey, cachedPlaylistItems != null, cachedPlaylistItems?.Count ?? 0);
                                 
                                 if (cachedPlaylistItems != null && cachedPlaylistItems.Count > 0)
@@ -376,6 +381,7 @@ public class AdminController : ControllerBase
                                     {
                                         // Check if it's external by looking for external provider in ProviderIds
                                         // External providers: SquidWTF, Deezer, Qobuz, Tidal
+                                        // Local tracks: Have Jellyfin ID OR no external provider keys
                                         var isExternal = false;
                                         
                                         if (item.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
@@ -398,7 +404,7 @@ public class AdminController : ControllerBase
                                             
                                             if (providerIds != null)
                                             {
-                                                // Check for external provider keys (not MusicBrainz, ISRC, Spotify, etc)
+                                                // Check for external provider keys (not MusicBrainz, ISRC, Spotify, Jellyfin, etc)
                                                 isExternal = providerIds.Keys.Any(k => 
                                                     k.Equals("SquidWTF", StringComparison.OrdinalIgnoreCase) ||
                                                     k.Equals("Deezer", StringComparison.OrdinalIgnoreCase) ||
@@ -413,6 +419,7 @@ public class AdminController : ControllerBase
                                         }
                                         else
                                         {
+                                            // Local track (has Jellyfin ID or no external provider)
                                             localCount++;
                                         }
                                     }
@@ -427,7 +434,7 @@ public class AdminController : ControllerBase
                                     playlistInfo["totalInJellyfin"] = cachedPlaylistItems.Count;
                                     playlistInfo["totalPlayable"] = localCount + externalCount; // Total tracks that will be served
                                     
-                                    _logger.LogInformation("Playlist {Name} (from cache): {Total} Spotify tracks, {Local} local, {ExtMatched} external matched, {ExtMissing} external missing, {Playable} total playable", 
+                                    _logger.LogDebug("Playlist {Name} (from cache): {Total} Spotify tracks, {Local} local, {ExtMatched} external matched, {ExtMissing} external missing, {Playable} total playable", 
                                         config.Name, spotifyTracks.Count, localCount, externalCount, externalMissingCount, localCount + externalCount);
                                 }
                                 else
@@ -544,7 +551,7 @@ public class AdminController : ControllerBase
                                     playlistInfo["totalInJellyfin"] = localCount + externalMatchedCount;
                                     playlistInfo["totalPlayable"] = localCount + externalMatchedCount; // Total tracks that will be served
                                     
-                                    _logger.LogDebug("Playlist {Name} (fallback): {Total} Spotify tracks, {Local} local, {ExtMatched} external matched, {ExtMissing} external missing, {Playable} total playable", 
+                                    _logger.LogWarning("Playlist {Name} (fallback): {Total} Spotify tracks, {Local} local, {ExtMatched} external matched, {ExtMissing} external missing, {Playable} total playable", 
                                         config.Name, spotifyTracks.Count, localCount, externalMatchedCount, externalMissingCount, localCount + externalMatchedCount);
                                 }
                             }
@@ -555,19 +562,19 @@ public class AdminController : ControllerBase
                         }
                         else
                         {
-                            _logger.LogWarning("Failed to get Jellyfin playlist {Name}: {StatusCode}", 
+                            _logger.LogError("Failed to get Jellyfin playlist {Name}: {StatusCode}", 
                                 config.Name, response.StatusCode);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to get Jellyfin playlist tracks for {Name}", config.Name);
+                    _logger.LogError(ex, "Failed to get Jellyfin playlist tracks for {Name}", config.Name);
                 }
             }
             else
             {
-                _logger.LogWarning("Playlist {Name} has no JellyfinId configured", config.Name);
+                _logger.LogInformation("Playlist {Name} has no JellyfinId configured", config.Name);
             }
             
             playlists.Add(playlistInfo);
@@ -588,7 +595,7 @@ public class AdminController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to save playlist summary cache");
+            _logger.LogError(ex, "Failed to save playlist summary cache");
         }
         
         return Ok(new { playlists });
@@ -621,7 +628,7 @@ public class AdminController : ControllerBase
             _logger.LogWarning(cacheEx, "Failed to deserialize playlist cache for {Playlist}", decodedName);
         }
         
-        _logger.LogInformation("GetPlaylistTracks for {Playlist}: Cache found: {Found}, Count: {Count}", 
+        _logger.LogDebug("GetPlaylistTracks for {Playlist}: Cache found: {Found}, Count: {Count}", 
             decodedName, cachedPlaylistItems != null, cachedPlaylistItems?.Count ?? 0);
         
         if (cachedPlaylistItems != null && cachedPlaylistItems.Count > 0)
@@ -629,8 +636,15 @@ public class AdminController : ControllerBase
             // Build a map of Spotify ID -> cached item for quick lookup
             var spotifyIdToItem = new Dictionary<string, Dictionary<string, object?>>();
             
-            foreach (var item in cachedPlaylistItems)
+            // Also track items by position for fallback matching
+            var itemsByPosition = new Dictionary<int, Dictionary<string, object?>>();
+            
+            for (int i = 0; i < cachedPlaylistItems.Count; i++)
             {
+                var item = cachedPlaylistItems[i];
+                
+                // Try to get Spotify ID from ProviderIds (works for both local and external)
+                bool hasSpotifyId = false;
                 if (item.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
                 {
                     Dictionary<string, string>? providerIds = null;
@@ -651,7 +665,14 @@ public class AdminController : ControllerBase
                     if (providerIds != null && providerIds.TryGetValue("Spotify", out var spotifyId) && !string.IsNullOrEmpty(spotifyId))
                     {
                         spotifyIdToItem[spotifyId] = item;
+                        hasSpotifyId = true;
                     }
+                }
+                
+                // If no Spotify ID found, use position-based matching as fallback
+                if (!hasSpotifyId)
+                {
+                    itemsByPosition[i] = item;
                 }
             }
             
@@ -664,7 +685,20 @@ public class AdminController : ControllerBase
                 string? manualMappingType = null;
                 string? manualMappingId = null;
                 
-                if (spotifyIdToItem.TryGetValue(track.SpotifyId, out var cachedItem))
+                Dictionary<string, object?>? cachedItem = null;
+                
+                // First try to match by Spotify ID
+                if (spotifyIdToItem.TryGetValue(track.SpotifyId, out cachedItem))
+                {
+                    _logger.LogDebug("Matched track {Title} by Spotify ID", track.Title);
+                }
+                // Fallback: Try position-based matching for items without Spotify ID
+                else if (itemsByPosition.TryGetValue(track.Position, out cachedItem))
+                {
+                    _logger.LogDebug("Matched track {Title} by position {Position}", track.Title, track.Position);
+                }
+                
+                if (cachedItem != null)
                 {
                     // Track is in the cache - determine if it's local or external
                     if (cachedItem.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
@@ -688,31 +722,29 @@ public class AdminController : ControllerBase
                         {
                             _logger.LogDebug("Track {Title} has ProviderIds: {Keys}", track.Title, string.Join(", ", providerIds.Keys));
                             
-                            // Check for external provider keys (case-insensitive)
-                            // External providers: squidwtf, deezer, qobuz, tidal (lowercase)
-                            var providerKey = providerIds.Keys.FirstOrDefault(k => 
+                            // Check for external provider keys (SquidWTF, Deezer, Qobuz, Tidal)
+                            // If found, it's an external track
+                            if (providerIds.Keys.Any(k => 
                                 k.Equals("squidwtf", StringComparison.OrdinalIgnoreCase) ||
-                                k.Equals("SquidWTF", StringComparison.OrdinalIgnoreCase));
-                            
-                            if (providerKey != null)
+                                k.Equals("SquidWTF", StringComparison.OrdinalIgnoreCase)))
                             {
                                 isLocal = false;
                                 externalProvider = "SquidWTF";
                                 _logger.LogDebug("✓ Track {Title} identified as SquidWTF", track.Title);
                             }
-                            else if ((providerKey = providerIds.Keys.FirstOrDefault(k => k.Equals("deezer", StringComparison.OrdinalIgnoreCase))) != null)
+                            else if (providerIds.Keys.Any(k => k.Equals("deezer", StringComparison.OrdinalIgnoreCase)))
                             {
                                 isLocal = false;
                                 externalProvider = "Deezer";
                                 _logger.LogDebug("✓ Track {Title} identified as Deezer", track.Title);
                             }
-                            else if ((providerKey = providerIds.Keys.FirstOrDefault(k => k.Equals("qobuz", StringComparison.OrdinalIgnoreCase))) != null)
+                            else if (providerIds.Keys.Any(k => k.Equals("qobuz", StringComparison.OrdinalIgnoreCase)))
                             {
                                 isLocal = false;
                                 externalProvider = "Qobuz";
                                 _logger.LogDebug("✓ Track {Title} identified as Qobuz", track.Title);
                             }
-                            else if ((providerKey = providerIds.Keys.FirstOrDefault(k => k.Equals("tidal", StringComparison.OrdinalIgnoreCase))) != null)
+                            else if (providerIds.Keys.Any(k => k.Equals("tidal", StringComparison.OrdinalIgnoreCase)))
                             {
                                 isLocal = false;
                                 externalProvider = "Tidal";
@@ -720,22 +752,25 @@ public class AdminController : ControllerBase
                             }
                             else
                             {
-                                // No external provider key found - it's a local track
-                                // Local tracks have MusicBrainz, ISRC, Spotify IDs but no external provider
+                                // No external provider key found - it's a local Jellyfin track
+                                // Local tracks may have: Jellyfin ID, MusicBrainz IDs, ISRC, etc.
                                 isLocal = true;
                                 _logger.LogDebug("✓ Track {Title} identified as LOCAL (has ProviderIds but no external provider)", track.Title);
                             }
                         }
                         else
                         {
-                            _logger.LogWarning("Track {Title} has ProviderIds object but it's null after parsing", track.Title);
+                            // ProviderIds exists but is null after parsing - treat as local
+                            isLocal = true;
+                            _logger.LogDebug("✓ Track {Title} identified as LOCAL (ProviderIds null)", track.Title);
                         }
                     }
                     else
                     {
-                        _logger.LogWarning("Track {Title} in cache but has NO ProviderIds - treating as missing", track.Title);
-                        isLocal = null;
-                        externalProvider = null;
+                        // Track is in cache but has NO ProviderIds property at all
+                        // This is typical for local Jellyfin tracks - treat as local
+                        isLocal = true;
+                        _logger.LogDebug("✓ Track {Title} identified as LOCAL (in cache, no ProviderIds)", track.Title);
                     }
                     
                     // Check if this is a manual mapping
@@ -861,7 +896,7 @@ public class AdminController : ControllerBase
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to process external manual mapping for {Title}", track.Title);
+                        _logger.LogError(ex, "Failed to process external manual mapping for {Title}", track.Title);
                     }
                 }
                 else if (fallbackMatchedSpotifyIds.Contains(track.SpotifyId))
@@ -916,13 +951,14 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
-    /// Trigger track matching for a specific playlist
+    /// Re-match tracks when LOCAL library has changed (checks if Jellyfin playlist changed).
+    /// This is a lightweight operation that reuses cached Spotify data.
     /// </summary>
     [HttpPost("playlists/{name}/match")]
     public async Task<IActionResult> MatchPlaylistTracks(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Manual track matching triggered for playlist: {Name}", decodedName);
+        _logger.LogInformation("Re-match tracks triggered for playlist: {Name} (checking for local changes)", decodedName);
         
         if (_matchingService == null)
         {
@@ -931,12 +967,31 @@ public class AdminController : ControllerBase
         
         try
         {
+            // Clear the Jellyfin playlist signature cache to force re-checking if local tracks changed
+            var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{decodedName}";
+            await _cache.DeleteAsync(jellyfinSignatureCacheKey);
+            _logger.LogDebug("Cleared Jellyfin signature cache to force change detection");
+            
+            // Clear the matched results cache to force re-matching
+            var matchedTracksKey = $"spotify:matched:ordered:{decodedName}";
+            await _cache.DeleteAsync(matchedTracksKey);
+            _logger.LogDebug("Cleared matched tracks cache");
+            
+            // Clear the playlist items cache
+            var playlistItemsCacheKey = $"spotify:playlist:items:{decodedName}";
+            await _cache.DeleteAsync(playlistItemsCacheKey);
+            _logger.LogDebug("Cleared playlist items cache");
+            
+            // Trigger matching (will use cached Spotify data if still valid)
             await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
             
             // Invalidate playlist summary cache
             InvalidatePlaylistSummaryCache();
             
-            return Ok(new { message = $"Track matching triggered for {decodedName}", timestamp = DateTime.UtcNow });
+            return Ok(new { 
+                message = $"Re-matching tracks for {decodedName} (checking local changes)", 
+                timestamp = DateTime.UtcNow 
+            });
         }
         catch (Exception ex)
         {
@@ -946,13 +1001,14 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
-    /// Clear cache and rebuild for a specific playlist
+    /// Rebuild playlist from scratch when REMOTE (Spotify) playlist has changed.
+    /// Clears all caches including Spotify data and forces fresh fetch.
     /// </summary>
     [HttpPost("playlists/{name}/clear-cache")]
     public async Task<IActionResult> ClearPlaylistCache(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Clear cache & rebuild triggered for playlist: {Name}", decodedName);
+        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name} (clearing Spotify cache)", decodedName);
         
         if (_matchingService == null)
         {
@@ -961,13 +1017,15 @@ public class AdminController : ControllerBase
         
         try
         {
-            // Clear all cache keys for this playlist
+            // Clear ALL cache keys for this playlist (including Spotify data)
             var cacheKeys = new[]
             {
-                $"spotify:playlist:items:{decodedName}",      // Pre-built items cache
-                $"spotify:matched:ordered:{decodedName}",     // Ordered matched tracks
-                $"spotify:matched:{decodedName}",             // Legacy matched tracks
-                $"spotify:missing:{decodedName}"              // Missing tracks
+                $"spotify:playlist:items:{decodedName}",           // Pre-built items cache
+                $"spotify:matched:ordered:{decodedName}",          // Ordered matched tracks
+                $"spotify:matched:{decodedName}",                  // Legacy matched tracks
+                $"spotify:missing:{decodedName}",                  // Missing tracks
+                $"spotify:playlist:jellyfin-signature:{decodedName}", // Jellyfin signature
+                $"spotify:playlist:{decodedName}"                  // Spotify playlist data
             };
             
             foreach (var key in cacheKeys)
@@ -993,9 +1051,9 @@ public class AdminController : ControllerBase
                 }
             }
             
-            _logger.LogInformation("✓ Cleared all caches for playlist: {Name}", decodedName);
+            _logger.LogInformation("✓ Cleared all caches for playlist: {Name} (including Spotify data)", decodedName);
             
-            // Trigger rebuild
+            // Trigger rebuild (will fetch fresh Spotify data)
             await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
             
             // Invalidate playlist summary cache
@@ -1003,10 +1061,10 @@ public class AdminController : ControllerBase
             
             return Ok(new 
             { 
-                message = $"Cache cleared and rebuild triggered for {decodedName}", 
+                message = $"Rebuilding {decodedName} from scratch (fetching fresh Spotify data)", 
                 timestamp = DateTime.UtcNow,
                 clearedKeys = cacheKeys.Length,
-                clearedFiles = filesToDelete.Count(System.IO.File.Exists)
+                clearedFiles = filesToDelete.Count(f => System.IO.File.Exists(f))
             });
         }
         catch (Exception ex)
@@ -1047,7 +1105,7 @@ public class AdminController : ControllerBase
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Jellyfin search failed: {StatusCode} - {Error}", response.StatusCode, errorBody);
+                _logger.LogError("Jellyfin search failed: {StatusCode} - {Error}", response.StatusCode, errorBody);
                 return StatusCode((int)response.StatusCode, new { error = "Failed to search Jellyfin" });
             }
             
@@ -1063,7 +1121,7 @@ public class AdminController : ControllerBase
                     var type = item.TryGetProperty("Type", out var typeEl) ? typeEl.GetString() : "";
                     if (type != "Audio")
                     {
-                        _logger.LogDebug("Skipping non-audio item: {Type}", type);
+                        _logger.LogWarning("Skipping non-audio item: {Type}", type);
                         continue;
                     }
                     
@@ -1124,7 +1182,7 @@ public class AdminController : ControllerBase
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("Failed to fetch Jellyfin track {Id}: {StatusCode} - {Error}", 
+                _logger.LogError("Failed to fetch Jellyfin track {Id}: {StatusCode} - {Error}", 
                     id, response.StatusCode, errorBody);
                 return StatusCode((int)response.StatusCode, new { error = "Track not found in Jellyfin" });
             }
@@ -1245,7 +1303,7 @@ public class AdminController : ControllerBase
                 if (System.IO.File.Exists(matchedFile))
                 {
                     System.IO.File.Delete(matchedFile);
-                    _logger.LogDebug("Deleted matched tracks file cache for {Playlist}", decodedName);
+                    _logger.LogInformation("Deleted matched tracks file cache for {Playlist}", decodedName);
                 }
                 
                 if (System.IO.File.Exists(itemsFile))
@@ -1256,7 +1314,7 @@ public class AdminController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to delete file caches for {Playlist}", decodedName);
+                _logger.LogError(ex, "Failed to delete file caches for {Playlist}", decodedName);
             }
             
             _logger.LogInformation("Cleared playlist caches for {Playlist} to force rebuild", decodedName);
@@ -1282,13 +1340,13 @@ public class AdminController : ControllerBase
                     }
                     else
                     {
-                        _logger.LogWarning("Failed to fetch external track metadata for {Provider} ID {Id}", 
+                        _logger.LogError("Failed to fetch external track metadata for {Provider} ID {Id}", 
                             normalizedProvider, request.ExternalId);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to fetch external track metadata, but mapping was saved");
+                    _logger.LogError(ex, "Failed to fetch external track metadata, but mapping was saved");
                 }
             }
             
@@ -1379,6 +1437,12 @@ public class AdminController : ControllerBase
     {
         return Ok(new
         {
+            backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin",
+            musicService = _configuration.GetValue<string>("MusicService") ?? "SquidWTF",
+            explicitFilter = _configuration.GetValue<string>("ExplicitFilter") ?? "All",
+            enableExternalPlaylists = _configuration.GetValue<bool>("EnableExternalPlaylists", false),
+            playlistsDirectory = _configuration.GetValue<string>("PlaylistsDirectory") ?? "(not set)",
+            redisEnabled = _configuration.GetValue<bool>("Redis:Enabled", false),
             spotifyApi = new
             {
                 enabled = _spotifyApiSettings.Enabled,
@@ -1454,7 +1518,7 @@ public class AdminController : ControllerBase
             return BadRequest(new { error = "No updates provided" });
         }
         
-        _logger.LogInformation("Config update requested: {Count} changes", request.Updates.Count);
+        _logger.LogDebug("Config update requested: {Count} changes", request.Updates.Count);
         
         try
         {
@@ -1483,7 +1547,7 @@ public class AdminController : ControllerBase
                         envContent[key] = value;
                     }
                 }
-                _logger.LogInformation("Loaded {Count} existing env vars from {Path}", envContent.Count, _envFilePath);
+                _logger.LogDebug("Loaded {Count} existing env vars from {Path}", envContent.Count, _envFilePath);
             }
             
             // Apply updates with validation
@@ -1519,7 +1583,13 @@ public class AdminController : ControllerBase
             var newContent = string.Join("\n", envContent.Select(kv => $"{kv.Key}={kv.Value}"));
             await System.IO.File.WriteAllTextAsync(_envFilePath, newContent + "\n");
             
-            _logger.LogInformation("Config file updated successfully at {Path}", _envFilePath);
+            _logger.LogDebug("Config file updated successfully at {Path}", _envFilePath);
+            
+            // Invalidate playlist summary cache if playlists were updated
+            if (appliedUpdates.Contains("SPOTIFY_IMPORT_PLAYLISTS"))
+            {
+                InvalidatePlaylistSummaryCache();
+            }
             
             return Ok(new
             {
@@ -1641,7 +1711,7 @@ public class AdminController : ControllerBase
     [HttpPost("cache/clear")]
     public async Task<IActionResult> ClearCache()
     {
-        _logger.LogInformation("Cache clear requested from admin UI");
+        _logger.LogDebug("Cache clear requested from admin UI");
         
         var clearedFiles = 0;
         var clearedRedisKeys = 0;
@@ -1658,7 +1728,7 @@ public class AdminController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to delete cache file {File}", file);
+                    _logger.LogError(ex, "Failed to delete cache file {File}", file);
                 }
             }
         }
@@ -1710,7 +1780,7 @@ public class AdminController : ControllerBase
     [HttpPost("restart")]
     public async Task<IActionResult> RestartContainer()
     {
-        _logger.LogInformation("Container restart requested from admin UI");
+        _logger.LogDebug("Container restart requested from admin UI");
         
         try
         {
@@ -1731,7 +1801,7 @@ public class AdminController : ControllerBase
             var containerId = Environment.MachineName;
             var containerName = "allstarr";
             
-            _logger.LogInformation("Attempting to restart container {ContainerId} / {ContainerName}", containerId, containerName);
+            _logger.LogDebug("Attempting to restart container {ContainerId} / {ContainerName}", containerId, containerName);
             
             // Create Unix socket HTTP client
             var handler = new SocketsHttpHandler
@@ -1920,6 +1990,53 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
+    /// Get all playlists from the user's Spotify account
+    /// </summary>
+    [HttpGet("spotify/user-playlists")]
+    public async Task<IActionResult> GetSpotifyUserPlaylists()
+    {
+        if (!_spotifyApiSettings.Enabled || string.IsNullOrEmpty(_spotifyApiSettings.SessionCookie))
+        {
+            return BadRequest(new { error = "Spotify API not configured. Please set sp_dc session cookie." });
+        }
+        
+        try
+        {
+            // Get list of already-configured Spotify playlist IDs
+            var configuredPlaylists = await ReadPlaylistsFromEnvFile();
+            var linkedSpotifyIds = new HashSet<string>(
+                configuredPlaylists.Select(p => p.Id),
+                StringComparer.OrdinalIgnoreCase
+            );
+            
+            // Use SpotifyApiClient's GraphQL method - much less rate-limited than REST API
+            var spotifyPlaylists = await _spotifyClient.GetUserPlaylistsAsync(searchName: null);
+            
+            if (spotifyPlaylists == null || spotifyPlaylists.Count == 0)
+            {
+                return Ok(new { playlists = new List<object>() });
+            }
+            
+            var playlists = spotifyPlaylists.Select(p => new
+            {
+                id = p.SpotifyId,
+                name = p.Name,
+                trackCount = p.TotalTracks,
+                owner = p.OwnerName ?? "",
+                isPublic = p.Public,
+                isLinked = linkedSpotifyIds.Contains(p.SpotifyId)
+            }).ToList();
+            
+            return Ok(new { playlists });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching Spotify user playlists");
+            return StatusCode(500, new { error = "Failed to fetch Spotify playlists", details = ex.Message });
+        }
+    }
+    
+    /// <summary>
     /// Get all playlists from Jellyfin
     /// </summary>
     [HttpGet("jellyfin/playlists")]
@@ -1990,11 +2107,16 @@ public class AdminController : ControllerBase
                         trackStats = await GetPlaylistTrackStats(id!);
                     }
                     
+                    // Use actual track stats for configured playlists, otherwise use Jellyfin's count
+                    var actualTrackCount = isConfigured 
+                        ? trackStats.LocalTracks + trackStats.ExternalTracks 
+                        : childCount;
+                    
                     playlists.Add(new
                     {
                         id,
                         name,
-                        trackCount = childCount,
+                        trackCount = actualTrackCount,
                         linkedSpotifyId,
                         isConfigured,
                         localTracks = trackStats.LocalTracks,
@@ -2056,7 +2178,7 @@ public class AdminController : ControllerBase
             var response = await _jellyfinHttpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Failed to fetch playlist items for {PlaylistId}: {StatusCode}", playlistId, response.StatusCode);
+                _logger.LogError("Failed to fetch playlist items for {PlaylistId}: {StatusCode}", playlistId, response.StatusCode);
                 return (0, 0, 0);
             }
             
@@ -2163,12 +2285,19 @@ public class AdminController : ControllerBase
             Name = request.Name,
             Id = request.SpotifyPlaylistId,
             JellyfinId = jellyfinPlaylistId,
-            LocalTracksPosition = LocalTracksPosition.First // Use Spotify order
+            LocalTracksPosition = LocalTracksPosition.First, // Use Spotify order
+            SyncSchedule = request.SyncSchedule ?? "0 8 * * 1" // Default to Monday 8 AM
         });
         
-        // Convert to JSON format for env var: [["Name","SpotifyId","JellyfinId","first|last"],...]
+        // Convert to JSON format for env var: [["Name","SpotifyId","JellyfinId","first|last","cronSchedule"],...]
         var playlistsJson = JsonSerializer.Serialize(
-            currentPlaylists.Select(p => new[] { p.Name, p.Id, p.JellyfinId, p.LocalTracksPosition.ToString().ToLower() }).ToArray()
+            currentPlaylists.Select(p => new[] { 
+                p.Name, 
+                p.Id, 
+                p.JellyfinId, 
+                p.LocalTracksPosition.ToString().ToLower(),
+                p.SyncSchedule ?? "0 8 * * 1"
+            }).ToArray()
         );
         
         // Update .env file
@@ -2193,9 +2322,63 @@ public class AdminController : ControllerBase
         return await RemovePlaylist(decodedName);
     }
     
+    /// <summary>
+    /// Update playlist sync schedule
+    /// </summary>
+    [HttpPut("playlists/{name}/schedule")]
+    public async Task<IActionResult> UpdatePlaylistSchedule(string name, [FromBody] UpdateScheduleRequest request)
+    {
+        var decodedName = Uri.UnescapeDataString(name);
+        
+        if (string.IsNullOrWhiteSpace(request.SyncSchedule))
+        {
+            return BadRequest(new { error = "SyncSchedule is required" });
+        }
+        
+        // Basic cron validation
+        var cronParts = request.SyncSchedule.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (cronParts.Length != 5)
+        {
+            return BadRequest(new { error = "Invalid cron format. Expected: minute hour day month dayofweek" });
+        }
+        
+        // Read current playlists
+        var currentPlaylists = await ReadPlaylistsFromEnvFile();
+        var playlist = currentPlaylists.FirstOrDefault(p => p.Name.Equals(decodedName, StringComparison.OrdinalIgnoreCase));
+        
+        if (playlist == null)
+        {
+            return NotFound(new { error = $"Playlist '{decodedName}' not found" });
+        }
+        
+        // Update the schedule
+        playlist.SyncSchedule = request.SyncSchedule.Trim();
+        
+        // Save back to .env
+        var playlistsJson = JsonSerializer.Serialize(
+            currentPlaylists.Select(p => new[] { 
+                p.Name, 
+                p.Id, 
+                p.JellyfinId, 
+                p.LocalTracksPosition.ToString().ToLower(),
+                p.SyncSchedule ?? "0 8 * * 1"
+            }).ToArray()
+        );
+        
+        var updateRequest = new ConfigUpdateRequest
+        {
+            Updates = new Dictionary<string, string>
+            {
+                ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
+            }
+        };
+        
+        return await UpdateConfig(updateRequest);
+    }
+    
     private string GetJellyfinAuthHeader()
     {
-        return $"MediaBrowser Client=\"Allstarr\", Device=\"Server\", DeviceId=\"allstarr-admin\", Version=\"1.0.0\", Token=\"{_jellyfinSettings.ApiKey}\"";
+        return $"MediaBrowser Client=\"Allstarr\", Device=\"Server\", DeviceId=\"allstarr-admin\", Version=\"1.0.1\", Token=\"{_jellyfinSettings.ApiKey}\"";
     }
     
     /// <summary>
@@ -2224,7 +2407,7 @@ public class AdminController : ControllerBase
                         return playlists;
                     }
                     
-                    // Parse JSON array format: [["Name","SpotifyId","JellyfinId","first|last"],...]
+                    // Parse JSON array format: [["Name","SpotifyId","JellyfinId","first|last","cronSchedule"],...]
                     var playlistArrays = JsonSerializer.Deserialize<string[][]>(value);
                     if (playlistArrays != null)
                     {
@@ -2240,7 +2423,8 @@ public class AdminController : ControllerBase
                                     LocalTracksPosition = arr.Length >= 4 && 
                                         arr[3].Trim().Equals("last", StringComparison.OrdinalIgnoreCase)
                                         ? LocalTracksPosition.Last
-                                        : LocalTracksPosition.First
+                                        : LocalTracksPosition.First,
+                                    SyncSchedule = arr.Length >= 5 ? arr[4].Trim() : "0 8 * * 1"
                                 });
                             }
                         }
@@ -2333,7 +2517,7 @@ public class AdminController : ControllerBase
             {
                 var backupPath = $"{_envFilePath}.backup.{DateTime.UtcNow:yyyyMMddHHmmss}";
                 System.IO.File.Copy(_envFilePath, backupPath, true);
-                _logger.LogInformation("Backed up existing .env to {BackupPath}", backupPath);
+                _logger.LogDebug("Backed up existing .env to {BackupPath}", backupPath);
             }
 
             // Write new .env file
@@ -2643,7 +2827,7 @@ public class AdminController : ControllerBase
                 }
             }
             
-            _logger.LogInformation("Cleared Spotify cache for {Count} keys via admin endpoint", clearedKeys.Count);
+            _logger.LogDebug("Cleared Spotify cache for {Count} keys via admin endpoint", clearedKeys.Count);
             
             return Ok(new { 
                 message = "Spotify cache cleared successfully",
@@ -2748,7 +2932,7 @@ public class AdminController : ControllerBase
             if (System.IO.File.Exists(logFile))
             {
                 System.IO.File.Delete(logFile);
-                _logger.LogInformation("Cleared endpoint usage log via admin endpoint");
+                _logger.LogDebug("Cleared endpoint usage log via admin endpoint");
                 
                 return Ok(new { 
                     message = "Endpoint usage log cleared successfully",
@@ -2917,7 +3101,7 @@ public class AdminController : ControllerBase
                         // Cache the lyrics using the standard cache key
                         var lyricsCacheKey = $"lyrics:{request.Artist}:{request.Title}:{request.Album ?? ""}:{request.DurationSeconds}";
                         await _cache.SetAsync(lyricsCacheKey, lyricsInfo.PlainLyrics);
-                        _logger.LogInformation("✓ Fetched and cached lyrics for {Artist} - {Title}", request.Artist, request.Title);
+                        _logger.LogDebug("✓ Fetched and cached lyrics for {Artist} - {Title}", request.Artist, request.Title);
                         
                         return Ok(new 
                         { 
@@ -2939,7 +3123,7 @@ public class AdminController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to fetch lyrics after mapping, but mapping was saved");
+                _logger.LogError(ex, "Failed to fetch lyrics after mapping, but mapping was saved");
             }
             
             return Ok(new 
@@ -3030,7 +3214,7 @@ public class AdminController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to read mapping file {File}", file);
+                    _logger.LogError(ex, "Failed to read mapping file {File}", file);
                 }
             }
             
@@ -3237,7 +3421,7 @@ public class AdminController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to invalidate playlist summary cache");
+            _logger.LogError(ex, "Failed to invalidate playlist summary cache");
         }
     }
     
@@ -3295,6 +3479,12 @@ public class LinkPlaylistRequest
 {
     public string Name { get; set; } = string.Empty;
     public string SpotifyPlaylistId { get; set; } = string.Empty;
+    public string SyncSchedule { get; set; } = "0 8 * * 1"; // Default: 8 AM every Monday
+}
+
+public class UpdateScheduleRequest
+{
+    public string SyncSchedule { get; set; } = string.Empty;
 }
 
     /// <summary>
@@ -3308,7 +3498,7 @@ public class LinkPlaylistRequest
         {
             var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             
-            _logger.LogInformation("📂 Checking kept folder: {Path}", keptPath);
+            _logger.LogDebug("📂 Checking kept folder: {Path}", keptPath);
             _logger.LogInformation("📂 Directory exists: {Exists}", Directory.Exists(keptPath));
             
             if (!Directory.Exists(keptPath))
@@ -3327,7 +3517,7 @@ public class LinkPlaylistRequest
                 .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .ToList();
             
-            _logger.LogInformation("📂 Found {Count} audio files in kept folder", allFiles.Count);
+            _logger.LogDebug("📂 Found {Count} audio files in kept folder", allFiles.Count);
             
             foreach (var filePath in allFiles)
             {
@@ -3358,7 +3548,7 @@ public class LinkPlaylistRequest
                 totalSize += fileInfo.Length;
             }
             
-            _logger.LogInformation("📂 Returning {Count} kept files, total size: {Size}", files.Count, FormatFileSize(totalSize));
+            _logger.LogDebug("📂 Returning {Count} kept files, total size: {Size}", files.Count, FormatFileSize(totalSize));
             
             return Ok(new
             {
@@ -3392,7 +3582,7 @@ public class LinkPlaylistRequest
             var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             var fullPath = Path.Combine(keptPath, path);
             
-            _logger.LogInformation("🗑️ Delete request for: {Path}", fullPath);
+            _logger.LogDebug("🗑️ Delete request for: {Path}", fullPath);
             
             // Security: Ensure the path is within the kept directory
             var normalizedFullPath = Path.GetFullPath(fullPath);
@@ -3411,7 +3601,7 @@ public class LinkPlaylistRequest
             }
             
             System.IO.File.Delete(fullPath);
-            _logger.LogInformation("🗑️ Deleted file: {Path}", fullPath);
+            _logger.LogDebug("🗑️ Deleted file: {Path}", fullPath);
             
             // Clean up empty directories (Album folder, then Artist folder if empty)
             var directory = Path.GetDirectoryName(fullPath);
@@ -3425,7 +3615,7 @@ public class LinkPlaylistRequest
                 }
                 else
                 {
-                    _logger.LogDebug("🗑️ Directory not empty or doesn't exist, stopping cleanup: {Dir}", directory);
+                    _logger.LogInformation("🗑️ Directory not empty or doesn't exist, stopping cleanup: {Dir}", directory);
                     break;
                 }
             }
@@ -3494,4 +3684,12 @@ public class LinkPlaylistRequest
         }
         return $"{len:0.##} {sizes[order]}";
     }
+}
+
+/// <summary>
+/// Request model for updating configuration
+/// </summary>
+public class ConfigUpdateRequest
+{
+    public Dictionary<string, string> Updates { get; set; } = new();
 }

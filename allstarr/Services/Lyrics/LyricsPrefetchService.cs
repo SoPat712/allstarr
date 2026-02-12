@@ -58,7 +58,7 @@ public class LyricsPrefetchService : BackgroundService
         // Run initial prefetch
         try
         {
-            _logger.LogInformation("Running initial lyrics prefetch on startup");
+            _logger.LogDebug("Running initial lyrics prefetch on startup");
             await PrefetchAllPlaylistLyricsAsync(stoppingToken);
         }
         catch (Exception ex)
@@ -115,7 +115,7 @@ public class LyricsPrefetchService : BackgroundService
         string playlistName, 
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Prefetching lyrics for playlist: {Playlist}", playlistName);
+        _logger.LogDebug("Prefetching lyrics for playlist: {Playlist}", playlistName);
 
         var tracks = await _playlistFetcher.GetPlaylistTracksAsync(playlistName);
         if (tracks.Count == 0)
@@ -156,7 +156,7 @@ public class LyricsPrefetchService : BackgroundService
                 }
             }
             
-            _logger.LogDebug("Found {Count} local Jellyfin tracks with Spotify IDs in playlist {Playlist}", 
+            _logger.LogInformation("Found {Count} local Jellyfin tracks with Spotify IDs in playlist {Playlist}", 
                 spotifyToJellyfinId.Count, playlistName);
         }
 
@@ -179,7 +179,7 @@ public class LyricsPrefetchService : BackgroundService
                 if (!string.IsNullOrEmpty(existingLyrics))
                 {
                     cached++;
-                    _logger.LogDebug("✓ Lyrics already cached for {Artist} - {Track}", track.PrimaryArtist, track.Title);
+                    _logger.LogInformation("✓ Lyrics already cached for {Artist} - {Track}", track.PrimaryArtist, track.Title);
                     continue;
                 }
 
@@ -191,7 +191,7 @@ public class LyricsPrefetchService : BackgroundService
                     if (hasLocalLyrics)
                     {
                         cached++;
-                        _logger.LogInformation("✓ Local Jellyfin lyrics found for {Artist} - {Track}, skipping external fetch", 
+                        _logger.LogWarning("✓ Local Jellyfin lyrics found for {Artist} - {Track}, skipping external fetch", 
                             track.PrimaryArtist, track.Title);
                         
                         // Remove any previously cached LRCLib lyrics for this track
@@ -239,12 +239,12 @@ public class LyricsPrefetchService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to prefetch lyrics for {Artist} - {Track}", track.PrimaryArtist, track.Title);
+                _logger.LogError(ex, "Failed to prefetch lyrics for {Artist} - {Track}", track.PrimaryArtist, track.Title);
                 missing++;
             }
         }
 
-        _logger.LogInformation("Playlist {Playlist}: {Fetched} fetched, {Cached} cached, {Missing} missing", 
+        _logger.LogDebug("Playlist {Playlist}: {Fetched} fetched, {Cached} cached, {Missing} missing", 
             playlistName, fetched, cached, missing);
 
         return (fetched, cached, missing);
@@ -264,7 +264,7 @@ public class LyricsPrefetchService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to save lyrics to file for {Artist} - {Track}", artist, title);
+            _logger.LogError(ex, "Failed to save lyrics to file for {Artist} - {Track}", artist, title);
         }
     }
 
@@ -277,7 +277,7 @@ public class LyricsPrefetchService : BackgroundService
         {
             if (!Directory.Exists(_lyricsCacheDir))
             {
-                _logger.LogInformation("Lyrics cache directory does not exist, skipping cache warming");
+                _logger.LogWarning("Lyrics cache directory does not exist, skipping cache warming");
                 return;
             }
 
@@ -288,7 +288,7 @@ public class LyricsPrefetchService : BackgroundService
                 return;
             }
 
-            _logger.LogInformation("🔥 Warming lyrics cache from {Count} files...", files.Length);
+            _logger.LogDebug("🔥 Warming lyrics cache from {Count} files...", files.Length);
 
             var loaded = 0;
             foreach (var file in files)
@@ -301,17 +301,17 @@ public class LyricsPrefetchService : BackgroundService
                     if (lyrics != null)
                     {
                         var cacheKey = $"lyrics:{lyrics.ArtistName}:{lyrics.TrackName}:{lyrics.AlbumName}:{lyrics.Duration}";
-                        await _cache.SetStringAsync(cacheKey, json, TimeSpan.FromDays(30));
+                        await _cache.SetStringAsync(cacheKey, json, CacheExtensions.LyricsTTL);
                         loaded++;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to load lyrics from file {File}", Path.GetFileName(file));
+                    _logger.LogError(ex, "Failed to load lyrics from file {File}", Path.GetFileName(file));
                 }
             }
 
-            _logger.LogInformation("✅ Warmed {Count} lyrics from file cache", loaded);
+            _logger.LogDebug("✅ Warmed {Count} lyrics from file cache", loaded);
         }
         catch (Exception ex)
         {
@@ -351,7 +351,7 @@ public class LyricsPrefetchService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to remove cached lyrics for {Artist} - {Track}", artist, title);
+            _logger.LogError(ex, "Failed to remove cached lyrics for {Artist} - {Track}", artist, title);
         }
     }
 
@@ -375,7 +375,7 @@ public class LyricsPrefetchService : BackgroundService
             
             if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
             {
-                _logger.LogInformation("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines)", 
+                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines)", 
                     artistName, trackTitle, spotifyLyrics.Lines.Count);
                 return spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
             }
@@ -384,7 +384,7 @@ public class LyricsPrefetchService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error fetching Spotify lyrics for track {SpotifyId}", spotifyTrackId);
+            _logger.LogError(ex, "Error fetching Spotify lyrics for track {SpotifyId}", spotifyTrackId);
             return null;
         }
     }
@@ -423,7 +423,7 @@ public class LyricsPrefetchService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error checking Jellyfin lyrics for item {ItemId}", jellyfinItemId);
+            _logger.LogError(ex, "Error checking Jellyfin lyrics for item {ItemId}", jellyfinItemId);
             return false;
         }
     }
@@ -528,7 +528,7 @@ public class LyricsPrefetchService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error checking for local Jellyfin lyrics for Spotify track {SpotifyId}", spotifyTrackId);
+            _logger.LogError(ex, "Error checking for local Jellyfin lyrics for Spotify track {SpotifyId}", spotifyTrackId);
             return false;
         }
     }

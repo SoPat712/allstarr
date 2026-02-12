@@ -76,7 +76,7 @@ public class JellyfinModelMapper
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error parsing Jellyfin items response");
+            _logger.LogError(ex, "Error parsing Jellyfin items response");
         }
 
         return (songs, albums, artists);
@@ -126,7 +126,7 @@ public class JellyfinModelMapper
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error parsing Jellyfin search hints response");
+            _logger.LogError(ex, "Error parsing Jellyfin search hints response");
         }
 
         return (songs, albums, artists);

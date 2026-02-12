@@ -58,7 +58,8 @@ public static class FuzzyMatcher
     /// Calculates similarity score following OPTIMAL ORDER:
     /// 1. Strip decorators (already done by caller)
     /// 2. Substring matching (cheap, high-precision)
-    /// 3. Levenshtein distance (expensive, fuzzy)
+    /// 3. Token-based matching (handles word order)
+    /// 4. Levenshtein distance (expensive, fuzzy)
     /// Returns score 0-100.
     /// </summary>
     public static int CalculateSimilarity(string query, string target)
@@ -103,11 +104,71 @@ public static class FuzzyMatcher
             return 85;
         }
 
-        // STEP 3: LEVENSHTEIN DISTANCE (expensive, fuzzy)
-        // Only use this for candidates that survived substring checks
-        
-        var distance = LevenshteinDistance(queryNorm, targetNorm);
-        var maxLength = Math.Max(queryNorm.Length, targetNorm.Length);
+        // STEP 3: TOKEN-BASED MATCHING (handles word order)
+        var tokens1 = queryNorm.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        var tokens2 = targetNorm.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (tokens1.Length > 0 && tokens2.Length > 0)
+        {
+            // Calculate how many tokens match (order-independent)
+            var matchedTokens = 0.0; // Use double for partial matches
+            var usedTokens = new HashSet<int>();
+            
+            foreach (var token1 in tokens1)
+            {
+                for (int i = 0; i < tokens2.Length; i++)
+                {
+                    if (usedTokens.Contains(i)) continue;
+                    
+                    var token2 = tokens2[i];
+                    
+                    // Exact token match
+                    if (token1 == token2)
+                    {
+                        matchedTokens++;
+                        usedTokens.Add(i);
+                        break;
+                    }
+                    // Partial token match (one contains the other)
+                    else if (token1.Contains(token2) || token2.Contains(token1))
+                    {
+                        matchedTokens += 0.8; // Partial credit
+                        usedTokens.Add(i);
+                        break;
+                    }
+                }
+            }
+            
+            // Calculate token match percentage
+            var maxTokens = Math.Max(tokens1.Length, tokens2.Length);
+            var tokenMatchScore = (matchedTokens / maxTokens) * 100.0;
+            
+            // If token match is very high (90%+), return it
+            if (tokenMatchScore >= 90)
+            {
+                return (int)Math.Round(tokenMatchScore, MidpointRounding.AwayFromZero);
+            }
+            
+            // If token match is decent (70%+), use it as a floor for Levenshtein
+            if (tokenMatchScore >= 70)
+            {
+                var levenshteinScore = CalculateLevenshteinScore(queryNorm, targetNorm);
+                return (int)Math.Max(tokenMatchScore, levenshteinScore);
+            }
+        }
+
+        // STEP 4: LEVENSHTEIN DISTANCE (expensive, fuzzy)
+        return CalculateLevenshteinScore(queryNorm, targetNorm);
+    }
+    
+    /// <summary>
+    /// Calculates similarity score based on Levenshtein distance.
+    /// Returns score 0-75 (reserve 75-100 for substring/token matches).
+    /// </summary>
+    private static int CalculateLevenshteinScore(string str1, string str2)
+    {
+        var distance = LevenshteinDistance(str1, str2);
+        var maxLength = Math.Max(str1.Length, str2.Length);
         
         if (maxLength == 0)
         {
@@ -117,8 +178,9 @@ public static class FuzzyMatcher
         // Normalize distance by length: score = 1 - (distance / max_length)
         var normalizedSimilarity = 1.0 - ((double)distance / maxLength);
         
-        // Convert to 0-80 range (reserve 80-100 for substring matches)
-        var score = (int)(normalizedSimilarity * 80);
+        // Convert to 0-75 range (reserve 75-100 for substring/token matches)
+        // Using 75 instead of 80 to be slightly stricter
+        var score = (int)(normalizedSimilarity * 75);
         
         return Math.Max(0, score);
     }
@@ -154,7 +216,9 @@ public static class FuzzyMatcher
     /// <summary>
     /// Normalizes a string for matching by:
     /// - Converting to lowercase
-    /// - Normalizing apostrophes (', ', ') to standard '
+    /// - Removing accents/diacritics
+    /// - Converting hyphens/underscores to spaces (for word separation)
+    /// - Removing other punctuation (periods, apostrophes, commas, etc.)
     /// - Removing extra whitespace
     /// </summary>
     private static string NormalizeForMatching(string text)
@@ -166,17 +230,41 @@ public static class FuzzyMatcher
         
         var normalized = text.ToLowerInvariant().Trim();
         
-        // Normalize different apostrophe types to standard apostrophe
-        normalized = normalized
-            .Replace("\u2019", "'")  // Right single quotation mark (')
-            .Replace("\u2018", "'")  // Left single quotation mark (')
-            .Replace("`", "'")       // Grave accent
-            .Replace("\u00B4", "'"); // Acute accent (´)
+        // Remove accents/diacritics (é -> e, ñ -> n, etc.)
+        normalized = RemoveDiacritics(normalized);
+        
+        // Replace hyphens and underscores with spaces (for word separation)
+        // This ensures "Dua-Lipa" becomes "Dua Lipa" not "DuaLipa"
+        normalized = normalized.Replace('-', ' ').Replace('_', ' ');
+        
+        // Remove all other punctuation: periods, apostrophes, commas, etc.
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"[^\w\s]", "");
         
         // Normalize whitespace
-        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ");
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ").Trim();
         
         return normalized;
+    }
+    
+    /// <summary>
+    /// Removes diacritics (accents) from characters.
+    /// Example: é -> e, ñ -> n, ü -> u
+    /// </summary>
+    private static string RemoveDiacritics(string text)
+    {
+        var normalizedString = text.Normalize(System.Text.NormalizationForm.FormD);
+        var stringBuilder = new System.Text.StringBuilder();
+
+        foreach (var c in normalizedString)
+        {
+            var unicodeCategory = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            if (unicodeCategory != System.Globalization.UnicodeCategory.NonSpacingMark)
+            {
+                stringBuilder.Append(c);
+            }
+        }
+
+        return stringBuilder.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
 
     /// <summary>

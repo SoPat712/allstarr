@@ -25,7 +25,7 @@ public class MusicBrainzService
         ILogger<MusicBrainzService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.0 (https://github.com/SoPat712/allstarr)");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         
         _settings = settings.Value;
@@ -92,6 +92,7 @@ public class MusicBrainzService
 
     /// <summary>
     /// Searches for recordings by title and artist.
+    /// Note: Search API doesn't return genres, only MBIDs. Use LookupByMbidAsync to get genres.
     /// </summary>
     public async Task<List<MusicBrainzRecording>> SearchRecordingsAsync(string title, string artist, int limit = 5)
     {
@@ -107,7 +108,8 @@ public class MusicBrainzService
             // Build Lucene query
             var query = $"recording:\"{title}\" AND artist:\"{artist}\"";
             var encodedQuery = Uri.EscapeDataString(query);
-            var url = $"{_settings.BaseUrl}/recording?query={encodedQuery}&fmt=json&limit={limit}&inc=genres+tags";
+            // Note: Search API doesn't support inc=genres, only returns basic info + MBIDs
+            var url = $"{_settings.BaseUrl}/recording?query={encodedQuery}&fmt=json&limit={limit}";
             
             _logger.LogDebug("MusicBrainz search: {Url}", url);
 
@@ -128,7 +130,7 @@ public class MusicBrainzService
                 return new List<MusicBrainzRecording>();
             }
 
-            _logger.LogInformation("Found {Count} MusicBrainz recordings for: {Title} - {Artist}",
+            _logger.LogDebug("Found {Count} MusicBrainz recordings for: {Title} - {Artist}",
                 result.Recordings.Count, title, artist);
 
             return result.Recordings;
@@ -141,8 +143,55 @@ public class MusicBrainzService
     }
     
     /// <summary>
+    /// Looks up a recording by MBID to get full details including genres.
+    /// </summary>
+    public async Task<MusicBrainzRecording?> LookupByMbidAsync(string mbid)
+    {
+        if (!_settings.Enabled)
+        {
+            return null;
+        }
+
+        await RateLimitAsync();
+
+        try
+        {
+            var url = $"{_settings.BaseUrl}/recording/{mbid}?fmt=json&inc=artists+releases+release-groups+genres+tags";
+            _logger.LogDebug("MusicBrainz MBID lookup: {Url}", url);
+
+            var response = await _httpClient.GetAsync(url);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("MusicBrainz MBID lookup failed: {StatusCode}", response.StatusCode);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var recording = JsonSerializer.Deserialize<MusicBrainzRecording>(json, JsonOptions);
+
+            if (recording == null)
+            {
+                _logger.LogDebug("No MusicBrainz recording found for MBID: {Mbid}", mbid);
+                return null;
+            }
+
+            var genres = recording.Genres?.Select(g => g.Name).Where(n => !string.IsNullOrEmpty(n)).ToList() ?? new List<string?>();
+            _logger.LogInformation("✓ Found MusicBrainz recording for MBID {Mbid}: {Title} by {Artist} (Genres: {Genres})",
+                mbid, recording.Title, recording.ArtistCredit?[0]?.Name ?? "Unknown", string.Join(", ", genres));
+
+            return recording;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error looking up MBID {Mbid} in MusicBrainz", mbid);
+            return null;
+        }
+    }
+    
+    /// <summary>
     /// Enriches a song with genre information from MusicBrainz.
-    /// First tries ISRC lookup, then falls back to title/artist search.
+    /// First tries ISRC lookup, then falls back to title/artist search + MBID lookup.
     /// </summary>
     public async Task<List<string>> GetGenresForSongAsync(string title, string artist, string? isrc = null)
     {
@@ -153,17 +202,23 @@ public class MusicBrainzService
 
         MusicBrainzRecording? recording = null;
 
-        // Try ISRC lookup first (most accurate)
+        // Try ISRC lookup first (most accurate and includes genres)
         if (!string.IsNullOrEmpty(isrc))
         {
             recording = await LookupByIsrcAsync(isrc);
         }
 
-        // Fall back to search if ISRC lookup failed or no ISRC provided
+        // Fall back to search + MBID lookup if ISRC lookup failed or no ISRC provided
         if (recording == null)
         {
             var recordings = await SearchRecordingsAsync(title, artist, limit: 1);
-            recording = recordings.FirstOrDefault();
+            var searchResult = recordings.FirstOrDefault();
+            
+            // If we found a recording from search, do a full lookup by MBID to get genres
+            if (searchResult != null && !string.IsNullOrEmpty(searchResult.Id))
+            {
+                recording = await LookupByMbidAsync(searchResult.Id);
+            }
         }
 
         if (recording == null)
@@ -186,7 +241,7 @@ public class MusicBrainzService
                 .ToList());
         }
 
-        _logger.LogInformation("Found {Count} genres for {Title} - {Artist}: {Genres}",
+        _logger.LogDebug("Found {Count} genres for {Title} - {Artist}: {Genres}",
             genres.Count, title, artist, string.Join(", ", genres));
 
         return genres;

@@ -60,7 +60,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         if (_spotifyApiSettings.Value.Enabled && !string.IsNullOrEmpty(_spotifyApiSettings.Value.SessionCookie))
         {
             _logger.LogInformation("SpotifyApi is enabled with session cookie - using direct Spotify API instead of Jellyfin scraping");
-            _logger.LogInformation("This service will remain dormant. SpotifyPlaylistFetcher is handling playlists.");
+            _logger.LogDebug("This service will remain dormant. SpotifyPlaylistFetcher is handling playlists.");
             _logger.LogInformation("========================================");
             return;
         }
@@ -77,7 +77,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         if (string.IsNullOrEmpty(jellyfinUrl) || string.IsNullOrEmpty(apiKey))
         {
-            _logger.LogWarning("Jellyfin URL or API key not configured, Spotify playlist injection disabled");
+            _logger.LogInformation("Jellyfin URL or API key not configured, Spotify playlist injection disabled");
             _logger.LogInformation("========================================");
             return;
         }
@@ -115,7 +115,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             }
             else
             {
-                _logger.LogInformation("Skipping startup fetch - already have cached files");
+                _logger.LogWarning("Skipping startup fetch - already have cached files");
                 _hasRunOnce = true;
             }
         }
@@ -194,7 +194,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             if (File.Exists(filePath))
             {
                 var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
-                _logger.LogInformation("  {Playlist}: Found file cache (age: {Age:F1}h)", playlistName, fileAge.TotalHours);
+                _logger.LogDebug("  {Playlist}: Found file cache (age: {Age:F1}h)", playlistName, fileAge.TotalHours);
                 
                 // Load into Redis if not already there
                 if (!await _cache.ExistsAsync(cacheKey))
@@ -207,7 +207,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             // Check Redis cache
             if (await _cache.ExistsAsync(cacheKey))
             {
-                _logger.LogInformation("  {Playlist}: Found in Redis cache", playlistName);
+                _logger.LogDebug("  {Playlist}: Found in Redis cache", playlistName);
                 continue;
             }
             
@@ -218,7 +218,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         
         if (allPlaylistsHaveCache)
         {
-            _logger.LogInformation("=== ALL PLAYLISTS HAVE CACHE - SKIPPING STARTUP FETCH ===");
+            _logger.LogWarning("=== ALL PLAYLISTS HAVE CACHE - SKIPPING STARTUP FETCH ===");
             return false;
         }
         
@@ -250,13 +250,13 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 
                 // No expiration - cache persists until next Jellyfin job generates new file
                 await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365));
-                _logger.LogInformation("Loaded {Count} tracks from file cache for {Playlist} (age: {Age:F1}h, no expiration)", 
+                _logger.LogDebug("Loaded {Count} tracks from file cache for {Playlist} (age: {Age:F1}h, no expiration)", 
                     tracks.Count, playlistName, fileAge.TotalHours);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load file cache for {Playlist}", playlistName);
+            _logger.LogError(ex, "Failed to load file cache for {Playlist}", playlistName);
         }
     }
     
@@ -267,7 +267,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             var filePath = GetCacheFilePath(playlistName);
             var json = JsonSerializer.Serialize(tracks, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(filePath, json);
-            _logger.LogInformation("Saved {Count} tracks to file cache for {Playlist}", 
+            _logger.LogDebug("Saved {Count} tracks to file cache for {Playlist}", 
                 tracks.Count, playlistName);
         }
         catch (Exception ex)
@@ -279,7 +279,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private async Task FetchMissingTracksAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("=== FETCHING MISSING TRACKS ===");
-        _logger.LogInformation("Processing {Count} playlists", _playlistIdToName.Count);
+        _logger.LogDebug("Processing {Count} playlists", _playlistIdToName.Count);
         
         // Track when we find files to optimize search for other playlists
         DateTime? firstFoundTime = null;
@@ -324,11 +324,11 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         
         if (existingTracks != null && existingTracks.Count > 0)
         {
-            _logger.LogInformation("  Current cache has {Count} tracks, will search for newer file", existingTracks.Count);
+            _logger.LogDebug("  Current cache has {Count} tracks, will search for newer file", existingTracks.Count);
         }
         else
         {
-            _logger.LogInformation("  No existing cache, will search for missing tracks file");
+            _logger.LogDebug("  No existing cache, will search for missing tracks file");
         }
         
         var settings = _spotifySettings.Value;
@@ -428,7 +428,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             // Keep the existing cache - don't let it expire
             if (existingTracks != null && existingTracks.Count > 0)
             {
-                _logger.LogInformation("  ✓ Keeping existing cache with {Count} tracks (no expiration)", existingTracks.Count);
+                _logger.LogDebug("  ✓ Keeping existing cache with {Count} tracks (no expiration)", existingTracks.Count);
                 // Re-save with no expiration to ensure it persists
                 await _cache.SetAsync(cacheKey, existingTracks, TimeSpan.FromDays(365)); // Effectively no expiration
             }
@@ -444,7 +444,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                     if (tracks != null && tracks.Count > 0)
                     {
                         await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365)); // No expiration
-                        _logger.LogInformation("  ✓ Loaded {Count} tracks from file cache (no expiration)", tracks.Count);
+                        _logger.LogDebug("  ✓ Loaded {Count} tracks from file cache (no expiration)", tracks.Count);
                     }
                 }
                 catch (Exception ex)
@@ -476,7 +476,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         try
         {
             // Log every request with the actual filename
-            _logger.LogInformation("Checking: {Playlist} at {DateTime}", playlistName, time.ToString("yyyy-MM-dd HH:mm"));
+            _logger.LogDebug("Checking: {Playlist} at {DateTime}", playlistName, time.ToString("yyyy-MM-dd HH:mm"));
             
             var response = await httpClient.GetAsync(url, cancellationToken);
             if (response.IsSuccessStatusCode)
@@ -502,7 +502,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to fetch {Filename}", filename);
+            _logger.LogError(ex, "Failed to fetch {Filename}", filename);
         }
         
         return (false, null);

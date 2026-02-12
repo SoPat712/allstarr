@@ -78,7 +78,7 @@ public class RoundRobinFallbackHelper
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
+            _logger.LogError(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
             
             // Cache as unhealthy
             lock (_healthCacheLock)
@@ -137,7 +137,7 @@ public class RoundRobinFallbackHelper
             _apiUrls.AddRange(reordered);
             _currentUrlIndex = 0;
 
-            _logger.LogInformation("📊 {Service} endpoints reordered by benchmark: {Endpoints}", 
+            _logger.LogDebug("📊 {Service} endpoints reordered by benchmark: {Endpoints}", 
                 _serviceName, string.Join(", ", _apiUrls.Take(3)));
         }
     }
@@ -180,7 +180,7 @@ public class RoundRobinFallbackHelper
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "{Service} request failed with endpoint {Endpoint}, trying next...", 
+                _logger.LogError(ex, "{Service} request failed with endpoint {Endpoint}, trying next...", 
                     _serviceName, baseUrl);
                 
                 // Mark as unhealthy in cache
@@ -227,7 +227,7 @@ public class RoundRobinFallbackHelper
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "{Service} race failed for endpoint {Endpoint}", _serviceName, baseUrl);
+                    _logger.LogError(ex, "{Service} race failed for endpoint {Endpoint}", _serviceName, baseUrl);
                     return (default(T)!, baseUrl, false);
                 }
             }, raceCts.Token);
@@ -243,7 +243,7 @@ public class RoundRobinFallbackHelper
             
             if (success)
             {
-                _logger.LogInformation("🏁 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
+                _logger.LogDebug("🏁 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
                 raceCts.Cancel(); // Cancel all other requests
                 return result;
             }
@@ -291,7 +291,7 @@ public class RoundRobinFallbackHelper
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "{Service} request failed with endpoint {Endpoint}, trying next...", 
+                _logger.LogError(ex, "{Service} request failed with endpoint {Endpoint}, trying next...", 
                     _serviceName, baseUrl);
                 
                 // Mark as unhealthy in cache

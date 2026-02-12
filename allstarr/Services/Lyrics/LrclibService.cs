@@ -18,7 +18,7 @@ public class LrclibService
         ILogger<LrclibService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.0 (https://github.com/SoPat712/allstarr)");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
         _cache = cache;
         _logger = logger;
     }
@@ -75,7 +75,7 @@ public class LrclibService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to deserialize cached lyrics");
+                _logger.LogError(ex, "Failed to deserialize cached lyrics");
             }
         }
 
@@ -89,7 +89,7 @@ public class LrclibService
                            $"track_name={Uri.EscapeDataString(trackName)}&" +
                            $"artist_name={Uri.EscapeDataString(searchArtistName)}";
 
-            _logger.LogInformation("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
+            _logger.LogDebug("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
 
             var searchResponse = await _httpClient.GetAsync(searchUrl);
             
@@ -157,12 +157,12 @@ public class LrclibService
                             SyncedLyrics = bestMatch.SyncedLyrics
                         };
 
-                        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), TimeSpan.FromDays(30));
+                        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), CacheExtensions.LyricsTTL);
                         return result;
                     }
                     else
                     {
-                        _logger.LogInformation("Best match score too low ({Score:F1}), trying exact match", bestScore);
+                        _logger.LogDebug("Best match score too low ({Score:F1}), trying exact match", bestScore);
                     }
                 }
             }
@@ -206,7 +206,7 @@ public class LrclibService
                 SyncedLyrics = lyrics.SyncedLyrics
             };
 
-            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(exactResult, JsonOptions), TimeSpan.FromDays(30));
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(exactResult, JsonOptions), CacheExtensions.LyricsTTL);
 
             _logger.LogInformation("Retrieved lyrics via exact match for {Artist} - {Track} (ID: {Id})", artistName, trackName, lyrics.Id);
             
@@ -214,7 +214,7 @@ public class LrclibService
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogWarning(ex, "Failed to fetch lyrics from LRCLIB for {Artist} - {Track}", artistName, trackName);
+            _logger.LogError(ex, "Failed to fetch lyrics from LRCLIB for {Artist} - {Track}", artistName, trackName);
             return null;
         }
         catch (Exception ex)
@@ -350,7 +350,7 @@ public class LrclibService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to fetch cached lyrics for {Artist} - {Track}", artistName, trackName);
+            _logger.LogError(ex, "Failed to fetch cached lyrics for {Artist} - {Track}", artistName, trackName);
             return null;
         }
     }
@@ -368,7 +368,7 @@ public class LrclibService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to deserialize cached lyrics");
+                _logger.LogError(ex, "Failed to deserialize cached lyrics");
             }
         }
 
@@ -404,7 +404,7 @@ public class LrclibService
                 SyncedLyrics = lyrics.SyncedLyrics
             };
 
-            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), TimeSpan.FromDays(30));
+            await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), CacheExtensions.LyricsTTL);
             
             return result;
         }

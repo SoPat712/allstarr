@@ -3,6 +3,7 @@ using allstarr.Models.Settings;
 using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -18,6 +19,7 @@ public class QobuzMetadataService : IMusicMetadataService
     private readonly SubsonicSettings _settings;
     private readonly QobuzBundleService _bundleService;
     private readonly ILogger<QobuzMetadataService> _logger;
+    private readonly GenreEnrichmentService? _genreEnrichment;
     private readonly string? _userAuthToken;
     private readonly string? _userId;
     
@@ -28,12 +30,14 @@ public class QobuzMetadataService : IMusicMetadataService
         IOptions<SubsonicSettings> settings,
         IOptions<QobuzSettings> qobuzSettings,
         QobuzBundleService bundleService,
-        ILogger<QobuzMetadataService> logger)
+        ILogger<QobuzMetadataService> logger,
+        GenreEnrichmentService? genreEnrichment = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
         _bundleService = bundleService;
         _logger = logger;
+        _genreEnrichment = genreEnrichment;
         
         var qobuzConfig = qobuzSettings.Value;
         _userAuthToken = qobuzConfig.UserAuthToken;
@@ -177,7 +181,26 @@ public class QobuzMetadataService : IMusicMetadataService
             
             if (track.TryGetProperty("error", out _)) return null;
             
-            return ParseQobuzTrackFull(track);
+            var song = ParseQobuzTrackFull(track);
+            
+            // Enrich with MusicBrainz genres if missing
+            if (_genreEnrichment != null && song != null && string.IsNullOrEmpty(song.Genre))
+            {
+                // Fire-and-forget: don't block the response waiting for genre enrichment
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _genreEnrichment.EnrichSongGenreAsync(song);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to enrich genre for {Title}", song.Title);
+                    }
+                });
+            }
+            
+            return song;
         }
         catch (Exception ex)
         {

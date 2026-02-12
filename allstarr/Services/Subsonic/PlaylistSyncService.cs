@@ -187,7 +187,7 @@ public class PlaylistSyncService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to download track '{Artist} - {Title}'", track.Artist, track.Title);
+                    _logger.LogError(ex, "Failed to download track '{Artist} - {Title}'", track.Artist, track.Title);
                 }
             }
             
@@ -239,7 +239,7 @@ public class PlaylistSyncService
             }
             
             await IOFile.WriteAllTextAsync(playlistPath, m3uContent.ToString());
-            _logger.LogInformation("Created M3U playlist: {Path}", playlistPath);
+            _logger.LogDebug("Created M3U playlist: {Path}", playlistPath);
         }
         catch (Exception ex)
         {
@@ -259,7 +259,7 @@ public class PlaylistSyncService
         // Skip real-time updates during full playlist download (M3U will be created once at the end)
         if (isFullPlaylistDownload)
         {
-            _logger.LogDebug("Skipping M3U update for track {TrackId} (full playlist download in progress)", track.Id);
+            _logger.LogWarning("Skipping M3U update for track {TrackId} (full playlist download in progress)", track.Id);
             return;
         }
         
@@ -349,7 +349,7 @@ public class PlaylistSyncService
             
             // Write the M3U file (overwrites existing)
             await IOFile.WriteAllTextAsync(playlistPath, m3uContent.ToString());
-            _logger.LogInformation("Updated M3U playlist '{PlaylistName}' with {Count} tracks (in correct order)", 
+            _logger.LogDebug("Updated M3U playlist '{PlaylistName}' with {Count} tracks (in correct order)", 
                 playlist.Name, addedCount);
         }
         catch (Exception ex)
@@ -382,7 +382,7 @@ public class PlaylistSyncService
                 
                 if (expiredKeys.Count > 0)
                 {
-                    _logger.LogDebug("Cleaned up {Count} expired playlist cache entries", expiredKeys.Count);
+                    _logger.LogWarning("Cleaned up {Count} expired playlist cache entries", expiredKeys.Count);
                 }
             }
             catch (OperationCanceledException)
@@ -392,7 +392,7 @@ public class PlaylistSyncService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error during playlist cache cleanup");
+                _logger.LogError(ex, "Error during playlist cache cleanup");
             }
         }
         

@@ -83,21 +83,9 @@ cache/
 # Docker volumes
 redis-data/
 
-# API keys and specs (ignore markdown docs, keep OpenAPI spec)
-apis/steering/
-apis/api-calls/*.json
-!apis/api-calls/jellyfin-openapi-stable.json
-apis/temp.json
-
-# Temporary documentation files
-apis/*.md
-
-# Log files for debugging
-apis/api-calls/*.log
-
-# Endpoint usage tracking
-apis/api-calls/endpoint-usage.json
-/app/cache/endpoint-usage/
+# Ignore everything in apis folder except jellyfin-openapi-stable.json
+apis/*
+!apis/jellyfin-openapi-stable.json
 
 # Original source code for reference
 originals/

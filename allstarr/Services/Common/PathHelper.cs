@@ -28,8 +28,10 @@ public static class PathHelper
     /// <param name="title">Track title (will be sanitized).</param>
     /// <param name="trackNumber">Optional track number for prefix.</param>
     /// <param name="extension">File extension (e.g., ".flac", ".mp3").</param>
+    /// <param name="provider">Optional provider name (e.g., "squidwtf", "deezer").</param>
+    /// <param name="externalId">Optional external ID from the provider.</param>
     /// <returns>Full path for the track file.</returns>
-    public static string BuildTrackPath(string downloadPath, string artist, string album, string title, int? trackNumber, string extension)
+    public static string BuildTrackPath(string downloadPath, string artist, string album, string title, int? trackNumber, string extension, string? provider = null, string? externalId = null)
     {
         var safeArtist = SanitizeFolderName(artist);
         var safeAlbum = SanitizeFolderName(album);
@@ -39,7 +41,10 @@ public static class PathHelper
         var albumFolder = Path.Combine(artistFolder, safeAlbum);
         
         var trackPrefix = trackNumber.HasValue ? $"{trackNumber:D2} - " : "";
-        var fileName = $"{trackPrefix}{safeTitle}{extension}";
+        var idSuffix = !string.IsNullOrEmpty(provider) && !string.IsNullOrEmpty(externalId) 
+            ? $" [{provider}-{externalId}]" 
+            : "";
+        var fileName = $"{trackPrefix}{safeTitle}{idSuffix}{extension}";
         
         return Path.Combine(albumFolder, fileName);
     }

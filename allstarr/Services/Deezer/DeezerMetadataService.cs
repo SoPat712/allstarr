@@ -3,6 +3,7 @@ using allstarr.Models.Settings;
 using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -15,12 +16,17 @@ public class DeezerMetadataService : IMusicMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
+    private readonly GenreEnrichmentService? _genreEnrichment;
     private const string BaseUrl = "https://api.deezer.com";
 
-    public DeezerMetadataService(IHttpClientFactory httpClientFactory, IOptions<SubsonicSettings> settings)
+    public DeezerMetadataService(
+        IHttpClientFactory httpClientFactory, 
+        IOptions<SubsonicSettings> settings,
+        GenreEnrichmentService? genreEnrichment = null)
     {
         _httpClient = httpClientFactory.CreateClient();
         _settings = settings.Value;
+        _genreEnrichment = genreEnrichment;
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
@@ -201,6 +207,23 @@ public class DeezerMetadataService : IMusicMetadataService
             {
                 // If we can't get the album, continue with track info only
             }
+        }
+        
+        // Enrich with MusicBrainz genres if missing
+        if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
+        {
+            // Fire-and-forget: don't block the response waiting for genre enrichment
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _genreEnrichment.EnrichSongGenreAsync(song);
+                }
+                catch
+                {
+                    // Silently ignore genre enrichment failures
+                }
+            });
         }
         
         return song;
@@ -384,17 +407,23 @@ public class DeezerMetadataService : IMusicMetadataService
             }
         }
         
-        // Contributors
+        // Contributors (all artists including features)
         var contributors = new List<string>();
+        var contributorIds = new List<string>();
         if (track.TryGetProperty("contributors", out var contribs))
         {
             foreach (var contrib in contribs.EnumerateArray())
             {
-                if (contrib.TryGetProperty("name", out var contribName))
+                if (contrib.TryGetProperty("name", out var contribName) && 
+                    contrib.TryGetProperty("id", out var contribId))
                 {
                     var name = contribName.GetString();
+                    var id = contribId.GetInt64();
                     if (!string.IsNullOrEmpty(name))
+                    {
                         contributors.Add(name);
+                        contributorIds.Add($"ext-deezer-artist-{id}");
+                    }
                 }
             }
         }
@@ -437,6 +466,8 @@ public class DeezerMetadataService : IMusicMetadataService
             ArtistId = track.TryGetProperty("artist", out var artistForId) 
                 ? $"ext-deezer-artist-{artistForId.GetProperty("id").GetInt64()}" 
                 : null,
+            Artists = contributors.Count > 0 ? contributors : new List<string>(),
+            ArtistIds = contributorIds.Count > 0 ? contributorIds : new List<string>(),
             Album = track.TryGetProperty("album", out var album) 
                 ? album.GetProperty("title").GetString() ?? "" 
                 : "",

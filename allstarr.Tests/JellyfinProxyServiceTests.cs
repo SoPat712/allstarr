@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Moq.Protected;
 using allstarr.Models.Settings;
@@ -40,12 +41,18 @@ public class JellyfinProxyServiceTests
             ClientName = "TestClient",
             DeviceName = "TestDevice",
             DeviceId = "test-device-id",
-            ClientVersion = "1.0.0"
+            ClientVersion = "1.0.1"
         };
 
         var httpContext = new DefaultHttpContext();
         var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
         var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
+
+        // Initialize cache settings for tests
+        var serviceCollection = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        serviceCollection.Configure<CacheSettings>(options => { }); // Use defaults
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+        CacheExtensions.InitializeCacheSettings(serviceProvider);
 
         _service = new JellyfinProxyService(
             _mockHttpClientFactory.Object,

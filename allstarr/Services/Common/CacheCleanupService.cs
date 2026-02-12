@@ -66,7 +66,9 @@ public class CacheCleanupService : BackgroundService
 
     private async Task CleanupOldCachedFilesAsync(CancellationToken cancellationToken)
     {
-        var cachePath = PathHelper.GetCachePath();
+        // Get the actual cache path used by download services
+        var downloadPath = _configuration["Library:DownloadPath"] ?? "downloads";
+        var cachePath = Path.Combine(downloadPath, "cache");
 
         if (!Directory.Exists(cachePath))
         {
@@ -78,7 +80,7 @@ public class CacheCleanupService : BackgroundService
         var deletedCount = 0;
         var totalSize = 0L;
 
-        _logger.LogInformation("Starting cache cleanup: deleting files older than {CutoffTime}", cutoffTime);
+        _logger.LogInformation("Starting cache cleanup: deleting files older than {CutoffTime} from {Path}", cutoffTime, cachePath);
 
         try
         {
@@ -108,7 +110,7 @@ public class CacheCleanupService : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to delete cached file: {Path}", filePath);
+                    _logger.LogError(ex, "Failed to delete cached file: {Path}", filePath);
                 }
             }
 
@@ -123,7 +125,7 @@ public class CacheCleanupService : BackgroundService
             }
             else
             {
-                _logger.LogDebug("Cache cleanup completed: no files to delete");
+                _logger.LogInformation("Cache cleanup completed: no files to delete");
             }
         }
         catch (Exception ex)
@@ -154,13 +156,13 @@ public class CacheCleanupService : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to delete empty directory: {Path}", directory);
+                    _logger.LogError(ex, "Failed to delete empty directory: {Path}", directory);
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error cleaning up empty directories");
+            _logger.LogError(ex, "Error cleaning up empty directories");
         }
 
         await Task.CompletedTask;

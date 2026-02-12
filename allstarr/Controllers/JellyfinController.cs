@@ -39,7 +39,9 @@ public class JellyfinController : ControllerBase
     private readonly PlaylistSyncService? _playlistSyncService;
     private readonly SpotifyPlaylistFetcher? _spotifyPlaylistFetcher;
     private readonly SpotifyLyricsService? _spotifyLyricsService;
+    private readonly LyricsPlusService? _lyricsPlusService;
     private readonly LrclibService? _lrclibService;
+    private readonly LyricsOrchestrator? _lyricsOrchestrator;
     private readonly OdesliService _odesliService;
     private readonly RedisCacheService _cache;
     private readonly IConfiguration _configuration;
@@ -64,7 +66,9 @@ public class JellyfinController : ControllerBase
         PlaylistSyncService? playlistSyncService = null,
         SpotifyPlaylistFetcher? spotifyPlaylistFetcher = null,
         SpotifyLyricsService? spotifyLyricsService = null,
-        LrclibService? lrclibService = null)
+        LyricsPlusService? lyricsPlusService = null,
+        LrclibService? lrclibService = null,
+        LyricsOrchestrator? lyricsOrchestrator = null)
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
@@ -80,7 +84,9 @@ public class JellyfinController : ControllerBase
         _playlistSyncService = playlistSyncService;
         _spotifyPlaylistFetcher = spotifyPlaylistFetcher;
         _spotifyLyricsService = spotifyLyricsService;
+        _lyricsPlusService = lyricsPlusService;
         _lrclibService = lrclibService;
+        _lyricsOrchestrator = lyricsOrchestrator;
         _odesliService = odesliService;
         _cache = cache;
         _configuration = configuration;
@@ -111,7 +117,7 @@ public class JellyfinController : ControllerBase
         [FromQuery] bool recursive = true,
         string? userId = null)
     {
-        _logger.LogInformation("=== SEARCHITEMS V2 CALLED === searchTerm={SearchTerm}, includeItemTypes={ItemTypes}, parentId={ParentId}, artistIds={ArtistIds}, userId={UserId}", 
+        _logger.LogDebug("=== SEARCHITEMS V2 CALLED === searchTerm={SearchTerm}, includeItemTypes={ItemTypes}, parentId={ParentId}, artistIds={ArtistIds}, userId={UserId}", 
             searchTerm, includeItemTypes, parentId, artistIds, userId);
 
         // Cache search results in Redis only (no file persistence, 15 min TTL)
@@ -210,14 +216,14 @@ public class JellyfinController : ControllerBase
                     return Unauthorized(new { error = "Authentication required" });
                 }
                 
-                _logger.LogInformation("Jellyfin returned {StatusCode}, returning empty result", statusCode);
+                _logger.LogDebug("Jellyfin returned {StatusCode}, returning empty result", statusCode);
                 return new JsonResult(new { Items = Array.Empty<object>(), TotalRecordCount = 0, StartIndex = startIndex });
             }
 
             // Update Spotify playlist counts if enabled and response contains playlists
             if (_spotifySettings.Enabled && browseResult.RootElement.TryGetProperty("Items", out var _))
             {
-                _logger.LogInformation("Browse result has Items, checking for Spotify playlists to update counts");
+                _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");
                 browseResult = await UpdateSpotifyPlaylistCounts(browseResult);
             }
 
@@ -248,7 +254,7 @@ public class JellyfinController : ControllerBase
         }
 
         var cleanQuery = searchTerm?.Trim().Trim('"') ?? "";
-        _logger.LogInformation("Performing integrated search for: {Query}", cleanQuery);
+        _logger.LogDebug("Performing integrated search for: {Query}", cleanQuery);
 
         // Run local and external searches in parallel
         var itemTypes = ParseItemTypes(includeItemTypes);
@@ -269,7 +275,7 @@ public class JellyfinController : ControllerBase
         var externalResult = await externalTask;
         var playlistResult = await playlistTask;
 
-        _logger.LogInformation("Search results: Jellyfin={JellyfinCount}, External Songs={ExtSongs}, Albums={ExtAlbums}, Artists={ExtArtists}, Playlists={Playlists}",
+        _logger.LogDebug("Search results: Jellyfin={JellyfinCount}, External Songs={ExtSongs}, Albums={ExtAlbums}, Artists={ExtArtists}, Playlists={Playlists}",
             jellyfinResult != null ? "found" : "null",
             externalResult.Songs.Count,
             externalResult.Albums.Count,
@@ -279,53 +285,50 @@ public class JellyfinController : ControllerBase
         // Parse Jellyfin results into domain models
         var (localSongs, localAlbums, localArtists) = _modelMapper.ParseItemsResponse(jellyfinResult);
 
-        // Respect source ordering (SquidWTF/Tidal has better search ranking than our fuzzy matching)
-        // Just interleave local and external results based on which source has better overall match
-        
-        // Calculate average match score for each source to determine which should come first
-        var localSongsAvgScore = localSongs.Any() 
-            ? localSongs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title)) 
-            : 0.0;
-        var externalSongsAvgScore = externalResult.Songs.Any() 
-            ? externalResult.Songs.Average(s => FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title)) 
-            : 0.0;
+        // Sort all results by match score (local tracks get +10 boost)
+        // This ensures best matches appear first regardless of source
+        var allSongs = localSongs.Concat(externalResult.Songs)
+            .Select(s => new { Song = s, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, s.Title) + (s.IsLocal ? 10.0 : 0.0) })
+            .OrderByDescending(x => x.Score)
+            .Select(x => x.Song)
+            .ToList();
 
-        var localAlbumsAvgScore = localAlbums.Any() 
-            ? localAlbums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title)) 
-            : 0.0;
-        var externalAlbumsAvgScore = externalResult.Albums.Any() 
-            ? externalResult.Albums.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title)) 
-            : 0.0;
+        var allAlbums = localAlbums.Concat(externalResult.Albums)
+            .Select(a => new { Album = a, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Title) + (a.IsLocal ? 10.0 : 0.0) })
+            .OrderByDescending(x => x.Score)
+            .Select(x => x.Album)
+            .ToList();
 
-        var localArtistsAvgScore = localArtists.Any() 
-            ? localArtists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name)) 
-            : 0.0;
-        var externalArtistsAvgScore = externalResult.Artists.Any() 
-            ? externalResult.Artists.Average(a => FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name)) 
-            : 0.0;
+        var allArtists = localArtists.Concat(externalResult.Artists)
+            .Select(a => new { Artist = a, Score = FuzzyMatcher.CalculateSimilarity(cleanQuery, a.Name) + (a.IsLocal ? 10.0 : 0.0) })
+            .OrderByDescending(x => x.Score)
+            .Select(x => x.Artist)
+            .ToList();
 
-        // Interleave results: put better-matching source first, preserve original ordering within each source
-        var allSongs = localSongsAvgScore >= externalSongsAvgScore
-            ? localSongs.Concat(externalResult.Songs).ToList()
-            : externalResult.Songs.Concat(localSongs).ToList();
-
-        var allAlbums = localAlbumsAvgScore >= externalAlbumsAvgScore
-            ? localAlbums.Concat(externalResult.Albums).ToList()
-            : externalResult.Albums.Concat(localAlbums).ToList();
-
-        var allArtists = localArtistsAvgScore >= externalArtistsAvgScore
-            ? localArtists.Concat(externalResult.Artists).ToList()
-            : externalResult.Artists.Concat(localArtists).ToList();
-
-        // Log results for debugging
+        // Log top results for debugging
         if (_logger.IsEnabled(LogLevel.Debug))
         {
-            _logger.LogDebug("🎵 Songs: Local avg score={LocalScore:F2}, External avg score={ExtScore:F2}, Local first={LocalFirst}",
-                localSongsAvgScore, externalSongsAvgScore, localSongsAvgScore >= externalSongsAvgScore);
-            _logger.LogDebug("💿 Albums: Local avg score={LocalScore:F2}, External avg score={ExtScore:F2}, Local first={LocalFirst}",
-                localAlbumsAvgScore, externalAlbumsAvgScore, localAlbumsAvgScore >= externalAlbumsAvgScore);
-            _logger.LogDebug("🎤 Artists: Local avg score={LocalScore:F2}, External avg score={ExtScore:F2}, Local first={LocalFirst}",
-                localArtistsAvgScore, externalArtistsAvgScore, localArtistsAvgScore >= externalArtistsAvgScore);
+            if (allSongs.Any())
+            {
+                var topSong = allSongs.First();
+                var topScore = FuzzyMatcher.CalculateSimilarity(cleanQuery, topSong.Title) + (topSong.IsLocal ? 10.0 : 0.0);
+                _logger.LogDebug("🎵 Top song: '{Title}' (local={IsLocal}, score={Score:F2})", 
+                    topSong.Title, topSong.IsLocal, topScore);
+            }
+            if (allAlbums.Any())
+            {
+                var topAlbum = allAlbums.First();
+                var topScore = FuzzyMatcher.CalculateSimilarity(cleanQuery, topAlbum.Title) + (topAlbum.IsLocal ? 10.0 : 0.0);
+                _logger.LogDebug("💿 Top album: '{Title}' (local={IsLocal}, score={Score:F2})", 
+                    topAlbum.Title, topAlbum.IsLocal, topScore);
+            }
+            if (allArtists.Any())
+            {
+                var topArtist = allArtists.First();
+                var topScore = FuzzyMatcher.CalculateSimilarity(cleanQuery, topArtist.Name) + (topArtist.IsLocal ? 10.0 : 0.0);
+                _logger.LogDebug("🎤 Top artist: '{Name}' (local={IsLocal}, score={Score:F2})", 
+                    topArtist.Name, topArtist.IsLocal, topScore);
+            }
         }
 
         // Convert to Jellyfin format
@@ -343,7 +346,7 @@ public class JellyfinController : ControllerBase
             mergedAlbums.AddRange(playlistItems);
         }
 
-        _logger.LogInformation("Merged results (preserving source order): Songs={Songs}, Albums={Albums}, Artists={Artists}",
+        _logger.LogDebug("Merged and sorted results by score: Songs={Songs}, Albums={Albums}, Artists={Artists}",
             mergedSongs.Count, mergedAlbums.Count, mergedArtists.Count);
 
         // Pre-fetch lyrics for top 3 songs in background (don't await)
@@ -374,7 +377,7 @@ public class JellyfinController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Failed to pre-fetch lyrics for search results");
+                    _logger.LogError(ex, "Failed to pre-fetch lyrics for search results");
                 }
             });
         }
@@ -382,28 +385,28 @@ public class JellyfinController : ControllerBase
         // Filter by item types if specified
         var items = new List<Dictionary<string, object?>>();
 
-        _logger.LogInformation("Filtering by item types: {ItemTypes}", itemTypes == null ? "null" : string.Join(",", itemTypes));
+        _logger.LogDebug("Filtering by item types: {ItemTypes}", itemTypes == null ? "null" : string.Join(",", itemTypes));
 
         if (itemTypes == null || itemTypes.Length == 0 || itemTypes.Contains("MusicArtist"))
         {
-            _logger.LogInformation("Adding {Count} artists to results", mergedArtists.Count);
+            _logger.LogDebug("Adding {Count} artists to results", mergedArtists.Count);
             items.AddRange(mergedArtists);
         }
         if (itemTypes == null || itemTypes.Length == 0 || itemTypes.Contains("MusicAlbum") || itemTypes.Contains("Playlist"))
         {
-            _logger.LogInformation("Adding {Count} albums to results", mergedAlbums.Count);
+            _logger.LogDebug("Adding {Count} albums to results", mergedAlbums.Count);
             items.AddRange(mergedAlbums);
         }
         if (itemTypes == null || itemTypes.Length == 0 || itemTypes.Contains("Audio"))
         {
-            _logger.LogInformation("Adding {Count} songs to results", mergedSongs.Count);
+            _logger.LogDebug("Adding {Count} songs to results", mergedSongs.Count);
             items.AddRange(mergedSongs);
         }
 
         // Apply pagination
         var pagedItems = items.Skip(startIndex).Take(limit).ToList();
 
-        _logger.LogInformation("Returning {Count} items (total: {Total})", pagedItems.Count, items.Count);
+        _logger.LogDebug("Returning {Count} items (total: {Total})", pagedItems.Count, items.Count);
 
         try
         {
@@ -419,11 +422,11 @@ public class JellyfinController : ControllerBase
             if (!string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(artistIds))
             {
                 var cacheKey = $"search:{searchTerm?.ToLowerInvariant()}:{includeItemTypes}:{limit}:{startIndex}";
-                await _cache.SetAsync(cacheKey, response, TimeSpan.FromMinutes(15));
-                _logger.LogDebug("💾 Cached search results for '{SearchTerm}' (15 min TTL)", searchTerm);
+                await _cache.SetAsync(cacheKey, response, CacheExtensions.SearchResultsTTL);
+                _logger.LogDebug("💾 Cached search results for '{SearchTerm}' ({Minutes} min TTL)", searchTerm, CacheExtensions.SearchResultsTTL.TotalMinutes);
             }
 
-            _logger.LogInformation("About to serialize response...");
+            _logger.LogDebug("About to serialize response...");
 
             var json = System.Text.Json.JsonSerializer.Serialize(response, new System.Text.Json.JsonSerializerOptions
             {
@@ -612,7 +615,7 @@ public class JellyfinController : ControllerBase
     {
         var itemTypes = ParseItemTypes(includeItemTypes);
 
-        _logger.LogInformation("GetExternalChildItems: provider={Provider}, externalId={ExternalId}, itemTypes={ItemTypes}", 
+        _logger.LogDebug("GetExternalChildItems: provider={Provider}, externalId={ExternalId}, itemTypes={ItemTypes}", 
             provider, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
 
         // Check if asking for audio (album tracks)
@@ -633,7 +636,7 @@ public class JellyfinController : ControllerBase
         var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId);
         var artist = await _metadataService.GetArtistAsync(provider, externalId);
 
-        _logger.LogInformation("Found {Count} albums for artist {ArtistName}", albums.Count, artist?.Name ?? "unknown");
+        _logger.LogDebug("Found {Count} albums for artist {ArtistName}", albums.Count, artist?.Name ?? "unknown");
 
         // Fill artist info
         if (artist != null)
@@ -664,13 +667,13 @@ public class JellyfinController : ControllerBase
         [FromQuery] int limit = 50,
         [FromQuery] int startIndex = 0)
     {
-        _logger.LogInformation("GetArtists called: searchTerm={SearchTerm}, limit={Limit}", searchTerm, limit);
+        _logger.LogDebug("GetArtists called: searchTerm={SearchTerm}, limit={Limit}", searchTerm, limit);
 
         // If there's a search term, integrate external results
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             var cleanQuery = searchTerm.Trim().Trim('"');
-            _logger.LogInformation("Searching artists for: {Query}", cleanQuery);
+            _logger.LogDebug("Searching artists for: {Query}", cleanQuery);
 
             // Run local and external searches in parallel
             var jellyfinTask = _proxyService.GetArtistsAsync(searchTerm, limit, startIndex, Request.Headers);
@@ -681,7 +684,7 @@ public class JellyfinController : ControllerBase
             var (jellyfinResult, _) = await jellyfinTask;
             var externalArtists = await externalTask;
 
-            _logger.LogInformation("Artist search results: Jellyfin={JellyfinCount}, External={ExternalCount}",
+            _logger.LogDebug("Artist search results: Jellyfin={JellyfinCount}, External={ExternalCount}",
                 jellyfinResult != null ? "found" : "null", externalArtists.Count);
 
             // Parse Jellyfin artists
@@ -698,7 +701,7 @@ public class JellyfinController : ControllerBase
             // Show ALL matches (local + external) sorted by best match first
             var mergedArtists = localArtists.Concat(externalArtists).ToList();
 
-            _logger.LogInformation("Returning {Count} total artists (local + external, no deduplication)", mergedArtists.Count);
+            _logger.LogDebug("Returning {Count} total artists (local + external, no deduplication)", mergedArtists.Count);
 
             // Convert to Jellyfin format
             var artistItems = mergedArtists.Select(a => _responseBuilder.ConvertArtistToJellyfinItem(a)).ToList();
@@ -963,14 +966,14 @@ public class JellyfinController : ControllerBase
 
         if (localPath != null && System.IO.File.Exists(localPath))
         {
-            // Update last access time for cache cleanup
+            // Update last write time for cache cleanup (extends cache lifetime)
             try
             {
-                System.IO.File.SetLastAccessTimeUtc(localPath, DateTime.UtcNow);
+                System.IO.File.SetLastWriteTimeUtc(localPath, DateTime.UtcNow);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to update last access time for {Path}", localPath);
+                _logger.LogError(ex, "Failed to update last write time for {Path}", localPath);
             }
             
             var stream = System.IO.File.OpenRead(localPath);
@@ -1103,7 +1106,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to fetch cover art from {Url}", coverUrl);
+            _logger.LogError(ex, "Failed to fetch cover art from {Url}", coverUrl);
             // Return placeholder on exception
             return await GetPlaceholderImageAsync();
         }
@@ -1144,7 +1147,7 @@ public class JellyfinController : ControllerBase
     [HttpGet("Items/{itemId}/Lyrics")]
     public async Task<IActionResult> GetLyrics(string itemId)
     {
-        _logger.LogInformation("🎵 GetLyrics called for itemId: {ItemId}", itemId);
+        _logger.LogDebug("🎵 GetLyrics called for itemId: {ItemId}", itemId);
         
         if (string.IsNullOrWhiteSpace(itemId))
         {
@@ -1153,18 +1156,18 @@ public class JellyfinController : ControllerBase
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         
-        _logger.LogInformation("🎵 Lyrics request: itemId={ItemId}, isExternal={IsExternal}, provider={Provider}, externalId={ExternalId}", 
+        _logger.LogDebug("🎵 Lyrics request: itemId={ItemId}, isExternal={IsExternal}, provider={Provider}, externalId={ExternalId}", 
             itemId, isExternal, provider, externalId);
 
         // For local tracks, check if Jellyfin already has embedded lyrics
         if (!isExternal)
         {
-            _logger.LogInformation("Checking Jellyfin for embedded lyrics for local track: {ItemId}", itemId);
+            _logger.LogDebug("Checking Jellyfin for embedded lyrics for local track: {ItemId}", itemId);
             
             // Try to get lyrics from Jellyfin first (it reads embedded lyrics from files)
             var (jellyfinLyrics, statusCode) = await _proxyService.GetJsonAsync($"Audio/{itemId}/Lyrics", null, Request.Headers);
             
-            _logger.LogInformation("Jellyfin lyrics check result: statusCode={StatusCode}, hasLyrics={HasLyrics}", 
+            _logger.LogDebug("Jellyfin lyrics check result: statusCode={StatusCode}, hasLyrics={HasLyrics}", 
                 statusCode, jellyfinLyrics != null);
             
             if (jellyfinLyrics != null && statusCode == 200)
@@ -1173,7 +1176,7 @@ public class JellyfinController : ControllerBase
                 return new JsonResult(JsonSerializer.Deserialize<object>(jellyfinLyrics.RootElement.GetRawText()));
             }
             
-            _logger.LogInformation("No embedded lyrics found in Jellyfin (status: {StatusCode}), trying Spotify/LRCLIB", statusCode);
+            _logger.LogWarning("No embedded lyrics found in Jellyfin (status: {StatusCode}), trying Spotify/LRCLIB", statusCode);
         }
 
         // Get song metadata for lyrics search
@@ -1197,7 +1200,7 @@ public class JellyfinController : ControllerBase
                 spotifyTrackId = await FindSpotifyIdForExternalTrackAsync(song);
                 if (!string.IsNullOrEmpty(spotifyTrackId))
                 {
-                    _logger.LogInformation("Found Spotify ID {SpotifyId} for external track {Provider}/{ExternalId} from cache", 
+                    _logger.LogDebug("Found Spotify ID {SpotifyId} for external track {Provider}/{ExternalId} from cache", 
                         spotifyTrackId, provider, externalId);
                 }
                 else
@@ -1225,7 +1228,7 @@ public class JellyfinController : ControllerBase
                     
                     if (!string.IsNullOrEmpty(spotifyTrackId))
                     {
-                        _logger.LogInformation("Converted {Provider}/{ExternalId} to Spotify ID {SpotifyId} via Odesli", 
+                        _logger.LogDebug("Converted {Provider}/{ExternalId} to Spotify ID {SpotifyId} via Odesli", 
                             provider, externalId, spotifyTrackId);
                     }
                 }
@@ -1274,50 +1277,53 @@ public class JellyfinController : ControllerBase
             searchArtists.Add(searchArtist);
         }
 
+        // Use orchestrator for clean, modular lyrics fetching
         LyricsInfo? lyrics = null;
         
-        // Try Spotify lyrics ONLY if we have a valid Spotify track ID
-        // Spotify lyrics only work for tracks from injected playlists that have been matched
-        if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
+        if (_lyricsOrchestrator != null)
         {
-            // Validate that this is a real Spotify ID (not spotify:local or other invalid formats)
-            var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
-            
-            // Spotify track IDs are 22 characters, base62 encoded
-            if (cleanSpotifyId.Length == 22 && !cleanSpotifyId.Contains(":") && !cleanSpotifyId.Contains("local"))
-            {
-                _logger.LogInformation("Trying Spotify lyrics for track ID: {SpotifyId} ({Artist} - {Title})", 
-                    cleanSpotifyId, searchArtist, searchTitle);
-                
-                var spotifyLyrics = await _spotifyLyricsService.GetLyricsByTrackIdAsync(cleanSpotifyId);
-                
-                if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
-                {
-                    _logger.LogInformation("Found Spotify lyrics for {Artist} - {Title} ({LineCount} lines, type: {SyncType})", 
-                        searchArtist, searchTitle, spotifyLyrics.Lines.Count, spotifyLyrics.SyncType);
-                    lyrics = _spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
-                }
-                else
-                {
-                    _logger.LogDebug("No Spotify lyrics found for track ID {SpotifyId}", cleanSpotifyId);
-                }
-            }
-            else
-            {
-                _logger.LogDebug("Invalid Spotify ID format: {SpotifyId}, skipping Spotify lyrics", spotifyTrackId);
-            }
+            lyrics = await _lyricsOrchestrator.GetLyricsAsync(
+                trackName: searchTitle,
+                artistNames: searchArtists.ToArray(),
+                albumName: searchAlbum,
+                durationSeconds: song.Duration ?? 0,
+                spotifyTrackId: spotifyTrackId);
         }
-        
-        // Fall back to LRCLIB if no Spotify lyrics
-        if (lyrics == null)
+        else
         {
-            _logger.LogInformation("Searching LRCLIB for lyrics: {Artists} - {Title}", 
-                string.Join(", ", searchArtists), 
-                searchTitle);
-            var lrclibService = HttpContext.RequestServices.GetService<LrclibService>();
-            if (lrclibService != null)
+            // Fallback to manual fetching if orchestrator not available
+            _logger.LogWarning("LyricsOrchestrator not available, using fallback method");
+            
+            // Try Spotify lyrics ONLY if we have a valid Spotify track ID
+            if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
             {
-                lyrics = await lrclibService.GetLyricsAsync(
+                var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
+                
+                if (cleanSpotifyId.Length == 22 && !cleanSpotifyId.Contains(":") && !cleanSpotifyId.Contains("local"))
+                {
+                    var spotifyLyrics = await _spotifyLyricsService.GetLyricsByTrackIdAsync(cleanSpotifyId);
+                    
+                    if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
+                    {
+                        lyrics = _spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
+                    }
+                }
+            }
+            
+            // Fall back to LyricsPlus
+            if (lyrics == null && _lyricsPlusService != null)
+            {
+                lyrics = await _lyricsPlusService.GetLyricsAsync(
+                    searchTitle,
+                    searchArtists.ToArray(),
+                    searchAlbum,
+                    song.Duration ?? 0);
+            }
+            
+            // Fall back to LRCLIB
+            if (lyrics == null && _lrclibService != null)
+            {
+                lyrics = await _lrclibService.GetLyricsAsync(
                     searchTitle,
                     searchArtists.ToArray(),
                     searchAlbum,
@@ -1342,7 +1348,7 @@ public class JellyfinController : ControllerBase
         
         if (isSynced && !string.IsNullOrEmpty(lyrics.SyncedLyrics))
         {
-            _logger.LogInformation("Parsing synced lyrics (LRC format)");
+            _logger.LogDebug("Parsing synced lyrics (LRC format)");
             // Parse LRC format: [mm:ss.xx] text
             // Skip ID tags like [ar:Artist], [ti:Title], etc.
             var lines = lyrics.SyncedLyrics.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -1370,7 +1376,7 @@ public class JellyfinController : ControllerBase
                 }
                 // Skip ID tags like [ar:Artist], [ti:Title], [length:2:23], etc.
             }
-            _logger.LogInformation("Parsed {Count} synced lyric lines (skipped ID tags)", lyricLines.Count);
+            _logger.LogDebug("Parsed {Count} synced lyric lines (skipped ID tags)", lyricLines.Count);
         }
         else if (!string.IsNullOrEmpty(lyricsText))
         {
@@ -1386,7 +1392,7 @@ public class JellyfinController : ControllerBase
                     ["Text"] = line.Trim()
                 });
             }
-            _logger.LogInformation("Split into {Count} plain lyric lines", lyricLines.Count);
+            _logger.LogDebug("Split into {Count} plain lyric lines", lyricLines.Count);
         }
         else
         {
@@ -1411,14 +1417,14 @@ public class JellyfinController : ControllerBase
             Lyrics = lyricLines
         };
 
-        _logger.LogInformation("Returning lyrics response: {LineCount} lines, synced={IsSynced}", lyricLines.Count, isSynced);
+        _logger.LogDebug("Returning lyrics response: {LineCount} lines, synced={IsSynced}", lyricLines.Count, isSynced);
         
         // Log a sample of the response for debugging
         if (lyricLines.Count > 0)
         {
             var sampleLine = lyricLines[0];
             var hasStart = sampleLine.ContainsKey("Start");
-            _logger.LogInformation("Sample line: Text='{Text}', HasStart={HasStart}", 
+            _logger.LogDebug("Sample line: Text='{Text}', HasStart={HasStart}", 
                 sampleLine.GetValueOrDefault("Text"), hasStart);
         }
 
@@ -1498,6 +1504,21 @@ public class JellyfinController : ControllerBase
             
             _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Title}", searchArtist, searchTitle);
             
+            // Use orchestrator for prefetching
+            if (_lyricsOrchestrator != null)
+            {
+                await _lyricsOrchestrator.PrefetchLyricsAsync(
+                    trackName: searchTitle,
+                    artistNames: searchArtists.ToArray(),
+                    albumName: searchAlbum,
+                    durationSeconds: song.Duration ?? 0,
+                    spotifyTrackId: spotifyTrackId);
+                return;
+            }
+            
+            // Fallback to manual prefetching if orchestrator not available
+            _logger.LogWarning("LyricsOrchestrator not available for prefetch, using fallback method");
+            
             // Try Spotify lyrics if we have a valid Spotify track ID
             if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
             {
@@ -1513,6 +1534,22 @@ public class JellyfinController : ControllerBase
                             searchArtist, searchTitle, spotifyLyrics.Lines.Count);
                         return; // Success, lyrics are now cached
                     }
+                }
+            }
+            
+            // Fall back to LyricsPlus
+            if (_lyricsPlusService != null)
+            {
+                var lyrics = await _lyricsPlusService.GetLyricsAsync(
+                    searchTitle,
+                    searchArtists.ToArray(),
+                    searchAlbum,
+                    song.Duration ?? 0);
+                
+                if (lyrics != null)
+                {
+                    _logger.LogDebug("✓ Prefetched LyricsPlus lyrics for {Artist} - {Title}", searchArtist, searchTitle);
+                    return; // Success, lyrics are now cached
                 }
             }
             
@@ -1537,7 +1574,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Error prefetching lyrics for track {ItemId}", itemId);
+            _logger.LogError(ex, "Error prefetching lyrics for track {ItemId}", itemId);
         }
     }
 
@@ -1559,7 +1596,7 @@ public class JellyfinController : ControllerBase
             userId = Request.Query["userId"].ToString();
         }
         
-        _logger.LogInformation("MarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}", 
+        _logger.LogDebug("MarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}", 
             userId, itemId, Request.Path);
         
         // Check if this is an external playlist - trigger download
@@ -1628,7 +1665,7 @@ public class JellyfinController : ControllerBase
             endpoint = $"{endpoint}?userId={userId}";
         }
         
-        _logger.LogInformation("Proxying favorite request to Jellyfin: {Endpoint}", endpoint);
+        _logger.LogDebug("Proxying favorite request to Jellyfin: {Endpoint}", endpoint);
         
         var (result, statusCode) = await _proxyService.PostJsonAsync(endpoint, "{}", Request.Headers);
         
@@ -1649,7 +1686,7 @@ public class JellyfinController : ControllerBase
             userId = Request.Query["userId"].ToString();
         }
         
-        _logger.LogInformation("UnmarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}", 
+        _logger.LogDebug("UnmarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}", 
             userId, itemId, Request.Path);
         
         // External items - remove from kept folder if it exists
@@ -1686,7 +1723,7 @@ public class JellyfinController : ControllerBase
             endpoint = $"{endpoint}?userId={userId}";
         }
         
-        _logger.LogInformation("Proxying unfavorite request to Jellyfin: {Endpoint}", endpoint);
+        _logger.LogDebug("Proxying unfavorite request to Jellyfin: {Endpoint}", endpoint);
         
         var (result, statusCode) = await _proxyService.DeleteAsync(endpoint, Request.Headers);
         
@@ -1748,7 +1785,7 @@ public class JellyfinController : ControllerBase
     {
         try
         {
-            _logger.LogInformation("=== GetPlaylistTracks called === PlaylistId: {PlaylistId}", playlistId);
+            _logger.LogDebug("=== GetPlaylistTracks called === PlaylistId: {PlaylistId}", playlistId);
             
             // Check if this is an external playlist (Deezer/Qobuz) first
             if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
@@ -1788,7 +1825,7 @@ public class JellyfinController : ControllerBase
                 endpoint = $"{endpoint}{Request.QueryString.Value}";
             }
             
-            _logger.LogInformation("Proxying to Jellyfin: {Endpoint}", endpoint);
+            _logger.LogDebug("Proxying to Jellyfin: {Endpoint}", endpoint);
             var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
             
             return HandleProxyResponse(result, statusCode);
@@ -1834,15 +1871,15 @@ public class JellyfinController : ControllerBase
             var imageBytes = await response.Content.ReadAsByteArrayAsync();
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
             
-            // Cache for 1 hour (playlists can change, so don't cache too long)
-            await _cache.SetAsync(cacheKey, imageBytes, TimeSpan.FromHours(1));
+            // Cache for configurable duration (playlists can change)
+            await _cache.SetAsync(cacheKey, imageBytes, CacheExtensions.PlaylistImagesTTL);
             _logger.LogDebug("Cached playlist image for {PlaylistId}", playlistId);
             
             return File(imageBytes, contentType);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to get playlist image {PlaylistId}", playlistId);
+            _logger.LogError(ex, "Failed to get playlist image {PlaylistId}", playlistId);
             return NotFound();
         }
     }
@@ -1870,7 +1907,7 @@ public class JellyfinController : ControllerBase
             // Reset stream position
             Request.Body.Position = 0;
             
-            _logger.LogInformation("Authentication request received");
+            _logger.LogDebug("Authentication request received");
             // DO NOT log request body or detailed headers - contains password
             
             // Forward to Jellyfin server with client headers - completely transparent proxy
@@ -1933,14 +1970,14 @@ public class JellyfinController : ControllerBase
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogDebug(ex, "Failed to post session capabilities after auth");
+                                _logger.LogError(ex, "Failed to post session capabilities after auth");
                             }
                         });
                     }
                 }
                 else
                 {
-                    _logger.LogWarning("Authentication failed - status {StatusCode}", statusCode);
+                    _logger.LogError("Authentication failed - status {StatusCode}", statusCode);
                 }
                 
                 // Return Jellyfin's exact response
@@ -2023,7 +2060,7 @@ public class JellyfinController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to get similar items for external song {ItemId}", itemId);
+                _logger.LogError(ex, "Failed to get similar items for external song {ItemId}", itemId);
                 return _responseBuilder.CreateJsonResponse(new
                 {
                     Items = Array.Empty<object>(),
@@ -2132,7 +2169,7 @@ public class JellyfinController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to create instant mix for external song {ItemId}", itemId);
+                _logger.LogError(ex, "Failed to create instant mix for external song {ItemId}", itemId);
                 return _responseBuilder.CreateJsonResponse(new
                 {
                     Items = Array.Empty<object>(),
@@ -2212,7 +2249,7 @@ public class JellyfinController : ControllerBase
             }
             else if (statusCode == 401)
             {
-                _logger.LogDebug("⚠ Jellyfin returned 401 for capabilities (token expired)");
+                _logger.LogWarning("⚠ Jellyfin returned 401 for capabilities (token expired)");
             }
             else
             {
@@ -2294,7 +2331,7 @@ public class JellyfinController : ControllerBase
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogDebug(ex, "Failed to prefetch lyrics for external track {ItemId}", itemId);
+                            _logger.LogError(ex, "Failed to prefetch lyrics for external track {ItemId}", itemId);
                         }
                     });
                     
@@ -2344,7 +2381,7 @@ public class JellyfinController : ControllerBase
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug(ex, "Failed to prefetch lyrics for local track {ItemId}", itemId);
+                        _logger.LogError(ex, "Failed to prefetch lyrics for local track {ItemId}", itemId);
                     }
                 });
             }
@@ -2388,7 +2425,7 @@ public class JellyfinController : ControllerBase
                             }
                             else
                             {
-                                _logger.LogWarning("⚠️ SESSION: Failed to ensure session for device {DeviceId}", deviceId);
+                                _logger.LogError("⚠️ SESSION: Failed to ensure session for device {DeviceId}", deviceId);
                             }
                         }
                         else
@@ -2414,7 +2451,7 @@ public class JellyfinController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to send playback start, trying basic");
+                _logger.LogError(ex, "Failed to send playback start, trying basic");
                 // Fall back to basic playback start
                 var (result, statusCode) = await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
                 if (statusCode == 204 || statusCode == 200)
@@ -2427,7 +2464,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to report playback start");
+            _logger.LogError(ex, "Failed to report playback start");
             return NoContent(); // Return success anyway to not break playback
         }
     }
@@ -2540,7 +2577,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to report playback progress");
+            _logger.LogError(ex, "Failed to report playback progress");
             return NoContent();
         }
     }
@@ -2561,7 +2598,7 @@ public class JellyfinController : ControllerBase
             }
             Request.Body.Position = 0;
 
-            _logger.LogDebug("⏹️  Playback STOPPED reported");
+            _logger.LogInformation("⏹️  Playback STOPPED reported");
 
             // Parse the body to check if it's an external track
             var doc = JsonDocument.Parse(body);
@@ -2657,7 +2694,7 @@ public class JellyfinController : ControllerBase
             }
             else if (statusCode == 401)
             {
-                _logger.LogDebug("Playback stop returned 401 (token expired)");
+                _logger.LogWarning("Playback stop returned 401 (token expired)");
             }
             else
             {
@@ -2668,7 +2705,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to report playback stopped");
+            _logger.LogError(ex, "Failed to report playback stopped");
             return NoContent();
         }
     }
@@ -2690,7 +2727,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to ping playback session");
+            _logger.LogError(ex, "Failed to ping playback session");
             return NoContent();
         }
     }
@@ -2778,7 +2815,7 @@ public class JellyfinController : ControllerBase
         {
             LocalAddress = Request.Host.ToString(),
             ServerName = serverName ?? "Allstarr",
-            Version = version ?? "1.0.0",
+            Version = version ?? "1.0.1",
             ProductName = "Allstarr (Jellyfin Proxy)",
             OperatingSystem = Environment.OSVersion.Platform.ToString(),
             Id = _settings.DeviceId,
@@ -2862,7 +2899,7 @@ public class JellyfinController : ControllerBase
             {
                 var playlistId = parts[1];
                 
-                _logger.LogInformation("=== PLAYLIST REQUEST ===");
+                _logger.LogDebug("=== PLAYLIST REQUEST ===");
                 _logger.LogInformation("Playlist ID: {PlaylistId}", playlistId);
                 _logger.LogInformation("Spotify Enabled: {Enabled}", _spotifySettings.Enabled);
                 _logger.LogInformation("Configured Playlists: {Playlists}", string.Join(", ", _spotifySettings.Playlists.Select(p => $"{p.Name}:{p.Id}")));
@@ -2938,7 +2975,7 @@ public class JellyfinController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to proxy binary request for {Path}", path);
+                _logger.LogError(ex, "Failed to proxy binary request for {Path}", path);
                 return NotFound();
             }
         }
@@ -2948,12 +2985,12 @@ public class JellyfinController : ControllerBase
         
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
-            _logger.LogInformation("ProxyRequest intercepting search request: Path={Path}, SearchTerm={SearchTerm}", path, searchTerm);
+            _logger.LogDebug("ProxyRequest intercepting search request: Path={Path}, SearchTerm={SearchTerm}", path, searchTerm);
             
             // Item search: /users/{userId}/items or /items
             if (path.EndsWith("/items", StringComparison.OrdinalIgnoreCase) || path.Equals("items", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogInformation("Redirecting to SearchItems");
+                _logger.LogDebug("Redirecting to SearchItems");
                 return await SearchItems(
                     searchTerm: searchTerm,
                     includeItemTypes: Request.Query["IncludeItemTypes"],
@@ -2994,7 +3031,7 @@ public class JellyfinController : ControllerBase
                 Request.EnableBuffering();
                 
                 // Log request details for debugging
-                _logger.LogInformation("POST request to {Path}: Method={Method}, ContentType={ContentType}, ContentLength={ContentLength}", 
+                _logger.LogDebug("POST request to {Path}: Method={Method}, ContentType={ContentType}, ContentLength={ContentLength}", 
                     fullPath, Request.Method, Request.ContentType, Request.ContentLength);
                 
                 // Read body using StreamReader with proper encoding
@@ -3018,7 +3055,7 @@ public class JellyfinController : ControllerBase
                 }
                 else
                 {
-                    _logger.LogInformation("POST body received from client for {Path}: {BodyLength} bytes, ContentType={ContentType}", 
+                    _logger.LogDebug("POST body received from client for {Path}: {BodyLength} bytes, ContentType={ContentType}", 
                         fullPath, body.Length, Request.ContentType);
                     
                     // Always log body content for playback endpoints to debug the issue
@@ -3075,7 +3112,7 @@ public class JellyfinController : ControllerBase
                 result.RootElement.ValueKind == JsonValueKind.Object && 
                 result.RootElement.TryGetProperty("Items", out var items))
             {
-                _logger.LogInformation("Response has Items property, checking for Spotify playlists to update counts");
+                _logger.LogDebug("Response has Items property, checking for Spotify playlists to update counts");
                 result = await UpdateSpotifyPlaylistCounts(result);
             }
 
@@ -3084,7 +3121,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Proxy request failed for {Path}", path);
+            _logger.LogError(ex, "Proxy request failed for {Path}", path);
             return _responseBuilder.CreateError(502, $"Proxy error: {ex.Message}");
         }
     }
@@ -3146,7 +3183,7 @@ public class JellyfinController : ControllerBase
             var modified = false;
             var updatedItems = new List<Dictionary<string, object>>();
 
-            _logger.LogInformation("Checking {Count} items for Spotify playlists", itemsArray.Count);
+            _logger.LogDebug("Checking {Count} items for Spotify playlists", itemsArray.Count);
 
             foreach (var item in itemsArray)
             {
@@ -3179,7 +3216,7 @@ public class JellyfinController : ControllerBase
                             var matchedTracksKey = $"spotify:matched:ordered:{playlistName}";
                             var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
                             
-                            _logger.LogDebug("Cache lookup for {Key}: {Count} matched tracks", 
+                            _logger.LogInformation("Cache lookup for {Key}: {Count} matched tracks", 
                                 matchedTracksKey, matchedTracks?.Count ?? 0);
                             
                             // Fallback to legacy cache format
@@ -3204,7 +3241,7 @@ public class JellyfinController : ControllerBase
                                 var fileItems = await LoadPlaylistItemsFromFile(playlistName);
                                 if (fileItems != null && fileItems.Count > 0)
                                 {
-                                    _logger.LogInformation("💿 Loaded {Count} playlist items from file cache for count update", fileItems.Count);
+                                    _logger.LogDebug("💿 Loaded {Count} playlist items from file cache for count update", fileItems.Count);
                                     // Use file cache count directly
                                     itemDict["ChildCount"] = fileItems.Count;
                                     modified = true;
@@ -3237,13 +3274,13 @@ public class JellyfinController : ControllerBase
                                         localTracksResponse.RootElement.TryGetProperty("Items", out var localItems))
                                     {
                                         localTracksCount = localItems.GetArrayLength();
-                                        _logger.LogInformation("Found {Count} total items in Jellyfin playlist {Name}", 
+                                        _logger.LogDebug("Found {Count} total items in Jellyfin playlist {Name}", 
                                             localTracksCount, playlistName);
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.LogWarning(ex, "Failed to get local tracks count for {Name}", playlistName);
+                                    _logger.LogError(ex, "Failed to get local tracks count for {Name}", playlistName);
                                 }
                                 
                                 // Count external matched tracks (not local)
@@ -3262,7 +3299,7 @@ public class JellyfinController : ControllerBase
                                     // Update ChildCount to show actual available tracks
                                     itemDict["ChildCount"] = totalAvailableCount;
                                     modified = true;
-                                    _logger.LogInformation("✓ Updated ChildCount for Spotify playlist {Name} to {Total} ({Local} local + {External} external)", 
+                                    _logger.LogDebug("✓ Updated ChildCount for Spotify playlist {Name} to {Total} ({Local} local + {External} external)", 
                                         playlistName, totalAvailableCount, localTracksCount, externalMatchedCount);
                                 }
                                 else
@@ -3288,7 +3325,7 @@ public class JellyfinController : ControllerBase
                 return response;
             }
 
-            _logger.LogInformation("Modified {Count} Spotify playlists, rebuilding response", 
+            _logger.LogDebug("Modified {Count} Spotify playlists, rebuilding response", 
                 updatedItems.Count(i => i.ContainsKey("ChildCount")));
 
             // Rebuild the response with updated items
@@ -3304,7 +3341,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to update Spotify playlist counts");
+            _logger.LogError(ex, "Failed to update Spotify playlist counts");
             return response;
         }
     }
@@ -3336,7 +3373,7 @@ public class JellyfinController : ControllerBase
         catch (Exception ex)
         {
             // Don't let logging failures break the request
-            _logger.LogDebug(ex, "Failed to log endpoint usage");
+            _logger.LogError(ex, "Failed to log endpoint usage");
         }
     }
 
@@ -3460,25 +3497,25 @@ public class JellyfinController : ControllerBase
     
     /// <summary>
     /// New mode: Gets playlist tracks with correct ordering using direct Spotify API data.
+    /// Optimized to only re-match when Jellyfin playlist changes (cheap check).
     /// </summary>
     private async Task<IActionResult?> GetSpotifyPlaylistTracksOrderedAsync(string spotifyPlaylistName, string playlistId)
     {
-        // Check Redis cache first for fast serving
+        // Check if Jellyfin playlist has changed (cheap API call)
+        var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{spotifyPlaylistName}";
+        var currentJellyfinSignature = await GetJellyfinPlaylistSignatureAsync(playlistId);
+        var cachedJellyfinSignature = await _cache.GetAsync<string>(jellyfinSignatureCacheKey);
+        
+        var jellyfinPlaylistChanged = cachedJellyfinSignature != currentJellyfinSignature;
+        
+        // Check Redis cache first for fast serving (only if Jellyfin playlist hasn't changed)
         var cacheKey = $"spotify:playlist:items:{spotifyPlaylistName}";
         var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(cacheKey);
         
-        if (cachedItems != null && cachedItems.Count > 0)
+        if (cachedItems != null && cachedItems.Count > 0 && !jellyfinPlaylistChanged)
         {
-            _logger.LogInformation("✅ Loaded {Count} playlist items from Redis cache for {Playlist}", 
+            _logger.LogDebug("✅ Loaded {Count} playlist items from Redis cache for {Playlist} (Jellyfin unchanged)", 
                 cachedItems.Count, spotifyPlaylistName);
-            
-            // Log sample item to verify Spotify IDs are present
-            if (cachedItems.Count > 0 && cachedItems[0].ContainsKey("ProviderIds"))
-            {
-                var providerIds = cachedItems[0]["ProviderIds"] as Dictionary<string, object>;
-                var hasSpotifyId = providerIds?.ContainsKey("Spotify") ?? false;
-                _logger.LogDebug("Sample cached item has Spotify ID: {HasSpotifyId}", hasSpotifyId);
-            }
             
             return new JsonResult(new
             {
@@ -3488,15 +3525,20 @@ public class JellyfinController : ControllerBase
             });
         }
         
+        if (jellyfinPlaylistChanged)
+        {
+            _logger.LogInformation("🔄 Jellyfin playlist changed for {Playlist} - re-matching tracks", spotifyPlaylistName);
+        }
+        
         // Check file cache as fallback
         var fileItems = await LoadPlaylistItemsFromFile(spotifyPlaylistName);
         if (fileItems != null && fileItems.Count > 0)
         {
-            _logger.LogInformation("✅ Loaded {Count} playlist items from file cache for {Playlist}", 
+            _logger.LogDebug("✅ Loaded {Count} playlist items from file cache for {Playlist}", 
                 fileItems.Count, spotifyPlaylistName);
             
             // Restore to Redis cache
-            await _cache.SetAsync(cacheKey, fileItems, TimeSpan.FromHours(24));
+            await _cache.SetAsync(cacheKey, fileItems, CacheExtensions.SpotifyPlaylistItemsTTL);
             
             return new JsonResult(new
             {
@@ -3512,12 +3554,12 @@ public class JellyfinController : ControllerBase
         
         if (orderedTracks == null || orderedTracks.Count == 0)
         {
-            _logger.LogDebug("No ordered matched tracks in cache for {Playlist}, checking if we can fetch", 
+            _logger.LogInformation("No ordered matched tracks in cache for {Playlist}, checking if we can fetch", 
                 spotifyPlaylistName);
             return null; // Fall back to legacy mode
         }
         
-        _logger.LogDebug("Using {Count} ordered matched tracks for {Playlist}", 
+        _logger.LogInformation("Using {Count} ordered matched tracks for {Playlist}", 
             orderedTracks.Count, spotifyPlaylistName);
         
         // Get existing Jellyfin playlist items (RAW - don't convert!)
@@ -3529,8 +3571,17 @@ public class JellyfinController : ControllerBase
             return null; // Fall back to legacy mode
         }
         
-        // Request MediaSources field to get bitrate info
-        var playlistItemsUrl = $"Playlists/{playlistId}/Items?UserId={userId}&Fields=MediaSources";
+        // Pass through all requested fields from the original request
+        var queryString = Request.QueryString.Value ?? "";
+        var playlistItemsUrl = $"Playlists/{playlistId}/Items?UserId={userId}";
+        
+        // Append the original query string (which includes Fields parameter)
+        if (!string.IsNullOrEmpty(queryString))
+        {
+            // Remove the leading ? if present
+            queryString = queryString.TrimStart('?');
+            playlistItemsUrl = $"{playlistItemsUrl}&{queryString}";
+        }
         
         _logger.LogInformation("🔍 Fetching existing tracks from Jellyfin playlist {PlaylistId} with UserId {UserId}", 
             playlistId, userId);
@@ -3597,7 +3648,7 @@ public class JellyfinController : ControllerBase
         var localUsedCount = 0;
         var externalUsedCount = 0;
         
-        _logger.LogInformation("🔍 Building playlist in Spotify order with {SpotifyCount} positions...", spotifyTracks.Count);
+        _logger.LogDebug("🔍 Building playlist in Spotify order with {SpotifyCount} positions...", spotifyTracks.Count);
         
         foreach (var spotifyTrack in spotifyTracks.OrderBy(t => t.Position))
         {
@@ -3681,15 +3732,17 @@ public class JellyfinController : ControllerBase
             }
         }
         
-        _logger.LogInformation(
-            "🎵 Final playlist '{Playlist}': {Total} tracks ({Local} LOCAL + {External} EXTERNAL)", 
+        _logger.LogDebug("🎵 Final playlist '{Playlist}': {Total} tracks ({Local} LOCAL + {External} EXTERNAL)", 
             spotifyPlaylistName, finalItems.Count, localUsedCount, externalUsedCount);
         
         // Save to file cache for persistence across restarts
         await SavePlaylistItemsToFile(spotifyPlaylistName, finalItems);
         
         // Also cache in Redis for fast serving (reuse the same cache key from top of method)
-        await _cache.SetAsync(cacheKey, finalItems, TimeSpan.FromHours(24));
+        await _cache.SetAsync(cacheKey, finalItems, CacheExtensions.SpotifyPlaylistItemsTTL);
+        
+        // Cache the Jellyfin playlist signature to detect future changes
+        await _cache.SetAsync(jellyfinSignatureCacheKey, currentJellyfinSignature, CacheExtensions.SpotifyPlaylistItemsTTL);
         
         // Return raw Jellyfin response format
         return new JsonResult(new
@@ -3710,7 +3763,7 @@ public class JellyfinController : ControllerBase
         
         if (cachedTracks != null && cachedTracks.Count > 0)
         {
-            _logger.LogDebug("Returning {Count} cached matched tracks from Redis for {Playlist}", 
+            _logger.LogInformation("Returning {Count} cached matched tracks from Redis for {Playlist}", 
                 cachedTracks.Count, spotifyPlaylistName);
             return _responseBuilder.CreateItemsResponse(cachedTracks);
         }
@@ -3721,8 +3774,8 @@ public class JellyfinController : ControllerBase
             cachedTracks = await LoadMatchedTracksFromFile(spotifyPlaylistName);
             if (cachedTracks != null && cachedTracks.Count > 0)
             {
-                // Restore to Redis with 1 hour TTL
-                await _cache.SetAsync(cacheKey, cachedTracks, TimeSpan.FromHours(1));
+                // Restore to Redis with configurable TTL
+                await _cache.SetAsync(cacheKey, cachedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
                 _logger.LogInformation("Loaded {Count} matched tracks from file cache for {Playlist}", 
                     cachedTracks.Count, spotifyPlaylistName);
                 return _responseBuilder.CreateItemsResponse(cachedTracks);
@@ -3739,7 +3792,7 @@ public class JellyfinController : ControllerBase
         }
         else
         {
-            _logger.LogWarning("No UserId configured - may not be able to fetch existing playlist tracks");
+            _logger.LogInformation("No UserId configured - may not be able to fetch existing playlist tracks");
         }
         
         var (existingTracksResponse, _) = await _proxyService.GetJsonAsync(
@@ -3784,7 +3837,7 @@ public class JellyfinController : ControllerBase
             if (missingTracks != null && missingTracks.Count > 0)
             {
                 await _cache.SetAsync(missingTracksKey, missingTracks, TimeSpan.FromDays(365));
-                _logger.LogInformation("Restored {Count} missing tracks from file cache for {Playlist} (no expiration)", 
+                _logger.LogDebug("Restored {Count} missing tracks from file cache for {Playlist} (no expiration)", 
                     missingTracks.Count, spotifyPlaylistName);
             }
         }
@@ -3796,7 +3849,7 @@ public class JellyfinController : ControllerBase
             return _responseBuilder.CreateItemsResponse(existingTracks);
         }
 
-        _logger.LogInformation("Matching {Count} missing tracks for {Playlist}", 
+        _logger.LogDebug("Matching {Count} missing tracks for {Playlist}", 
             missingTracks.Count, spotifyPlaylistName);
 
         // Match missing tracks sequentially with rate limiting (excluding ones we already have locally)
@@ -3855,7 +3908,7 @@ public class JellyfinController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Failed to match track: {Title} - {Artist}", 
+                _logger.LogError(ex, "Failed to match track: {Title} - {Artist}", 
                     track.Title, track.PrimaryArtist);
             }
         }
@@ -3879,7 +3932,7 @@ public class JellyfinController : ControllerBase
             finalTracks.AddRange(existingTracks);
         }
 
-        await _cache.SetAsync(cacheKey, finalTracks, TimeSpan.FromHours(1));
+        await _cache.SetAsync(cacheKey, finalTracks, CacheExtensions.SpotifyMatchedTracksTTL);
         
         // Also save to file cache for persistence across restarts
         await SaveMatchedTracksToFile(spotifyPlaylistName, finalTracks);
@@ -3948,7 +4001,7 @@ public class JellyfinController : ControllerBase
                 if (cacheFiles.Length > 0)
                 {
                     sourceFilePath = cacheFiles[0];
-                    _logger.LogInformation("Found track in cache folder: {Path}", sourceFilePath);
+                    _logger.LogDebug("Found track in cache folder: {Path}", sourceFilePath);
                 }
             }
 
@@ -3962,7 +4015,7 @@ public class JellyfinController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to download track {ItemId}", itemId);
+                    _logger.LogError(ex, "Failed to download track {ItemId}", itemId);
                     return;
                 }
             }
@@ -3983,7 +4036,7 @@ public class JellyfinController : ControllerBase
             }
 
             System.IO.File.Copy(sourceFilePath, keptFilePath, overwrite: false);
-            _logger.LogInformation("✓ Copied track to kept folder: {Path}", keptFilePath);
+            _logger.LogDebug("✓ Copied track to kept folder: {Path}", keptFilePath);
             
             // Also copy cover art if it exists
             var sourceCoverPath = Path.Combine(Path.GetDirectoryName(sourceFilePath)!, "cover.jpg");
@@ -4044,7 +4097,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to check favorite status for {ItemId}", itemId);
+            _logger.LogError(ex, "Failed to check favorite status for {ItemId}", itemId);
             return false;
         }
     }
@@ -4083,7 +4136,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to mark track as favorited: {ItemId}", itemId);
+            _logger.LogError(ex, "Failed to mark track as favorited: {ItemId}", itemId);
         }
     }
 
@@ -4109,7 +4162,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to remove track from favorites: {ItemId}", itemId);
+            _logger.LogError(ex, "Failed to remove track from favorites: {ItemId}", itemId);
         }
     }
 
@@ -4145,7 +4198,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to mark track for deletion: {ItemId}", itemId);
+            _logger.LogError(ex, "Failed to mark track for deletion: {ItemId}", itemId);
         }
     }
 
@@ -4190,7 +4243,7 @@ public class JellyfinController : ControllerBase
                 var updatedJson = JsonSerializer.Serialize(remaining, new JsonSerializerOptions { WriteIndented = true });
                 await System.IO.File.WriteAllTextAsync(deletionFilePath, updatedJson);
                 
-                _logger.LogInformation("Processed {Count} pending deletions", toDelete.Count);
+                _logger.LogDebug("Processed {Count} pending deletions", toDelete.Count);
             }
         }
         catch (Exception ex)
@@ -4224,7 +4277,7 @@ public class JellyfinController : ControllerBase
             foreach (var trackFile in trackFiles)
             {
                 System.IO.File.Delete(trackFile);
-                _logger.LogInformation("✓ Deleted track from kept folder: {Path}", trackFile);
+                _logger.LogDebug("✓ Deleted track from kept folder: {Path}", trackFile);
             }
 
             // Clean up empty directories
@@ -4242,7 +4295,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to delete track {ItemId}", itemId);
+            _logger.LogError(ex, "Failed to delete track {ItemId}", itemId);
         }
     }
 
@@ -4271,14 +4324,14 @@ public class JellyfinController : ControllerBase
             var json = await System.IO.File.ReadAllTextAsync(filePath);
             var tracks = JsonSerializer.Deserialize<List<allstarr.Models.Spotify.MissingTrack>>(json);
             
-            _logger.LogInformation("Loaded {Count} missing tracks from file cache for {Playlist} (age: {Age:F1}h)", 
+            _logger.LogDebug("Loaded {Count} missing tracks from file cache for {Playlist} (age: {Age:F1}h)", 
                 tracks?.Count ?? 0, playlistName, fileAge.TotalHours);
             
             return tracks;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load missing tracks from file for {Playlist}", playlistName);
+            _logger.LogError(ex, "Failed to load missing tracks from file for {Playlist}", playlistName);
             return null;
         }
     }
@@ -4295,7 +4348,7 @@ public class JellyfinController : ControllerBase
             
             if (!System.IO.File.Exists(filePath))
             {
-                _logger.LogDebug("No matched tracks file cache found for {Playlist} at {Path}", playlistName, filePath);
+                _logger.LogInformation("No matched tracks file cache found for {Playlist} at {Path}", playlistName, filePath);
                 return null;
             }
             
@@ -4309,7 +4362,7 @@ public class JellyfinController : ControllerBase
                 return null;
             }
             
-            _logger.LogDebug("Matched tracks file cache for {Playlist} age: {Age:F1}h", playlistName, fileAge.TotalHours);
+            _logger.LogInformation("Matched tracks file cache for {Playlist} age: {Age:F1}h", playlistName, fileAge.TotalHours);
             
             var json = await System.IO.File.ReadAllTextAsync(filePath);
             var tracks = JsonSerializer.Deserialize<List<Song>>(json);
@@ -4321,7 +4374,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load matched tracks from file for {Playlist}", playlistName);
+            _logger.LogError(ex, "Failed to load matched tracks from file for {Playlist}", playlistName);
             return null;
         }
     }
@@ -4352,6 +4405,54 @@ public class JellyfinController : ControllerBase
     }
 
     /// <summary>
+    /// Gets a signature (hash) of the Jellyfin playlist to detect changes.
+    /// This is a cheap operation compared to re-matching all tracks.
+    /// Signature includes: track count + concatenated track IDs.
+    /// </summary>
+    private async Task<string> GetJellyfinPlaylistSignatureAsync(string playlistId)
+    {
+        try
+        {
+            var userId = _settings.UserId;
+            var playlistItemsUrl = $"Playlists/{playlistId}/Items?Fields=Id";
+            if (!string.IsNullOrEmpty(userId))
+            {
+                playlistItemsUrl += $"&UserId={userId}";
+            }
+            
+            var (response, _) = await _proxyService.GetJsonAsync(playlistItemsUrl, null, Request.Headers);
+            
+            if (response != null && response.RootElement.TryGetProperty("Items", out var items))
+            {
+                var trackIds = new List<string>();
+                foreach (var item in items.EnumerateArray())
+                {
+                    if (item.TryGetProperty("Id", out var idEl))
+                    {
+                        trackIds.Add(idEl.GetString() ?? "");
+                    }
+                }
+                
+                // Create signature: count + sorted IDs (sorted for consistency)
+                trackIds.Sort();
+                var signature = $"{trackIds.Count}:{string.Join(",", trackIds)}";
+                
+                // Hash it to keep it compact
+                using var sha256 = System.Security.Cryptography.SHA256.Create();
+                var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(signature));
+                return Convert.ToHexString(hashBytes);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get Jellyfin playlist signature for {PlaylistId}", playlistId);
+        }
+        
+        // Return empty string if failed (will trigger re-match)
+        return string.Empty;
+    }
+
+    /// <summary>
     /// Saves playlist items (raw Jellyfin JSON) to file cache for persistence across restarts.
     /// </summary>
     private async Task SavePlaylistItemsToFile(string playlistName, List<Dictionary<string, object?>> items)
@@ -4367,7 +4468,7 @@ public class JellyfinController : ControllerBase
             var json = JsonSerializer.Serialize(items, new JsonSerializerOptions { WriteIndented = true });
             await System.IO.File.WriteAllTextAsync(filePath, json);
             
-            _logger.LogInformation("💾 Saved {Count} playlist items to file cache for {Playlist}", 
+            _logger.LogDebug("💾 Saved {Count} playlist items to file cache for {Playlist}", 
                 items.Count, playlistName);
         }
         catch (Exception ex)
@@ -4397,7 +4498,7 @@ public class JellyfinController : ControllerBase
             // Check if cache is too old (more than 24 hours)
             if (fileAge.TotalHours > 24)
             {
-                _logger.LogInformation("Playlist items file cache for {Playlist} is too old ({Age:F1}h), will rebuild", 
+                _logger.LogDebug("Playlist items file cache for {Playlist} is too old ({Age:F1}h), will rebuild", 
                     playlistName, fileAge.TotalHours);
                 return null;
             }
@@ -4407,14 +4508,14 @@ public class JellyfinController : ControllerBase
             var json = await System.IO.File.ReadAllTextAsync(filePath);
             var items = JsonSerializer.Deserialize<List<Dictionary<string, object?>>>(json);
             
-            _logger.LogInformation("💿 Loaded {Count} playlist items from file cache for {Playlist} (age: {Age:F1}h)", 
+            _logger.LogDebug("💿 Loaded {Count} playlist items from file cache for {Playlist} (age: {Age:F1}h)", 
                 items?.Count ?? 0, playlistName, fileAge.TotalHours);
             
             return items;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load playlist items from file for {Playlist}", playlistName);
+            _logger.LogError(ex, "Failed to load playlist items from file for {Playlist}", playlistName);
             return null;
         }
     }
@@ -4571,7 +4672,7 @@ public class JellyfinController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error finding Spotify ID for external track");
+            _logger.LogError(ex, "Error finding Spotify ID for external track");
             return null;
         }
     }

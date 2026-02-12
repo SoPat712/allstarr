@@ -104,10 +104,10 @@ public abstract class BaseDownloadService : IDownloadService
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
             
-            // Update access time for cache cleanup
+            // Update write time for cache cleanup (extends cache lifetime)
             if (SubsonicSettings.StorageMode == StorageMode.Cache)
             {
-                IOFile.SetLastAccessTime(localPath, DateTime.UtcNow);
+                IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
             }
             
             // Start background Odesli conversion for lyrics (if not already cached)
@@ -264,6 +264,7 @@ public abstract class BaseDownloadService : IDownloadService
         
         // Acquire lock BEFORE checking existence to prevent race conditions with concurrent requests
         await DownloadLock.WaitAsync(cancellationToken);
+        var lockHeld = true;
         
         try
         {
@@ -273,10 +274,10 @@ public abstract class BaseDownloadService : IDownloadService
             {
                 Logger.LogInformation("Song already downloaded: {Path}", existingPath);
                 
-                // For cache mode, update file access time for cache cleanup logic
+                // For cache mode, update file write time to extend cache lifetime
                 if (isCache)
                 {
-                    IOFile.SetLastAccessTime(existingPath, DateTime.UtcNow);
+                    IOFile.SetLastWriteTime(existingPath, DateTime.UtcNow);
                 }
                 
                 return existingPath;
@@ -288,6 +289,7 @@ public abstract class BaseDownloadService : IDownloadService
                 Logger.LogDebug("Download already in progress for {SongId}, waiting for completion...", songId);
                 // Release lock while waiting
                 DownloadLock.Release();
+                lockHeld = false;
                 
                 // Wait for download to complete, checking every 100ms (faster than 500ms)
                 // Also respect cancellation token so client timeouts are handled immediately
@@ -444,7 +446,10 @@ public abstract class BaseDownloadService : IDownloadService
         }
         finally
         {
-            DownloadLock.Release();
+            if (lockHeld)
+            {
+                DownloadLock.Release();
+            }
         }
     }
     

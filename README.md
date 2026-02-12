@@ -37,6 +37,8 @@ The proxy will be available at `http://localhost:5274`.
 ## Web Dashboard
 
 Allstarr includes a web UI for easy configuration and playlist management, accessible at `http://localhost:5275`
+<img width="1664" height="1101" alt="image" src="https://github.com/user-attachments/assets/9159100b-7e11-449e-8530-517d336d6bd2" />
+
 
 ### Features
 
@@ -73,8 +75,6 @@ There's an environment variable to modify this.
 
 
 **Recommended workflow**: Use the `sp_dc` cookie method alongside the [Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file).
-
-
 
 ### Nginx Proxy Setup (Required)
 
@@ -139,8 +139,14 @@ This project brings together all the music streaming providers into one unified 
 **Compatible Jellyfin clients:**
 
 - [Feishin](https://github.com/jeffvli/feishin) (Mac/Windows/Linux)
-- [Musiver](https://music.aqzscn.cn/en/) (Android/IOS/Windows/Android)
-- [Finamp](https://github.com/jmshrv/finamp) ()
+<img width="1691" height="1128" alt="image" src="https://github.com/user-attachments/assets/c602f71c-c4dd-49a9-b533-1558e24a9f45" />
+
+
+- [Musiver](https://music.aqzscn.cn/en/) (Android/iOS/Windows/Android)
+<img width="523" height="1025" alt="image" src="https://github.com/user-attachments/assets/135e2721-5fd7-482f-bb06-b0736003cfe7" />
+
+
+- [Finamp](https://github.com/jmshrv/finamp) (Android/iOS)
 
 _Working on getting more currently_
 
@@ -335,6 +341,9 @@ Subsonic__EnableExternalPlaylists=false
 ### Spotify Playlist Injection (Jellyfin Only)
 
 Allstarr automatically fills your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
+
+<img width="1649" height="3764" alt="image" src="https://github.com/user-attachments/assets/a4d3d79c-7741-427f-8c01-ffc90f3a579b" />
+
 
 #### Prerequisites
 

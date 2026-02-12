@@ -13,8 +13,27 @@ using allstarr.Middleware;
 using allstarr.Filters;
 using Microsoft.Extensions.Http;
 using System.Text;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure forwarded headers for reverse proxy support (nginx, etc.)
+// This allows ASP.NET Core to read X-Forwarded-For, X-Real-IP, etc.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor 
+                             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+                             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
+    
+    // Clear known networks and proxies to accept headers from any proxy
+    // This is safe when running behind a trusted reverse proxy (nginx)
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+    
+    // Trust X-Forwarded-* headers from any source
+    // Only do this if your reverse proxy is properly configured and trusted
+    options.ForwardLimit = null;
+});
 
 // Decode SquidWTF API base URLs once at startup
 var squidWtfApiUrls = DecodeSquidWtfUrls();
@@ -131,6 +150,8 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
+builder.Services.Configure<CacheSettings>(
+    builder.Configuration.GetSection("Cache"));
 // Configure Spotify Import settings with custom playlist parsing from env var
 builder.Services.Configure<SpotifyImportSettings>(options =>
 {
@@ -454,7 +475,8 @@ else if (musicService == MusicService.SquidWTF)
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
             sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
             sp.GetRequiredService<RedisCacheService>(),
-            squidWtfApiUrls));
+            squidWtfApiUrls,
+            sp.GetRequiredService<GenreEnrichmentService>()));
     builder.Services.AddSingleton<IDownloadService>(sp =>
         new SquidWTFDownloadService(
             sp.GetRequiredService<IHttpClientFactory>(),
@@ -505,6 +527,9 @@ builder.Services.AddHostedService<CacheCleanupService>();
 // Register cache warming service (loads file caches into Redis on startup)
 builder.Services.AddHostedService<CacheWarmingService>();
 
+// Register Redis persistence service (snapshots Redis to files periodically)
+builder.Services.AddHostedService<RedisPersistenceService>();
+
 // Register Spotify API client, lyrics service, and settings for direct API access
 // Configure from environment variables with SPOTIFY_API_ prefix
 builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options =>
@@ -516,18 +541,6 @@ builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options 
     if (!string.IsNullOrEmpty(enabled))
     {
         options.Enabled = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
-    }
-    
-    var clientId = builder.Configuration.GetValue<string>("SpotifyApi:ClientId");
-    if (!string.IsNullOrEmpty(clientId))
-    {
-        options.ClientId = clientId;
-    }
-    
-    var clientSecret = builder.Configuration.GetValue<string>("SpotifyApi:ClientSecret");
-    if (!string.IsNullOrEmpty(clientSecret))
-    {
-        options.ClientSecret = clientSecret;
     }
     
     var sessionCookie = builder.Configuration.GetValue<string>("SpotifyApi:SessionCookie");
@@ -557,7 +570,6 @@ builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options 
     // Log configuration (mask sensitive values)
     Console.WriteLine($"SpotifyApi Configuration:");
     Console.WriteLine($"  Enabled: {options.Enabled}");
-    Console.WriteLine($"  ClientId: {(string.IsNullOrEmpty(options.ClientId) ? "(not set)" : options.ClientId[..8] + "...")}");
     Console.WriteLine($"  SessionCookie: {(string.IsNullOrEmpty(options.SessionCookie) ? "(not set)" : "***" + options.SessionCookie[^8..])}");
     Console.WriteLine($"  SessionCookieSetDate: {options.SessionCookieSetDate ?? "(not set)"}");
     Console.WriteLine($"  CacheDurationMinutes: {options.CacheDurationMinutes}");
@@ -567,6 +579,12 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClient>();
 
 // Register Spotify lyrics service (uses Spotify's color-lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
+
+// Register LyricsPlus service (multi-source lyrics API)
+builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
+
+// Register Lyrics Orchestrator (manages priority-based lyrics fetching)
+builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
@@ -626,7 +644,26 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Initialize cache settings for static access
+CacheExtensions.InitializeCacheSettings(app.Services);
+
+// Migrate old .env file format on startup
+try
+{
+    var migrationService = new EnvMigrationService(app.Services.GetRequiredService<ILogger<EnvMigrationService>>());
+    migrationService.MigrateEnvFile();
+}
+catch (Exception ex)
+{
+    app.Logger.LogWarning(ex, "Failed to run .env migration");
+}
+
 // Configure the HTTP request pipeline.
+
+// IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
+// This processes X-Forwarded-For, X-Real-IP, etc. from nginx
+app.UseForwardedHeaders();
+
 app.UseExceptionHandler(_ => { }); // Global exception handler
 
 // Enable response compression EARLY in the pipeline

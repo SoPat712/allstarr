@@ -17,8 +17,11 @@ services:
     networks:
       - allstarr-network
 
+  # Spotify Lyrics API sidecar service
+  # Note: This image only supports AMD64. On ARM64 systems, Docker will use emulation.
   spotify-lyrics:
     image: akashrchandran/spotify-lyrics-api:latest
+    platform: linux/amd64
     container_name: allstarr-spotify-lyrics
     restart: unless-stopped
     ports:
@@ -70,6 +73,17 @@ services:
       - Redis__ConnectionString=redis:6379
       - Redis__Enabled=${REDIS_ENABLED:-true}
       
+      # ===== CACHE TTL SETTINGS =====
+      - Cache__SearchResultsMinutes=${CACHE_SEARCH_RESULTS_MINUTES:-120}
+      - Cache__PlaylistImagesHours=${CACHE_PLAYLIST_IMAGES_HOURS:-168}
+      - Cache__SpotifyPlaylistItemsHours=${CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS:-168}
+      - Cache__SpotifyMatchedTracksDays=${CACHE_SPOTIFY_MATCHED_TRACKS_DAYS:-30}
+      - Cache__LyricsDays=${CACHE_LYRICS_DAYS:-14}
+      - Cache__GenreDays=${CACHE_GENRE_DAYS:-30}
+      - Cache__MetadataDays=${CACHE_METADATA_DAYS:-7}
+      - Cache__OdesliLookupDays=${CACHE_ODESLI_LOOKUP_DAYS:-60}
+      - Cache__ProxyImagesDays=${CACHE_PROXY_IMAGES_DAYS:-14}
+      
       # ===== SUBSONIC BACKEND =====
       - Subsonic__Url=${SUBSONIC_URL:-http://localhost:4533}
       - Subsonic__ExplicitFilter=${EXPLICIT_FILTER:-ExplicitOnly}
@@ -104,8 +118,6 @@ services:
       
       # ===== SPOTIFY DIRECT API (for lyrics, ISRC matching, track ordering) =====
       - SpotifyApi__Enabled=${SPOTIFY_API_ENABLED:-false}
-      - SpotifyApi__ClientId=${SPOTIFY_API_CLIENT_ID:-}
-      - SpotifyApi__ClientSecret=${SPOTIFY_API_CLIENT_SECRET:-}
       - SpotifyApi__SessionCookie=${SPOTIFY_API_SESSION_COOKIE:-}
       - SpotifyApi__SessionCookieSetDate=${SPOTIFY_API_SESSION_COOKIE_SET_DATE:-}
       - SpotifyApi__CacheDurationMinutes=${SPOTIFY_API_CACHE_DURATION_MINUTES:-60}
