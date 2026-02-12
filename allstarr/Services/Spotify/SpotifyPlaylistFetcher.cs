@@ -267,9 +267,6 @@ public class SpotifyPlaylistFetcher : BackgroundService
         
         _logger.LogInformation("========================================");
         
-        // Initial fetch of all playlists on startup
-        await FetchAllPlaylistsAsync(stoppingToken);
-        
         // Cron-based refresh loop - only fetch when cron schedule triggers
         // This prevents excess Spotify API calls
         while (!stoppingToken.IsCancellationRequested)
@@ -332,7 +329,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
                             // Rate limiting between playlists
                             if (playlistName != needsRefresh.Last())
                             {
-                                _logger.LogWarning("Waiting 3 seconds before next playlist to avoid rate limits...");
+                                _logger.LogWarning("Finished fetching '{Name}' - waiting 3 seconds before next playlist to avoid rate limits...", playlistName);
                                 await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
                             }
                         }
@@ -392,7 +389,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
             // Wait 3 seconds between each playlist to avoid 429 TooManyRequests errors
             if (config != _spotifyImportSettings.Playlists.Last())
             {
-                _logger.LogWarning("Waiting 3 seconds before next playlist to avoid rate limits...");
+                _logger.LogWarning("Finished fetching '{Name}' - waiting 3 seconds before next playlist to avoid rate limits...", config.Name);
                 await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
             }
         }

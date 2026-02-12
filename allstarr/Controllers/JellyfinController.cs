@@ -3497,25 +3497,25 @@ public class JellyfinController : ControllerBase
     
     /// <summary>
     /// New mode: Gets playlist tracks with correct ordering using direct Spotify API data.
+    /// Optimized to only re-match when Jellyfin playlist changes (cheap check).
     /// </summary>
     private async Task<IActionResult?> GetSpotifyPlaylistTracksOrderedAsync(string spotifyPlaylistName, string playlistId)
     {
-        // Check Redis cache first for fast serving
+        // Check if Jellyfin playlist has changed (cheap API call)
+        var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{spotifyPlaylistName}";
+        var currentJellyfinSignature = await GetJellyfinPlaylistSignatureAsync(playlistId);
+        var cachedJellyfinSignature = await _cache.GetAsync<string>(jellyfinSignatureCacheKey);
+        
+        var jellyfinPlaylistChanged = cachedJellyfinSignature != currentJellyfinSignature;
+        
+        // Check Redis cache first for fast serving (only if Jellyfin playlist hasn't changed)
         var cacheKey = $"spotify:playlist:items:{spotifyPlaylistName}";
         var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(cacheKey);
         
-        if (cachedItems != null && cachedItems.Count > 0)
+        if (cachedItems != null && cachedItems.Count > 0 && !jellyfinPlaylistChanged)
         {
-            _logger.LogDebug("✅ Loaded {Count} playlist items from Redis cache for {Playlist}", 
+            _logger.LogDebug("✅ Loaded {Count} playlist items from Redis cache for {Playlist} (Jellyfin unchanged)", 
                 cachedItems.Count, spotifyPlaylistName);
-            
-            // Log sample item to verify Spotify IDs are present
-            if (cachedItems.Count > 0 && cachedItems[0].ContainsKey("ProviderIds"))
-            {
-                var providerIds = cachedItems[0]["ProviderIds"] as Dictionary<string, object>;
-                var hasSpotifyId = providerIds?.ContainsKey("Spotify") ?? false;
-                _logger.LogDebug("Sample cached item has Spotify ID: {HasSpotifyId}", hasSpotifyId);
-            }
             
             return new JsonResult(new
             {
@@ -3523,6 +3523,11 @@ public class JellyfinController : ControllerBase
                 TotalRecordCount = cachedItems.Count,
                 StartIndex = 0
             });
+        }
+        
+        if (jellyfinPlaylistChanged)
+        {
+            _logger.LogInformation("🔄 Jellyfin playlist changed for {Playlist} - re-matching tracks", spotifyPlaylistName);
         }
         
         // Check file cache as fallback
@@ -3735,6 +3740,9 @@ public class JellyfinController : ControllerBase
         
         // Also cache in Redis for fast serving (reuse the same cache key from top of method)
         await _cache.SetAsync(cacheKey, finalItems, CacheExtensions.SpotifyPlaylistItemsTTL);
+        
+        // Cache the Jellyfin playlist signature to detect future changes
+        await _cache.SetAsync(jellyfinSignatureCacheKey, currentJellyfinSignature, CacheExtensions.SpotifyPlaylistItemsTTL);
         
         // Return raw Jellyfin response format
         return new JsonResult(new
@@ -4394,6 +4402,54 @@ public class JellyfinController : ControllerBase
         {
             _logger.LogError(ex, "Failed to save matched tracks to file for {Playlist}", playlistName);
         }
+    }
+
+    /// <summary>
+    /// Gets a signature (hash) of the Jellyfin playlist to detect changes.
+    /// This is a cheap operation compared to re-matching all tracks.
+    /// Signature includes: track count + concatenated track IDs.
+    /// </summary>
+    private async Task<string> GetJellyfinPlaylistSignatureAsync(string playlistId)
+    {
+        try
+        {
+            var userId = _settings.UserId;
+            var playlistItemsUrl = $"Playlists/{playlistId}/Items?Fields=Id";
+            if (!string.IsNullOrEmpty(userId))
+            {
+                playlistItemsUrl += $"&UserId={userId}";
+            }
+            
+            var (response, _) = await _proxyService.GetJsonAsync(playlistItemsUrl, null, Request.Headers);
+            
+            if (response != null && response.RootElement.TryGetProperty("Items", out var items))
+            {
+                var trackIds = new List<string>();
+                foreach (var item in items.EnumerateArray())
+                {
+                    if (item.TryGetProperty("Id", out var idEl))
+                    {
+                        trackIds.Add(idEl.GetString() ?? "");
+                    }
+                }
+                
+                // Create signature: count + sorted IDs (sorted for consistency)
+                trackIds.Sort();
+                var signature = $"{trackIds.Count}:{string.Join(",", trackIds)}";
+                
+                // Hash it to keep it compact
+                using var sha256 = System.Security.Cryptography.SHA256.Create();
+                var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(signature));
+                return Convert.ToHexString(hashBytes);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get Jellyfin playlist signature for {PlaylistId}", playlistId);
+        }
+        
+        // Return empty string if failed (will trigger re-match)
+        return string.Empty;
     }
 
     /// <summary>

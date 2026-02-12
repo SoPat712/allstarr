@@ -655,9 +655,9 @@
                 <h2>
                     Injected Spotify Playlists
                     <div class="actions">
-                        <button onclick="matchAllPlaylists()" title="Match tracks for all playlists against your local library and external providers. This may take several minutes.">Match All Tracks</button>
+                        <button onclick="matchAllPlaylists()" title="Re-match tracks when local library changed (uses cached Spotify data)">Re-match All Local</button>
                         <button onclick="refreshPlaylists()" title="Fetch the latest playlist data from Spotify without re-matching tracks.">Refresh All</button>
-                        <button onclick="refreshAndMatchAll()" title="Clear caches, fetch fresh data from Spotify, and match all tracks. This is a full rebuild and may take several minutes." style="background:var(--accent);border-color:var(--accent);">Refresh & Match All</button>
+                        <button onclick="refreshAndMatchAll()" title="Rebuild all playlists when Spotify playlists changed (fetches fresh data and re-matches)" style="background:var(--accent);border-color:var(--accent);">Rebuild All Remote</button>
                     </div>
                 </h2>
                 <p style="color: var(--text-secondary); margin-bottom: 12px;">
@@ -1716,8 +1716,8 @@
                             </td>
                             <td class="cache-age">${p.cacheAge || '-'}</td>
                             <td>
-                                <button onclick="clearPlaylistCache('${escapeJs(p.name)}')">Clear Cache & Rebuild</button>
-                                <button onclick="matchPlaylistTracks('${escapeJs(p.name)}')">Match Tracks</button>
+                                <button onclick="matchPlaylistTracks('${escapeJs(p.name)}')" title="Re-match when local library changed (uses cached Spotify data)">Re-match Local</button>
+                                <button onclick="clearPlaylistCache('${escapeJs(p.name)}')" title="Rebuild when Spotify playlist changed (fetches fresh data)" style="background:var(--accent);border-color:var(--accent);">Rebuild Remote</button>
                                 <button onclick="viewTracks('${escapeJs(p.name)}')">View</button>
                                 <button class="danger" onclick="removePlaylist('${escapeJs(p.name)}')">Remove</button>
                             </td>
@@ -2358,18 +2358,18 @@
         }
         
         async function clearPlaylistCache(name) {
-            if (!confirm(`Clear cache and rebuild for "${name}"?\n\nThis will:\n• Clear Redis cache\n• Delete file caches\n• Rebuild with latest Spotify IDs\n\nThis may take a minute.`)) return;
+            if (!confirm(`Rebuild "${name}" from scratch?\n\nThis will:\n• Fetch fresh Spotify playlist data\n• Clear all caches\n• Re-match all tracks\n\nUse this when the Spotify playlist has changed.\n\nThis may take a minute.`)) return;
             
             try {
                 // Show warning banner
                 document.getElementById('matching-warning-banner').style.display = 'block';
                 
-                showToast(`Clearing cache for ${name}...`, 'info');
+                showToast(`Rebuilding ${name} from scratch...`, 'info');
                 const res = await fetch(`/api/admin/playlists/${encodeURIComponent(name)}/clear-cache`, { method: 'POST' });
                 const data = await res.json();
                 
                 if (res.ok) {
-                    showToast(`✓ ${data.message} (Cleared ${data.clearedKeys} cache keys, ${data.clearedFiles} files)`, 'success', 5000);
+                    showToast(`✓ ${data.message}`, 'success', 5000);
                     // Refresh the playlists table after a delay to show updated counts
                     setTimeout(() => {
                         fetchPlaylists();
@@ -2377,7 +2377,7 @@
                         document.getElementById('matching-warning-banner').style.display = 'none';
                     }, 3000);
                 } else {
-                    showToast(data.error || 'Failed to clear cache', 'error');
+                    showToast(data.error || 'Failed to rebuild playlist', 'error');
                     document.getElementById('matching-warning-banner').style.display = 'none';
                 }
             } catch (error) {
@@ -2391,7 +2391,7 @@
                 // Show warning banner
                 document.getElementById('matching-warning-banner').style.display = 'block';
                 
-                showToast(`Matching tracks for ${name}...`, 'success');
+                showToast(`Re-matching local tracks for ${name}...`, 'info');
                 const res = await fetch(`/api/admin/playlists/${encodeURIComponent(name)}/match`, { method: 'POST' });
                 const data = await res.json();
                 
@@ -2404,17 +2404,17 @@
                         document.getElementById('matching-warning-banner').style.display = 'none';
                     }, 2000);
                 } else {
-                    showToast(data.error || 'Failed to match tracks', 'error');
+                    showToast(data.error || 'Failed to re-match tracks', 'error');
                     document.getElementById('matching-warning-banner').style.display = 'none';
                 }
             } catch (error) {
-                showToast('Failed to match tracks', 'error');
+                showToast('Failed to re-match tracks', 'error');
                 document.getElementById('matching-warning-banner').style.display = 'none';
             }
         }
         
         async function matchAllPlaylists() {
-            if (!confirm('Match tracks for ALL playlists? This may take a few minutes.')) return;
+            if (!confirm('Re-match local tracks for ALL playlists?\n\nUse this when your local library has changed.\n\nThis may take a few minutes.')) return;
             
             try {
                 // Show warning banner

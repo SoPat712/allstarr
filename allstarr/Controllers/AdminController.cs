@@ -951,13 +951,14 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
-    /// Trigger track matching for a specific playlist
+    /// Re-match tracks when LOCAL library has changed (checks if Jellyfin playlist changed).
+    /// This is a lightweight operation that reuses cached Spotify data.
     /// </summary>
     [HttpPost("playlists/{name}/match")]
     public async Task<IActionResult> MatchPlaylistTracks(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Manual track matching triggered for playlist: {Name}", decodedName);
+        _logger.LogInformation("Re-match tracks triggered for playlist: {Name} (checking for local changes)", decodedName);
         
         if (_matchingService == null)
         {
@@ -966,12 +967,31 @@ public class AdminController : ControllerBase
         
         try
         {
+            // Clear the Jellyfin playlist signature cache to force re-checking if local tracks changed
+            var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{decodedName}";
+            await _cache.DeleteAsync(jellyfinSignatureCacheKey);
+            _logger.LogDebug("Cleared Jellyfin signature cache to force change detection");
+            
+            // Clear the matched results cache to force re-matching
+            var matchedTracksKey = $"spotify:matched:ordered:{decodedName}";
+            await _cache.DeleteAsync(matchedTracksKey);
+            _logger.LogDebug("Cleared matched tracks cache");
+            
+            // Clear the playlist items cache
+            var playlistItemsCacheKey = $"spotify:playlist:items:{decodedName}";
+            await _cache.DeleteAsync(playlistItemsCacheKey);
+            _logger.LogDebug("Cleared playlist items cache");
+            
+            // Trigger matching (will use cached Spotify data if still valid)
             await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
             
             // Invalidate playlist summary cache
             InvalidatePlaylistSummaryCache();
             
-            return Ok(new { message = $"Track matching triggered for {decodedName}", timestamp = DateTime.UtcNow });
+            return Ok(new { 
+                message = $"Re-matching tracks for {decodedName} (checking local changes)", 
+                timestamp = DateTime.UtcNow 
+            });
         }
         catch (Exception ex)
         {
@@ -981,13 +1001,14 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
-    /// Clear cache and rebuild for a specific playlist
+    /// Rebuild playlist from scratch when REMOTE (Spotify) playlist has changed.
+    /// Clears all caches including Spotify data and forces fresh fetch.
     /// </summary>
     [HttpPost("playlists/{name}/clear-cache")]
     public async Task<IActionResult> ClearPlaylistCache(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Clear cache & rebuild triggered for playlist: {Name}", decodedName);
+        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name} (clearing Spotify cache)", decodedName);
         
         if (_matchingService == null)
         {
@@ -996,13 +1017,15 @@ public class AdminController : ControllerBase
         
         try
         {
-            // Clear all cache keys for this playlist
+            // Clear ALL cache keys for this playlist (including Spotify data)
             var cacheKeys = new[]
             {
-                $"spotify:playlist:items:{decodedName}",      // Pre-built items cache
-                $"spotify:matched:ordered:{decodedName}",     // Ordered matched tracks
-                $"spotify:matched:{decodedName}",             // Legacy matched tracks
-                $"spotify:missing:{decodedName}"              // Missing tracks
+                $"spotify:playlist:items:{decodedName}",           // Pre-built items cache
+                $"spotify:matched:ordered:{decodedName}",          // Ordered matched tracks
+                $"spotify:matched:{decodedName}",                  // Legacy matched tracks
+                $"spotify:missing:{decodedName}",                  // Missing tracks
+                $"spotify:playlist:jellyfin-signature:{decodedName}", // Jellyfin signature
+                $"spotify:playlist:{decodedName}"                  // Spotify playlist data
             };
             
             foreach (var key in cacheKeys)
@@ -1028,9 +1051,9 @@ public class AdminController : ControllerBase
                 }
             }
             
-            _logger.LogInformation("✓ Cleared all caches for playlist: {Name}", decodedName);
+            _logger.LogInformation("✓ Cleared all caches for playlist: {Name} (including Spotify data)", decodedName);
             
-            // Trigger rebuild
+            // Trigger rebuild (will fetch fresh Spotify data)
             await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
             
             // Invalidate playlist summary cache
@@ -1038,10 +1061,10 @@ public class AdminController : ControllerBase
             
             return Ok(new 
             { 
-                message = $"Cache cleared and rebuild triggered for {decodedName}", 
+                message = $"Rebuilding {decodedName} from scratch (fetching fresh Spotify data)", 
                 timestamp = DateTime.UtcNow,
                 clearedKeys = cacheKeys.Length,
-                clearedFiles = filesToDelete.Count(System.IO.File.Exists)
+                clearedFiles = filesToDelete.Count(f => System.IO.File.Exists(f))
             });
         }
         catch (Exception ex)
