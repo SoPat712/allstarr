@@ -119,7 +119,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
                     if (count >= limit) break;
                     
                     var song = ParseTidalTrack(track);
-                    if (ShouldIncludeSong(song))
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);
                     }
@@ -348,7 +348,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 					if (trackWrapper.TryGetProperty("item", out var track))
 					{
 						var song = ParseTidalTrack(track);
-						if (ShouldIncludeSong(song))
+						if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
 						{
 							album.Songs.Add(song);
 						}
@@ -574,7 +574,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
 					// Override album name to be the playlist name
 					song.Album = playlistName;
 					
-					if (ShouldIncludeSong(song))
+					if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
 					{
 						songs.Add(song);
 					}

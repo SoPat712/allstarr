@@ -261,7 +261,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
         
         foreach (var playlist in _spotifyImportSettings.Playlists)
         {
-            var schedule = string.IsNullOrEmpty(playlist.SyncSchedule) ? "0 8 * * 1" : playlist.SyncSchedule;
+            var schedule = string.IsNullOrEmpty(playlist.SyncSchedule) ? "0 8 * * *" : playlist.SyncSchedule;
             _logger.LogInformation("  - {Name}: {Schedule}", playlist.Name, schedule);
         }
         
@@ -279,7 +279,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
                 
                 foreach (var config in _spotifyImportSettings.Playlists)
                 {
-                    var schedule = string.IsNullOrEmpty(config.SyncSchedule) ? "0 8 * * 1" : config.SyncSchedule;
+                    var schedule = string.IsNullOrEmpty(config.SyncSchedule) ? "0 8 * * *" : config.SyncSchedule;
                     
                     try
                     {

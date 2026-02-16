@@ -242,8 +242,18 @@ public abstract class BaseDownloadService : IDownloadService
     /// <summary>
     /// Extracts the external album ID from the internal album ID format.
     /// Example: "ext-deezer-album-123456" -> "123456"
+    /// Default implementation handles standard format: "ext-{provider}-album-{id}"
+    /// Override if your provider uses a different format.
     /// </summary>
-    protected abstract string? ExtractExternalIdFromAlbumId(string albumId);
+    protected virtual string? ExtractExternalIdFromAlbumId(string albumId)
+    {
+        var prefix = $"ext-{ProviderName}-album-";
+        if (albumId.StartsWith(prefix))
+        {
+            return albumId[prefix.Length..];
+        }
+        return null;
+    }
     
     #endregion
     

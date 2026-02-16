@@ -68,10 +68,7 @@ public class QobuzMetadataService : IMusicMetadataService
                 foreach (var track in items.EnumerateArray())
                 {
                     var song = ParseQobuzTrack(track);
-                    if (ShouldIncludeSong(song))
-                    {
-                        songs.Add(song);
-                    }
+                    songs.Add(song);
                 }
             }
             
@@ -241,10 +238,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     song.AlbumId = album.Id;
                     song.AlbumArtist = album.Artist;
                     
-                    if (ShouldIncludeSong(song))
-                    {
-                        album.Songs.Add(song);
-                    }
+                    album.Songs.Add(song);
                 }
             }
             
@@ -429,10 +423,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     song.Album = playlistName;
                     song.Track = trackIndex;
                     
-                    if (ShouldIncludeSong(song))
-                    {
-                        songs.Add(song);
-                    }
+                    songs.Add(song);
                     trackIndex++;
                 }
             }
@@ -835,14 +826,4 @@ public class QobuzMetadataService : IMusicMetadataService
             .Replace("(C)", "©");
     }
 
-    /// <summary>
-    /// Determines whether a song should be included based on the explicit content filter setting
-    /// Note: Qobuz doesn't have the same explicit content tagging as Deezer, so this is a no-op for now
-    /// </summary>
-    private bool ShouldIncludeSong(Song song)
-    {
-        // Qobuz API doesn't expose explicit content flags in the same way as Deezer
-        // We could implement this in the future if needed
-        return true;
-    }
 }

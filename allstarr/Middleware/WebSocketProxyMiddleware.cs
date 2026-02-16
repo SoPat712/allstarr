@@ -110,7 +110,9 @@ public class WebSocketProxyMiddleware
                 jellyfinWsUrl += context.Request.QueryString.Value;
             }
 
-            _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin WebSocket: {Url}", jellyfinWsUrl);
+            // Build masked query string for safe logging
+            var maskedQuery = BuildMaskedQuery(context.Request.QueryString.Value);
+            _logger.LogDebug("🔗 WEBSOCKET: Connecting to Jellyfin WebSocket: {BaseUrl}{MaskedQuery}", jellyfinWsUrl.Split('?')[0], maskedQuery);
 
             // Connect to Jellyfin WebSocket
             serverWebSocket = new ClientWebSocket();
@@ -139,7 +141,7 @@ public class WebSocketProxyMiddleware
             }
 
             // Set user agent
-            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0.1");
+            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0.3");
 
             await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
             _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
@@ -208,6 +210,32 @@ public class WebSocketProxyMiddleware
 
             _logger.LogDebug("🧹 WEBSOCKET: WebSocket connections cleaned up");
         }
+    }
+
+    // Helper for building a masked query string for logging. Redacts sensitive keys.
+    public static string BuildMaskedQuery(string? queryString)
+    {
+        if (string.IsNullOrEmpty(queryString)) return string.Empty;
+
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
+        var parts = new List<string>();
+        foreach (var kv in query)
+        {
+            var key = kv.Key;
+            var value = kv.Value.ToString();
+            if (string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "token", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "auth", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"{key}=<redacted>");
+            }
+            else
+            {
+                parts.Add($"{key}={value}");
+            }
+        }
+
+        return parts.Count > 0 ? "?" + string.Join("&", parts) : string.Empty;
     }
 
     private async Task ProxyMessagesAsync(

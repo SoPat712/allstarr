@@ -49,10 +49,10 @@ public class SpotifyPlaylistConfig
     /// <summary>
     /// Cron schedule for syncing this playlist with Spotify
     /// Format: minute hour day month dayofweek
-    /// Example: "0 8 * * 1" = 8 AM every Monday
-    /// Default: "0 8 * * 1" (weekly on Monday at 8 AM)
+    /// Example: "0 8 * * *" = 8 AM every day
+    /// Default: "0 8 * * *" (daily at 8 AM)
     /// </summary>
-    public string SyncSchedule { get; set; } = "0 8 * * 1";
+    public string SyncSchedule { get; set; } = "0 8 * * *";
 }
 
 /// <summary>

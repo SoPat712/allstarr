@@ -161,7 +161,7 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_items", "");
 
-                    var redisKey = $"spotify:playlist:items:{playlistName}";
+                    var redisKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
                     await _cache.SetAsync(redisKey, items, CacheExtensions.SpotifyPlaylistItemsTTL);
                     warmedCount++;
 
@@ -199,7 +199,7 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_matched", "");
 
-                    var redisKey = $"spotify:matched:ordered:{playlistName}";
+                    var redisKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
                     await _cache.SetAsync(redisKey, matchedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
                     warmedCount++;
 

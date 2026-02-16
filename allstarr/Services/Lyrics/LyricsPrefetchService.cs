@@ -125,7 +125,7 @@ public class LyricsPrefetchService : BackgroundService
         }
 
         // Get the pre-built playlist items cache which includes Jellyfin item IDs for local tracks
-        var playlistItemsKey = $"spotify:playlist:items:{playlistName}";
+        var playlistItemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
         var playlistItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(playlistItemsKey);
         
         // Build a map of Spotify ID -> Jellyfin Item ID for quick lookup

@@ -47,7 +47,7 @@ public class DeezerMetadataService : IMusicMetadataService
                 foreach (var track in data.EnumerateArray())
                 {
                     var song = ParseDeezerTrack(track);
-                    if (ShouldIncludeSong(song))
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);
                     }
@@ -260,7 +260,7 @@ public class DeezerMetadataService : IMusicMetadataService
                 song.AlbumId = album.Id;
                 song.AlbumArtist = album.Artist;
                 
-                if (ShouldIncludeSong(song))
+                if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                 {
                     album.Songs.Add(song);
                 }
@@ -636,7 +636,7 @@ public class DeezerMetadataService : IMusicMetadataService
                     // Override album name to be the playlist name
                     song.Album = playlistName;
                     
-                    if (ShouldIncludeSong(song))
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);
                     }
@@ -702,35 +702,6 @@ public class DeezerMetadataService : IMusicMetadataService
                     ? pictureBig.GetString() 
                     : null),
             CreatedDate = createdDate
-        };
-    }
-
-    /// <summary>
-    /// Determines whether a song should be included based on the explicit content filter setting
-    /// </summary>
-    /// <param name="song">The song to check</param>
-    /// <returns>True if the song should be included, false otherwise</returns>
-    private bool ShouldIncludeSong(Song song)
-    {
-        // If no explicit content info, include the song
-        if (song.ExplicitContentLyrics == null)
-            return true;
-        
-        return _settings.ExplicitFilter switch
-        {
-            // All: No filtering, include everything
-            ExplicitFilter.All => true,
-            
-            // ExplicitOnly: Exclude clean/edited versions (value 3)
-            // Include: 0 (naturally clean), 1 (explicit), 2 (not applicable), 6/7 (unknown)
-            ExplicitFilter.ExplicitOnly => song.ExplicitContentLyrics != 3,
-            
-            // CleanOnly: Only show clean content
-            // Include: 0 (naturally clean), 3 (clean/edited version)
-            // Exclude: 1 (explicit)
-            ExplicitFilter.CleanOnly => song.ExplicitContentLyrics != 1,
-            
-            _ => true
         };
     }
 }

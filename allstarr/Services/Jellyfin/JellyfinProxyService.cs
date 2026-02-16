@@ -176,64 +176,11 @@ public class JellyfinProxyService
         // Forward authentication headers from client if provided
         if (clientHeaders != null && clientHeaders.Count > 0)
         {
-            // Try X-Emby-Authorization first (case-insensitive)
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("X-Emby-Authorization", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                    authHeaderAdded = true;
-                    _logger.LogTrace("Forwarded X-Emby-Authorization header");
-                    break;
-                }
-            }
+            authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
             
-            // Try X-Emby-Token (simpler format used by some clients)
-            if (!authHeaderAdded)
+            if (authHeaderAdded)
             {
-                foreach (var header in clientHeaders)
-                {
-                    if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var headerValue = header.Value.ToString();
-                        request.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
-                        authHeaderAdded = true;
-                        _logger.LogTrace("Forwarded X-Emby-Token header");
-                        break;
-                    }
-                }
-            }
-            
-            // If no X-Emby-Authorization, check if Authorization header contains MediaBrowser format
-            // Some clients send it as "Authorization" instead of "X-Emby-Authorization"
-            if (!authHeaderAdded)
-            {
-                foreach (var header in clientHeaders)
-                {
-                    if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var headerValue = header.Value.ToString();
-                        
-                        // Check if it's MediaBrowser/Jellyfin format (contains "MediaBrowser" or "Token=")
-                        if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                            headerValue.Contains("Token=", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Forward as X-Emby-Authorization (Jellyfin's expected header)
-                            request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                            authHeaderAdded = true;
-                            _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
-                        }
-                        else
-                        {
-                            // Standard Bearer token - forward as-is
-                            request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                            authHeaderAdded = true;
-                            _logger.LogTrace("Forwarded Authorization header");
-                        }
-                        break;
-                    }
-                }
+                _logger.LogTrace("Forwarded authentication headers");
             }
             
             // Check for api_key query parameter (some clients use this)
@@ -329,63 +276,12 @@ public class JellyfinProxyService
         bool authHeaderAdded = false;
         bool isAuthEndpoint = endpoint.Contains("Authenticate", StringComparison.OrdinalIgnoreCase);
         
-        // Forward authentication headers from client (case-insensitive)
-        // Try X-Emby-Authorization first
-        foreach (var header in clientHeaders)
-        {
-            if (header.Key.Equals("X-Emby-Authorization", StringComparison.OrdinalIgnoreCase))
-            {
-                var headerValue = header.Value.ToString();
-                request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                authHeaderAdded = true;
-                _logger.LogTrace("Forwarded X-Emby-Authorization header");
-                break;
-            }
-        }
+        // Forward authentication headers from client
+        authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
         
-        // Try X-Emby-Token
-        if (!authHeaderAdded)
+        if (authHeaderAdded)
         {
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    request.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
-                    authHeaderAdded = true;
-                    _logger.LogTrace("Forwarded X-Emby-Token header");
-                    break;
-                }
-            }
-        }
-        
-        // Try Authorization header
-        if (!authHeaderAdded)
-        {
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    
-                    // Check if it's MediaBrowser/Jellyfin format
-                    if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                        headerValue.Contains("Client=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Forward as X-Emby-Authorization
-                        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                        _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
-                    }
-                    else
-                    {
-                        // Standard Bearer token
-                        request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                        _logger.LogTrace("Forwarded Authorization header");
-                    }
-                    authHeaderAdded = true;
-                    break;
-                }
-            }
+            _logger.LogTrace("Forwarded authentication headers");
         }
         
         // For authentication endpoints, credentials are in the body, not headers
@@ -536,50 +432,16 @@ public class JellyfinProxyService
         
         bool authHeaderAdded = false;
         
-        // Forward authentication headers from client (case-insensitive)
-        foreach (var header in clientHeaders)
-        {
-            if (header.Key.Equals("X-Emby-Authorization", StringComparison.OrdinalIgnoreCase))
-            {
-                var headerValue = header.Value.ToString();
-                request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                authHeaderAdded = true;
-                _logger.LogDebug("Forwarded X-Emby-Authorization from client");
-                break;
-            }
-        }
-        
-        if (!authHeaderAdded)
-        {
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    
-                    // Check if it's MediaBrowser/Jellyfin format
-                    if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                        headerValue.Contains("Client=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Forward as X-Emby-Authorization
-                        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                        _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
-                    }
-                    else
-                    {
-                        // Standard Bearer token
-                        request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                        _logger.LogDebug("Forwarded Authorization header");
-                    }
-                    authHeaderAdded = true;
-                    break;
-                }
-            }
-        }
+        // Forward authentication headers from client
+        authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
         
         if (!authHeaderAdded)
         {
             _logger.LogDebug("No client auth provided for DELETE {Url} - forwarding without auth", url);
+        }
+        else
+        {
+            _logger.LogTrace("Forwarded authentication headers");
         }
         
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));

@@ -137,6 +137,9 @@ builder.Services.AddProblemDetails();
 // Admin port filter (restricts admin API to port 5275)
 builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
 
+// Admin helper service (shared utilities for admin controllers)
+builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
+
 // Configuration - register both settings, active one determined by backend type
 builder.Services.Configure<SubsonicSettings>(
     builder.Configuration.GetSection("Subsonic"));
@@ -165,7 +168,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
 #pragma warning restore CS0618
     
     // Parse SPOTIFY_IMPORT_PLAYLISTS env var (JSON array format)
-    // Format: [["Name","SpotifyId","JellyfinId","first|last"],["Name2","SpotifyId2","JellyfinId2","first|last"]]
+    // Format: [["Name","SpotifyId","JellyfinId","first|last","cronSchedule"],["Name2","SpotifyId2","JellyfinId2","first|last","cronSchedule"]]
     var playlistsEnv = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
     if (!string.IsNullOrWhiteSpace(playlistsEnv))
     {
@@ -192,10 +195,11 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
                             LocalTracksPosition = arr.Length >= 4 && 
                                 arr[3].Trim().Equals("last", StringComparison.OrdinalIgnoreCase)
                                 ? LocalTracksPosition.Last
-                                : LocalTracksPosition.First
+                                : LocalTracksPosition.First,
+                            SyncSchedule = arr.Length >= 5 ? arr[4].Trim() : "0 8 * * *"
                         };
                         options.Playlists.Add(config);
-                        Console.WriteLine($"  Added: {config.Name} (Spotify: {config.Id}, Jellyfin: {config.JellyfinId}, Position: {config.LocalTracksPosition})");
+                        Console.WriteLine($"  Added: {config.Name} (Spotify: {config.Id}, Jellyfin: {config.JellyfinId}, Position: {config.LocalTracksPosition}, Schedule: {config.SyncSchedule})");
                     }
                 }
             }
@@ -207,7 +211,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
         catch (System.Text.Json.JsonException ex)
         {
             Console.WriteLine($"Warning: Failed to parse SPOTIFY_IMPORT_PLAYLISTS: {ex.Message}");
-            Console.WriteLine("Expected format: [[\"Name\",\"SpotifyId\",\"JellyfinId\",\"first|last\"],[\"Name2\",\"SpotifyId2\",\"JellyfinId2\",\"first|last\"]]");
+            Console.WriteLine("Expected format: [[\"Name\",\"SpotifyId\",\"JellyfinId\",\"first|last\",\"cronSchedule\"],[\"Name2\",\"SpotifyId2\",\"JellyfinId2\",\"first|last\",\"cronSchedule\"]]");
             Console.WriteLine("Will try legacy format instead");
         }
     }
@@ -586,6 +590,15 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 // Register Lyrics Orchestrator (manages priority-based lyrics fetching)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 
+// Register Spotify mapping service (global Spotify ID → Local/External mappings)
+builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>();
+
+// Register Spotify mapping validation service (validates and upgrades mappings)
+builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingValidationService>();
+
+// Register Spotify mapping migration service (migrates legacy per-playlist mappings to global format)
+builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMappingMigrationService>();
+
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
@@ -718,8 +731,21 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
 
-        // AdminController should always be registered (for web UI)
-        if (typeInfo.Name == "AdminController") return true;
+        // All admin controllers should always be registered (for admin UI)
+        // This includes: AdminController, ConfigController, DiagnosticsController, DownloadsController,
+        // PlaylistController, JellyfinAdminController, SpotifyAdminController, LyricsController, MappingController
+        if (typeInfo.Name == "AdminController" || 
+            typeInfo.Name == "ConfigController" ||
+            typeInfo.Name == "DiagnosticsController" ||
+            typeInfo.Name == "DownloadsController" ||
+            typeInfo.Name == "PlaylistController" ||
+            typeInfo.Name == "JellyfinAdminController" ||
+            typeInfo.Name == "SpotifyAdminController" ||
+            typeInfo.Name == "LyricsController" ||
+            typeInfo.Name == "MappingController")
+        {
+            return true;
+        }
 
         // Only register the controller matching the configured backend type
         return _backendType switch

@@ -13,6 +13,7 @@ using allstarr.Services.Jellyfin;
 using allstarr.Services.Subsonic;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Spotify;
+using allstarr.Services.Admin;
 using allstarr.Filters;
 
 namespace allstarr.Controllers;
@@ -124,7 +125,7 @@ public class JellyfinController : ControllerBase
         // Only cache actual searches, not browse operations
         if (!string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(artistIds))
         {
-            var cacheKey = $"search:{searchTerm?.ToLowerInvariant()}:{includeItemTypes}:{limit}:{startIndex}";
+            var cacheKey = CacheKeyBuilder.BuildSearchKey(searchTerm, includeItemTypes, limit, startIndex);
             var cachedResult = await _cache.GetAsync<object>(cacheKey);
             
             if (cachedResult != null)
@@ -421,7 +422,7 @@ public class JellyfinController : ControllerBase
             // Cache search results in Redis (15 min TTL, no file persistence)
             if (!string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(artistIds))
             {
-                var cacheKey = $"search:{searchTerm?.ToLowerInvariant()}:{includeItemTypes}:{limit}:{startIndex}";
+                var cacheKey = CacheKeyBuilder.BuildSearchKey(searchTerm, includeItemTypes, limit, startIndex);
                 await _cache.SetAsync(cacheKey, response, CacheExtensions.SearchResultsTTL);
                 _logger.LogDebug("💾 Cached search results for '{SearchTerm}' ({Minutes} min TTL)", searchTerm, CacheExtensions.SearchResultsTTL.TotalMinutes);
             }
@@ -886,14 +887,7 @@ public class JellyfinController : ControllerBase
             var request = new HttpRequestMessage(HttpMethod.Get, jellyfinUrl);
             
             // Forward auth headers
-            if (Request.Headers.TryGetValue("X-Emby-Authorization", out var embyAuth))
-            {
-                request.Headers.TryAddWithoutValidation("X-Emby-Authorization", embyAuth.ToString());
-            }
-            else if (Request.Headers.TryGetValue("Authorization", out var auth))
-            {
-                request.Headers.TryAddWithoutValidation("Authorization", auth.ToString());
-            }
+            AuthHeaderHelper.ForwardAuthHeaders(Request.Headers, request);
             
             // Forward Range header for seeking
             if (Request.Headers.TryGetValue("Range", out var range))
@@ -2815,7 +2809,7 @@ public class JellyfinController : ControllerBase
         {
             LocalAddress = Request.Host.ToString(),
             ServerName = serverName ?? "Allstarr",
-            Version = version ?? "1.0.1",
+            Version = version ?? "1.0.3",
             ProductName = "Allstarr (Jellyfin Proxy)",
             OperatingSystem = Environment.OSVersion.Platform.ToString(),
             Id = _settings.DeviceId,
@@ -2841,6 +2835,13 @@ public class JellyfinController : ControllerBase
     [HttpPost("{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
+        // Block admin API routes - these should be handled by admin controllers, not proxied to Jellyfin
+        if (path.StartsWith("api/admin", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Admin route {Path} reached ProxyRequest - this should be handled by admin controllers", path);
+            return NotFound(new { error = "Admin endpoint not found" });
+        }
+        
         // Log session-related requests prominently to debug missing capabilities call
         if (path.Contains("session", StringComparison.OrdinalIgnoreCase) || 
             path.Contains("capabilit", StringComparison.OrdinalIgnoreCase))
@@ -2944,23 +2945,7 @@ public class JellyfinController : ControllerBase
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
                 
                 // Forward auth headers from client
-                if (Request.Headers.TryGetValue("X-Emby-Authorization", out var embyAuth))
-                {
-                    request.Headers.TryAddWithoutValidation("X-Emby-Authorization", embyAuth.ToString());
-                }
-                else if (Request.Headers.TryGetValue("Authorization", out var auth))
-                {
-                    var authValue = auth.ToString();
-                    if (authValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                        authValue.Contains("Token=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authValue);
-                    }
-                    else
-                    {
-                        request.Headers.TryAddWithoutValidation("Authorization", authValue);
-                    }
-                }
+                AuthHeaderHelper.ForwardAuthHeaders(Request.Headers, request);
                 
                 var response = await _proxyService.HttpClient.SendAsync(request);
                 
@@ -3213,7 +3198,7 @@ public class JellyfinController : ControllerBase
                             var playlistName = playlistConfig.Name;
                             
                             // Get matched external tracks (tracks that were successfully downloaded/matched)
-                            var matchedTracksKey = $"spotify:matched:ordered:{playlistName}";
+                            var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
                             var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
                             
                             _logger.LogInformation("Cache lookup for {Key}: {Count} matched tracks", 
@@ -3509,7 +3494,7 @@ public class JellyfinController : ControllerBase
         var jellyfinPlaylistChanged = cachedJellyfinSignature != currentJellyfinSignature;
         
         // Check Redis cache first for fast serving (only if Jellyfin playlist hasn't changed)
-        var cacheKey = $"spotify:playlist:items:{spotifyPlaylistName}";
+        var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(spotifyPlaylistName);
         var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(cacheKey);
         
         if (cachedItems != null && cachedItems.Count > 0 && !jellyfinPlaylistChanged)
@@ -3549,7 +3534,7 @@ public class JellyfinController : ControllerBase
         }
         
         // Check for ordered matched tracks from SpotifyTrackMatchingService
-        var orderedCacheKey = $"spotify:matched:ordered:{spotifyPlaylistName}";
+        var orderedCacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(spotifyPlaylistName);
         var orderedTracks = await _cache.GetAsync<List<MatchedTrack>>(orderedCacheKey);
         
         if (orderedTracks == null || orderedTracks.Count == 0)
@@ -3825,7 +3810,7 @@ public class JellyfinController : ControllerBase
             _logger.LogWarning("No existing tracks found in Jellyfin playlist - may need UserId parameter");
         }
 
-        var missingTracksKey = $"spotify:missing:{spotifyPlaylistName}";
+        var missingTracksKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(spotifyPlaylistName);
         var missingTracks = await _cache.GetAsync<List<MissingTrack>>(missingTracksKey);
         
         // Fallback to file cache if Redis is empty
@@ -3970,13 +3955,13 @@ public class JellyfinController : ControllerBase
 
             // Build kept folder path: Artist/Album/
             var keptBasePath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
-            var keptArtistPath = Path.Combine(keptBasePath, PathHelper.SanitizeFileName(song.Artist));
-            var keptAlbumPath = Path.Combine(keptArtistPath, PathHelper.SanitizeFileName(song.Album));
+            var keptArtistPath = Path.Combine(keptBasePath, AdminHelperService.SanitizeFileName(song.Artist));
+            var keptAlbumPath = Path.Combine(keptArtistPath, AdminHelperService.SanitizeFileName(song.Album));
             
             // Check if track already exists in kept folder
             if (Directory.Exists(keptAlbumPath))
             {
-                var sanitizedTitle = PathHelper.SanitizeFileName(song.Title);
+                var sanitizedTitle = AdminHelperService.SanitizeFileName(song.Title);
                 var existingFiles = Directory.GetFiles(keptAlbumPath, $"*{sanitizedTitle}*");
                 if (existingFiles.Length > 0)
                 {
@@ -3989,14 +3974,14 @@ public class JellyfinController : ControllerBase
 
             // Look for the track in cache folder first
             var cacheBasePath = "/tmp/allstarr-cache";
-            var cacheArtistPath = Path.Combine(cacheBasePath, PathHelper.SanitizeFileName(song.Artist));
-            var cacheAlbumPath = Path.Combine(cacheArtistPath, PathHelper.SanitizeFileName(song.Album));
+            var cacheArtistPath = Path.Combine(cacheBasePath, AdminHelperService.SanitizeFileName(song.Artist));
+            var cacheAlbumPath = Path.Combine(cacheArtistPath, AdminHelperService.SanitizeFileName(song.Album));
             
             string? sourceFilePath = null;
             
             if (Directory.Exists(cacheAlbumPath))
             {
-                var sanitizedTitle = PathHelper.SanitizeFileName(song.Title);
+                var sanitizedTitle = AdminHelperService.SanitizeFileName(song.Title);
                 var cacheFiles = Directory.GetFiles(cacheAlbumPath, $"*{sanitizedTitle}*");
                 if (cacheFiles.Length > 0)
                 {
@@ -4266,12 +4251,12 @@ public class JellyfinController : ControllerBase
             if (song == null) return;
 
             var keptBasePath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
-            var keptArtistPath = Path.Combine(keptBasePath, PathHelper.SanitizeFileName(song.Artist));
-            var keptAlbumPath = Path.Combine(keptArtistPath, PathHelper.SanitizeFileName(song.Album));
+            var keptArtistPath = Path.Combine(keptBasePath, AdminHelperService.SanitizeFileName(song.Artist));
+            var keptAlbumPath = Path.Combine(keptArtistPath, AdminHelperService.SanitizeFileName(song.Album));
             
             if (!Directory.Exists(keptAlbumPath)) return;
 
-            var sanitizedTitle = PathHelper.SanitizeFileName(song.Title);
+            var sanitizedTitle = AdminHelperService.SanitizeFileName(song.Title);
             var trackFiles = Directory.GetFiles(keptAlbumPath, $"*{sanitizedTitle}*");
             
             foreach (var trackFile in trackFiles)
@@ -4523,54 +4508,6 @@ public class JellyfinController : ControllerBase
     #endregion
 
     /// <summary>
-    /// Calculates artist match score ensuring ALL artists are present.
-    /// Penalizes if artist counts don't match or if any artist is missing.
-    /// </summary>
-    private static double CalculateArtistMatchScore(List<string> spotifyArtists, string songMainArtist, List<string> songContributors)
-    {
-        if (spotifyArtists.Count == 0 || string.IsNullOrEmpty(songMainArtist))
-            return 0;
-        
-        // Build list of all song artists (main + contributors)
-        var allSongArtists = new List<string> { songMainArtist };
-        allSongArtists.AddRange(songContributors);
-        
-        // If artist counts differ significantly, penalize
-        var countDiff = Math.Abs(spotifyArtists.Count - allSongArtists.Count);
-        if (countDiff > 1) // Allow 1 artist difference (sometimes features are listed differently)
-            return 0;
-        
-        // Check that each Spotify artist has a good match in song artists
-        var spotifyScores = new List<double>();
-        foreach (var spotifyArtist in spotifyArtists)
-        {
-            var bestMatch = allSongArtists.Max(songArtist => 
-                FuzzyMatcher.CalculateSimilarity(spotifyArtist, songArtist));
-            spotifyScores.Add(bestMatch);
-        }
-        
-        // Check that each song artist has a good match in Spotify artists
-        var songScores = new List<double>();
-        foreach (var songArtist in allSongArtists)
-        {
-            var bestMatch = spotifyArtists.Max(spotifyArtist => 
-                FuzzyMatcher.CalculateSimilarity(songArtist, spotifyArtist));
-            songScores.Add(bestMatch);
-        }
-        
-        // Average all scores - this ensures ALL artists must match well
-        var allScores = spotifyScores.Concat(songScores);
-        var avgScore = allScores.Average();
-        
-        // Penalize if any individual artist match is poor (< 70)
-        var minScore = allScores.Min();
-        if (minScore < 70)
-            avgScore *= 0.7; // 30% penalty for poor individual match
-        
-        return avgScore;
-    }
-
-    /// <summary>
     /// Extracts device information from Authorization header.
     /// </summary>
     private (string? deviceId, string? client, string? device, string? version) ExtractDeviceInfo(IHeaderDictionary headers)
@@ -4646,7 +4583,7 @@ public class JellyfinController : ControllerBase
             // Search through each playlist's matched tracks cache
             foreach (var playlist in playlists)
             {
-                var cacheKey = $"spotify:matched:ordered:{playlist.Name}";
+                var cacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name);
                 var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(cacheKey);
                 
                 if (matchedTracks == null || matchedTracks.Count == 0)
