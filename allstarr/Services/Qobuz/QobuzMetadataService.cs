@@ -423,6 +423,10 @@ public class QobuzMetadataService : IMusicMetadataService
                     song.Album = playlistName;
                     song.Track = trackIndex;
                     
+                    // Playlists should not have disc numbers - always set to null
+                    // This prevents Jellyfin from splitting the playlist into multiple "discs"
+                    song.DiscNumber = null;
+                    
                     songs.Add(song);
                     trackIndex++;
                 }

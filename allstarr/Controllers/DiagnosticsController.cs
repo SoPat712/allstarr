@@ -54,7 +54,6 @@ public class DiagnosticsController : ControllerBase
         var encodedUrls = new[]
         {
             "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",
-            "aHR0cHM6Ly90aWRhbC1hcGkuYmluaW11bS5vcmc=",
             "aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",
             "aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==",
             "aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==",
@@ -62,7 +61,12 @@ public class DiagnosticsController : ControllerBase
             "aHR0cDovL2h1bmQucXFkbC5zaXRl",
             "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",
             "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",
-            "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ=="
+            "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",
+            "aHR0cHM6Ly9ldS1jZW50cmFsLm1vbm9jaHJvbWUudGY=",
+            "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",
+            "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",
+            "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",
+            "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="
         };
         return encodedUrls.Select(encoded => System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encoded))).ToList();
     }

@@ -148,8 +148,8 @@ public class JellyfinResponseBuilderTests
 
         // Assert
         Assert.Equal("ext-playlist-deezer-999", result["Id"]);
-        Assert.Equal("Summer Vibes", result["Name"]);
-        Assert.Equal("Playlist", result["Type"]);
+        Assert.Equal("Summer Vibes [S/P]", result["Name"]);
+        Assert.Equal("MusicAlbum", result["Type"]);
         Assert.Equal("DJ Cool", result["AlbumArtist"]);
         Assert.Equal(50, result["ChildCount"]);
         Assert.Equal(2023, result["ProductionYear"]);
@@ -270,7 +270,7 @@ public class JellyfinResponseBuilderTests
         // Arrange
         var playlist = new ExternalPlaylist
         {
-            Id = "pl-1",
+            Id = "ext-deezer-playlist-1",
             Name = "My Playlist",
             Provider = "deezer",
             ExternalId = "123"

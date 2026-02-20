@@ -88,65 +88,75 @@ public abstract class BaseDownloadService : IDownloadService
     
     #region IDownloadService Implementation
     
+    /// <summary>
+    /// Downloads a song and returns the local file path.
+    /// This method respects the cancellation token for user-initiated downloads (e.g., playlist downloads).
+    /// For streaming downloads, use DownloadAndStreamAsync which ensures downloads complete server-side.
+    /// </summary>
     public async Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         return await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
     }
+
     
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    {
-        var startTime = DateTime.UtcNow;
-        
-        // Check if already downloaded locally
-        var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-        if (localPath != null && IOFile.Exists(localPath))
         {
-            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
-            
-            // Update write time for cache cleanup (extends cache lifetime)
-            if (SubsonicSettings.StorageMode == StorageMode.Cache)
+            var startTime = DateTime.UtcNow;
+
+            // Check if already downloaded locally
+            var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
+            if (localPath != null && IOFile.Exists(localPath))
             {
-                IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
+                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
+
+                // Update write time for cache cleanup (extends cache lifetime)
+                if (SubsonicSettings.StorageMode == StorageMode.Cache)
+                {
+                    IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
+                }
+
+                // Start background Odesli conversion for lyrics (if not already cached)
+                StartBackgroundOdesliConversion(externalProvider, externalId);
+
+                return IOFile.OpenRead(localPath);
             }
-            
-            // Start background Odesli conversion for lyrics (if not already cached)
-            StartBackgroundOdesliConversion(externalProvider, externalId);
-            
-            return IOFile.OpenRead(localPath);
+
+            // Download to disk first to ensure complete file with metadata
+            // This is necessary because:
+            // 1. Clients may seek to arbitrary positions (requires full file)
+            // 2. Metadata embedding requires complete file
+            // 3. Caching for future plays
+            Logger.LogInformation("Downloading song for streaming: {Provider}:{ExternalId}", externalProvider, externalId);
+
+            try
+            {
+                // IMPORTANT: Use CancellationToken.None for the actual download
+                // This ensures downloads complete server-side even if the client cancels the request
+                // The client can request the file again later once it's ready
+                localPath = await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, CancellationToken.None);
+                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
+
+                // Start background Odesli conversion for lyrics (after stream starts)
+                StartBackgroundOdesliConversion(externalProvider, externalId);
+
+                return IOFile.OpenRead(localPath);
+            }
+            catch (OperationCanceledException)
+            {
+                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                Logger.LogWarning("Download cancelled by client after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                Logger.LogError(ex, "Download failed after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
+                throw;
+            }
         }
 
-        // Download to disk first to ensure complete file with metadata
-        // This is necessary because:
-        // 1. Clients may seek to arbitrary positions (requires full file)
-        // 2. Metadata embedding requires complete file
-        // 3. Caching for future plays
-        Logger.LogInformation("Downloading song for streaming: {Provider}:{ExternalId}", externalProvider, externalId);
-        
-        try
-        {
-            localPath = await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
-            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
-            
-            // Start background Odesli conversion for lyrics (after stream starts)
-            StartBackgroundOdesliConversion(externalProvider, externalId);
-            
-            return IOFile.OpenRead(localPath);
-        }
-        catch (OperationCanceledException)
-        {
-            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            Logger.LogWarning("Download cancelled by client after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
-            throw;
-        }
-        catch (Exception ex)
-        {
-            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            Logger.LogError(ex, "Download failed after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
-            throw;
-        }
-    }
     
     /// <summary>
     /// Starts background Odesli conversion for lyrics support.
@@ -301,12 +311,18 @@ public abstract class BaseDownloadService : IDownloadService
                 DownloadLock.Release();
                 lockHeld = false;
                 
-                // Wait for download to complete, checking every 100ms (faster than 500ms)
-                // Also respect cancellation token so client timeouts are handled immediately
+                // Wait for download to complete, checking every 100ms
+                // Note: We check cancellation but don't cancel the actual download
+                // The download continues server-side even if this client gives up waiting
                 while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await Task.Delay(100, cancellationToken);
+                    // If client cancels, throw but let the download continue in background
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        Logger.LogInformation("Client cancelled while waiting for download {SongId}, but download continues server-side", songId);
+                        throw new OperationCanceledException("Client cancelled request, but download continues server-side");
+                    }
+                    await Task.Delay(100, CancellationToken.None);
                 }
                 
                 if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)

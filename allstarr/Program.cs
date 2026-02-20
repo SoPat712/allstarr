@@ -9,6 +9,7 @@ using allstarr.Services.Subsonic;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Lyrics;
+using allstarr.Services.Scrobbling;
 using allstarr.Middleware;
 using allstarr.Filters;
 using Microsoft.Extensions.Http;
@@ -41,21 +42,20 @@ static List<string> DecodeSquidWtfUrls()
 {
     var encodedUrls = new[]
     {
-        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",                      // triton.squid.wtf
-        "aHR0cHM6Ly90aWRhbC1hcGkuYmluaW11bS5vcmc=",              // tidal-api.binimum.org
-        "aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",              // tidal.kinoplus.online
-        "aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==",          // hifi-two.spotisaver.net
-        "aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==",          // hifi-one.spotisaver.net
-        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",                      // wolf.qqdl.site
-        "aHR0cDovL2h1bmQucXFkbC5zaXRl",                          // hund.qqdl.site (http)
-        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",                      // katze.qqdl.site
-        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",                      // vogel.qqdl.site
-        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",                      // maus.qqdl.site
-        "aHR0cHM6Ly9ldS1jZW50cmFsLm1vbm9jaHJvbWUudGY=",          // eu-central.monochrome.tf
-        "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",              // us-west.monochrome.tf
-        "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",                  // arran.monochrome.tf
-        "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",                  // api.monochrome.tf
-        "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="                       // hund.qqdl.site (https)
+        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",                      // triton
+        "aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",              // kinoplus
+        "aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==",          // spotisaver-two
+        "aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==",          // spotisaver-one
+        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",                      // wolf
+        "aHR0cDovL2h1bmQucXFkbC5zaXRl",                          // hund-http
+        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",                      // katze
+        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",                      // vogel
+        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",                      // maus
+        "aHR0cHM6Ly9ldS1jZW50cmFsLm1vbm9jaHJvbWUudGY=",          // eu-central
+        "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",              // us-west
+        "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",                  // arran
+        "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",                  // api
+        "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="                       // hund
     };
     
     return encodedUrls
@@ -615,6 +615,70 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.
 // builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPrefetchService>();
 // builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Lyrics.LyricsPrefetchService>());
 
+// Register scrobbling services (Last.fm, ListenBrainz, etc.)
+builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options =>
+{
+    // Last.fm settings
+    var lastFmEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LastFm:Enabled");
+    var lastFmApiKey = builder.Configuration.GetValue<string>("Scrobbling:LastFm:ApiKey");
+    var lastFmSharedSecret = builder.Configuration.GetValue<string>("Scrobbling:LastFm:SharedSecret");
+    var lastFmSessionKey = builder.Configuration.GetValue<string>("Scrobbling:LastFm:SessionKey");
+    var lastFmUsername = builder.Configuration.GetValue<string>("Scrobbling:LastFm:Username");
+    var lastFmPassword = builder.Configuration.GetValue<string>("Scrobbling:LastFm:Password");
+    
+    options.Enabled = builder.Configuration.GetValue<bool>("Scrobbling:Enabled");
+    options.LocalTracksEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LocalTracksEnabled");
+    options.LastFm.Enabled = lastFmEnabled;
+    
+    // Only override hardcoded API credentials if explicitly set in config
+    if (!string.IsNullOrEmpty(lastFmApiKey))
+        options.LastFm.ApiKey = lastFmApiKey;
+    if (!string.IsNullOrEmpty(lastFmSharedSecret))
+        options.LastFm.SharedSecret = lastFmSharedSecret;
+    
+    // These don't have defaults, so set them normally
+    options.LastFm.SessionKey = lastFmSessionKey ?? string.Empty;
+    options.LastFm.Username = lastFmUsername;
+    options.LastFm.Password = lastFmPassword;
+    
+    // ListenBrainz settings
+    var listenBrainzEnabled = builder.Configuration.GetValue<bool>("Scrobbling:ListenBrainz:Enabled");
+    var listenBrainzUserToken = builder.Configuration.GetValue<string>("Scrobbling:ListenBrainz:UserToken") ?? string.Empty;
+    
+    options.ListenBrainz.Enabled = listenBrainzEnabled;
+    options.ListenBrainz.UserToken = listenBrainzUserToken;
+    
+    // Debug logging
+    Console.WriteLine($"Scrobbling Configuration:");
+    Console.WriteLine($"  Enabled: {options.Enabled}");
+    Console.WriteLine($"  Local Tracks Enabled: {options.LocalTracksEnabled}");
+    Console.WriteLine($"  Last.fm Enabled: {options.LastFm.Enabled}");
+    Console.WriteLine($"  Last.fm Username: {options.LastFm.Username ?? "(not set)"}");
+    Console.WriteLine($"  Last.fm Session Key: {(string.IsNullOrEmpty(options.LastFm.SessionKey) ? "(not set)" : "***" + options.LastFm.SessionKey[^8..])}");
+    Console.WriteLine($"  ListenBrainz Enabled: {options.ListenBrainz.Enabled}");
+    Console.WriteLine($"  ListenBrainz Token: {(string.IsNullOrEmpty(options.ListenBrainz.UserToken) ? "(not set)" : "***" + options.ListenBrainz.UserToken[^8..])}");
+});
+
+// Register Last.fm HTTP client with proper User-Agent
+builder.Services.AddHttpClient("LastFm", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Register ListenBrainz HTTP client with proper User-Agent
+builder.Services.AddHttpClient("ListenBrainz", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Register scrobbling services
+builder.Services.AddSingleton<IScrobblingService, LastFmScrobblingService>();
+builder.Services.AddSingleton<IScrobblingService, ListenBrainzScrobblingService>();
+builder.Services.AddSingleton<ScrobblingOrchestrator>();
+builder.Services.AddSingleton<ScrobblingHelper>();
+
 // Register MusicBrainz service for metadata enrichment
 builder.Services.Configure<allstarr.Models.Settings.MusicBrainzSettings>(options =>
 {
@@ -677,6 +741,9 @@ catch (Exception ex)
 // This processes X-Forwarded-For, X-Real-IP, etc. from nginx
 app.UseForwardedHeaders();
 
+// Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
+app.UseMiddleware<RequestLoggingMiddleware>();
+
 app.UseExceptionHandler(_ => { }); // Global exception handler
 
 // Enable response compression EARLY in the pipeline
@@ -733,7 +800,7 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
 
         // All admin controllers should always be registered (for admin UI)
         // This includes: AdminController, ConfigController, DiagnosticsController, DownloadsController,
-        // PlaylistController, JellyfinAdminController, SpotifyAdminController, LyricsController, MappingController
+        // PlaylistController, JellyfinAdminController, SpotifyAdminController, LyricsController, MappingController, ScrobblingAdminController
         if (typeInfo.Name == "AdminController" || 
             typeInfo.Name == "ConfigController" ||
             typeInfo.Name == "DiagnosticsController" ||
@@ -742,7 +809,8 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
             typeInfo.Name == "JellyfinAdminController" ||
             typeInfo.Name == "SpotifyAdminController" ||
             typeInfo.Name == "LyricsController" ||
-            typeInfo.Name == "MappingController")
+            typeInfo.Name == "MappingController" ||
+            typeInfo.Name == "ScrobblingAdminController")
         {
             return true;
         }

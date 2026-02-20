@@ -489,8 +489,15 @@ public class JellyfinProxyService
             var result = await GetBytesAsync(endpoint, queryParams);
             return (result.Body, result.ContentType, true);
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // 404s are expected for missing images - log at debug level
+            _logger.LogDebug("Image not available for {Endpoint}", endpoint);
+            return (null, null, false);
+        }
         catch (Exception ex)
         {
+            // Actual errors should still be logged
             _logger.LogError(ex, "Failed to get bytes from {Endpoint}", endpoint);
             return (null, null, false);
         }
@@ -498,7 +505,7 @@ public class JellyfinProxyService
 
     /// <summary>
     /// Searches for items in Jellyfin.
-    /// Uses configured or auto-detected LibraryId to filter search to music library only.
+    /// Does not force any library filtering - clients can specify parentId if they want.
     /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> SearchAsync(
         string searchTerm,
@@ -520,12 +527,8 @@ public class JellyfinProxyService
             queryParams["userId"] = _settings.UserId;
         }
 
-        // Only filter search to music library if explicitly configured
-        if (!string.IsNullOrEmpty(_settings.LibraryId))
-        {
-            queryParams["parentId"] = _settings.LibraryId;
-            _logger.LogInformation("Searching within configured LibraryId {LibraryId}", _settings.LibraryId);
-        }
+        // Note: We don't force parentId here - let clients specify which library to search
+        // The controller will detect music library searches and add external results
 
         if (includeItemTypes != null && includeItemTypes.Length > 0)
         {

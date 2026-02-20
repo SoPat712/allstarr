@@ -636,6 +636,10 @@ public class DeezerMetadataService : IMusicMetadataService
                     // Override album name to be the playlist name
                     song.Album = playlistName;
                     
+                    // Playlists should not have disc numbers - always set to null
+                    // This prevents Jellyfin from splitting the playlist into multiple "discs"
+                    song.DiscNumber = null;
+                    
                     if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);

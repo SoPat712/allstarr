@@ -116,15 +116,13 @@ public class JavaScriptSyntaxTests
         // app.js is now deprecated and just contains comments
         // Skip this test or check main.js instead
         var filePath = Path.Combine(_wwwrootPath, "js", "main.js");
-        var content = File.ReadAllText(filePath);
         
-        // Remove strings and comments to avoid false positives
-        var cleanedContent = RemoveStringsAndComments(content);
+        // Use Node.js to validate syntax instead of counting parentheses
+        // This is more reliable than regex-based string/comment removal
+        string error;
+        var isValid = ValidateJavaScriptSyntax(filePath, out error);
         
-        var openParens = cleanedContent.Count(c => c == '(');
-        var closeParens = cleanedContent.Count(c => c == ')');
-        
-        Assert.Equal(openParens, closeParens);
+        Assert.True(isValid, $"JavaScript syntax validation failed: {error}");
     }
 
     private bool ValidateJavaScriptSyntax(string filePath, out string error)

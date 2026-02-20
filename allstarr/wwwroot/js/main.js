@@ -237,6 +237,16 @@ window.downloadFile = function(path) {
     }
 };
 
+window.downloadAllKept = function() {
+    try {
+        window.open('/api/admin/downloads/all', '_blank');
+        showToast('Preparing download archive...', 'info');
+    } catch (error) {
+        console.error('Failed to download all files:', error);
+        showToast('Failed to download all files', 'error');
+    }
+};
+
 window.deleteDownload = async function(path) {
     if (!confirm(`Delete this file?\n\n${path}\n\nThis action cannot be undone.`)) {
         return;
@@ -690,6 +700,8 @@ window.viewTracks = viewTracks;
 // Manual mapping functions
 window.openManualMap = openManualMap;
 window.openExternalMap = openExternalMap;
+window.openMapToLocal = openManualMap; // Alias for compatibility
+window.openMapToExternal = openExternalMap; // Alias for compatibility
 window.searchJellyfinTracks = searchJellyfinTracks;
 window.selectJellyfinTrack = selectJellyfinTrack;
 window.saveLocalMapping = saveLocalMapping;
@@ -872,6 +884,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start auto-refresh
     startPlaylistAutoRefresh();
     
+    // Load scrobbling config immediately on page load
+    loadScrobblingConfig();
+    
+    // Also reload when scrobbling tab is clicked
+    const scrobblingTab = document.querySelector('.tab[data-tab="scrobbling"]');
+    if (scrobblingTab) {
+        scrobblingTab.addEventListener('click', function() {
+            loadScrobblingConfig();
+        });
+    }
+    
     // Auto-refresh every 30 seconds
     setInterval(() => {
         window.fetchStatus();
@@ -888,3 +911,314 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 console.log('✅ Main.js module loaded');
+
+// ===== SCROBBLING FUNCTIONS =====
+
+window.loadScrobblingConfig = async function() {
+    try {
+        const response = await fetch('/api/admin/config', {
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Update scrobbling enabled
+        document.getElementById('scrobbling-enabled-value').textContent = data.scrobbling.enabled ? 'Enabled' : 'Disabled';
+        
+        // Update local tracks enabled
+        document.getElementById('local-tracks-enabled-value').textContent = data.scrobbling.localTracksEnabled ? 'Enabled' : 'Disabled';
+        
+        // Update Last.fm config
+        document.getElementById('lastfm-enabled-value').textContent = data.scrobbling.lastFm.enabled ? 'Enabled' : 'Disabled';
+        
+        // Username - show actual value or "Not Set"
+        const username = data.scrobbling.lastFm.username;
+        document.getElementById('lastfm-username-value').textContent = (username && username !== '(not set)') ? username : 'Not Set';
+        
+        // Password - show if set (masked)
+        const password = data.scrobbling.lastFm.password;
+        document.getElementById('lastfm-password-value').textContent = (password && password !== '(not set)') ? '••••••••' : 'Not Set';
+        
+        // Session key - show first 32 chars if exists
+        const sessionKey = data.scrobbling.lastFm.sessionKey;
+        if (sessionKey && sessionKey !== '(not set)' && !sessionKey.startsWith('••••')) {
+            document.getElementById('lastfm-session-key-value').textContent = sessionKey.substring(0, 32) + '...';
+        } else if (sessionKey && sessionKey.startsWith('••••')) {
+            // It's masked, show it as is
+            document.getElementById('lastfm-session-key-value').textContent = sessionKey;
+        } else {
+            document.getElementById('lastfm-session-key-value').textContent = 'Not Set';
+        }
+        
+        // Status - check if API Key and Secret are set
+        const hasApiKey = data.scrobbling.lastFm.apiKey && data.scrobbling.lastFm.apiKey !== '(not set)' && !data.scrobbling.lastFm.apiKey.startsWith('(not set)');
+        const hasSecret = data.scrobbling.lastFm.sharedSecret && data.scrobbling.lastFm.sharedSecret !== '(not set)' && !data.scrobbling.lastFm.sharedSecret.startsWith('(not set)');
+        const hasUsername = username && username !== '(not set)';
+        const hasPassword = password && password !== '(not set)';
+        const hasSessionKey = sessionKey && sessionKey !== '(not set)' && sessionKey.length > 0;
+        
+        let status = '';
+        if (data.scrobbling.lastFm.enabled && hasSessionKey) {
+            status = '<span style="color: var(--success);">✓ Configured & Enabled</span>';
+        } else if (hasApiKey && hasSecret && hasUsername && hasPassword && !hasSessionKey) {
+            status = '<span style="color: var(--warning);">⚠️ Ready to Authenticate</span>';
+        } else if (hasApiKey && hasSecret && (!hasUsername || !hasPassword)) {
+            status = '<span style="color: var(--warning);">⚠️ Needs Username & Password</span>';
+        } else if (!hasApiKey || !hasSecret) {
+            status = '<span style="color: var(--success);">✓ Using hardcoded credentials</span>';
+        } else {
+            status = '<span style="color: var(--muted);">○ Not Configured</span>';
+        }
+        document.getElementById('lastfm-status-value').innerHTML = status;
+        
+        // Update ListenBrainz config
+        document.getElementById('listenbrainz-enabled-value').textContent = data.scrobbling.listenBrainz.enabled ? 'Enabled' : 'Disabled';
+        
+        const hasToken = data.scrobbling.listenBrainz.userToken && data.scrobbling.listenBrainz.userToken !== '(not set)';
+        document.getElementById('listenbrainz-token-value').textContent = hasToken ? '••••••••' : 'Not Set';
+        
+        // ListenBrainz status
+        let lbStatus = '';
+        if (data.scrobbling.listenBrainz.enabled && hasToken) {
+            lbStatus = '<span style="color: var(--success);">✓ Configured & Enabled</span>';
+        } else if (hasToken && !data.scrobbling.listenBrainz.enabled) {
+            lbStatus = '<span style="color: var(--warning);">⚠️ Token Set (Not Enabled)</span>';
+        } else if (!hasToken && data.scrobbling.listenBrainz.enabled) {
+            lbStatus = '<span style="color: var(--warning);">⚠️ Enabled (No Token)</span>';
+        } else {
+            lbStatus = '<span style="color: var(--muted);">○ Not Configured</span>';
+        }
+        document.getElementById('listenbrainz-status-value').innerHTML = lbStatus;
+        
+    } catch (error) {
+        console.error('Failed to load scrobbling config:', error);
+        showToast('Failed to load scrobbling configuration: ' + error.message, 'error');
+    }
+};
+
+window.toggleScrobblingEnabled = async function() {
+    try {
+        const response = await fetch('/api/admin/config', {
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        const data = await response.json();
+        const newValue = !data.scrobbling.enabled;
+        
+        await API.updateConfigSetting('SCROBBLING_ENABLED', newValue.toString());
+        showToast(`Scrobbling ${newValue ? 'enabled' : 'disabled'}`, 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to toggle scrobbling: ' + error.message, 'error');
+    }
+};
+
+window.toggleLocalTracksEnabled = async function() {
+    try {
+        const response = await fetch('/api/admin/scrobbling/status', {
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        const data = await response.json();
+        const newValue = !data.localTracksEnabled;
+        
+        const updateResponse = await fetch('/api/admin/scrobbling/local-tracks/update', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': localStorage.getItem('apiKey') || ''
+            },
+            body: JSON.stringify({ enabled: newValue })
+        });
+        
+        if (!updateResponse.ok) {
+            const error = await updateResponse.json();
+            throw new Error(error.error || 'Failed to update setting');
+        }
+        
+        const result = await updateResponse.json();
+        showToast(result.message || `Local track scrobbling ${newValue ? 'enabled' : 'disabled'}`, 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to toggle local track scrobbling: ' + error.message, 'error');
+    }
+};
+
+window.toggleLastFmEnabled = async function() {
+    try {
+        const response = await fetch('/api/admin/config', {
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        const data = await response.json();
+        const newValue = !data.scrobbling.lastFm.enabled;
+        
+        await API.updateConfigSetting('SCROBBLING_LASTFM_ENABLED', newValue.toString());
+        showToast(`Last.fm ${newValue ? 'enabled' : 'disabled'}`, 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to toggle Last.fm: ' + error.message, 'error');
+    }
+};
+
+window.toggleListenBrainzEnabled = async function() {
+    try {
+        const response = await fetch('/api/admin/config', {
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        const data = await response.json();
+        const newValue = !data.scrobbling.listenBrainz.enabled;
+        
+        await API.updateConfigSetting('SCROBBLING_LISTENBRAINZ_ENABLED', newValue.toString());
+        showToast(`ListenBrainz ${newValue ? 'enabled' : 'disabled'}`, 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to toggle ListenBrainz: ' + error.message, 'error');
+    }
+};
+
+window.editLastFmUsername = async function() {
+    const value = prompt('Enter your Last.fm username:');
+    if (value === null) return;
+    
+    try {
+        await API.updateConfigSetting('SCROBBLING_LASTFM_USERNAME', value.trim());
+        showToast('Last.fm username updated', 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to update username: ' + error.message, 'error');
+    }
+};
+
+window.editLastFmPassword = async function() {
+    const value = prompt('Enter your Last.fm password:\n\nThis is stored encrypted and only used for authentication.');
+    if (value === null) return;
+    
+    try {
+        await API.updateConfigSetting('SCROBBLING_LASTFM_PASSWORD', value.trim());
+        showToast('Last.fm password updated', 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to update password: ' + error.message, 'error');
+    }
+};
+
+window.editListenBrainzToken = async function() {
+    const value = prompt('Enter your ListenBrainz User Token:\n\nGet from https://listenbrainz.org/profile/');
+    if (value === null) return;
+    
+    try {
+        await API.updateConfigSetting('SCROBBLING_LISTENBRAINZ_USER_TOKEN', value.trim());
+        showToast('ListenBrainz token updated', 'success');
+        await loadScrobblingConfig();
+    } catch (error) {
+        showToast('Failed to update token: ' + error.message, 'error');
+    }
+};
+
+window.authenticateLastFm = async function() {
+    try {
+        showToast('Authenticating with Last.fm...', 'info');
+        
+        const response = await fetch('/api/admin/scrobbling/lastfm/authenticate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': localStorage.getItem('apiKey') || ''
+            }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        showToast('✓ Authentication successful! Session key saved. Please restart the container.', 'success', 5000);
+        window.showRestartBanner();
+        
+        // Reload config to show updated session key
+        await loadScrobblingConfig();
+    } catch (error) {
+        console.error('Failed to authenticate:', error);
+        showToast('Authentication failed: ' + error.message, 'error');
+    }
+};
+
+window.testLastFmConnection = async function() {
+    try {
+        const response = await fetch('/api/admin/scrobbling/lastfm/test', {
+            method: 'POST',
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        showToast(`✓ Last.fm connection successful! User: ${data.username}, Scrobbles: ${data.playcount}`, 'success');
+    } catch (error) {
+        console.error('Failed to test connection:', error);
+        showToast('Failed to test connection: ' + error.message, 'error');
+    }
+};
+
+window.validateListenBrainzToken = async function() {
+    const token = prompt('Enter your ListenBrainz User Token:\n\nGet from https://listenbrainz.org/settings/');
+    if (!token) return;
+    
+    try {
+        showToast('Validating ListenBrainz token...', 'info');
+        
+        const response = await fetch('/api/admin/scrobbling/listenbrainz/validate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': localStorage.getItem('apiKey') || ''
+            },
+            body: JSON.stringify({ userToken: token.trim() })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        showToast(`✓ Token validated! User: ${data.username}. Please restart the container.`, 'success', 5000);
+        window.showRestartBanner();
+        
+        // Reload config to show updated token
+        await loadScrobblingConfig();
+    } catch (error) {
+        console.error('Failed to validate token:', error);
+        showToast('Validation failed: ' + error.message, 'error');
+    }
+};
+
+window.testListenBrainzConnection = async function() {
+    try {
+        const response = await fetch('/api/admin/scrobbling/listenbrainz/test', {
+            method: 'POST',
+            headers: { 'X-API-Key': localStorage.getItem('apiKey') || '' }
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        showToast(`✓ ListenBrainz connection successful! User: ${data.username}`, 'success');
+    } catch (error) {
+        console.error('Failed to test connection:', error);
+        showToast('Failed to test connection: ' + error.message, 'error');
+    }
+};

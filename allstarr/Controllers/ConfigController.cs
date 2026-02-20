@@ -25,6 +25,7 @@ public class ConfigController : ControllerBase
     private readonly SquidWTFSettings _squidWtfSettings;
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
+    private readonly ScrobblingSettings _scrobblingSettings;
     private readonly AdminHelperService _helperService;
     private readonly RedisCacheService _cache;
     private const string CacheDirectory = "/app/cache/spotify";
@@ -40,6 +41,7 @@ public class ConfigController : ControllerBase
         IOptions<SquidWTFSettings> squidWtfSettings,
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
+        IOptions<ScrobblingSettings> scrobblingSettings,
         AdminHelperService helperService,
         RedisCacheService cache)
     {
@@ -53,12 +55,13 @@ public class ConfigController : ControllerBase
         _squidWtfSettings = squidWtfSettings.Value;
         _musicBrainzSettings = musicBrainzSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
+        _scrobblingSettings = scrobblingSettings.Value;
         _helperService = helperService;
         _cache = cache;
     }
 
     [HttpGet("config")]
-    public IActionResult GetConfig()
+    public async Task<IActionResult> GetConfig()
     {
         return Ok(new
         {
@@ -68,6 +71,10 @@ public class ConfigController : ControllerBase
             enableExternalPlaylists = _configuration.GetValue<bool>("EnableExternalPlaylists", false),
             playlistsDirectory = _configuration.GetValue<string>("PlaylistsDirectory") ?? "(not set)",
             redisEnabled = _configuration.GetValue<bool>("Redis:Enabled", false),
+            debug = new
+            {
+                logAllRequests = _configuration.GetValue<bool>("Debug:LogAllRequests", false)
+            },
             spotifyApi = new
             {
                 enabled = _spotifyApiSettings.Enabled,
@@ -128,8 +135,117 @@ public class ConfigController : ControllerBase
                 password = AdminHelperService.MaskValue(_musicBrainzSettings.Password),
                 baseUrl = _musicBrainzSettings.BaseUrl,
                 rateLimitMs = _musicBrainzSettings.RateLimitMs
-            }
+            },
+            scrobbling = await GetScrobblingSettingsFromEnvAsync()
         });
+    }
+    
+    /// <summary>
+    /// Read scrobbling settings directly from .env file for real-time updates
+    /// </summary>
+    private async Task<object> GetScrobblingSettingsFromEnvAsync()
+    {
+        try
+        {
+            var envPath = _helperService.GetEnvFilePath();
+            if (!System.IO.File.Exists(envPath))
+            {
+                // Fallback to IOptions if .env doesn't exist
+                return new
+                {
+                    enabled = _scrobblingSettings.Enabled,
+                    lastFm = new
+                    {
+                        enabled = _scrobblingSettings.LastFm.Enabled,
+                        apiKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
+                        sharedSecret = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
+                        sessionKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
+                        username = _scrobblingSettings.LastFm.Username ?? "(not set)",
+                        password = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
+                    },
+                    listenBrainz = new
+                    {
+                        enabled = _scrobblingSettings.ListenBrainz.Enabled,
+                        userToken = AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
+                    }
+                };
+            }
+            
+            var lines = await System.IO.File.ReadAllLinesAsync(envPath);
+            var envVars = new Dictionary<string, string>();
+            
+            foreach (var line in lines)
+            {
+                if (AdminHelperService.ShouldSkipEnvLine(line))
+                    continue;
+                    
+                var (key, value) = AdminHelperService.ParseEnvLine(line);
+                if (!string.IsNullOrEmpty(key))
+                {
+                    envVars[key] = value;
+                }
+            }
+            
+            return new
+            {
+                enabled = envVars.TryGetValue("SCROBBLING_ENABLED", out var scrobblingEnabled) 
+                    ? scrobblingEnabled.Equals("true", StringComparison.OrdinalIgnoreCase) 
+                    : _scrobblingSettings.Enabled,
+                lastFm = new
+                {
+                    enabled = envVars.TryGetValue("SCROBBLING_LASTFM_ENABLED", out var lastFmEnabled)
+                        ? lastFmEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
+                        : _scrobblingSettings.LastFm.Enabled,
+                    apiKey = envVars.TryGetValue("SCROBBLING_LASTFM_API_KEY", out var apiKey)
+                        ? AdminHelperService.MaskValue(apiKey, showLast: 8)
+                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
+                    sharedSecret = envVars.TryGetValue("SCROBBLING_LASTFM_SHARED_SECRET", out var sharedSecret)
+                        ? AdminHelperService.MaskValue(sharedSecret, showLast: 8)
+                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
+                    sessionKey = envVars.TryGetValue("SCROBBLING_LASTFM_SESSION_KEY", out var sessionKey)
+                        ? AdminHelperService.MaskValue(sessionKey, showLast: 8)
+                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
+                    username = envVars.TryGetValue("SCROBBLING_LASTFM_USERNAME", out var username)
+                        ? (string.IsNullOrEmpty(username) ? "(not set)" : username)
+                        : (_scrobblingSettings.LastFm.Username ?? "(not set)"),
+                    password = envVars.TryGetValue("SCROBBLING_LASTFM_PASSWORD", out var password)
+                        ? AdminHelperService.MaskValue(password, showLast: 0)
+                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
+                },
+                listenBrainz = new
+                {
+                    enabled = envVars.TryGetValue("SCROBBLING_LISTENBRAINZ_ENABLED", out var lbEnabled)
+                        ? lbEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
+                        : _scrobblingSettings.ListenBrainz.Enabled,
+                    userToken = envVars.TryGetValue("SCROBBLING_LISTENBRAINZ_USER_TOKEN", out var userToken)
+                        ? AdminHelperService.MaskValue(userToken, showLast: 8)
+                        : AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read scrobbling settings from .env, falling back to IOptions");
+            // Fallback to IOptions
+            return new
+            {
+                enabled = _scrobblingSettings.Enabled,
+                lastFm = new
+                {
+                    enabled = _scrobblingSettings.LastFm.Enabled,
+                    apiKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
+                    sharedSecret = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
+                    sessionKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
+                    username = _scrobblingSettings.LastFm.Username ?? "(not set)",
+                    password = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
+                },
+                listenBrainz = new
+                {
+                    enabled = _scrobblingSettings.ListenBrainz.Enabled,
+                    userToken = AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
+                }
+            };
+        }
     }
     
     /// <summary>
@@ -169,6 +285,13 @@ public class ConfigController : ControllerBase
                     {
                         var key = line[..eqIndex].Trim();
                         var value = line[(eqIndex + 1)..].Trim();
+                        
+                        // Remove surrounding quotes if present (for proper re-quoting)
+                        if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2)
+                        {
+                            value = value[1..^1];
+                        }
+                        
                         envContent[key] = value;
                     }
                 }
@@ -186,10 +309,13 @@ public class ConfigController : ControllerBase
                     return BadRequest(new { error = $"Invalid environment variable key: {key}" });
                 }
                 
+                // IMPORTANT: Docker Compose does NOT need quotes in .env files
+                // It handles special characters correctly without them
+                // When quotes are used, they become part of the value itself
                 envContent[key] = value;
                 appliedUpdates.Add(key);
                 _logger.LogInformation("  Setting {Key} = {Value}", key, 
-                    key.Contains("COOKIE") || key.Contains("TOKEN") || key.Contains("KEY") || key.Contains("ARL") 
+                    key.Contains("COOKIE") || key.Contains("TOKEN") || key.Contains("KEY") || key.Contains("ARL") || key.Contains("PASSWORD")
                         ? "***" + (value.Length > 8 ? value[^8..] : "") 
                         : value);
                 
@@ -204,7 +330,7 @@ public class ConfigController : ControllerBase
                 }
             }
             
-            // Write back to .env file
+            // Write back to .env file (no quoting needed - Docker Compose handles special chars)
             var newContent = string.Join("\n", envContent.Select(kv => $"{kv.Key}={kv.Value}"));
             await System.IO.File.WriteAllTextAsync(_helperService.GetEnvFilePath(), newContent + "\n");
             

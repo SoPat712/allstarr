@@ -76,9 +76,36 @@ public class RoundRobinFallbackHelper
             
             return isHealthy;
         }
+        catch (TaskCanceledException)
+        {
+            // Timeouts are expected when checking multiple mirrors - log at debug level
+            _logger.LogDebug("{Service} endpoint {Endpoint} health check timed out", _serviceName, baseUrl);
+            
+            // Cache as unhealthy
+            lock (_healthCacheLock)
+            {
+                _healthCache[baseUrl] = (false, DateTime.UtcNow);
+            }
+            
+            return false;
+        }
+        catch (HttpRequestException ex)
+        {
+            // Connection errors (refused, DNS failures, etc.) - log at debug level
+            _logger.LogDebug("{Service} endpoint {Endpoint} health check failed: {Message}", _serviceName, baseUrl, ex.Message);
+            
+            // Cache as unhealthy
+            lock (_healthCacheLock)
+            {
+                _healthCache[baseUrl] = (false, DateTime.UtcNow);
+            }
+            
+            return false;
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
+            // Unexpected errors - still log at debug level for health checks
+            _logger.LogDebug(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
             
             // Cache as unhealthy
             lock (_healthCacheLock)
@@ -203,56 +230,68 @@ public class RoundRobinFallbackHelper
     /// Races all endpoints in parallel and returns the first successful result.
     /// Cancels remaining requests once one succeeds. Great for latency-sensitive operations.
     /// </summary>
-    public async Task<T> RaceAllEndpointsAsync<T>(Func<string, CancellationToken, Task<T>> action, CancellationToken cancellationToken = default)
-    {
-        if (_apiUrls.Count == 1)
+    /// <summary>
+        /// Races the top N fastest endpoints in parallel and returns the first successful result.
+        /// Cancels remaining requests once one succeeds. Used for latency-sensitive operations like search.
+        /// </summary>
+        public async Task<T> RaceTopEndpointsAsync<T>(int topN, Func<string, CancellationToken, Task<T>> action, CancellationToken cancellationToken = default)
         {
-            // No point racing with one endpoint
-            return await action(_apiUrls[0], cancellationToken);
-        }
-
-        using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var tasks = new List<Task<(T result, string endpoint, bool success)>>();
-
-        // Start all requests in parallel
-        foreach (var baseUrl in _apiUrls)
-        {
-            var task = Task.Run(async () =>
+            if (_apiUrls.Count == 1 || topN <= 1)
             {
-                try
-                {
-                    _logger.LogDebug("Racing {Service} endpoint {Endpoint}", _serviceName, baseUrl);
-                    var result = await action(baseUrl, raceCts.Token);
-                    return (result, baseUrl, true);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "{Service} race failed for endpoint {Endpoint}", _serviceName, baseUrl);
-                    return (default(T)!, baseUrl, false);
-                }
-            }, raceCts.Token);
-            
-            tasks.Add(task);
-        }
-
-        // Wait for first successful completion
-        while (tasks.Count > 0)
-        {
-            var completedTask = await Task.WhenAny(tasks);
-            var (result, endpoint, success) = await completedTask;
-            
-            if (success)
-            {
-                _logger.LogDebug("🏁 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
-                raceCts.Cancel(); // Cancel all other requests
-                return result;
+                // No point racing with one endpoint - use fallback instead
+                return await TryWithFallbackAsync(baseUrl => action(baseUrl, cancellationToken));
             }
-            
-            tasks.Remove(completedTask);
-        }
 
-        throw new Exception($"All {_serviceName} endpoints failed in race");
-    }
+            // Get top N fastest healthy endpoints
+            var endpointsToRace = _apiUrls.Take(Math.Min(topN, _apiUrls.Count)).ToList();
+
+            if (endpointsToRace.Count == 1)
+            {
+                return await action(endpointsToRace[0], cancellationToken);
+            }
+
+            using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var tasks = new List<Task<(T result, string endpoint, bool success)>>();
+
+            // Start racing the top N endpoints
+            foreach (var baseUrl in endpointsToRace)
+            {
+                var task = Task.Run(async () =>
+                {
+                    try
+                    {
+                        _logger.LogDebug("🏁 Racing {Service} endpoint {Endpoint}", _serviceName, baseUrl);
+                        var result = await action(baseUrl, raceCts.Token);
+                        return (result, baseUrl, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug("{Service} race failed for endpoint {Endpoint}: {Message}", _serviceName, baseUrl, ex.Message);
+                        return (default(T)!, baseUrl, false);
+                    }
+                }, raceCts.Token);
+
+                tasks.Add(task);
+            }
+
+            // Wait for first successful completion
+            while (tasks.Count > 0)
+            {
+                var completedTask = await Task.WhenAny(tasks);
+                var (result, endpoint, success) = await completedTask;
+
+                if (success)
+                {
+                    _logger.LogDebug("🏆 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
+                    raceCts.Cancel(); // Cancel all other requests
+                    return result;
+                }
+
+                tasks.Remove(completedTask);
+            }
+
+            throw new Exception($"All {topN} {_serviceName} endpoints failed in race");
+        }
 
     /// <summary>
     /// Tries the request with the next provider in round-robin, then falls back to others on failure.
@@ -309,5 +348,94 @@ public class RoundRobinFallbackHelper
             }
         }
         return defaultValue;
+    }
+
+    /// <summary>
+    /// Processes multiple items in parallel across all available endpoints.
+    /// Each endpoint processes items sequentially. Failed endpoints are blacklisted.
+    /// </summary>
+    public async Task<List<TResult>> ProcessInParallelAsync<TItem, TResult>(
+        List<TItem> items,
+        Func<string, TItem, CancellationToken, Task<TResult>> action,
+        CancellationToken cancellationToken = default)
+    {
+        if (!items.Any())
+        {
+            return new List<TResult>();
+        }
+
+        var results = new List<TResult>();
+        var resultsLock = new object();
+        var itemQueue = new Queue<TItem>(items);
+        var queueLock = new object();
+        var blacklistedEndpoints = new HashSet<string>();
+        var blacklistLock = new object();
+
+        // Start one task per endpoint
+        var tasks = _apiUrls.Select(async endpoint =>
+        {
+            while (true)
+            {
+                // Check if endpoint is blacklisted
+                lock (blacklistLock)
+                {
+                    if (blacklistedEndpoints.Contains(endpoint))
+                    {
+                        return;
+                    }
+                }
+
+                // Get next item from queue
+                TItem? item;
+                lock (queueLock)
+                {
+                    if (itemQueue.Count == 0)
+                    {
+                        return; // No more items to process
+                    }
+                    item = itemQueue.Dequeue();
+                }
+
+                // Process the item
+                try
+                {
+                    var result = await action(endpoint, item, cancellationToken);
+                    
+                    lock (resultsLock)
+                    {
+                        results.Add(result);
+                    }
+                    
+                    _logger.LogDebug("✓ {Service} endpoint {Endpoint} processed item ({Completed}/{Total})", 
+                        _serviceName, endpoint, results.Count, items.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "✗ {Service} endpoint {Endpoint} failed, blacklisting", 
+                        _serviceName, endpoint);
+                    
+                    // Blacklist this endpoint
+                    lock (blacklistLock)
+                    {
+                        blacklistedEndpoints.Add(endpoint);
+                    }
+                    
+                    // Put item back in queue for another endpoint to try
+                    lock (queueLock)
+                    {
+                        itemQueue.Enqueue(item);
+                    }
+                    
+                    return; // Exit this endpoint's task
+                }
+            }
+        }).ToList();
+
+        await Task.WhenAll(tasks);
+
+        _logger.LogInformation("🏁 {Service} parallel processing complete: {Completed}/{Total} items, {Blacklisted} endpoints blacklisted",
+            _serviceName, results.Count, items.Count, blacklistedEndpoints.Count);
+
+        return results;
     }
 }

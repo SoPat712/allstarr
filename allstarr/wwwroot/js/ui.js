@@ -206,6 +206,7 @@ export function updateConfigUI(data) {
     document.getElementById('config-enable-external-playlists').textContent = data.enableExternalPlaylists ? 'Yes' : 'No';
     document.getElementById('config-playlists-directory').textContent = data.playlistsDirectory || '(not set)';
     document.getElementById('config-redis-enabled').textContent = data.redisEnabled ? 'Yes' : 'No';
+    document.getElementById('config-debug-log-requests').textContent = data.debug?.logAllRequests ? 'Enabled' : 'Disabled';
     
     document.getElementById('config-spotify-enabled').textContent = data.spotifyApi.enabled ? 'Yes' : 'No';
     document.getElementById('config-spotify-cookie').textContent = data.spotifyApi.sessionCookie;

@@ -100,7 +100,7 @@ public class QobuzMetadataServiceTests
         Assert.Equal(12000, result[0].Duration);
         Assert.Equal("qobuz", result[0].Provider);
         Assert.Equal("1578664", result[0].ExternalId);
-        Assert.Equal("pl-qobuz-1578664", result[0].Id);
+        Assert.Equal("ext-qobuz-playlist-1578664", result[0].Id);
         Assert.Equal("Qobuz Editorial", result[0].CuratorName);
     }
     
@@ -198,7 +198,7 @@ public class QobuzMetadataServiceTests
         Assert.Equal("Top jazz tracks", result.Description);
         Assert.Equal(100, result.TrackCount);
         Assert.Equal(24000, result.Duration);
-        Assert.Equal("pl-qobuz-1578664", result.Id);
+        Assert.Equal("ext-qobuz-playlist-1578664", result.Id);
         Assert.Equal("Qobuz Editor", result.CuratorName);
         Assert.Equal("https://example.com/cover-large.jpg", result.CoverUrl);
     }

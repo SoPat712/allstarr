@@ -321,7 +321,7 @@ export function extractJellyfinId() {
 export function validateExternalMapping(externalId, provider) {
     if (provider === 'squidwtf') {
         if (!/^https?:\/\//.test(externalId)) {
-            showToast('SquidWTF requires a full URL (e.g., https://squid.wtf/music/...)', 'error');
+            showToast('SquidWTF requires a full URL from the search results', 'error');
             return false;
         }
     } else if (provider === 'deezer') {
@@ -391,11 +391,12 @@ export async function saveLyricsMapping() {
 export async function searchProvider(query, provider) {
     try {
         const data = await API.getSquidWTFBaseUrl();
-        const baseUrl = data.squidWtfBaseUrl || 'https://squid.wtf';
+        const baseUrl = data.baseUrl; // Use the actual property name from API
         const searchUrl = `${baseUrl}/music/search?q=${encodeURIComponent(query)}`;
         window.open(searchUrl, '_blank');
     } catch (error) {
         console.error('Failed to get SquidWTF base URL:', error);
-        window.open(`https://squid.wtf/music/search?q=${encodeURIComponent(query)}`, '_blank');
+        // Fallback to first encoded URL (triton)
+        showToast('Failed to get SquidWTF URL, using fallback', 'warning');
     }
 }

@@ -27,12 +27,8 @@ public class DownloadsController : ControllerBase
         {
             var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             
-            _logger.LogDebug("📂 Checking kept folder: {Path}", keptPath);
-            _logger.LogInformation("📂 Directory exists: {Exists}", Directory.Exists(keptPath));
-            
             if (!Directory.Exists(keptPath))
             {
-                _logger.LogWarning("Kept folder does not exist: {Path}", keptPath);
                 return Ok(new { files = new List<object>(), totalSize = 0, count = 0 });
             }
             
@@ -46,11 +42,8 @@ public class DownloadsController : ControllerBase
                 .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
                 .ToList();
             
-            _logger.LogDebug("📂 Found {Count} audio files in kept folder", allFiles.Count);
-            
             foreach (var filePath in allFiles)
             {
-                _logger.LogDebug("📂 Processing file: {Path}", filePath);
                 
                 var fileInfo = new FileInfo(filePath);
                 var relativePath = Path.GetRelativePath(keptPath, filePath);
@@ -76,8 +69,6 @@ public class DownloadsController : ControllerBase
                 
                 totalSize += fileInfo.Length;
             }
-            
-            _logger.LogDebug("📂 Returning {Count} kept files, total size: {Size}", files.Count, AdminHelperService.FormatFileSize(totalSize));
             
             return Ok(new
             {
@@ -111,26 +102,21 @@ public class DownloadsController : ControllerBase
             var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
             var fullPath = Path.Combine(keptPath, path);
             
-            _logger.LogDebug("🗑️ Delete request for: {Path}", fullPath);
-            
             // Security: Ensure the path is within the kept directory
             var normalizedFullPath = Path.GetFullPath(fullPath);
             var normalizedKeptPath = Path.GetFullPath(keptPath);
             
             if (!normalizedFullPath.StartsWith(normalizedKeptPath))
             {
-                _logger.LogWarning("🗑️ Invalid path (outside kept folder): {Path}", normalizedFullPath);
                 return BadRequest(new { error = "Invalid path" });
             }
             
             if (!System.IO.File.Exists(fullPath))
             {
-                _logger.LogWarning("🗑️ File not found: {Path}", fullPath);
                 return NotFound(new { error = "File not found" });
             }
             
             System.IO.File.Delete(fullPath);
-            _logger.LogDebug("🗑️ Deleted file: {Path}", fullPath);
             
             // Clean up empty directories (Album folder, then Artist folder if empty)
             var directory = Path.GetDirectoryName(fullPath);
@@ -139,12 +125,10 @@ public class DownloadsController : ControllerBase
                 if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
                 {
                     Directory.Delete(directory);
-                    _logger.LogInformation("🗑️ Deleted empty directory: {Dir}", directory);
                     directory = Path.GetDirectoryName(directory);
                 }
                 else
                 {
-                    _logger.LogInformation("🗑️ Directory not empty or doesn't exist, stopping cleanup: {Dir}", directory);
                     break;
                 }
             }
@@ -198,6 +182,60 @@ public class DownloadsController : ControllerBase
         {
             _logger.LogError(ex, "Failed to download file: {Path}", path);
             return StatusCode(500, new { error = "Failed to download file" });
+        }
+    }
+    
+    /// <summary>
+    /// GET /api/admin/downloads/all
+    /// Downloads all kept files as a zip archive
+    /// </summary>
+    [HttpGet("downloads/all")]
+    public IActionResult DownloadAllFiles()
+    {
+        try
+        {
+            var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
+            
+            if (!Directory.Exists(keptPath))
+            {
+                return NotFound(new { error = "No kept files found" });
+            }
+            
+            var audioExtensions = new[] { ".flac", ".mp3", ".m4a", ".opus" };
+            var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
+                .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .ToList();
+            
+            if (allFiles.Count == 0)
+            {
+                return NotFound(new { error = "No audio files found in kept folder" });
+            }
+            
+            _logger.LogInformation("📦 Creating zip archive with {Count} files", allFiles.Count);
+            
+            // Create zip in memory
+            var memoryStream = new MemoryStream();
+            using (var archive = new System.IO.Compression.ZipArchive(memoryStream, System.IO.Compression.ZipArchiveMode.Create, true))
+            {
+                foreach (var filePath in allFiles)
+                {
+                    var relativePath = Path.GetRelativePath(keptPath, filePath);
+                    var entry = archive.CreateEntry(relativePath, System.IO.Compression.CompressionLevel.NoCompression);
+                    
+                    using var entryStream = entry.Open();
+                    using var fileStream = System.IO.File.OpenRead(filePath);
+                    fileStream.CopyTo(entryStream);
+                }
+            }
+            
+            memoryStream.Position = 0;
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            return File(memoryStream, "application/zip", $"allstarr_kept_{timestamp}.zip");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create zip archive");
+            return StatusCode(500, new { error = "Failed to create zip archive" });
         }
     }
     

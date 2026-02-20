@@ -93,7 +93,8 @@ public class LyricsOrchestrator
     {
         var artistName = string.Join(", ", artistNames);
         
-        _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Track}", artistName, trackName);
+        _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Track} (Spotify ID: {SpotifyId})", 
+            artistName, trackName, spotifyTrackId ?? "none");
 
         // 1. Try Spotify lyrics (if Spotify ID provided)
         if (!string.IsNullOrEmpty(spotifyTrackId))
@@ -103,6 +104,10 @@ public class LyricsOrchestrator
             {
                 return true;
             }
+        }
+        else
+        {
+            _logger.LogDebug("No Spotify ID available for prefetch, skipping Spotify lyrics");
         }
 
         // 2. Try LyricsPlus
@@ -181,7 +186,8 @@ public class LyricsOrchestrator
             
             if (lyrics != null)
             {
-                _logger.LogInformation("✓ Found LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
+                // LyricsPlus already logs with source info, so we just confirm success
+                _logger.LogDebug("✓ LyricsOrchestrator: Using LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
                 return lyrics;
             }
             
@@ -210,7 +216,7 @@ public class LyricsOrchestrator
             
             if (lyrics != null)
             {
-                _logger.LogInformation("✓ Found LRCLib lyrics for {Artist} - {Track}", artistName, trackName);
+                _logger.LogInformation("✓ LyricsOrchestrator: Using LRCLib lyrics for {Artist} - {Track}", artistName, trackName);
                 return lyrics;
             }
             

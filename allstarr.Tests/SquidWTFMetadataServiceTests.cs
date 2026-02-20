@@ -40,9 +40,9 @@ public class SquidWTFMetadataServiceTests
         
         _apiUrls = new List<string> 
         { 
-            "https://squid.wtf",
-            "https://mirror1.squid.wtf",
-            "https://mirror2.squid.wtf"
+            "https://test1.example.com",
+            "https://test2.example.com",
+            "https://test3.example.com"
         };
         
         var httpClient = new System.Net.Http.HttpClient();
@@ -321,10 +321,10 @@ public class SquidWTFMetadataServiceTests
         // Arrange
         var multipleUrls = new List<string>
         {
-            "https://primary.squid.wtf",
-            "https://backup1.squid.wtf",
-            "https://backup2.squid.wtf",
-            "https://backup3.squid.wtf"
+            "https://test-primary.example.com",
+            "https://test-backup1.example.com",
+            "https://test-backup2.example.com",
+            "https://test-backup3.example.com"
         };
 
         // Act

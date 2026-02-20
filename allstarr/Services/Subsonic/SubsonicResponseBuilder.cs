@@ -156,6 +156,14 @@ public class SubsonicResponseBuilder
         
         var artistId = $"curator-{playlist.Provider}-{playlist.CuratorName?.ToLowerInvariant().Replace(" ", "-") ?? "unknown"}";
         
+        // Aggregate unique genres from all tracks
+        var genres = tracks
+            .Where(s => !string.IsNullOrEmpty(s.Genre))
+            .Select(s => s.Genre!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var genreString = genres.Count > 0 ? string.Join(", ", genres) : "Playlist";
+        
         if (format == "json")
         {
             return CreateJsonResponse(new 
@@ -172,7 +180,7 @@ public class SubsonicResponseBuilder
                     songCount = tracks.Count,
                     duration = totalDuration,
                     year = playlist.CreatedDate?.Year ?? 0,
-                    genre = "Playlist",
+                    genre = genreString,
                     isCompilation = false,
                     created = playlist.CreatedDate?.ToString("yyyy-MM-ddTHH:mm:ss"),
                     song = tracks.Select(s => ConvertSongToJson(s)).ToList()
@@ -188,7 +196,7 @@ public class SubsonicResponseBuilder
             new XAttribute("artistId", artistId),
             new XAttribute("songCount", tracks.Count),
             new XAttribute("duration", totalDuration),
-            new XAttribute("genre", "Playlist"),
+            new XAttribute("genre", genreString),
             new XAttribute("coverArt", playlist.Id)
         );
         

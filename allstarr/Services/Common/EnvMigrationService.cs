@@ -64,6 +64,39 @@ public class EnvMigrationService
                         _logger.LogInformation("Migrated SQUIDWTF_QUALITY from {Old} to {New} in .env file", value, newValue);
                     }
                 }
+                
+                // CRITICAL FIX: Remove quotes from password/token values
+                // Docker Compose does NOT need quotes in .env files - it handles special characters correctly
+                // When quotes are used, they become part of the value itself
+                var keysToUnquote = new[]
+                {
+                    "SCROBBLING_LASTFM_PASSWORD",
+                    "MUSICBRAINZ_PASSWORD",
+                    "DEEZER_ARL",
+                    "DEEZER_ARL_FALLBACK",
+                    "QOBUZ_USER_AUTH_TOKEN",
+                    "SCROBBLING_LASTFM_SESSION_KEY",
+                    "SCROBBLING_LISTENBRAINZ_USER_TOKEN",
+                    "SPOTIFY_API_SESSION_COOKIE"
+                };
+                
+                foreach (var key in keysToUnquote)
+                {
+                    if (line.StartsWith($"{key}="))
+                    {
+                        var value = line.Substring($"{key}=".Length);
+                        
+                        // Remove surrounding quotes if present
+                        if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2)
+                        {
+                            var unquoted = value.Substring(1, value.Length - 2);
+                            lines[i] = $"{key}={unquoted}";
+                            modified = true;
+                            _logger.LogInformation("Removed quotes from {Key} (Docker Compose doesn't need them)", key);
+                        }
+                        break;
+                    }
+                }
             }
 
             if (modified)
@@ -74,7 +107,7 @@ public class EnvMigrationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to migrate .env file - please manually update DOWNLOAD_PATH to Library__DownloadPath");
+            _logger.LogError(ex, "Failed to migrate .env file");
         }
     }
 }

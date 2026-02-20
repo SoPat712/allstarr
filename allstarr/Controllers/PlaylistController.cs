@@ -553,7 +553,15 @@ public class PlaylistController : ControllerBase
             }
             else
             {
-                _logger.LogInformation("Playlist {Name} has no JellyfinId configured", config.Name);
+                // This else block is reached when:
+                // 1. JellyfinId is empty, OR
+                // 2. totalPlayable > 0 (modern path already worked), OR
+                // 3. spotifyTrackCount == 0
+                // Only log if JellyfinId is actually missing
+                if (string.IsNullOrEmpty(config.JellyfinId))
+                {
+                    _logger.LogInformation("Playlist {Name} has no JellyfinId configured", config.Name);
+                }
             }
             
             playlists.Add(playlistInfo);
@@ -662,7 +670,74 @@ public class PlaylistController : ControllerBase
                 // Check if track is in the playlist cache first
                 if (cachedItem != null)
                 {
-                    // Track is in the playlist cache - determine type from ProviderIds
+                    // First check ServerId - if it's "allstarr", it's an external track
+                    if (cachedItem.TryGetValue("ServerId", out var serverIdObj) && serverIdObj != null)
+                    {
+                        string? serverId = null;
+                        if (serverIdObj is string str)
+                        {
+                            serverId = str;
+                        }
+                        else if (serverIdObj is JsonElement jsonEl && jsonEl.ValueKind == JsonValueKind.String)
+                        {
+                            serverId = jsonEl.GetString();
+                        }
+                        
+                        if (serverId == "allstarr")
+                        {
+                            // This is an external track stub
+                            isLocal = false;
+                            
+                            // Try to determine the provider from ProviderIds
+                            if (cachedItem.TryGetValue("ProviderIds", out var providerIdsObjExt) && providerIdsObjExt != null)
+                            {
+                                Dictionary<string, string>? providerIdsExt = null;
+                                
+                                if (providerIdsObjExt is Dictionary<string, string> dictExt)
+                                {
+                                    providerIdsExt = dictExt;
+                                }
+                                else if (providerIdsObjExt is JsonElement jsonElExt && jsonElExt.ValueKind == JsonValueKind.Object)
+                                {
+                                    providerIdsExt = new Dictionary<string, string>();
+                                    foreach (var prop in jsonElExt.EnumerateObject())
+                                    {
+                                        providerIdsExt[prop.Name] = prop.Value.GetString() ?? "";
+                                    }
+                                }
+                                
+                                if (providerIdsExt != null)
+                                {
+                                    // Check for external provider keys
+                                    if (providerIdsExt.ContainsKey("squidwtf"))
+                                        externalProvider = "squidwtf";
+                                    else if (providerIdsExt.ContainsKey("deezer"))
+                                        externalProvider = "deezer";
+                                    else if (providerIdsExt.ContainsKey("qobuz"))
+                                        externalProvider = "qobuz";
+                                    else if (providerIdsExt.ContainsKey("tidal"))
+                                        externalProvider = "tidal";
+                                }
+                            }
+                            
+                            _logger.LogDebug("✓ Track {Title} identified as EXTERNAL from ServerId=allstarr (provider: {Provider})", 
+                                track.Title, externalProvider ?? "unknown");
+                            
+                            // Check if this is a manual mapping
+                            var globalMappingExt = await _mappingService.GetMappingAsync(track.SpotifyId);
+                            if (globalMappingExt != null && globalMappingExt.Source == "manual")
+                            {
+                                isManualMapping = true;
+                                manualMappingType = "external";
+                                manualMappingId = globalMappingExt.ExternalId;
+                            }
+                            
+                            // Skip the rest of the ProviderIds logic
+                            goto AddTrack;
+                        }
+                    }
+                    
+                    // Track is in the playlist cache with real Jellyfin ServerId - determine type from ProviderIds
                     if (cachedItem.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
                     {
                         Dictionary<string, string>? providerIds = null;
@@ -780,6 +855,7 @@ public class PlaylistController : ControllerBase
                     }
                 }
                 
+                AddTrack:
                 // Check lyrics status
                 var cacheKey = $"lyrics:{track.PrimaryArtist}:{track.Title}:{track.Album}:{track.DurationMs / 1000}";
                 var existingLyrics = await _cache.GetStringAsync(cacheKey);
