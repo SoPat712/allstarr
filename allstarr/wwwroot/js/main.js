@@ -304,7 +304,7 @@ window.fetchJellyfinUsers = async function() {
     }
 };
 
-// Refresh playlists
+// Refresh playlists (fetch from Spotify without re-matching)
 window.refreshPlaylists = async function() {
     try {
         showToast('Refreshing playlists...', 'success');
@@ -316,9 +316,21 @@ window.refreshPlaylists = async function() {
     }
 };
 
-// Clear playlist cache
+// Refresh single playlist (fetch from Spotify without re-matching)
+window.refreshPlaylist = async function(name) {
+    try {
+        showToast(`Refreshing ${name} from Spotify...`, 'info');
+        const data = await API.refreshPlaylist(name);
+        showToast(`✓ ${data.message}`, 'success');
+        setTimeout(window.fetchPlaylists, 2000);
+    } catch (error) {
+        showToast('Failed to refresh playlist', 'error');
+    }
+};
+
+// Clear playlist cache (individual "Rebuild Remote" button)
 window.clearPlaylistCache = async function(name) {
-    if (!confirm(`Rebuild "${name}" from scratch?\n\nThis will:\n• Fetch fresh Spotify playlist data\n• Clear all caches\n• Re-match all tracks\n\nUse this when the Spotify playlist has changed.\n\nThis may take a minute.`)) return;
+    if (!confirm(`Rebuild "${name}" from scratch?\n\nThis will:\n• Clear all caches\n• Fetch fresh Spotify playlist data\n• Re-match all tracks\n\nThis is the SAME process as the scheduled cron job.\n\nUse this when the Spotify playlist has changed.\n\nThis may take a minute.`)) return;
     
     try {
         document.getElementById('matching-warning-banner').style.display = 'block';
@@ -372,32 +384,24 @@ window.matchAllPlaylists = async function() {
     }
 };
 
-// Refresh and match all
+// Refresh and match all (Rebuild All Remote button)
 window.refreshAndMatchAll = async function() {
-    if (!confirm('Clear caches, refresh from Spotify, and match all tracks?\n\nThis will:\n• Clear all playlist caches\n• Fetch fresh data from Spotify\n• Match all tracks against local library and external providers\n\nThis may take several minutes.')) return;
+    if (!confirm('Rebuild all playlists from scratch?\n\nThis will:\n• Clear all playlist caches\n• Fetch fresh data from Spotify\n• Re-match all tracks against local library and external providers\n\nThis is the SAME process as the scheduled cron job.\n\nThis may take several minutes.')) return;
     
     try {
         document.getElementById('matching-warning-banner').style.display = 'block';
-        showToast('Starting full refresh and match...', 'info', 3000);
+        showToast('Starting full rebuild (same as cron job)...', 'info', 3000);
         
-        showToast('Step 1/3: Clearing caches...', 'info', 2000);
-        await API.clearCache();
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        showToast('Step 2/3: Fetching from Spotify...', 'info', 2000);
-        await API.refreshPlaylists();
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        showToast('Step 3/3: Matching all tracks (this may take several minutes)...', 'info', 3000);
-        const data = await API.matchAllPlaylists();
-        showToast(`✓ Full refresh and match complete!`, 'success', 5000);
+        // Call the unified rebuild endpoint
+        const data = await API.rebuildAllPlaylists();
+        showToast(`✓ Full rebuild complete!`, 'success', 5000);
         
         setTimeout(() => {
             window.fetchPlaylists();
             document.getElementById('matching-warning-banner').style.display = 'none';
         }, 3000);
     } catch (error) {
-        showToast('Failed to complete refresh and match', 'error');
+        showToast('Failed to complete rebuild', 'error');
         document.getElementById('matching-warning-banner').style.display = 'none';
     }
 };

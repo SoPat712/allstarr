@@ -27,7 +27,7 @@ public class AdminHelperService
 
     public string GetJellyfinAuthHeader()
     {
-        return $"MediaBrowser Client=\"Allstarr\", Device=\"Server\", DeviceId=\"allstarr-admin\", Version=\"1.0.3\", Token=\"{_jellyfinSettings.ApiKey}\"";
+        return $"MediaBrowser Client=\"Allstarr\", Device=\"Server\", DeviceId=\"allstarr-admin\", Version=\"{AppVersion.Version}\", Token=\"{_jellyfinSettings.ApiKey}\"";
     }
 
     public async Task<List<SpotifyPlaylistConfig>> ReadPlaylistsFromEnvFileAsync()

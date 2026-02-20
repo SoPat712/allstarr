@@ -1003,6 +1003,43 @@ public class PlaylistController : ControllerBase
     }
     
     /// <summary>
+    /// Refresh a single playlist from Spotify (fetch latest data without re-matching).
+    /// </summary>
+    [HttpPost("playlists/{name}/refresh")]
+    public async Task<IActionResult> RefreshPlaylist(string name)
+    {
+        var decodedName = Uri.UnescapeDataString(name);
+        _logger.LogInformation("Manual refresh triggered for playlist: {Name}", decodedName);
+        
+        if (_playlistFetcher == null)
+        {
+            return BadRequest(new { error = "Playlist fetcher is not available" });
+        }
+        
+        try
+        {
+            await _playlistFetcher.RefreshPlaylistAsync(decodedName);
+            
+            // Clear playlist stats cache first (so it gets recalculated with fresh data)
+            var statsCacheKey = $"spotify:playlist:stats:{decodedName}";
+            await _cache.DeleteAsync(statsCacheKey);
+            
+            // Then invalidate playlist summary cache (will rebuild with fresh stats)
+            _helperService.InvalidatePlaylistSummaryCache();
+            
+            return Ok(new { 
+                message = $"Refreshed {decodedName} from Spotify (no re-matching)", 
+                timestamp = DateTime.UtcNow 
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to refresh playlist {Name}", decodedName);
+            return StatusCode(500, new { error = "Failed to refresh playlist", details = ex.Message });
+        }
+    }
+    
+    /// <summary>
     /// Re-match tracks when LOCAL library has changed (checks if Jellyfin playlist changed).
     /// This is a lightweight operation that reuses cached Spotify data.
     /// </summary>
@@ -1065,7 +1102,7 @@ public class PlaylistController : ControllerBase
     public async Task<IActionResult> ClearPlaylistCache(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name} (clearing Spotify cache)", decodedName);
+        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name} (same as cron job)", decodedName);
         
         if (_matchingService == null)
         {
@@ -1074,65 +1111,22 @@ public class PlaylistController : ControllerBase
         
         try
         {
-            // Clear ALL cache keys for this playlist (including Spotify data)
-            var cacheKeys = new[]
-            {
-                CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(decodedName),           // Pre-built items cache
-                CacheKeyBuilder.BuildSpotifyMatchedTracksKey(decodedName),          // Ordered matched tracks
-                $"spotify:matched:{decodedName}",                  // Legacy matched tracks
-                CacheKeyBuilder.BuildSpotifyMissingTracksKey(decodedName),                  // Missing tracks
-                $"spotify:playlist:jellyfin-signature:{decodedName}", // Jellyfin signature
-                CacheKeyBuilder.BuildSpotifyPlaylistKey(decodedName)                  // Spotify playlist data
-            };
-            
-            foreach (var key in cacheKeys)
-            {
-                await _cache.DeleteAsync(key);
-                _logger.LogDebug("Cleared cache key: {Key}", key);
-            }
-            
-            // Delete file caches
-            var safeName = AdminHelperService.SanitizeFileName(decodedName);
-            var filesToDelete = new[]
-            {
-                Path.Combine(CacheDirectory, $"{safeName}_items.json"),
-                Path.Combine(CacheDirectory, $"{safeName}_matched.json")
-            };
-            
-            foreach (var file in filesToDelete)
-            {
-                if (System.IO.File.Exists(file))
-                {
-                    System.IO.File.Delete(file);
-                    _logger.LogDebug("Deleted cache file: {File}", file);
-                }
-            }
-            
-            _logger.LogInformation("✓ Cleared all caches for playlist: {Name} (including Spotify data)", decodedName);
-            
-            // Trigger rebuild (will fetch fresh Spotify data)
-            await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
+            // Use the unified rebuild method (same as cron job and "Rebuild All Remote")
+            await _matchingService.TriggerRebuildForPlaylistAsync(decodedName);
             
             // Invalidate playlist summary cache
             _helperService.InvalidatePlaylistSummaryCache();
             
-            // Clear playlist stats cache to force recalculation from new mappings
-            var statsCacheKey = $"spotify:playlist:stats:{decodedName}";
-            await _cache.DeleteAsync(statsCacheKey);
-            _logger.LogDebug("Cleared stats cache for {Name}", decodedName);
-            
             return Ok(new 
             { 
-                message = $"Rebuilding {decodedName} from scratch (fetching fresh Spotify data)", 
-                timestamp = DateTime.UtcNow,
-                clearedKeys = cacheKeys.Length,
-                clearedFiles = filesToDelete.Count(f => System.IO.File.Exists(f))
+                message = $"Rebuilding {decodedName} from scratch (same as cron job)", 
+                timestamp = DateTime.UtcNow
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to clear cache for {Name}", decodedName);
-            return StatusCode(500, new { error = "Failed to clear cache", details = ex.Message });
+            _logger.LogError(ex, "Failed to rebuild playlist {Name}", decodedName);
+            return StatusCode(500, new { error = "Failed to rebuild playlist", details = ex.Message });
         }
     }
     
@@ -1495,6 +1489,32 @@ public class PlaylistController : ControllerBase
         {
             _logger.LogError(ex, "Failed to trigger track matching for all playlists");
             return StatusCode(500, new { error = "Failed to trigger track matching", details = ex.Message });
+        }
+    }
+    
+    /// <summary>
+    /// Rebuild all playlists from scratch (clear cache, fetch fresh data, re-match).
+    /// This is the same process as the scheduled cron job - used by "Rebuild All Remote" button.
+    /// </summary>
+    [HttpPost("playlists/rebuild-all")]
+    public async Task<IActionResult> RebuildAllPlaylists()
+    {
+        _logger.LogInformation("Manual full rebuild triggered for all playlists (same as cron job)");
+        
+        if (_matchingService == null)
+        {
+            return BadRequest(new { error = "Track matching service is not available" });
+        }
+        
+        try
+        {
+            await _matchingService.TriggerRebuildAllAsync();
+            return Ok(new { message = "Full rebuild triggered for all playlists (same as cron job)", timestamp = DateTime.UtcNow });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to trigger full rebuild for all playlists");
+            return StatusCode(500, new { error = "Failed to trigger full rebuild", details = ex.Message });
         }
     }
     

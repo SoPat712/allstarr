@@ -312,6 +312,30 @@ public class DeezerMetadataService : IMusicMetadataService
         return albums;
     }
 
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "deezer") return new List<Song>();
+        
+        var url = $"{BaseUrl}/artist/{externalId}/top?limit=50";
+        var response = await _httpClient.GetAsync(url);
+        
+        if (!response.IsSuccessStatusCode) return new List<Song>();
+        
+        var json = await response.Content.ReadAsStringAsync();
+        var result = JsonDocument.Parse(json);
+        
+        var tracks = new List<Song>();
+        if (result.RootElement.TryGetProperty("data", out var data))
+        {
+            foreach (var track in data.EnumerateArray())
+            {
+                tracks.Add(ParseDeezerTrack(track));
+            }
+        }
+        
+        return tracks;
+    }
+
     private Song ParseDeezerTrack(JsonElement track, int? fallbackTrackNumber = null, string? albumArtist = null)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();

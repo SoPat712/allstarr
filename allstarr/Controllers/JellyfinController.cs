@@ -189,44 +189,66 @@ public partial class JellyfinController : ControllerBase
     /// <summary>
     /// Gets child items for an external parent (album tracks or artist albums).
     /// </summary>
-    private async Task<IActionResult> GetExternalChildItems(string provider, string externalId, string? includeItemTypes)
+    private async Task<IActionResult> GetExternalChildItems(string provider, string type, string externalId, string? includeItemTypes)
     {
         var itemTypes = ParseItemTypes(includeItemTypes);
 
-        _logger.LogDebug("GetExternalChildItems: provider={Provider}, externalId={ExternalId}, itemTypes={ItemTypes}", 
-            provider, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
+        _logger.LogDebug("GetExternalChildItems: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}", 
+            provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
 
-        // Check if asking for audio (album tracks)
+        // Check if asking for audio (album tracks or artist songs)
         if (itemTypes?.Contains("Audio") == true)
         {
-            _logger.LogDebug("Fetching album tracks for {Provider}/{ExternalId}", provider, externalId);
-            var album = await _metadataService.GetAlbumAsync(provider, externalId);
-            if (album == null)
+            if (type == "album")
             {
-                return _responseBuilder.CreateError(404, "Album not found");
-            }
+                _logger.LogDebug("Fetching album tracks for {Provider}/{ExternalId}", provider, externalId);
+                var album = await _metadataService.GetAlbumAsync(provider, externalId);
+                if (album == null)
+                {
+                    return _responseBuilder.CreateError(404, "Album not found");
+                }
 
-            return _responseBuilder.CreateItemsResponse(album.Songs);
+                return _responseBuilder.CreateItemsResponse(album.Songs);
+            }
+            else if (type == "artist")
+            {
+                // For artist + Audio, fetch top tracks from the artist endpoint
+                _logger.LogDebug("Fetching artist tracks for {Provider}/{ExternalId}", provider, externalId);
+                var tracks = await _metadataService.GetArtistTracksAsync(provider, externalId);
+                _logger.LogDebug("Found {Count} tracks for artist", tracks.Count);
+                return _responseBuilder.CreateItemsResponse(tracks);
+            }
         }
 
-        // Otherwise assume it's artist albums
-        _logger.LogDebug("Fetching artist albums for {Provider}/{ExternalId}", provider, externalId);
-        var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId);
-        var artist = await _metadataService.GetArtistAsync(provider, externalId);
-
-        _logger.LogDebug("Found {Count} albums for artist {ArtistName}", albums.Count, artist?.Name ?? "unknown");
-
-        // Fill artist info
-        if (artist != null)
+        // Check if asking for albums (artist albums)
+        if (itemTypes?.Contains("MusicAlbum") == true || itemTypes == null)
         {
-            foreach (var a in albums)
+            if (type == "artist")
             {
-                if (string.IsNullOrEmpty(a.Artist)) a.Artist = artist.Name;
-                if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = artist.Id;
+                _logger.LogDebug("Fetching artist albums for {Provider}/{ExternalId}", provider, externalId);
+                var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId);
+                var artist = await _metadataService.GetArtistAsync(provider, externalId);
+
+                _logger.LogDebug("Found {Count} albums for artist {ArtistName}", albums.Count, artist?.Name ?? "unknown");
+
+                // Fill artist info
+                if (artist != null)
+                {
+                    foreach (var a in albums)
+                    {
+                        if (string.IsNullOrEmpty(a.Artist)) a.Artist = artist.Name;
+                        if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = artist.Id;
+                    }
+                }
+
+                return _responseBuilder.CreateAlbumsResponse(albums);
             }
         }
 
-        return _responseBuilder.CreateAlbumsResponse(albums);
+        // Fallback: return empty result
+        _logger.LogWarning("Unhandled GetExternalChildItems request: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}", 
+            provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
+        return _responseBuilder.CreateItemsResponse(new List<Song>());
     }
     private async Task<IActionResult> GetCuratorPlaylists(string provider, string externalId, string? includeItemTypes)
         {
@@ -517,8 +539,11 @@ public partial class JellyfinController : ControllerBase
             _ => null
         };
 
+        _logger.LogDebug("External {Type} {Provider}/{ExternalId} coverUrl: {CoverUrl}", type, provider, externalId, coverUrl ?? "NULL");
+
         if (string.IsNullOrEmpty(coverUrl))
         {
+            _logger.LogDebug("No cover URL for external {Type}, returning placeholder", type);
             // Return placeholder "no image available" image
             return await GetPlaceholderImageAsync();
         }
@@ -526,16 +551,34 @@ public partial class JellyfinController : ControllerBase
         // Fetch and return the image using the proxy service's HttpClient
         try
         {
-            var response = await _proxyService.HttpClient.GetAsync(coverUrl);
-            if (!response.IsSuccessStatusCode)
+            _logger.LogDebug("Fetching external image from {Url}", coverUrl);
+            
+            var imageBytes = await RetryHelper.RetryWithBackoffAsync(async () =>
             {
-                // Return placeholder on fetch failure
+                var response = await _proxyService.HttpClient.GetAsync(coverUrl);
+                
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ||
+                    response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+                {
+                    throw new HttpRequestException($"Transient error: {response.StatusCode}", null, response.StatusCode);
+                }
+                
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Failed to fetch external image from {Url}: {StatusCode}", coverUrl, response.StatusCode);
+                    return null;
+                }
+                
+                return await response.Content.ReadAsByteArrayAsync();
+            }, _logger, maxRetries: 3, initialDelayMs: 500);
+            
+            if (imageBytes == null)
+            {
                 return await GetPlaceholderImageAsync();
             }
-
-            var imageBytes = await response.Content.ReadAsByteArrayAsync();
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-            return File(imageBytes, contentType);
+            
+            _logger.LogDebug("Successfully fetched external image from {Url}, size: {Size} bytes", coverUrl, imageBytes.Length);
+            return File(imageBytes, "image/jpeg");
         }
         catch (Exception ex)
         {
@@ -967,7 +1010,7 @@ public partial class JellyfinController : ControllerBase
         {
             LocalAddress = Request.Host.ToString(),
             ServerName = serverName ?? "Allstarr",
-            Version = version ?? "1.0.3",
+            Version = version ?? AppVersion.Version,
             ProductName = "Allstarr (Jellyfin Proxy)",
             OperatingSystem = Environment.OSVersion.Platform.ToString(),
             Id = _settings.DeviceId,

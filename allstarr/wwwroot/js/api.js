@@ -141,6 +141,14 @@ export async function refreshPlaylists() {
     return await res.json();
 }
 
+export async function refreshPlaylist(name) {
+    const res = await fetch(`/api/admin/playlists/${encodeURIComponent(name)}/refresh`, { method: 'POST' });
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    return await res.json();
+}
+
 export async function clearPlaylistCache(name) {
     const res = await fetch(`/api/admin/playlists/${encodeURIComponent(name)}/clear-cache`, { method: 'POST' });
     if (!res.ok) {
@@ -159,6 +167,14 @@ export async function matchPlaylistTracks(name) {
 
 export async function matchAllPlaylists() {
     const res = await fetch('/api/admin/playlists/match-all', { method: 'POST' });
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    return await res.json();
+}
+
+export async function rebuildAllPlaylists() {
+    const res = await fetch('/api/admin/playlists/rebuild-all', { method: 'POST' });
     if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }

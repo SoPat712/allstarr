@@ -56,6 +56,11 @@ public interface IMusicMetadataService
     Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId);
     
     /// <summary>
+    /// Gets an artist's top tracks (not all songs, just popular tracks from the artist endpoint)
+    /// </summary>
+    Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId);
+    
+    /// <summary>
     /// Searches for playlists on external providers
     /// </summary>
     /// <param name="query">Search term</param>

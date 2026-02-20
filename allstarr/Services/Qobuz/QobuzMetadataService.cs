@@ -328,6 +328,14 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    {
+        // Qobuz doesn't have a dedicated "artist top tracks" endpoint
+        // Return empty list - clients will need to browse albums instead
+        if (externalProvider != "qobuz") return new List<Song>();
+        return new List<Song>();
+    }
+
     public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20)
     {
         try

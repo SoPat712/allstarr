@@ -93,7 +93,7 @@ public class DiagnosticsController : ControllerBase
         
         return Ok(new
         {
-            version = "1.0.3",
+            version = AppVersion.Version,
             backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin",
             jellyfinUrl = _jellyfinSettings.Url,
             spotify = new

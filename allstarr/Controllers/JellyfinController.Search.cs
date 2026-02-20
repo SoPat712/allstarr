@@ -38,35 +38,38 @@ public partial class JellyfinController
         // ============================================================================
         // REQUEST ROUTING LOGIC (Priority Order)
         // ============================================================================
-        // 1. ParentId present → GetChildItems (handles external playlists/albums/artists OR proxies library items)
-        // 2. AlbumIds present → Handle external albums OR proxy library albums
-        // 3. ArtistIds present → Handle external artists OR proxy library artists  
-        // 4. SearchTerm present → Integrated search (Jellyfin + external sources)
-        // 5. Otherwise → Proxy browse request transparently to Jellyfin
+        // 1. ArtistIds present (external) → Handle external artists (even with ParentId)
+        // 2. AlbumIds present (external) → Handle external albums (even with ParentId)
+        // 3. ParentId present → GetChildItems (handles external playlists/albums/artists OR proxies library items)
+        // 4. ArtistIds present (library) → Proxy to Jellyfin with artist filter
+        // 5. SearchTerm present → Integrated search (Jellyfin + external sources)
+        // 6. Otherwise → Proxy browse request transparently to Jellyfin
         // ============================================================================
 
-        // PRIORITY 1: ParentId takes precedence - handles both external and library items
-        if (!string.IsNullOrWhiteSpace(parentId))
+        // PRIORITY 1: External artist filter - takes precedence over everything (including ParentId)
+        if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
         {
-            // Check if this is the music library root with a search term - if so, do integrated search
-            var isMusicLibrary = parentId == _settings.LibraryId;
+            var artistId = effectiveArtistIds.Split(',')[0]; // Take first artist if multiple
+            var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(artistId);
 
-            if (isMusicLibrary && !string.IsNullOrWhiteSpace(searchTerm))
+            if (isExternal)
             {
-                _logger.LogInformation("Searching within music library {ParentId}, including external sources",
-                    parentId);
-                // Fall through to integrated search below
+                // Check if this is a curator ID (format: ext-{provider}-curator-{name})
+                if (artistId.Contains("-curator-", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation("Fetching playlists for curator: {ArtistId}", artistId);
+                    return await GetCuratorPlaylists(provider!, externalId!, includeItemTypes);
+                }
+
+                _logger.LogInformation("Fetching content for external artist: {Provider}/{ExternalId}, type={Type}, parentId={ParentId}", 
+                    provider, externalId, type, parentId);
+                return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes);
             }
-            else
-            {
-                // Browse parent item (external playlist/album/artist OR library item)
-                _logger.LogDebug("Browsing parent: {ParentId}", parentId);
-                return await GetChildItems(parentId, includeItemTypes, limit, startIndex, sortBy);
-            }
+            // If library artist, fall through to handle with ParentId or proxy
         }
 
-        // PRIORITY 2: Filter by album (no parentId)
-        if (string.IsNullOrWhiteSpace(parentId) && !string.IsNullOrWhiteSpace(albumIds))
+        // PRIORITY 2: External album filter
+        if (!string.IsNullOrWhiteSpace(albumIds))
         {
             var albumId = albumIds.Split(',')[0]; // Take first album if multiple
             var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(albumId);
@@ -92,51 +95,42 @@ public partial class JellyfinController
                     StartIndex = startIndex
                 });
             }
-            else
-            {
-                // Library album - proxy transparently with full query string
-                _logger.LogDebug("Library album filter requested: {AlbumId}, proxying to Jellyfin", albumId);
-                var endpoint = userId != null
-                    ? $"Users/{userId}/Items{Request.QueryString}"
-                    : $"Items{Request.QueryString}";
-                var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
-                return HandleProxyResponse(result, statusCode);
-            }
+            // If library album, fall through to handle with ParentId or proxy
         }
 
-        // PRIORITY 3: Filter by artist (no parentId, no albumIds)
-        if (string.IsNullOrWhiteSpace(parentId) && string.IsNullOrWhiteSpace(albumIds) &&
-            !string.IsNullOrWhiteSpace(effectiveArtistIds))
+        // PRIORITY 3: ParentId present - handles both external and library items
+        if (!string.IsNullOrWhiteSpace(parentId))
         {
-            var artistId = effectiveArtistIds.Split(',')[0]; // Take first artist if multiple
-            var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(artistId);
+            // Check if this is the music library root with a search term - if so, do integrated search
+            var isMusicLibrary = parentId == _settings.LibraryId;
 
-            if (isExternal)
+            if (isMusicLibrary && !string.IsNullOrWhiteSpace(searchTerm))
             {
-                // Check if this is a curator ID (format: ext-{provider}-curator-{name})
-                if (artistId.Contains("-curator-", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogInformation("Fetching playlists for curator: {ArtistId}", artistId);
-                    return await GetCuratorPlaylists(provider!, externalId!, includeItemTypes);
-                }
-
-                _logger.LogInformation("Fetching content for external artist: {Provider}/{ExternalId}", provider,
-                    externalId);
-                return await GetExternalChildItems(provider!, externalId!, includeItemTypes);
+                _logger.LogInformation("Searching within music library {ParentId}, including external sources",
+                    parentId);
+                // Fall through to integrated search below
             }
             else
             {
-                // Library artist - proxy transparently with full query string
-                _logger.LogDebug("Library artist filter requested: {ArtistId}, proxying to Jellyfin", artistId);
-                var endpoint = userId != null
-                    ? $"Users/{userId}/Items{Request.QueryString}"
-                    : $"Items{Request.QueryString}";
-                var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
-                return HandleProxyResponse(result, statusCode);
+                // Browse parent item (external playlist/album/artist OR library item)
+                _logger.LogDebug("Browsing parent: {ParentId}", parentId);
+                return await GetChildItems(parentId, includeItemTypes, limit, startIndex, sortBy);
             }
         }
 
-        // PRIORITY 4: Search term present - do integrated search (Jellyfin + external)
+        // PRIORITY 4: Library artist filter (already checked for external above)
+        if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
+        {
+            // Library artist - proxy transparently with full query string
+            _logger.LogDebug("Library artist filter requested, proxying to Jellyfin");
+            var endpoint = userId != null
+                ? $"Users/{userId}/Items{Request.QueryString}"
+                : $"Items{Request.QueryString}";
+            var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+            return HandleProxyResponse(result, statusCode);
+        }
+
+        // PRIORITY 5: Search term present - do integrated search (Jellyfin + external)
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             // Check cache for search results (only cache pure searches, not filtered searches)
@@ -154,7 +148,7 @@ public partial class JellyfinController
 
             // Fall through to integrated search below
         }
-        // PRIORITY 5: No filters, no search - proxy browse request transparently
+        // PRIORITY 6: No filters, no search - proxy browse request transparently
         else
         {
             _logger.LogDebug("Browse request with no filters, proxying to Jellyfin with full query string");
@@ -508,12 +502,12 @@ public partial class JellyfinController
             return await GetPlaylistTracks(parentId);
         }
 
-        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(parentId);
+        var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(parentId);
 
         if (isExternal)
         {
             // Get external album or artist content
-            return await GetExternalChildItems(provider!, externalId!, includeItemTypes);
+            return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes);
         }
 
         // For library items, proxy transparently with full query string

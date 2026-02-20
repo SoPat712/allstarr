@@ -375,7 +375,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         var cached = await _cache.GetAsync<Artist>(cacheKey);
         if (cached != null)
         {
-            _logger.LogDebug("Returning cached artist {ArtistName}", cached.Name);
+            _logger.LogDebug("Returning cached artist {ArtistName}, ImageUrl: {ImageUrl}", cached.Name, cached.ImageUrl ?? "NULL");
             return cached;
         }
   
@@ -432,13 +432,21 @@ public class SquidWTFMetadataService : IMusicMetadataService
             }
 
 			var artistElement = artistSource.Value;
+            
+            // Extract picture UUID (may be null)
+            string? pictureUuid = null;
+            if (artistElement.TryGetProperty("picture", out var pictureEl) && pictureEl.ValueKind != JsonValueKind.Null)
+            {
+                pictureUuid = pictureEl.GetString();
+            }
+            
             // Normalize artist data to include album count
 			var normalizedArtist = new JsonObject
 			{
 				["id"] = artistElement.GetProperty("id").GetInt64(),
 				["name"] = artistElement.GetProperty("name").GetString(),
 				["albums_count"] = albumCount,
-				["picture"] = artistElement.GetProperty("picture").GetString()
+				["picture"] = pictureUuid
 			};
 
 			using var doc = JsonDocument.Parse(normalizedArtist.ToJsonString());
@@ -498,6 +506,50 @@ public class SquidWTFMetadataService : IMusicMetadataService
 			
 			return albums;
 		}, new List<Album>());
+	}
+
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    {
+		if (externalProvider != "squidwtf") return new List<Song>();
+		
+		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+		{
+            _logger.LogDebug("GetArtistTracksAsync called for SquidWTF artist {ExternalId}", externalId);
+            
+            // Same endpoint as albums - /artist/?f={artistId} returns both albums and tracks
+			var url = $"{baseUrl}/artist/?f={externalId}";
+			_logger.LogDebug("Fetching artist tracks from URL: {Url}", url);
+			var response = await _httpClient.GetAsync(url);
+			
+			if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("SquidWTF artist tracks request failed with status {StatusCode}", response.StatusCode);
+                return new List<Song>();
+            }
+			
+			var json = await response.Content.ReadAsStringAsync();
+			_logger.LogDebug("SquidWTF artist tracks response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
+			var result = JsonDocument.Parse(json);
+			
+			var tracks = new List<Song>();
+			
+            // Response structure: { "tracks": [ track objects ] }
+			if (result.RootElement.TryGetProperty("tracks", out var tracksArray))
+			{
+				foreach (var track in tracksArray.EnumerateArray())
+				{
+					var parsedTrack = ParseTidalTrack(track);
+					tracks.Add(parsedTrack);
+				}
+                _logger.LogDebug("Found {TrackCount} tracks for artist {ExternalId}", tracks.Count, externalId);
+			}
+            else
+            {
+                _logger.LogWarning("No tracks found in response for artist {ExternalId}", externalId);
+            }
+			
+			return tracks;
+		}, new List<Song>());
 	}
 
     public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
@@ -901,18 +953,24 @@ public class SquidWTFMetadataService : IMusicMetadataService
     private Artist ParseTidalArtist(JsonElement artist)
     {
         var externalId = artist.GetProperty("id").GetInt64().ToString();
+        var artistName = artist.GetProperty("name").GetString() ?? "";
         
         string? imageUrl = null;
         if (artist.TryGetProperty("picture", out var picture))
         {
-            var pictureGuid = picture.GetString()?.Replace("-", "/");
-            imageUrl = $"https://resources.tidal.com/images/{pictureGuid}/320x320.jpg";
+            var pictureUuid = picture.GetString();
+            if (!string.IsNullOrEmpty(pictureUuid))
+            {
+                var pictureGuid = pictureUuid.Replace("-", "/");
+                imageUrl = $"https://resources.tidal.com/images/{pictureGuid}/320x320.jpg";
+                _logger.LogDebug("Artist {ArtistName} picture: {ImageUrl}", artistName, imageUrl);
+            }
         }
 		
         return new Artist
         {
             Id = $"ext-squidwtf-artist-{externalId}",
-            Name = artist.GetProperty("name").GetString() ?? "",
+            Name = artistName,
             ImageUrl = imageUrl,
 			AlbumCount = artist.TryGetProperty("albums_count", out var albumsCount)
 				? albumsCount.GetInt32()

@@ -166,7 +166,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                 }
                 
                 // Time to run this playlist
-                _logger.LogInformation("=== CRON TRIGGER: Running scheduled match for {Playlist} ===", nextPlaylist.PlaylistName);
+                _logger.LogInformation("=== CRON TRIGGER: Running scheduled sync for {Playlist} ===", nextPlaylist.PlaylistName);
                 
                 // Check cooldown to prevent duplicate runs
                 if (_lastRunTimes.TryGetValue(nextPlaylist.PlaylistName, out var lastRun))
@@ -181,8 +181,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                     }
                 }
                 
-                // Run matching for this playlist
-                await MatchSinglePlaylistAsync(nextPlaylist.PlaylistName, stoppingToken);
+                // Run full rebuild for this playlist (same as "Rebuild All Remote" button)
+                await RebuildSinglePlaylistAsync(nextPlaylist.PlaylistName, stoppingToken);
                 _lastRunTimes[nextPlaylist.PlaylistName] = DateTime.UtcNow;
                 
                 _logger.LogInformation("=== FINISHED: {Playlist} - Next run at {NextRun} UTC ===", 
@@ -197,7 +197,85 @@ public class SpotifyTrackMatchingService : BackgroundService
     }
     
     /// <summary>
-    /// Matches tracks for a single playlist (called by cron scheduler or manual trigger).
+    /// Rebuilds a single playlist from scratch (clears cache, fetches fresh data, re-matches).
+    /// This is the unified method used by both cron scheduler and "Rebuild All Remote" button.
+    /// </summary>
+    private async Task RebuildSinglePlaylistAsync(string playlistName, CancellationToken cancellationToken)
+    {
+        var playlist = _spotifySettings.Playlists
+            .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+        
+        if (playlist == null)
+        {
+            _logger.LogInformation("Playlist {Playlist} not found in configuration", playlistName);
+            return;
+        }
+        
+        _logger.LogInformation("Step 1/3: Clearing cache for {Playlist}", playlistName);
+        
+        // Clear cache for this playlist (same as "Rebuild All Remote" button)
+        var keysToDelete = new[]
+        {
+            CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name),
+            CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlist.Name),
+            $"spotify:matched:{playlist.Name}", // Legacy key
+            CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name),
+            $"spotify:playlist:items:{playlist.Name}",
+            $"spotify:playlist:ordered:{playlist.Name}",
+            $"spotify:playlist:stats:{playlist.Name}"
+        };
+        
+        foreach (var key in keysToDelete)
+        {
+            await _cache.DeleteAsync(key);
+        }
+        
+        _logger.LogInformation("Step 2/3: Fetching fresh data from Spotify for {Playlist}", playlistName);
+        
+        using var scope = _serviceProvider.CreateScope();
+        var metadataService = scope.ServiceProvider.GetRequiredService<IMusicMetadataService>();
+        
+        // Trigger fresh fetch from Spotify
+        SpotifyPlaylistFetcher? playlistFetcher = null;
+        if (_spotifyApiSettings.Enabled)
+        {
+            playlistFetcher = scope.ServiceProvider.GetService<SpotifyPlaylistFetcher>();
+            if (playlistFetcher != null)
+            {
+                // Force refresh from Spotify (clears cache and re-fetches)
+                await playlistFetcher.RefreshPlaylistAsync(playlist.Name);
+            }
+        }
+        
+        _logger.LogInformation("Step 3/3: Matching tracks for {Playlist}", playlistName);
+        
+        try
+        {
+            if (playlistFetcher != null)
+            {
+                // Use new direct API mode with ISRC support
+                await MatchPlaylistTracksWithIsrcAsync(
+                    playlist.Name, playlistFetcher, metadataService, cancellationToken);
+            }
+            else
+            {
+                // Fall back to legacy mode
+                await MatchPlaylistTracksLegacyAsync(
+                    playlist.Name, metadataService, cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error matching tracks for playlist {Playlist}", playlist.Name);
+            throw;
+        }
+        
+        _logger.LogInformation("✓ Rebuild complete for {Playlist}", playlistName);
+    }
+    
+    /// <summary>
+    /// Matches tracks for a single playlist WITHOUT clearing cache or refreshing from Spotify.
+    /// Used for lightweight re-matching when only local library has changed.
     /// </summary>
     private async Task MatchSinglePlaylistAsync(string playlistName, CancellationToken cancellationToken)
     {
@@ -243,13 +321,73 @@ public class SpotifyTrackMatchingService : BackgroundService
     }
 
     /// <summary>
-    /// Public method to trigger matching manually for all playlists (called from controller).
-    /// This bypasses cron schedules and runs immediately.
+    /// Public method to trigger full rebuild for all playlists (called from "Rebuild All Remote" button).
+    /// This clears caches, fetches fresh data, and re-matches everything - same as cron job.
+    /// </summary>
+    public async Task TriggerRebuildAllAsync()
+    {
+        _logger.LogInformation("Manual full rebuild triggered for all playlists (same as cron job)");
+        await RebuildAllPlaylistsAsync(CancellationToken.None);
+    }
+    
+    /// <summary>
+    /// Public method to trigger full rebuild for a single playlist (called from individual "Rebuild Remote" button).
+    /// This clears cache, fetches fresh data, and re-matches - same as cron job.
+    /// </summary>
+    public async Task TriggerRebuildForPlaylistAsync(string playlistName)
+    {
+        _logger.LogInformation("Manual full rebuild triggered for playlist: {Playlist} (same as cron job)", playlistName);
+        
+        // Check cooldown to prevent abuse
+        if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
+        {
+            var timeSinceLastRun = DateTime.UtcNow - lastRun;
+            if (timeSinceLastRun < _minimumRunInterval)
+            {
+                _logger.LogWarning("Skipping manual rebuild for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)", 
+                    playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
+                throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before rebuilding again");
+            }
+        }
+        
+        await RebuildSinglePlaylistAsync(playlistName, CancellationToken.None);
+        _lastRunTimes[playlistName] = DateTime.UtcNow;
+    }
+    
+    /// <summary>
+    /// Public method to trigger lightweight matching for all playlists (called from controller).
+    /// This bypasses cron schedules and runs immediately WITHOUT clearing cache or refreshing from Spotify.
+    /// Use this when only the local library has changed.
     /// </summary>
     public async Task TriggerMatchingAsync()
     {
         _logger.LogInformation("Manual track matching triggered for all playlists (bypassing cron schedules)");
         await MatchAllPlaylistsAsync(CancellationToken.None);
+    }
+    
+    /// <summary>
+    /// Public method to trigger lightweight matching for a single playlist (called from "Re-match Local" button).
+    /// This bypasses cron schedules and runs immediately WITHOUT clearing cache or refreshing from Spotify.
+    /// Use this when only the local library has changed, not when Spotify playlist changed.
+    /// </summary>
+    public async Task TriggerMatchingForPlaylistAsync(string playlistName)
+    {
+        _logger.LogInformation("Manual track matching triggered for playlist: {Playlist} (lightweight, no cache clear)", playlistName);
+        
+        // Check cooldown to prevent abuse
+        if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
+        {
+            var timeSinceLastRun = DateTime.UtcNow - lastRun;
+            if (timeSinceLastRun < _minimumRunInterval)
+            {
+                _logger.LogWarning("Skipping manual refresh for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)", 
+                    playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
+                throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before refreshing again");
+            }
+        }
+        
+        await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
+        _lastRunTimes[playlistName] = DateTime.UtcNow;
     }
     
     /// <summary>
@@ -274,6 +412,34 @@ public class SpotifyTrackMatchingService : BackgroundService
         
         await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
         _lastRunTimes[playlistName] = DateTime.UtcNow;
+    }
+
+    private async Task RebuildAllPlaylistsAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("=== STARTING FULL REBUILD FOR ALL PLAYLISTS ===");
+        
+        var playlists = _spotifySettings.Playlists;
+        if (playlists.Count == 0)
+        {
+            _logger.LogInformation("No playlists configured for rebuild");
+            return;
+        }
+
+        foreach (var playlist in playlists)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+            
+            try
+            {
+                await RebuildSinglePlaylistAsync(playlist.Name, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error rebuilding playlist {Playlist}", playlist.Name);
+            }
+        }
+        
+        _logger.LogInformation("=== FINISHED FULL REBUILD FOR ALL PLAYLISTS ===");
     }
 
     private async Task MatchAllPlaylistsAsync(CancellationToken cancellationToken)

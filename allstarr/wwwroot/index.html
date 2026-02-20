@@ -20,7 +20,7 @@
     <div class="container">
         <header>
             <h1>
-                Allstarr <span class="version" id="version">v1.0.3</span>
+                Allstarr <span class="version" id="version">Loading...</span>
             </h1>
             <div id="status-indicator">
                 <span class="status-badge" id="spotify-status">
@@ -175,16 +175,25 @@
                     Injected Spotify Playlists
                     <div class="actions">
                         <button onclick="matchAllPlaylists()"
-                            title="Re-match tracks when local library changed (uses cached Spotify data)">Re-match All
-                            Local</button>
+                            title="Re-match tracks when local library changed (uses cached Spotify data)">Rematch All</button>
                         <button onclick="refreshPlaylists()"
-                            title="Fetch the latest playlist data from Spotify without re-matching tracks.">Refresh
-                            All</button>
+                            title="Fetch the latest playlist data from Spotify without re-matching tracks">Refresh All</button>
                         <button onclick="refreshAndMatchAll()"
-                            title="Rebuild all playlists when Spotify playlists changed (fetches fresh data and re-matches)"
-                            style="background:var(--accent);border-color:var(--accent);">Rebuild All Remote</button>
+                            title="Rebuild all playlists when Spotify playlists changed (clears cache, fetches fresh data, re-matches)"
+                            style="background:var(--accent);border-color:var(--accent);">Rebuild All</button>
                     </div>
                 </h2>
+                
+                <!-- Info box explaining the differences -->
+                <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 6px; padding: 14px; margin-bottom: 16px; font-size: 0.9rem;">
+                    <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">📋 Button Guide:</div>
+                    <div style="display: grid; gap: 8px; color: var(--text-secondary);">
+                        <div><strong style="color: var(--text-primary);">Rematch:</strong> Re-match tracks when your <em>local Jellyfin library</em> changed (fast, uses cached Spotify data)</div>
+                        <div><strong style="color: var(--text-primary);">Refresh:</strong> Fetch latest data from Spotify without re-matching (updates track counts only)</div>
+                        <div><strong style="color: var(--accent);">Rebuild:</strong> Full rebuild when <em>Spotify playlist</em> changed (clears cache, fetches fresh data, re-matches everything - same as scheduled cron job)</div>
+                    </div>
+                </div>
+                
                 <p style="color: var(--text-secondary); margin-bottom: 12px;">
                     These are the Spotify playlists currently being injected into Jellyfin with tracks from your music
                     service.

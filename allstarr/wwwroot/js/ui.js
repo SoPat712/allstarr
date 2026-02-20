@@ -118,8 +118,9 @@ export function updatePlaylistsUI(data) {
                 </td>
                 <td class="cache-age">${p.cacheAge || '-'}</td>
                 <td>
-                    <button onclick="matchPlaylistTracks('${escapeJs(p.name)}')" title="Re-match when local library changed">Re-match Local</button>
-                    <button onclick="clearPlaylistCache('${escapeJs(p.name)}')" title="Rebuild when Spotify playlist changed" style="background:var(--accent);border-color:var(--accent);">Rebuild Remote</button>
+                    <button onclick="matchPlaylistTracks('${escapeJs(p.name)}')" title="Re-match when local Jellyfin library changed">Rematch</button>
+                    <button onclick="refreshPlaylist('${escapeJs(p.name)}')" title="Fetch latest from Spotify without re-matching">Refresh</button>
+                    <button onclick="clearPlaylistCache('${escapeJs(p.name)}')" title="Rebuild when Spotify playlist changed (same as cron job)" style="background:var(--accent);border-color:var(--accent);">Rebuild</button>
                     <button onclick="viewTracks('${escapeJs(p.name)}')">View</button>
                     <button class="danger" onclick="removePlaylist('${escapeJs(p.name)}')">Remove</button>
                 </td>
