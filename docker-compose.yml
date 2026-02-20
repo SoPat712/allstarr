@@ -126,6 +126,20 @@ services:
       # Spotify Lyrics API sidecar service URL (internal)
       - SpotifyApi__LyricsApiUrl=${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}
       
+      # ===== SCROBBLING (LAST.FM, LISTENBRAINZ) =====
+      - Scrobbling__Enabled=${SCROBBLING_ENABLED:-false}
+      - Scrobbling__LastFm__Enabled=${SCROBBLING_LASTFM_ENABLED:-false}
+      - Scrobbling__LastFm__ApiKey=${SCROBBLING_LASTFM_API_KEY:-}
+      - Scrobbling__LastFm__SharedSecret=${SCROBBLING_LASTFM_SHARED_SECRET:-}
+      - Scrobbling__LastFm__SessionKey=${SCROBBLING_LASTFM_SESSION_KEY:-}
+      - Scrobbling__LastFm__Username=${SCROBBLING_LASTFM_USERNAME:-}
+      - Scrobbling__LastFm__Password=${SCROBBLING_LASTFM_PASSWORD:-}
+      - Scrobbling__ListenBrainz__Enabled=${SCROBBLING_LISTENBRAINZ_ENABLED:-false}
+      - Scrobbling__ListenBrainz__UserToken=${SCROBBLING_LISTENBRAINZ_USER_TOKEN:-}
+      
+      # ===== DEBUG SETTINGS =====
+      - Debug__LogAllRequests=${DEBUG_LOG_ALL_REQUESTS:-false}
+      
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
       - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}

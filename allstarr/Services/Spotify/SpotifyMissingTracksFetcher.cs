@@ -188,7 +188,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         foreach (var playlistName in _playlistIdToName.Values)
         {
             var filePath = GetCacheFilePath(playlistName);
-            var cacheKey = $"spotify:missing:{playlistName}";
+            var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
             
             // Check file cache
             if (File.Exists(filePath))
@@ -245,7 +245,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             
             if (tracks != null && tracks.Count > 0)
             {
-                var cacheKey = $"spotify:missing:{playlistName}";
+                var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
                 var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
                 
                 // No expiration - cache persists until next Jellyfin job generates new file
@@ -310,7 +310,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         CancellationToken cancellationToken,
         DateTime? hintTime = null)
     {
-        var cacheKey = $"spotify:missing:{playlistName}";
+        var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
         
         // Check if we have existing cache
         var existingTracks = await _cache.GetAsync<List<MissingTrack>>(cacheKey);
@@ -486,7 +486,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 
                 if (tracks.Count > 0)
                 {
-                    var cacheKey = $"spotify:missing:{playlistName}";
+                    var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
                     
                     // Save to both Redis and file with extended TTL until next job runs
                     // Set to 365 days (effectively no expiration) - will be replaced when Jellyfin generates new file

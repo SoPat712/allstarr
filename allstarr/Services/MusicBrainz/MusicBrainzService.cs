@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.MusicBrainz;
@@ -15,6 +16,8 @@ public class MusicBrainzService
 {
     private readonly HttpClient _httpClient;
     private readonly MusicBrainzSettings _settings;
+    private readonly CacheSettings _cacheSettings;
+    private readonly RedisCacheService _cache;
     private readonly ILogger<MusicBrainzService> _logger;
     private DateTime _lastRequestTime = DateTime.MinValue;
     private readonly SemaphoreSlim _rateLimitSemaphore = new(1, 1);
@@ -22,13 +25,23 @@ public class MusicBrainzService
     public MusicBrainzService(
         IHttpClientFactory httpClientFactory,
         IOptions<MusicBrainzSettings> settings,
+        IOptions<CacheSettings> cacheSettings,
+        RedisCacheService cache,
         ILogger<MusicBrainzService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
+<<<<<<< HEAD
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
+||||||| f68706f
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.0 (https://github.com/SoPat712/allstarr)");
+=======
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
+>>>>>>> beta
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         
         _settings = settings.Value;
+        _cacheSettings = cacheSettings.Value;
+        _cache = cache;
         _logger = logger;
         
         // Set up digest authentication if credentials provided
@@ -49,6 +62,15 @@ public class MusicBrainzService
         if (!_settings.Enabled)
         {
             return null;
+        }
+
+        // Check cache first
+        var cacheKey = $"musicbrainz:isrc:{isrc}";
+        var cached = await _cache.GetAsync<MusicBrainzRecording>(cacheKey);
+        if (cached != null)
+        {
+            _logger.LogDebug("MusicBrainz ISRC cache hit: {Isrc}", isrc);
+            return cached;
         }
 
         await RateLimitAsync();
@@ -81,6 +103,9 @@ public class MusicBrainzService
             _logger.LogInformation("✓ Found MusicBrainz recording for ISRC {Isrc}: {Title} by {Artist} (Genres: {Genres})",
                 isrc, recording.Title, recording.ArtistCredit?[0]?.Name ?? "Unknown", string.Join(", ", genres));
 
+            // Cache the result
+            await _cache.SetAsync(cacheKey, recording, _cacheSettings.GenreTTL);
+
             return recording;
         }
         catch (Exception ex)
@@ -99,6 +124,15 @@ public class MusicBrainzService
         if (!_settings.Enabled)
         {
             return new List<MusicBrainzRecording>();
+        }
+
+        // Check cache first
+        var cacheKey = $"musicbrainz:search:{title.ToLowerInvariant()}:{artist.ToLowerInvariant()}:{limit}";
+        var cached = await _cache.GetAsync<List<MusicBrainzRecording>>(cacheKey);
+        if (cached != null)
+        {
+            _logger.LogDebug("MusicBrainz search cache hit: {Title} - {Artist}", title, artist);
+            return cached;
         }
 
         await RateLimitAsync();
@@ -133,6 +167,9 @@ public class MusicBrainzService
             _logger.LogDebug("Found {Count} MusicBrainz recordings for: {Title} - {Artist}",
                 result.Recordings.Count, title, artist);
 
+            // Cache the result
+            await _cache.SetAsync(cacheKey, result.Recordings, _cacheSettings.GenreTTL);
+
             return result.Recordings;
         }
         catch (Exception ex)
@@ -143,6 +180,7 @@ public class MusicBrainzService
     }
     
     /// <summary>
+<<<<<<< HEAD
     /// Looks up a recording by MBID to get full details including genres.
     /// </summary>
     public async Task<MusicBrainzRecording?> LookupByMbidAsync(string mbid)
@@ -190,6 +228,68 @@ public class MusicBrainzService
     }
     
     /// <summary>
+||||||| f68706f
+=======
+    /// Looks up a recording by MBID to get full details including genres.
+    /// </summary>
+    public async Task<MusicBrainzRecording?> LookupByMbidAsync(string mbid)
+    {
+        if (!_settings.Enabled)
+        {
+            return null;
+        }
+
+        // Check cache first
+        var cacheKey = $"musicbrainz:mbid:{mbid}";
+        var cached = await _cache.GetAsync<MusicBrainzRecording>(cacheKey);
+        if (cached != null)
+        {
+            _logger.LogDebug("MusicBrainz MBID cache hit: {Mbid}", mbid);
+            return cached;
+        }
+
+        await RateLimitAsync();
+
+        try
+        {
+            var url = $"{_settings.BaseUrl}/recording/{mbid}?fmt=json&inc=artists+releases+release-groups+genres+tags";
+            _logger.LogDebug("MusicBrainz MBID lookup: {Url}", url);
+
+            var response = await _httpClient.GetAsync(url);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("MusicBrainz MBID lookup failed: {StatusCode}", response.StatusCode);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var recording = JsonSerializer.Deserialize<MusicBrainzRecording>(json, JsonOptions);
+
+            if (recording == null)
+            {
+                _logger.LogDebug("No MusicBrainz recording found for MBID: {Mbid}", mbid);
+                return null;
+            }
+
+            var genres = recording.Genres?.Select(g => g.Name).Where(n => !string.IsNullOrEmpty(n)).ToList() ?? new List<string?>();
+            _logger.LogInformation("✓ Found MusicBrainz recording for MBID {Mbid}: {Title} by {Artist} (Genres: {Genres})",
+                mbid, recording.Title, recording.ArtistCredit?[0]?.Name ?? "Unknown", string.Join(", ", genres));
+
+            // Cache the result
+            await _cache.SetAsync(cacheKey, recording, _cacheSettings.GenreTTL);
+
+            return recording;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error looking up MBID {Mbid} in MusicBrainz", mbid);
+            return null;
+        }
+    }
+    
+    /// <summary>
+>>>>>>> beta
     /// Enriches a song with genre information from MusicBrainz.
     /// First tries ISRC lookup, then falls back to title/artist search + MBID lookup.
     /// </summary>

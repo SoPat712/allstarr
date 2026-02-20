@@ -85,13 +85,34 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                         return false;
                     }
                 },
-                pingCount: 2,
+                pingCount: 5,
                 cancellationToken);
 
             if (orderedEndpoints.Count > 0)
             {
                 _fallbackHelper.SetEndpointOrder(orderedEndpoints);
-                WriteDetail($"Fastest endpoint: {orderedEndpoints.First()}");
+                
+                // Show top 5 endpoints with their metrics
+                var topEndpoints = orderedEndpoints.Take(5).ToList();
+                WriteDetail($"Fastest endpoint: {topEndpoints.First()}");
+                
+                if (topEndpoints.Count > 1)
+                {
+                    WriteDetail("Top 5 endpoints by average latency:");
+                    for (int i = 0; i < topEndpoints.Count; i++)
+                    {
+                        var endpoint = topEndpoints[i];
+                        var metrics = _benchmarkService.GetMetrics(endpoint);
+                        if (metrics != null)
+                        {
+                            WriteDetail($"  {i + 1}. {endpoint} - {metrics.AverageResponseMs}ms avg ({metrics.SuccessRate:P0} success)");
+                        }
+                        else
+                        {
+                            WriteDetail($"  {i + 1}. {endpoint}");
+                        }
+                    }
+                }
             }
         }
 

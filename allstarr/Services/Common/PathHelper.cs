@@ -41,10 +41,33 @@ public static class PathHelper
         var albumFolder = Path.Combine(artistFolder, safeAlbum);
         
         var trackPrefix = trackNumber.HasValue ? $"{trackNumber:D2} - " : "";
+<<<<<<< HEAD
         var idSuffix = !string.IsNullOrEmpty(provider) && !string.IsNullOrEmpty(externalId) 
             ? $" [{provider}-{externalId}]" 
             : "";
         var fileName = $"{trackPrefix}{safeTitle}{idSuffix}{extension}";
+||||||| f68706f
+        var fileName = $"{trackPrefix}{safeTitle}{extension}";
+=======
+        // Sanitize provider and external id to avoid path traversal or invalid filename segments
+        string? safeProvider = null;
+        string? safeExternalId = null;
+        if (!string.IsNullOrEmpty(provider))
+        {
+            safeProvider = SanitizeFileName(provider);
+        }
+
+        if (!string.IsNullOrEmpty(externalId))
+        {
+            safeExternalId = SanitizeFileName(externalId);
+        }
+
+        // If both provider and external id are present, append a sanitized id suffix
+        var idSuffix = (!string.IsNullOrEmpty(safeProvider) && !string.IsNullOrEmpty(safeExternalId))
+            ? $" [{safeProvider}-{safeExternalId}]"
+            : "";
+        var fileName = $"{trackPrefix}{safeTitle}{idSuffix}{extension}";
+>>>>>>> beta
         
         return Path.Combine(albumFolder, fileName);
     }
@@ -66,12 +89,24 @@ public static class PathHelper
             .Select(c => invalidChars.Contains(c) ? '_' : c)
             .ToArray());
         
+        // Collapse sequences of two or more dots to a single underscore to avoid
+        // creating ".." which can be interpreted as parent directory tokens.
+        sanitized = System.Text.RegularExpressions.Regex.Replace(sanitized, "\\.{2,}", "_");
+
+        // Remove any remaining path separators just in case
+        sanitized = sanitized.Replace('/', '_').Replace('\\', '_');
+
+        // Trim whitespace and trailing/leading dots
+        sanitized = sanitized.Trim().TrimEnd('.').TrimStart('.');
+
         if (sanitized.Length > 100)
         {
-            sanitized = sanitized[..100];
+            sanitized = sanitized[..100].TrimEnd('.');
         }
-        
-        return sanitized.Trim();
+
+        if (string.IsNullOrWhiteSpace(sanitized)) return "Unknown";
+
+        return sanitized;
     }
 
     /// <summary>
@@ -119,21 +154,38 @@ public static class PathHelper
     /// <returns>Unique file path that does not exist yet.</returns>
     public static string ResolveUniquePath(string basePath)
     {
+        if (string.IsNullOrEmpty(basePath))
+        {
+            throw new ArgumentException("basePath must be provided", nameof(basePath));
+        }
+
         if (!IOFile.Exists(basePath))
         {
             return basePath;
         }
         
-        var directory = Path.GetDirectoryName(basePath)!;
+        var directory = Path.GetDirectoryName(basePath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            // If no directory part is present, use current directory
+            directory = Directory.GetCurrentDirectory();
+        }
         var extension = Path.GetExtension(basePath);
         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(basePath);
         
         var counter = 1;
         string uniquePath;
+        // Limit attempts to avoid infinite loop in pathological cases
+        const int maxAttempts = 10000;
         do
         {
             uniquePath = Path.Combine(directory, $"{fileNameWithoutExt} ({counter}){extension}");
             counter++;
+
+            if (counter > maxAttempts)
+            {
+                throw new IOException("Unable to determine unique file path after many attempts");
+            }
         } while (IOFile.Exists(uniquePath));
         
         return uniquePath;

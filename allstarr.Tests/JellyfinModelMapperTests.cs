@@ -277,7 +277,7 @@ public class JellyfinModelMapperTests
         // Arrange
         var playlists = new List<ExternalPlaylist>
         {
-            new() { Id = "pl-1", Name = "Summer Mix", Provider = "deezer", ExternalId = "123" }
+            new() { Id = "ext-deezer-playlist-123", Name = "Summer Mix", Provider = "deezer", ExternalId = "123" }
         };
 
         var externalResult = new SearchResult
@@ -293,7 +293,7 @@ public class JellyfinModelMapperTests
 
         // Assert
         Assert.Single(albums);
-        Assert.Equal("pl-1", albums[0]["Id"]);
+        Assert.Equal("ext-deezer-playlist-123", albums[0]["Id"]);
     }
 
     [Fact]

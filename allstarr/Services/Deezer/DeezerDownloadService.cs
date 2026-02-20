@@ -81,15 +81,6 @@ public class DeezerDownloadService : BaseDownloadService
         }
     }
 
-    protected override string? ExtractExternalIdFromAlbumId(string albumId)
-    {
-        const string prefix = "ext-deezer-album-";
-        if (albumId.StartsWith(prefix))
-        {
-            return albumId[prefix.Length..];
-        }
-        return null;
-    }
 
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
@@ -121,14 +112,14 @@ public class DeezerDownloadService : BaseDownloadService
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
         // Download the encrypted file
-        var response = await RetryWithBackoffAsync(async () =>
+        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
             
             return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        });
+        }, Logger);
 
         response.EnsureSuccessStatusCode();
 
@@ -159,7 +150,7 @@ public class DeezerDownloadService : BaseDownloadService
             throw new Exception("ARL token required for Deezer downloads");
         }
 
-        await RetryWithBackoffAsync(async () =>
+        await RetryHelper.RetryWithBackoffAsync(async () =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, 
                 "https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=null");
@@ -186,11 +177,12 @@ public class DeezerDownloadService : BaseDownloadService
                 }
                 
                 Logger.LogInformation("Deezer token refreshed successfully");
-                return true;
             }
-
-            throw new Exception("Invalid ARL token");
-        });
+            else
+            {
+                throw new Exception("Invalid ARL token");
+            }
+        }, Logger);
     }
 
     private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken)
@@ -456,43 +448,6 @@ public class DeezerDownloadService : BaseDownloadService
             _ => allFormats
         };
     }
-
-    private async Task<T> RetryWithBackoffAsync<T>(Func<Task<T>> action, int maxRetries = 3, int initialDelayMs = 1000)
-    {
-        Exception? lastException = null;
-        
-        for (int attempt = 0; attempt < maxRetries; attempt++)
-        {
-            try
-            {
-                return await action();
-            }
-            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
-                                                   ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                lastException = ex;
-                if (attempt < maxRetries - 1)
-                {
-                    var delay = initialDelayMs * (int)Math.Pow(2, attempt);
-                    Logger.LogWarning("Retry attempt {Attempt}/{MaxRetries} after {Delay}ms ({Message})", 
-                        attempt + 1, maxRetries, delay, ex.Message);
-                    await Task.Delay(delay);
-                }
-            }
-            catch
-            {
-                throw;
-            }
-        }
-
-        throw lastException!;
-    }
-
-    private async Task RetryWithBackoffAsync(Func<Task<bool>> action, int maxRetries = 3, int initialDelayMs = 1000)
-    {
-        await RetryWithBackoffAsync<bool>(action, maxRetries, initialDelayMs);
-    }
-
 
     #endregion
 

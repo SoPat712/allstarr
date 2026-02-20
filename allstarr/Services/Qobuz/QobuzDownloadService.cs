@@ -80,15 +80,6 @@ public class QobuzDownloadService : BaseDownloadService
         }
     }
 
-    protected override string? ExtractExternalIdFromAlbumId(string albumId)
-    {
-        const string prefix = "ext-qobuz-album-";
-        if (albumId.StartsWith(prefix))
-        {
-            return albumId[prefix.Length..];
-        }
-        return null;
-    }
 
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {

@@ -47,7 +47,7 @@ public class DeezerMetadataService : IMusicMetadataService
                 foreach (var track in data.EnumerateArray())
                 {
                     var song = ParseDeezerTrack(track);
-                    if (ShouldIncludeSong(song))
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);
                     }
@@ -260,7 +260,7 @@ public class DeezerMetadataService : IMusicMetadataService
                 song.AlbumId = album.Id;
                 song.AlbumArtist = album.Artist;
                 
-                if (ShouldIncludeSong(song))
+                if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                 {
                     album.Songs.Add(song);
                 }
@@ -310,6 +310,30 @@ public class DeezerMetadataService : IMusicMetadataService
         }
         
         return albums;
+    }
+
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    {
+        if (externalProvider != "deezer") return new List<Song>();
+        
+        var url = $"{BaseUrl}/artist/{externalId}/top?limit=50";
+        var response = await _httpClient.GetAsync(url);
+        
+        if (!response.IsSuccessStatusCode) return new List<Song>();
+        
+        var json = await response.Content.ReadAsStringAsync();
+        var result = JsonDocument.Parse(json);
+        
+        var tracks = new List<Song>();
+        if (result.RootElement.TryGetProperty("data", out var data))
+        {
+            foreach (var track in data.EnumerateArray())
+            {
+                tracks.Add(ParseDeezerTrack(track));
+            }
+        }
+        
+        return tracks;
     }
 
     private Song ParseDeezerTrack(JsonElement track, int? fallbackTrackNumber = null, string? albumArtist = null)
@@ -636,7 +660,11 @@ public class DeezerMetadataService : IMusicMetadataService
                     // Override album name to be the playlist name
                     song.Album = playlistName;
                     
-                    if (ShouldIncludeSong(song))
+                    // Playlists should not have disc numbers - always set to null
+                    // This prevents Jellyfin from splitting the playlist into multiple "discs"
+                    song.DiscNumber = null;
+                    
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);
                     }
@@ -702,35 +730,6 @@ public class DeezerMetadataService : IMusicMetadataService
                     ? pictureBig.GetString() 
                     : null),
             CreatedDate = createdDate
-        };
-    }
-
-    /// <summary>
-    /// Determines whether a song should be included based on the explicit content filter setting
-    /// </summary>
-    /// <param name="song">The song to check</param>
-    /// <returns>True if the song should be included, false otherwise</returns>
-    private bool ShouldIncludeSong(Song song)
-    {
-        // If no explicit content info, include the song
-        if (song.ExplicitContentLyrics == null)
-            return true;
-        
-        return _settings.ExplicitFilter switch
-        {
-            // All: No filtering, include everything
-            ExplicitFilter.All => true,
-            
-            // ExplicitOnly: Exclude clean/edited versions (value 3)
-            // Include: 0 (naturally clean), 1 (explicit), 2 (not applicable), 6/7 (unknown)
-            ExplicitFilter.ExplicitOnly => song.ExplicitContentLyrics != 3,
-            
-            // CleanOnly: Only show clean content
-            // Include: 0 (naturally clean), 3 (clean/edited version)
-            // Exclude: 1 (explicit)
-            ExplicitFilter.CleanOnly => song.ExplicitContentLyrics != 1,
-            
-            _ => true
         };
     }
 }

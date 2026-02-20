@@ -261,8 +261,15 @@ public class SpotifyPlaylistFetcher : BackgroundService
         
         foreach (var playlist in _spotifyImportSettings.Playlists)
         {
+<<<<<<< HEAD
             var schedule = string.IsNullOrEmpty(playlist.SyncSchedule) ? "0 8 * * 1" : playlist.SyncSchedule;
             _logger.LogInformation("  - {Name}: {Schedule}", playlist.Name, schedule);
+||||||| f68706f
+            _logger.LogInformation("  - {Name}", playlist.Name);
+=======
+            var schedule = string.IsNullOrEmpty(playlist.SyncSchedule) ? "0 8 * * *" : playlist.SyncSchedule;
+            _logger.LogInformation("  - {Name}: {Schedule}", playlist.Name, schedule);
+>>>>>>> beta
         }
         
         _logger.LogInformation("========================================");
@@ -273,6 +280,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
         {
             try
             {
+<<<<<<< HEAD
                 // Check each playlist to see if it needs refreshing based on cron schedule
                 var now = DateTime.UtcNow;
                 var needsRefresh = new List<string>();
@@ -344,6 +352,81 @@ public class SpotifyPlaylistFetcher : BackgroundService
                 
                 // Sleep for 1 hour before checking again
                 await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+||||||| f68706f
+                await FetchAllPlaylistsAsync(stoppingToken);
+=======
+                // Check each playlist to see if it needs refreshing based on cron schedule
+                var now = DateTime.UtcNow;
+                var needsRefresh = new List<string>();
+                
+                foreach (var config in _spotifyImportSettings.Playlists)
+                {
+                    var schedule = string.IsNullOrEmpty(config.SyncSchedule) ? "0 8 * * *" : config.SyncSchedule;
+                    
+                    try
+                    {
+                        var cron = CronExpression.Parse(schedule);
+                        
+                        // Check if we have cached data
+                        var cacheKey = $"{CacheKeyPrefix}{config.Name}";
+                        var cached = await _cache.GetAsync<SpotifyPlaylist>(cacheKey);
+                        
+                        if (cached != null)
+                        {
+                            // Calculate when the next run should be after the last fetch
+                            var nextRun = cron.GetNextOccurrence(cached.FetchedAt, TimeZoneInfo.Utc);
+                            
+                            if (nextRun.HasValue && now >= nextRun.Value)
+                            {
+                                needsRefresh.Add(config.Name);
+                                _logger.LogInformation("Playlist '{Name}' needs refresh - last fetched {Age:F1}h ago, next run was {NextRun}", 
+                                    config.Name, (now - cached.FetchedAt).TotalHours, nextRun.Value);
+                            }
+                        }
+                        else
+                        {
+                            // No cache, fetch it
+                            needsRefresh.Add(config.Name);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Invalid cron schedule for playlist {Name}: {Schedule}", config.Name, schedule);
+                    }
+                }
+                
+                // Fetch playlists that need refreshing
+                if (needsRefresh.Count > 0)
+                {
+                    _logger.LogInformation("=== CRON TRIGGER: Fetching {Count} playlists ===", needsRefresh.Count);
+                    
+                    foreach (var playlistName in needsRefresh)
+                    {
+                        if (stoppingToken.IsCancellationRequested) break;
+                        
+                        try
+                        {
+                            await GetPlaylistTracksAsync(playlistName);
+                            
+                            // Rate limiting between playlists
+                            if (playlistName != needsRefresh.Last())
+                            {
+                                _logger.LogWarning("Finished fetching '{Name}' - waiting 3 seconds before next playlist to avoid rate limits...", playlistName);
+                                await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error fetching playlist '{Name}'", playlistName);
+                        }
+                    }
+                    
+                    _logger.LogInformation("=== FINISHED FETCHING PLAYLISTS ===");
+                }
+                
+                // Sleep for 1 hour before checking again
+                await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+>>>>>>> beta
             }
             catch (Exception ex)
             {

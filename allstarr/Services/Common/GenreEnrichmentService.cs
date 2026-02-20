@@ -112,31 +112,14 @@ public class GenreEnrichmentService
 
     /// <summary>
     /// Aggregates genres from a list of songs to determine playlist genres.
-    /// Returns the top 5 most common genres.
+    /// Returns all unique genres from the songs.
     /// </summary>
     public List<string> AggregatePlaylistGenres(List<Song> songs)
     {
-        var genreCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var song in songs)
-        {
-            if (!string.IsNullOrEmpty(song.Genre))
-            {
-                if (genreCounts.ContainsKey(song.Genre))
-                {
-                    genreCounts[song.Genre]++;
-                }
-                else
-                {
-                    genreCounts[song.Genre] = 1;
-                }
-            }
-        }
-
-        return genreCounts
-            .OrderByDescending(kvp => kvp.Value)
-            .Take(5)
-            .Select(kvp => kvp.Key)
+        return songs
+            .Where(s => !string.IsNullOrEmpty(s.Genre))
+            .Select(s => s.Genre!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 

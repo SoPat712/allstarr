@@ -41,7 +41,13 @@ public class JellyfinProxyServiceTests
             ClientName = "TestClient",
             DeviceName = "TestDevice",
             DeviceId = "test-device-id",
+<<<<<<< HEAD
             ClientVersion = "1.0.1"
+||||||| f68706f
+            ClientVersion = "1.0.0"
+=======
+            ClientVersion = "1.0.3"
+>>>>>>> beta
         };
 
         var httpContext = new DefaultHttpContext();

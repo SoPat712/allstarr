@@ -619,7 +619,7 @@ public class DeezerMetadataServiceTests
         Assert.Equal(2, result.Count);
         Assert.Equal("Chill Vibes", result[0].Name);
         Assert.Equal(50, result[0].TrackCount);
-        Assert.Equal("pl-deezer-12345", result[0].Id);
+        Assert.Equal("ext-deezer-playlist-12345", result[0].Id);
     }
 
     [Fact]
@@ -691,7 +691,7 @@ public class DeezerMetadataServiceTests
         Assert.NotNull(result);
         Assert.Equal("Best Of Jazz", result.Name);
         Assert.Equal(100, result.TrackCount);
-        Assert.Equal("pl-deezer-12345", result.Id);
+        Assert.Equal("ext-deezer-playlist-12345", result.Id);
     }
 
     [Fact]

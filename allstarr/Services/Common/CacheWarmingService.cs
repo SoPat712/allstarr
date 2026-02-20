@@ -161,8 +161,16 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_items", "");
 
+<<<<<<< HEAD
                     var redisKey = $"spotify:playlist:items:{playlistName}";
                     await _cache.SetAsync(redisKey, items, CacheExtensions.SpotifyPlaylistItemsTTL);
+||||||| f68706f
+                    var redisKey = $"spotify:playlist:items:{playlistName}";
+                    await _cache.SetAsync(redisKey, items, TimeSpan.FromHours(24));
+=======
+                    var redisKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
+                    await _cache.SetAsync(redisKey, items, CacheExtensions.SpotifyPlaylistItemsTTL);
+>>>>>>> beta
                     warmedCount++;
 
                     _logger.LogDebug("🔥 Warmed playlist items cache for {Playlist} ({Count} items)", 
@@ -199,8 +207,16 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_matched", "");
 
+<<<<<<< HEAD
                     var redisKey = $"spotify:matched:ordered:{playlistName}";
                     await _cache.SetAsync(redisKey, matchedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
+||||||| f68706f
+                    var redisKey = $"spotify:matched:ordered:{playlistName}";
+                    await _cache.SetAsync(redisKey, matchedTracks, TimeSpan.FromHours(1));
+=======
+                    var redisKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
+                    await _cache.SetAsync(redisKey, matchedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
+>>>>>>> beta
                     warmedCount++;
 
                     _logger.LogInformation("🔥 Warmed matched tracks cache for {Playlist} ({Count} tracks)", 

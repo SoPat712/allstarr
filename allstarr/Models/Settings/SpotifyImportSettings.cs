@@ -45,6 +45,7 @@ public class SpotifyPlaylistConfig
     /// Where to position local tracks: "first" or "last"
     /// </summary>
     public LocalTracksPosition LocalTracksPosition { get; set; } = LocalTracksPosition.First;
+<<<<<<< HEAD
     
     /// <summary>
     /// Cron schedule for syncing this playlist with Spotify
@@ -53,6 +54,17 @@ public class SpotifyPlaylistConfig
     /// Default: "0 8 * * 1" (weekly on Monday at 8 AM)
     /// </summary>
     public string SyncSchedule { get; set; } = "0 8 * * 1";
+||||||| f68706f
+=======
+    
+    /// <summary>
+    /// Cron schedule for syncing this playlist with Spotify
+    /// Format: minute hour day month dayofweek
+    /// Example: "0 8 * * *" = 8 AM every day
+    /// Default: "0 8 * * *" (daily at 8 AM)
+    /// </summary>
+    public string SyncSchedule { get; set; } = "0 8 * * *";
+>>>>>>> beta
 }
 
 /// <summary>

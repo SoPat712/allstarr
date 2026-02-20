@@ -225,7 +225,7 @@ public class SubsonicModelMapper
     
     /// <summary>
     /// Converts an ExternalPlaylist to a JSON object representing an album.
-    /// Playlists are represented as albums with genre "Playlist" and artist "🎵 {Provider} {Curator}".
+    /// Playlists are represented as albums with aggregated genres from tracks and artist "🎵 {Provider} {Curator}".
     /// </summary>
     private Dictionary<string, object> ConvertPlaylistToAlbumJson(ExternalPlaylist playlist)
     {
@@ -243,7 +243,7 @@ public class SubsonicModelMapper
             ["name"] = playlist.Name,
             ["artist"] = artistName,
             ["artistId"] = artistId,
-            ["genre"] = "Playlist",
+            ["genre"] = "Playlist",  // Note: This is metadata-only, actual tracks will have their own genres
             ["songCount"] = playlist.TrackCount,
             ["duration"] = playlist.Duration
         };
@@ -264,7 +264,7 @@ public class SubsonicModelMapper
     
     /// <summary>
     /// Converts an ExternalPlaylist to an XML element representing an album.
-    /// Playlists are represented as albums with genre "Playlist" and artist "🎵 {Provider} {Curator}".
+    /// Playlists are represented as albums with aggregated genres from tracks and artist "🎵 {Provider} {Curator}".
     /// </summary>
     private XElement ConvertPlaylistToAlbumXml(ExternalPlaylist playlist, XNamespace ns)
     {
@@ -281,7 +281,7 @@ public class SubsonicModelMapper
             new XAttribute("name", playlist.Name),
             new XAttribute("artist", artistName),
             new XAttribute("artistId", artistId),
-            new XAttribute("genre", "Playlist"),
+            new XAttribute("genre", "Playlist"),  // Note: This is metadata-only, actual tracks will have their own genres
             new XAttribute("songCount", playlist.TrackCount),
             new XAttribute("duration", playlist.Duration)
         );

@@ -5,9 +5,19 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>allstarr</RootNamespace>
+<<<<<<< HEAD
         <Version>1.0.1</Version>
         <AssemblyVersion>1.0.1.0</AssemblyVersion>
         <FileVersion>1.0.1.0</FileVersion>
+||||||| f68706f
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+=======
+        <Version>1.1.1</Version>
+        <AssemblyVersion>1.1.1.0</AssemblyVersion>
+        <FileVersion>1.1.1.0</FileVersion>
+>>>>>>> beta
     </PropertyGroup>
 
     <ItemGroup>

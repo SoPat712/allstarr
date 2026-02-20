@@ -68,10 +68,7 @@ public class QobuzMetadataService : IMusicMetadataService
                 foreach (var track in items.EnumerateArray())
                 {
                     var song = ParseQobuzTrack(track);
-                    if (ShouldIncludeSong(song))
-                    {
-                        songs.Add(song);
-                    }
+                    songs.Add(song);
                 }
             }
             
@@ -241,10 +238,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     song.AlbumId = album.Id;
                     song.AlbumArtist = album.Artist;
                     
-                    if (ShouldIncludeSong(song))
-                    {
-                        album.Songs.Add(song);
-                    }
+                    album.Songs.Add(song);
                 }
             }
             
@@ -332,6 +326,14 @@ public class QobuzMetadataService : IMusicMetadataService
             _logger.LogError(ex, "Failed to get artist albums for {ExternalId}", externalId);
             return new List<Album>();
         }
+    }
+
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    {
+        // Qobuz doesn't have a dedicated "artist top tracks" endpoint
+        // Return empty list - clients will need to browse albums instead
+        if (externalProvider != "qobuz") return new List<Song>();
+        return new List<Song>();
     }
 
     public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20)
@@ -429,10 +431,11 @@ public class QobuzMetadataService : IMusicMetadataService
                     song.Album = playlistName;
                     song.Track = trackIndex;
                     
-                    if (ShouldIncludeSong(song))
-                    {
-                        songs.Add(song);
-                    }
+                    // Playlists should not have disc numbers - always set to null
+                    // This prevents Jellyfin from splitting the playlist into multiple "discs"
+                    song.DiscNumber = null;
+                    
+                    songs.Add(song);
                     trackIndex++;
                 }
             }
@@ -835,14 +838,4 @@ public class QobuzMetadataService : IMusicMetadataService
             .Replace("(C)", "©");
     }
 
-    /// <summary>
-    /// Determines whether a song should be included based on the explicit content filter setting
-    /// Note: Qobuz doesn't have the same explicit content tagging as Deezer, so this is a no-op for now
-    /// </summary>
-    private bool ShouldIncludeSong(Song song)
-    {
-        // Qobuz API doesn't expose explicit content flags in the same way as Deezer
-        // We could implement this in the future if needed
-        return true;
-    }
 }

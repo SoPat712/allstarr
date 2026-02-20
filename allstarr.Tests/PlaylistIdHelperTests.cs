@@ -11,7 +11,7 @@ public class PlaylistIdHelperTests
     public void IsExternalPlaylist_WithValidPlaylistId_ReturnsTrue()
     {
         // Arrange
-        var id = "pl-deezer-123456";
+        var id = "ext-deezer-playlist-123456";
 
         // Act
         var result = PlaylistIdHelper.IsExternalPlaylist(id);
@@ -24,7 +24,7 @@ public class PlaylistIdHelperTests
     public void IsExternalPlaylist_WithValidQobuzPlaylistId_ReturnsTrue()
     {
         // Arrange
-        var id = "pl-qobuz-789012";
+        var id = "ext-qobuz-playlist-789012";
 
         // Act
         var result = PlaylistIdHelper.IsExternalPlaylist(id);
@@ -37,7 +37,7 @@ public class PlaylistIdHelperTests
     public void IsExternalPlaylist_WithUpperCasePrefix_ReturnsTrue()
     {
         // Arrange
-        var id = "PL-deezer-123456";
+        var id = "EXT-deezer-PLAYLIST-123456";
 
         // Act
         var result = PlaylistIdHelper.IsExternalPlaylist(id);
@@ -106,7 +106,7 @@ public class PlaylistIdHelperTests
     public void ParsePlaylistId_WithValidDeezerPlaylistId_ReturnsProviderAndExternalId()
     {
         // Arrange
-        var id = "pl-deezer-123456";
+        var id = "ext-deezer-playlist-123456";
 
         // Act
         var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
@@ -120,7 +120,7 @@ public class PlaylistIdHelperTests
     public void ParsePlaylistId_WithValidQobuzPlaylistId_ReturnsProviderAndExternalId()
     {
         // Arrange
-        var id = "pl-qobuz-789012";
+        var id = "ext-qobuz-playlist-789012";
 
         // Act
         var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
@@ -134,7 +134,7 @@ public class PlaylistIdHelperTests
     public void ParsePlaylistId_WithExternalIdContainingDashes_ParsesCorrectly()
     {
         // Arrange
-        var id = "pl-deezer-abc-def-123";
+        var id = "ext-deezer-playlist-abc-def-123";
 
         // Act
         var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
@@ -148,7 +148,7 @@ public class PlaylistIdHelperTests
     public void ParsePlaylistId_WithInvalidFormatNoProvider_ThrowsArgumentException()
     {
         // Arrange
-        var id = "pl-123456";
+        var id = "ext-playlist-123456";
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentException>(() => PlaylistIdHelper.ParsePlaylistId(id));
@@ -190,7 +190,7 @@ public class PlaylistIdHelperTests
     public void ParsePlaylistId_WithOnlyPrefix_ThrowsArgumentException()
     {
         // Arrange
-        var id = "pl-";
+        var id = "ext-";
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentException>(() => PlaylistIdHelper.ParsePlaylistId(id));
@@ -212,7 +212,7 @@ public class PlaylistIdHelperTests
         var result = PlaylistIdHelper.CreatePlaylistId(provider, externalId);
 
         // Assert
-        Assert.Equal("pl-deezer-123456", result);
+        Assert.Equal("ext-deezer-playlist-123456", result);
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public class PlaylistIdHelperTests
         var result = PlaylistIdHelper.CreatePlaylistId(provider, externalId);
 
         // Assert
-        Assert.Equal("pl-qobuz-789012", result);
+        Assert.Equal("ext-qobuz-playlist-789012", result);
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public class PlaylistIdHelperTests
         var result = PlaylistIdHelper.CreatePlaylistId(provider, externalId);
 
         // Assert
-        Assert.Equal("pl-deezer-123456", result);
+        Assert.Equal("ext-deezer-playlist-123456", result);
     }
 
     [Fact]
@@ -254,7 +254,7 @@ public class PlaylistIdHelperTests
         var result = PlaylistIdHelper.CreatePlaylistId(provider, externalId);
 
         // Assert
-        Assert.Equal("pl-deezer-123456", result);
+        Assert.Equal("ext-deezer-playlist-123456", result);
     }
 
     [Fact]
@@ -268,7 +268,7 @@ public class PlaylistIdHelperTests
         var result = PlaylistIdHelper.CreatePlaylistId(provider, externalId);
 
         // Assert
-        Assert.Equal("pl-deezer-abc-def-123", result);
+        Assert.Equal("ext-deezer-playlist-abc-def-123", result);
     }
 
     [Fact]

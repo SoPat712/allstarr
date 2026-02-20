@@ -91,21 +91,10 @@ public class SquidWTFDownloadService : BaseDownloadService
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             var response = await _httpClient.GetAsync(baseUrl);
-			Console.WriteLine($"Response code from is available async: {response.IsSuccessStatusCode}");
             return response.IsSuccessStatusCode;
         });
 	}
 
-    protected override string? ExtractExternalIdFromAlbumId(string albumId)
-    {
-        const string prefix = "ext-squidwtf-album-";
-        if (albumId.StartsWith(prefix))
-        {
-			Console.WriteLine(albumId[prefix.Length..]);
-            return albumId[prefix.Length..];
-        }
-        return null;
-    }
 
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {

@@ -6,8 +6,9 @@ namespace allstarr.Models.Subsonic;
 public class ExternalPlaylist
 {
     /// <summary>
-    /// Unique identifier in the format "pl-{provider}-{externalId}"
-    /// Example: "pl-deezer-123456" or "pl-qobuz-789"
+    /// Unique identifier in the format "ext-{provider}-playlist-{externalId}"
+    /// Example: "ext-deezer-playlist-123456" or "ext-qobuz-playlist-789"
+    /// This matches the format used for albums and songs for consistency.
     /// </summary>
     public string Id { get; set; } = string.Empty;
     
@@ -32,7 +33,7 @@ public class ExternalPlaylist
     public string Provider { get; set; } = string.Empty;
     
     /// <summary>
-    /// External ID from the provider (without "pl-" prefix)
+    /// External ID from the provider (without "ext-{provider}-playlist-" prefix)
     /// </summary>
     public string ExternalId { get; set; } = string.Empty;
     

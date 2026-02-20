@@ -9,6 +9,7 @@ using allstarr.Services.Subsonic;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Lyrics;
+using allstarr.Services.Scrobbling;
 using allstarr.Middleware;
 using allstarr.Filters;
 using Microsoft.Extensions.Http;
@@ -41,21 +42,20 @@ static List<string> DecodeSquidWtfUrls()
 {
     var encodedUrls = new[]
     {
-        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",                      // triton.squid.wtf
-        "aHR0cHM6Ly90aWRhbC1hcGkuYmluaW11bS5vcmc=",              // tidal-api.binimum.org
-        "aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",              // tidal.kinoplus.online
-        "aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==",          // hifi-two.spotisaver.net
-        "aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==",          // hifi-one.spotisaver.net
-        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",                      // wolf.qqdl.site
-        "aHR0cDovL2h1bmQucXFkbC5zaXRl",                          // hund.qqdl.site (http)
-        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",                      // katze.qqdl.site
-        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",                      // vogel.qqdl.site
-        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",                      // maus.qqdl.site
-        "aHR0cHM6Ly9ldS1jZW50cmFsLm1vbm9jaHJvbWUudGY=",          // eu-central.monochrome.tf
-        "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",              // us-west.monochrome.tf
-        "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",                  // arran.monochrome.tf
-        "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",                  // api.monochrome.tf
-        "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="                       // hund.qqdl.site (https)
+        "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",                      // triton
+        "aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",              // kinoplus
+        "aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==",          // spotisaver-two
+        "aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==",          // spotisaver-one
+        "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",                      // wolf
+        "aHR0cDovL2h1bmQucXFkbC5zaXRl",                          // hund-http
+        "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",                      // katze
+        "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",                      // vogel
+        "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",                      // maus
+        "aHR0cHM6Ly9ldS1jZW50cmFsLm1vbm9jaHJvbWUudGY=",          // eu-central
+        "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",              // us-west
+        "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",                  // arran
+        "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",                  // api
+        "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="                       // hund
     };
     
     return encodedUrls
@@ -137,6 +137,9 @@ builder.Services.AddProblemDetails();
 // Admin port filter (restricts admin API to port 5275)
 builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
 
+// Admin helper service (shared utilities for admin controllers)
+builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
+
 // Configuration - register both settings, active one determined by backend type
 builder.Services.Configure<SubsonicSettings>(
     builder.Configuration.GetSection("Subsonic"));
@@ -165,7 +168,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
 #pragma warning restore CS0618
     
     // Parse SPOTIFY_IMPORT_PLAYLISTS env var (JSON array format)
-    // Format: [["Name","SpotifyId","JellyfinId","first|last"],["Name2","SpotifyId2","JellyfinId2","first|last"]]
+    // Format: [["Name","SpotifyId","JellyfinId","first|last","cronSchedule"],["Name2","SpotifyId2","JellyfinId2","first|last","cronSchedule"]]
     var playlistsEnv = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
     if (!string.IsNullOrWhiteSpace(playlistsEnv))
     {
@@ -192,10 +195,11 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
                             LocalTracksPosition = arr.Length >= 4 && 
                                 arr[3].Trim().Equals("last", StringComparison.OrdinalIgnoreCase)
                                 ? LocalTracksPosition.Last
-                                : LocalTracksPosition.First
+                                : LocalTracksPosition.First,
+                            SyncSchedule = arr.Length >= 5 ? arr[4].Trim() : "0 8 * * *"
                         };
                         options.Playlists.Add(config);
-                        Console.WriteLine($"  Added: {config.Name} (Spotify: {config.Id}, Jellyfin: {config.JellyfinId}, Position: {config.LocalTracksPosition})");
+                        Console.WriteLine($"  Added: {config.Name} (Spotify: {config.Id}, Jellyfin: {config.JellyfinId}, Position: {config.LocalTracksPosition}, Schedule: {config.SyncSchedule})");
                     }
                 }
             }
@@ -207,7 +211,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
         catch (System.Text.Json.JsonException ex)
         {
             Console.WriteLine($"Warning: Failed to parse SPOTIFY_IMPORT_PLAYLISTS: {ex.Message}");
-            Console.WriteLine("Expected format: [[\"Name\",\"SpotifyId\",\"JellyfinId\",\"first|last\"],[\"Name2\",\"SpotifyId2\",\"JellyfinId2\",\"first|last\"]]");
+            Console.WriteLine("Expected format: [[\"Name\",\"SpotifyId\",\"JellyfinId\",\"first|last\",\"cronSchedule\"],[\"Name2\",\"SpotifyId2\",\"JellyfinId2\",\"first|last\",\"cronSchedule\"]]");
             Console.WriteLine("Will try legacy format instead");
         }
     }
@@ -580,12 +584,31 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClient>();
 // Register Spotify lyrics service (uses Spotify's color-lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
 
+<<<<<<< HEAD
 // Register LyricsPlus service (multi-source lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 
 // Register Lyrics Orchestrator (manages priority-based lyrics fetching)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 
+||||||| f68706f
+=======
+// Register LyricsPlus service (multi-source lyrics API)
+builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
+
+// Register Lyrics Orchestrator (manages priority-based lyrics fetching)
+builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
+
+// Register Spotify mapping service (global Spotify ID → Local/External mappings)
+builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>();
+
+// Register Spotify mapping validation service (validates and upgrades mappings)
+builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingValidationService>();
+
+// Register Spotify mapping migration service (migrates legacy per-playlist mappings to global format)
+builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMappingMigrationService>();
+
+>>>>>>> beta
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
@@ -601,6 +624,70 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.
 // DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast
 // builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPrefetchService>();
 // builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Lyrics.LyricsPrefetchService>());
+
+// Register scrobbling services (Last.fm, ListenBrainz, etc.)
+builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options =>
+{
+    // Last.fm settings
+    var lastFmEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LastFm:Enabled");
+    var lastFmApiKey = builder.Configuration.GetValue<string>("Scrobbling:LastFm:ApiKey");
+    var lastFmSharedSecret = builder.Configuration.GetValue<string>("Scrobbling:LastFm:SharedSecret");
+    var lastFmSessionKey = builder.Configuration.GetValue<string>("Scrobbling:LastFm:SessionKey");
+    var lastFmUsername = builder.Configuration.GetValue<string>("Scrobbling:LastFm:Username");
+    var lastFmPassword = builder.Configuration.GetValue<string>("Scrobbling:LastFm:Password");
+    
+    options.Enabled = builder.Configuration.GetValue<bool>("Scrobbling:Enabled");
+    options.LocalTracksEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LocalTracksEnabled");
+    options.LastFm.Enabled = lastFmEnabled;
+    
+    // Only override hardcoded API credentials if explicitly set in config
+    if (!string.IsNullOrEmpty(lastFmApiKey))
+        options.LastFm.ApiKey = lastFmApiKey;
+    if (!string.IsNullOrEmpty(lastFmSharedSecret))
+        options.LastFm.SharedSecret = lastFmSharedSecret;
+    
+    // These don't have defaults, so set them normally
+    options.LastFm.SessionKey = lastFmSessionKey ?? string.Empty;
+    options.LastFm.Username = lastFmUsername;
+    options.LastFm.Password = lastFmPassword;
+    
+    // ListenBrainz settings
+    var listenBrainzEnabled = builder.Configuration.GetValue<bool>("Scrobbling:ListenBrainz:Enabled");
+    var listenBrainzUserToken = builder.Configuration.GetValue<string>("Scrobbling:ListenBrainz:UserToken") ?? string.Empty;
+    
+    options.ListenBrainz.Enabled = listenBrainzEnabled;
+    options.ListenBrainz.UserToken = listenBrainzUserToken;
+    
+    // Debug logging
+    Console.WriteLine($"Scrobbling Configuration:");
+    Console.WriteLine($"  Enabled: {options.Enabled}");
+    Console.WriteLine($"  Local Tracks Enabled: {options.LocalTracksEnabled}");
+    Console.WriteLine($"  Last.fm Enabled: {options.LastFm.Enabled}");
+    Console.WriteLine($"  Last.fm Username: {options.LastFm.Username ?? "(not set)"}");
+    Console.WriteLine($"  Last.fm Session Key: {(string.IsNullOrEmpty(options.LastFm.SessionKey) ? "(not set)" : "***" + options.LastFm.SessionKey[^8..])}");
+    Console.WriteLine($"  ListenBrainz Enabled: {options.ListenBrainz.Enabled}");
+    Console.WriteLine($"  ListenBrainz Token: {(string.IsNullOrEmpty(options.ListenBrainz.UserToken) ? "(not set)" : "***" + options.ListenBrainz.UserToken[^8..])}");
+});
+
+// Register Last.fm HTTP client with proper User-Agent
+builder.Services.AddHttpClient("LastFm", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Register ListenBrainz HTTP client with proper User-Agent
+builder.Services.AddHttpClient("ListenBrainz", client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0 (https://github.com/sopat712/allstarr)");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+
+// Register scrobbling services
+builder.Services.AddSingleton<IScrobblingService, LastFmScrobblingService>();
+builder.Services.AddSingleton<IScrobblingService, ListenBrainzScrobblingService>();
+builder.Services.AddSingleton<ScrobblingOrchestrator>();
+builder.Services.AddSingleton<ScrobblingHelper>();
 
 // Register MusicBrainz service for metadata enrichment
 builder.Services.Configure<allstarr.Models.Settings.MusicBrainzSettings>(options =>
@@ -659,11 +746,23 @@ catch (Exception ex)
 }
 
 // Configure the HTTP request pipeline.
+<<<<<<< HEAD
 
 // IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
 // This processes X-Forwarded-For, X-Real-IP, etc. from nginx
 app.UseForwardedHeaders();
 
+||||||| f68706f
+=======
+
+// IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
+// This processes X-Forwarded-For, X-Real-IP, etc. from nginx
+app.UseForwardedHeaders();
+
+// Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
+app.UseMiddleware<RequestLoggingMiddleware>();
+
+>>>>>>> beta
 app.UseExceptionHandler(_ => { }); // Global exception handler
 
 // Enable response compression EARLY in the pipeline
@@ -718,8 +817,22 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
 
-        // AdminController should always be registered (for web UI)
-        if (typeInfo.Name == "AdminController") return true;
+        // All admin controllers should always be registered (for admin UI)
+        // This includes: AdminController, ConfigController, DiagnosticsController, DownloadsController,
+        // PlaylistController, JellyfinAdminController, SpotifyAdminController, LyricsController, MappingController, ScrobblingAdminController
+        if (typeInfo.Name == "AdminController" || 
+            typeInfo.Name == "ConfigController" ||
+            typeInfo.Name == "DiagnosticsController" ||
+            typeInfo.Name == "DownloadsController" ||
+            typeInfo.Name == "PlaylistController" ||
+            typeInfo.Name == "JellyfinAdminController" ||
+            typeInfo.Name == "SpotifyAdminController" ||
+            typeInfo.Name == "LyricsController" ||
+            typeInfo.Name == "MappingController" ||
+            typeInfo.Name == "ScrobblingAdminController")
+        {
+            return true;
+        }
 
         // Only register the controller matching the configured backend type
         return _backendType switch
