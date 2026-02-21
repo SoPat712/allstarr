@@ -513,7 +513,12 @@ public partial class JellyfinController
         // For library items, proxy transparently with full query string
         _logger.LogDebug("Proxying library item request to Jellyfin: ParentId={ParentId}", parentId);
 
-        var endpoint = $"Users/{Request.RouteValues["userId"]}/Items{Request.QueryString}";
+        // Build endpoint - handle both /Items and /Users/{userId}/Items routes
+        var userIdFromRoute = Request.RouteValues["userId"]?.ToString();
+        var endpoint = string.IsNullOrEmpty(userIdFromRoute) 
+            ? $"Items{Request.QueryString}"
+            : $"Users/{userIdFromRoute}/Items{Request.QueryString}";
+            
         var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
 
         return HandleProxyResponse(result, statusCode);

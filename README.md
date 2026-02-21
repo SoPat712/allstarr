@@ -153,6 +153,8 @@ This project brings together all the music streaming providers into one unified 
 
 - [Finamp](https://github.com/jmshrv/finamp) (Android/iOS)
 
+- [Finer Player](https://monk-studio.com/finer) (iOS/iPadOS/macOS/tvOS)
+
 _Working on getting more currently_
 
 ### Subsonic/Navidrome

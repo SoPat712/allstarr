@@ -389,30 +389,6 @@ public class SpotifyTrackMatchingService : BackgroundService
         await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
         _lastRunTimes[playlistName] = DateTime.UtcNow;
     }
-    
-    /// <summary>
-    /// Public method to trigger matching for a specific playlist (called from controller).
-    /// This bypasses cron schedules and runs immediately.
-    /// </summary>
-    public async Task TriggerMatchingForPlaylistAsync(string playlistName)
-    {
-        _logger.LogInformation("Manual track matching triggered for playlist: {Playlist} (bypassing cron schedule)", playlistName);
-        
-        // Check cooldown to prevent abuse
-        if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
-        {
-            var timeSinceLastRun = DateTime.UtcNow - lastRun;
-            if (timeSinceLastRun < _minimumRunInterval)
-            {
-                _logger.LogWarning("Skipping manual refresh for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)", 
-                    playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
-                throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before refreshing again");
-            }
-        }
-        
-        await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
-        _lastRunTimes[playlistName] = DateTime.UtcNow;
-    }
 
     private async Task RebuildAllPlaylistsAsync(CancellationToken cancellationToken)
     {
