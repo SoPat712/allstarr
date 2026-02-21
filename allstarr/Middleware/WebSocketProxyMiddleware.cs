@@ -141,13 +141,7 @@ public class WebSocketProxyMiddleware
             }
 
             // Set user agent
-<<<<<<< HEAD
-            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0.1");
-||||||| f68706f
-            serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0");
-=======
             serverWebSocket.Options.SetRequestHeader("User-Agent", "Allstarr/1.0.3");
->>>>>>> beta
 
             await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
             _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin WebSocket");

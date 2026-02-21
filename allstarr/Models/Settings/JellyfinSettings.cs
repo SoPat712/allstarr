@@ -43,13 +43,7 @@ public class JellyfinSettings
     /// <summary>
     /// Client version reported to Jellyfin
     /// </summary>
-<<<<<<< HEAD
-    public string ClientVersion { get; set; } = "1.0.1";
-||||||| f68706f
-    public string ClientVersion { get; set; } = "1.0.0";
-=======
     public string ClientVersion { get; set; } = AppVersion.Version;
->>>>>>> beta
     
     /// <summary>
     /// Device ID reported to Jellyfin

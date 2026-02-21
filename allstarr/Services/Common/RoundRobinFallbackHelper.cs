@@ -104,14 +104,8 @@ public class RoundRobinFallbackHelper
         }
         catch (Exception ex)
         {
-<<<<<<< HEAD
-            _logger.LogError(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
-||||||| f68706f
-            _logger.LogDebug(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
-=======
             // Unexpected errors - still log at debug level for health checks
             _logger.LogDebug(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
->>>>>>> beta
             
             // Cache as unhealthy
             lock (_healthCacheLock)
@@ -244,66 +238,8 @@ public class RoundRobinFallbackHelper
         {
             if (_apiUrls.Count == 1 || topN <= 1)
             {
-<<<<<<< HEAD
-                try
-                {
-                    _logger.LogDebug("Racing {Service} endpoint {Endpoint}", _serviceName, baseUrl);
-                    var result = await action(baseUrl, raceCts.Token);
-                    return (result, baseUrl, true);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "{Service} race failed for endpoint {Endpoint}", _serviceName, baseUrl);
-                    return (default(T)!, baseUrl, false);
-                }
-            }, raceCts.Token);
-            
-            tasks.Add(task);
-        }
-
-        // Wait for first successful completion
-        while (tasks.Count > 0)
-        {
-            var completedTask = await Task.WhenAny(tasks);
-            var (result, endpoint, success) = await completedTask;
-            
-            if (success)
-            {
-                _logger.LogDebug("🏁 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
-                raceCts.Cancel(); // Cancel all other requests
-                return result;
-||||||| f68706f
-                try
-                {
-                    _logger.LogDebug("Racing {Service} endpoint {Endpoint}", _serviceName, baseUrl);
-                    var result = await action(baseUrl, raceCts.Token);
-                    return (result, baseUrl, true);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "{Service} race failed for endpoint {Endpoint}", _serviceName, baseUrl);
-                    return (default(T)!, baseUrl, false);
-                }
-            }, raceCts.Token);
-            
-            tasks.Add(task);
-        }
-
-        // Wait for first successful completion
-        while (tasks.Count > 0)
-        {
-            var completedTask = await Task.WhenAny(tasks);
-            var (result, endpoint, success) = await completedTask;
-            
-            if (success)
-            {
-                _logger.LogInformation("🏁 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
-                raceCts.Cancel(); // Cancel all other requests
-                return result;
-=======
                 // No point racing with one endpoint - use fallback instead
                 return await TryWithFallbackAsync(baseUrl => action(baseUrl, cancellationToken));
->>>>>>> beta
             }
 
             // Get top N fastest healthy endpoints

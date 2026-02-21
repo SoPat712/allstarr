@@ -85,83 +85,15 @@ public class SquidWTFMetadataService : IMusicMetadataService
     
 	
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
-<<<<<<< HEAD
-    {
-        // Use round-robin to distribute load across endpoints (allows parallel processing of multiple tracks)
-        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-||||||| f68706f
-    {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
-=======
->>>>>>> beta
         {
-<<<<<<< HEAD
-            // Use 's' parameter for track search as per hifi-api spec
-            var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url);
-            
-            if (!response.IsSuccessStatusCode)
-||||||| f68706f
-            // Use 's' parameter for track search as per hifi-api spec
-            var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url, ct);
-            
-            if (!response.IsSuccessStatusCode)
-=======
             // Race top 3 fastest endpoints for search (latency-sensitive)
             return await _fallbackHelper.RaceTopEndpointsAsync(3, async (baseUrl, ct) =>
->>>>>>> beta
             {
-<<<<<<< HEAD
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
-            }
-            
-            var json = await response.Content.ReadAsStringAsync();
-            
-            // Check for error in response body
-            var result = JsonDocument.Parse(json);
-            if (result.RootElement.TryGetProperty("detail", out _) || 
-                result.RootElement.TryGetProperty("error", out _))
-            {
-                throw new HttpRequestException("API returned error response");
-            }
-            
-            var songs = new List<Song>();
-            // Per hifi-api spec: track search returns data.items array
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("items", out var items))
-            {
-                int count = 0;
-                foreach (var track in items.EnumerateArray())
-||||||| f68706f
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
-            }
-            
-            var json = await response.Content.ReadAsStringAsync(ct);
-            
-            // Check for error in response body
-            var result = JsonDocument.Parse(json);
-            if (result.RootElement.TryGetProperty("detail", out _) || 
-                result.RootElement.TryGetProperty("error", out _))
-            {
-                throw new HttpRequestException("API returned error response");
-            }
-            
-            var songs = new List<Song>();
-            // Per hifi-api spec: track search returns data.items array
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("items", out var items))
-            {
-                int count = 0;
-                foreach (var track in items.EnumerateArray())
-=======
                 // Use 's' parameter for track search as per hifi-api spec
                 var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
                 var response = await _httpClient.GetAsync(url, ct);
 
                 if (!response.IsSuccessStatusCode)
->>>>>>> beta
                 {
                     throw new HttpRequestException($"HTTP {response.StatusCode}");
                 }
@@ -199,72 +131,16 @@ public class SquidWTFMetadataService : IMusicMetadataService
         }
 	
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
-<<<<<<< HEAD
-    {
-        // Use round-robin to distribute load across endpoints (allows parallel processing)
-        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-||||||| f68706f
-    {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
-=======
->>>>>>> beta
         {
-<<<<<<< HEAD
-            // Note: hifi-api doesn't document album search, but 'al' parameter is commonly used
-            var url = $"{baseUrl}/search/?al={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url);
-            
-            if (!response.IsSuccessStatusCode)
-||||||| f68706f
-            // Note: hifi-api doesn't document album search, but 'al' parameter is commonly used
-            var url = $"{baseUrl}/search/?al={Uri.EscapeDataString(query)}";
-            var response = await _httpClient.GetAsync(url, ct);
-            
-            if (!response.IsSuccessStatusCode)
-=======
             // Race top 3 fastest endpoints for search (latency-sensitive)
             return await _fallbackHelper.RaceTopEndpointsAsync(3, async (baseUrl, ct) =>
->>>>>>> beta
             {
-<<<<<<< HEAD
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
-            }
-            
-            var json = await response.Content.ReadAsStringAsync();
-            var result = JsonDocument.Parse(json);
-            
-            var albums = new List<Album>();
-            // Per hifi-api spec: album search returns data.albums.items array
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("albums", out var albumsObj) &&
-                albumsObj.TryGetProperty("items", out var items))
-            {
-                int count = 0;
-                foreach (var album in items.EnumerateArray())
-||||||| f68706f
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
-            }
-            
-            var json = await response.Content.ReadAsStringAsync(ct);
-            var result = JsonDocument.Parse(json);
-            
-            var albums = new List<Album>();
-            // Per hifi-api spec: album search returns data.albums.items array
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("albums", out var albumsObj) &&
-                albumsObj.TryGetProperty("items", out var items))
-            {
-                int count = 0;
-                foreach (var album in items.EnumerateArray())
-=======
                 // Use 'al' parameter for album search
                 // a= is for artists, al= is for albums, p= is for playlists
                 var url = $"{baseUrl}/search/?al={Uri.EscapeDataString(query)}";
                 var response = await _httpClient.GetAsync(url, ct);
 
                 if (!response.IsSuccessStatusCode)
->>>>>>> beta
                 {
                     throw new HttpRequestException($"HTTP {response.StatusCode}");
                 }
@@ -293,93 +169,13 @@ public class SquidWTFMetadataService : IMusicMetadataService
         }
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
-<<<<<<< HEAD
-    {
-        // Use round-robin to distribute load across endpoints (allows parallel processing)
-        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-||||||| f68706f
-    {
-        // Race all endpoints for fastest search results
-        return await _fallbackHelper.RaceAllEndpointsAsync(async (baseUrl, ct) =>
-=======
->>>>>>> beta
         {
-<<<<<<< HEAD
-            // Per hifi-api spec: use 'a' parameter for artist search
-            var url = $"{baseUrl}/search/?a={Uri.EscapeDataString(query)}";
-            _logger.LogDebug("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
-            
-            var response = await _httpClient.GetAsync(url);
-            
-            if (!response.IsSuccessStatusCode)
-||||||| f68706f
-            // Per hifi-api spec: use 'a' parameter for artist search
-            var url = $"{baseUrl}/search/?a={Uri.EscapeDataString(query)}";
-            _logger.LogInformation("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
-            
-            var response = await _httpClient.GetAsync(url, ct);
-            
-            if (!response.IsSuccessStatusCode)
-=======
             // Race top 3 fastest endpoints for search (latency-sensitive)
             return await _fallbackHelper.RaceTopEndpointsAsync(3, async (baseUrl, ct) =>
->>>>>>> beta
             {
-<<<<<<< HEAD
-                _logger.LogWarning("⚠️ SQUIDWTF: Artist search failed with status {StatusCode}", response.StatusCode);
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
-            }
-            
-            var json = await response.Content.ReadAsStringAsync();
-            var result = JsonDocument.Parse(json);
-            
-            var artists = new List<Artist>();
-            // Per hifi-api spec: artist search returns data.artists.items array
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("artists", out var artistsObj) &&
-                artistsObj.TryGetProperty("items", out var items))
-            {
-                int count = 0;
-                foreach (var artist in items.EnumerateArray())
-                {
-                    if (count >= limit) break;
-                    
-                    var parsedArtist = ParseTidalArtist(artist);
-                    artists.Add(parsedArtist);
-                    _logger.LogDebug("🎤 SQUIDWTF: Found artist: {Name} (ID: {Id})", parsedArtist.Name, parsedArtist.ExternalId);
-                    count++;
-                }
-            }
-||||||| f68706f
-                _logger.LogWarning("⚠️ SQUIDWTF: Artist search failed with status {StatusCode}", response.StatusCode);
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
-            }
-            
-            var json = await response.Content.ReadAsStringAsync(ct);
-            var result = JsonDocument.Parse(json);
-            
-            var artists = new List<Artist>();
-            // Per hifi-api spec: artist search returns data.artists.items array
-            if (result.RootElement.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("artists", out var artistsObj) &&
-                artistsObj.TryGetProperty("items", out var items))
-            {
-                int count = 0;
-                foreach (var artist in items.EnumerateArray())
-                {
-                    if (count >= limit) break;
-                    
-                    var parsedArtist = ParseTidalArtist(artist);
-                    artists.Add(parsedArtist);
-                    _logger.LogDebug("🎤 SQUIDWTF: Found artist: {Name} (ID: {Id})", parsedArtist.Name, parsedArtist.ExternalId);
-                    count++;
-                }
-            }
-=======
                 // Per hifi-api spec: use 'a' parameter for artist search
                 var url = $"{baseUrl}/search/?a={Uri.EscapeDataString(query)}";
                 _logger.LogDebug("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
->>>>>>> beta
 
                 var response = await _httpClient.GetAsync(url, ct);
 
@@ -579,13 +375,7 @@ public class SquidWTFMetadataService : IMusicMetadataService
         var cached = await _cache.GetAsync<Artist>(cacheKey);
         if (cached != null)
         {
-<<<<<<< HEAD
-            _logger.LogDebug("Returning cached artist {ArtistName}", cached.Name);
-||||||| f68706f
-            _logger.LogInformation("Returning cached artist {ArtistName}", cached.Name);
-=======
             _logger.LogDebug("Returning cached artist {ArtistName}, ImageUrl: {ImageUrl}", cached.Name, cached.ImageUrl ?? "NULL");
->>>>>>> beta
             return cached;
         }
   

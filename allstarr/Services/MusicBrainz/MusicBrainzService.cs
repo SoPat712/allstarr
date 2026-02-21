@@ -30,13 +30,7 @@ public class MusicBrainzService
         ILogger<MusicBrainzService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-<<<<<<< HEAD
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
-||||||| f68706f
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.0 (https://github.com/SoPat712/allstarr)");
-=======
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
->>>>>>> beta
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         
         _settings = settings.Value;
@@ -180,56 +174,6 @@ public class MusicBrainzService
     }
     
     /// <summary>
-<<<<<<< HEAD
-    /// Looks up a recording by MBID to get full details including genres.
-    /// </summary>
-    public async Task<MusicBrainzRecording?> LookupByMbidAsync(string mbid)
-    {
-        if (!_settings.Enabled)
-        {
-            return null;
-        }
-
-        await RateLimitAsync();
-
-        try
-        {
-            var url = $"{_settings.BaseUrl}/recording/{mbid}?fmt=json&inc=artists+releases+release-groups+genres+tags";
-            _logger.LogDebug("MusicBrainz MBID lookup: {Url}", url);
-
-            var response = await _httpClient.GetAsync(url);
-            
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("MusicBrainz MBID lookup failed: {StatusCode}", response.StatusCode);
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            var recording = JsonSerializer.Deserialize<MusicBrainzRecording>(json, JsonOptions);
-
-            if (recording == null)
-            {
-                _logger.LogDebug("No MusicBrainz recording found for MBID: {Mbid}", mbid);
-                return null;
-            }
-
-            var genres = recording.Genres?.Select(g => g.Name).Where(n => !string.IsNullOrEmpty(n)).ToList() ?? new List<string?>();
-            _logger.LogInformation("✓ Found MusicBrainz recording for MBID {Mbid}: {Title} by {Artist} (Genres: {Genres})",
-                mbid, recording.Title, recording.ArtistCredit?[0]?.Name ?? "Unknown", string.Join(", ", genres));
-
-            return recording;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error looking up MBID {Mbid} in MusicBrainz", mbid);
-            return null;
-        }
-    }
-    
-    /// <summary>
-||||||| f68706f
-=======
     /// Looks up a recording by MBID to get full details including genres.
     /// </summary>
     public async Task<MusicBrainzRecording?> LookupByMbidAsync(string mbid)
@@ -289,7 +233,6 @@ public class MusicBrainzService
     }
     
     /// <summary>
->>>>>>> beta
     /// Enriches a song with genre information from MusicBrainz.
     /// First tries ISRC lookup, then falls back to title/artist search + MBID lookup.
     /// </summary>

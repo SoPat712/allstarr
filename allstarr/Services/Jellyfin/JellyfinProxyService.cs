@@ -180,95 +180,7 @@ public class JellyfinProxyService
             
             if (authHeaderAdded)
             {
-<<<<<<< HEAD
-                foreach (var header in clientHeaders)
-                {
-                    if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var headerValue = header.Value.ToString();
-                        request.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
-                        authHeaderAdded = true;
-                        _logger.LogTrace("Forwarded X-Emby-Token header");
-                        break;
-                    }
-                }
-            }
-            
-            // If no X-Emby-Authorization, check if Authorization header contains MediaBrowser format
-            // Some clients send it as "Authorization" instead of "X-Emby-Authorization"
-            if (!authHeaderAdded)
-            {
-                foreach (var header in clientHeaders)
-                {
-                    if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var headerValue = header.Value.ToString();
-                        
-                        // Check if it's MediaBrowser/Jellyfin format (contains "MediaBrowser" or "Token=")
-                        if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                            headerValue.Contains("Token=", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Forward as X-Emby-Authorization (Jellyfin's expected header)
-                            request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                            authHeaderAdded = true;
-                            _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
-                        }
-                        else
-                        {
-                            // Standard Bearer token - forward as-is
-                            request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                            authHeaderAdded = true;
-                            _logger.LogTrace("Forwarded Authorization header");
-                        }
-                        break;
-                    }
-                }
-||||||| f68706f
-                foreach (var header in clientHeaders)
-                {
-                    if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var headerValue = header.Value.ToString();
-                        request.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
-                        authHeaderAdded = true;
-                        _logger.LogTrace("Forwarded X-Emby-Token header");
-                        break;
-                    }
-                }
-            }
-            
-            // If no X-Emby-Authorization, check if Authorization header contains MediaBrowser format
-            // Some clients send it as "Authorization" instead of "X-Emby-Authorization"
-            if (!authHeaderAdded)
-            {
-                foreach (var header in clientHeaders)
-                {
-                    if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var headerValue = header.Value.ToString();
-                        
-                        // Check if it's MediaBrowser/Jellyfin format (contains "MediaBrowser" or "Token=")
-                        if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                            headerValue.Contains("Token=", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Forward as X-Emby-Authorization (Jellyfin's expected header)
-                            request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                            authHeaderAdded = true;
-                            _logger.LogTrace("Converted Authorization to X-Emby-Authorization");
-                        }
-                        else
-                        {
-                            // Standard Bearer token - forward as-is
-                            request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                            authHeaderAdded = true;
-                            _logger.LogTrace("Forwarded Authorization header");
-                        }
-                        break;
-                    }
-                }
-=======
                 _logger.LogTrace("Forwarded authentication headers");
->>>>>>> beta
             }
             
             // Check for api_key query parameter (some clients use this)
@@ -369,91 +281,7 @@ public class JellyfinProxyService
         
         if (authHeaderAdded)
         {
-<<<<<<< HEAD
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    request.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
-                    authHeaderAdded = true;
-                    _logger.LogTrace("Forwarded X-Emby-Token header");
-                    break;
-                }
-            }
-        }
-        
-        // Try Authorization header
-        if (!authHeaderAdded)
-        {
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    
-                    // Check if it's MediaBrowser/Jellyfin format
-                    if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                        headerValue.Contains("Client=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Forward as X-Emby-Authorization
-                        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                        _logger.LogDebug("Converted Authorization to X-Emby-Authorization");
-                    }
-                    else
-                    {
-                        // Standard Bearer token
-                        request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                        _logger.LogTrace("Forwarded Authorization header");
-                    }
-                    authHeaderAdded = true;
-                    break;
-                }
-            }
-||||||| f68706f
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    request.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
-                    authHeaderAdded = true;
-                    _logger.LogTrace("Forwarded X-Emby-Token header");
-                    break;
-                }
-            }
-        }
-        
-        // Try Authorization header
-        if (!authHeaderAdded)
-        {
-            foreach (var header in clientHeaders)
-            {
-                if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
-                {
-                    var headerValue = header.Value.ToString();
-                    
-                    // Check if it's MediaBrowser/Jellyfin format
-                    if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) || 
-                        headerValue.Contains("Client=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Forward as X-Emby-Authorization
-                        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
-                        _logger.LogTrace("Converted Authorization to X-Emby-Authorization");
-                    }
-                    else
-                    {
-                        // Standard Bearer token
-                        request.Headers.TryAddWithoutValidation("Authorization", headerValue);
-                        _logger.LogTrace("Forwarded Authorization header");
-                    }
-                    authHeaderAdded = true;
-                    break;
-                }
-            }
-=======
             _logger.LogTrace("Forwarded authentication headers");
->>>>>>> beta
         }
         
         // For authentication endpoints, credentials are in the body, not headers
@@ -613,13 +441,7 @@ public class JellyfinProxyService
         }
         else
         {
-<<<<<<< HEAD
-            _logger.LogDebug("No client auth provided for DELETE {Url} - forwarding without auth", url);
-||||||| f68706f
-            _logger.LogInformation("No client auth provided for DELETE {Url} - forwarding without auth", url);
-=======
             _logger.LogTrace("Forwarded authentication headers");
->>>>>>> beta
         }
         
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -675,14 +497,8 @@ public class JellyfinProxyService
         }
         catch (Exception ex)
         {
-<<<<<<< HEAD
-            _logger.LogError(ex, "Failed to get bytes from {Endpoint}", endpoint);
-||||||| f68706f
-            _logger.LogWarning(ex, "Failed to get bytes from {Endpoint}", endpoint);
-=======
             // Actual errors should still be logged
             _logger.LogError(ex, "Failed to get bytes from {Endpoint}", endpoint);
->>>>>>> beta
             return (null, null, false);
         }
     }
@@ -711,24 +527,8 @@ public class JellyfinProxyService
             queryParams["userId"] = _settings.UserId;
         }
 
-<<<<<<< HEAD
-        // Only filter search to music library if explicitly configured
-        if (!string.IsNullOrEmpty(_settings.LibraryId))
-        {
-            queryParams["parentId"] = _settings.LibraryId;
-            _logger.LogInformation("Searching within configured LibraryId {LibraryId}", _settings.LibraryId);
-        }
-||||||| f68706f
-        // Only filter search to music library if explicitly configured
-        if (!string.IsNullOrEmpty(_settings.LibraryId))
-        {
-            queryParams["parentId"] = _settings.LibraryId;
-            _logger.LogDebug("Searching within configured LibraryId {LibraryId}", _settings.LibraryId);
-        }
-=======
         // Note: We don't force parentId here - let clients specify which library to search
         // The controller will detect music library searches and add external results
->>>>>>> beta
 
         if (includeItemTypes != null && includeItemTypes.Length > 0)
         {

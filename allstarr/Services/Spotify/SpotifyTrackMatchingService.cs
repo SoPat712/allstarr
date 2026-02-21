@@ -112,85 +112,6 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             try
             {
-<<<<<<< HEAD
-                // Calculate next run time for each playlist
-                var now = DateTime.UtcNow;
-                var nextRuns = new List<(string PlaylistName, DateTime NextRun, CronExpression Cron)>();
-                
-                foreach (var playlist in _spotifySettings.Playlists)
-                {
-                    var schedule = string.IsNullOrEmpty(playlist.SyncSchedule) ? "0 8 * * 1" : playlist.SyncSchedule;
-                    
-                    try
-                    {
-                        var cron = CronExpression.Parse(schedule);
-                        var nextRun = cron.GetNextOccurrence(now, TimeZoneInfo.Utc);
-                        
-                        if (nextRun.HasValue)
-                        {
-                            nextRuns.Add((playlist.Name, nextRun.Value, cron));
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Could not calculate next run for playlist {Name} with schedule {Schedule}", 
-                                playlist.Name, schedule);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Invalid cron schedule for playlist {Name}: {Schedule}", 
-                            playlist.Name, schedule);
-                    }
-                }
-                
-                if (nextRuns.Count == 0)
-                {
-                    _logger.LogWarning("No valid cron schedules found, sleeping for 1 hour");
-                    await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
-                    continue;
-                }
-                
-                // Find the next playlist that needs to run
-                var nextPlaylist = nextRuns.OrderBy(x => x.NextRun).First();
-                var waitTime = nextPlaylist.NextRun - now;
-                
-                if (waitTime.TotalSeconds > 0)
-                {
-                    _logger.LogInformation("Next scheduled run: {Playlist} at {Time} UTC (in {Minutes:F1} minutes)", 
-                        nextPlaylist.PlaylistName, nextPlaylist.NextRun, waitTime.TotalMinutes);
-                    
-                    // Wait until next run (or max 1 hour to re-check schedules)
-                    var maxWait = TimeSpan.FromHours(1);
-                    var actualWait = waitTime > maxWait ? maxWait : waitTime;
-                    await Task.Delay(actualWait, stoppingToken);
-                    continue;
-                }
-                
-                // Time to run this playlist
-                _logger.LogInformation("=== CRON TRIGGER: Running scheduled match for {Playlist} ===", nextPlaylist.PlaylistName);
-                
-                // Check cooldown to prevent duplicate runs
-                if (_lastRunTimes.TryGetValue(nextPlaylist.PlaylistName, out var lastRun))
-                {
-                    var timeSinceLastRun = now - lastRun;
-                    if (timeSinceLastRun < _minimumRunInterval)
-                    {
-                        _logger.LogWarning("Skipping {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)", 
-                            nextPlaylist.PlaylistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
-                        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                        continue;
-                    }
-                }
-                
-                // Run matching for this playlist
-                await MatchSinglePlaylistAsync(nextPlaylist.PlaylistName, stoppingToken);
-                _lastRunTimes[nextPlaylist.PlaylistName] = DateTime.UtcNow;
-                
-                _logger.LogInformation("=== FINISHED: {Playlist} - Next run at {NextRun} UTC ===", 
-                    nextPlaylist.PlaylistName, nextPlaylist.Cron.GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc));
-||||||| f68706f
-                await MatchAllPlaylistsAsync(stoppingToken);
-=======
                 // Calculate next run time for each playlist
                 var now = DateTime.UtcNow;
                 var nextRuns = new List<(string PlaylistName, DateTime NextRun, CronExpression Cron)>();
@@ -266,7 +187,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                 
                 _logger.LogInformation("=== FINISHED: {Playlist} - Next run at {NextRun} UTC ===", 
                     nextPlaylist.PlaylistName, nextPlaylist.Cron.GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc));
->>>>>>> beta
             }
             catch (Exception ex)
             {
@@ -277,33 +197,16 @@ public class SpotifyTrackMatchingService : BackgroundService
     }
     
     /// <summary>
-<<<<<<< HEAD
-    /// Matches tracks for a single playlist (called by cron scheduler or manual trigger).
-||||||| f68706f
-    /// Public method to trigger matching for a specific playlist (called from controller).
-=======
     /// Rebuilds a single playlist from scratch (clears cache, fetches fresh data, re-matches).
     /// This is the unified method used by both cron scheduler and "Rebuild All Remote" button.
->>>>>>> beta
     /// </summary>
-<<<<<<< HEAD
-    private async Task MatchSinglePlaylistAsync(string playlistName, CancellationToken cancellationToken)
-||||||| f68706f
-    public async Task TriggerMatchingForPlaylistAsync(string playlistName)
-=======
     private async Task RebuildSinglePlaylistAsync(string playlistName, CancellationToken cancellationToken)
->>>>>>> beta
     {
         var playlist = _spotifySettings.Playlists
             .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
         
         if (playlist == null)
         {
-<<<<<<< HEAD
-            _logger.LogInformation("Playlist {Playlist} not found in configuration", playlistName);
-||||||| f68706f
-            _logger.LogWarning("Playlist {Playlist} not found in configuration", playlistName);
-=======
             _logger.LogInformation("Playlist {Playlist} not found in configuration", playlistName);
             return;
         }
@@ -382,7 +285,6 @@ public class SpotifyTrackMatchingService : BackgroundService
         if (playlist == null)
         {
             _logger.LogInformation("Playlist {Playlist} not found in configuration", playlistName);
->>>>>>> beta
             return;
         }
         
@@ -418,42 +320,12 @@ public class SpotifyTrackMatchingService : BackgroundService
         }
     }
 
-<<<<<<< HEAD
-    /// <summary>
-    /// Public method to trigger matching manually for all playlists (called from controller).
-    /// This bypasses cron schedules and runs immediately.
-    /// </summary>
-    public async Task TriggerMatchingAsync()
-||||||| f68706f
-    private async Task MatchAllPlaylistsAsync(CancellationToken cancellationToken)
-=======
     /// <summary>
     /// Public method to trigger full rebuild for all playlists (called from "Rebuild All Remote" button).
     /// This clears caches, fetches fresh data, and re-matches everything - same as cron job.
     /// </summary>
     public async Task TriggerRebuildAllAsync()
->>>>>>> beta
     {
-<<<<<<< HEAD
-        _logger.LogInformation("Manual track matching triggered for all playlists (bypassing cron schedules)");
-        await MatchAllPlaylistsAsync(CancellationToken.None);
-    }
-    
-    /// <summary>
-    /// Public method to trigger matching for a specific playlist (called from controller).
-    /// This bypasses cron schedules and runs immediately.
-    /// </summary>
-    public async Task TriggerMatchingForPlaylistAsync(string playlistName)
-    {
-        _logger.LogInformation("Manual track matching triggered for playlist: {Playlist} (bypassing cron schedule)", playlistName);
-        
-        // Check cooldown to prevent abuse
-        if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
-||||||| f68706f
-        // Check if we've run too recently (cooldown period)
-        var timeSinceLastRun = DateTime.UtcNow - _lastMatchingRun;
-        if (timeSinceLastRun < _minimumMatchingInterval)
-=======
         _logger.LogInformation("Manual full rebuild triggered for all playlists (same as cron job)");
         await RebuildAllPlaylistsAsync(CancellationToken.None);
     }
@@ -468,21 +340,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         
         // Check cooldown to prevent abuse
         if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
->>>>>>> beta
         {
-<<<<<<< HEAD
-            var timeSinceLastRun = DateTime.UtcNow - lastRun;
-            if (timeSinceLastRun < _minimumRunInterval)
-            {
-                _logger.LogWarning("Skipping manual refresh for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)", 
-                    playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
-                throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before refreshing again");
-            }
-||||||| f68706f
-            _logger.LogInformation("Skipping track matching - last run was {Seconds}s ago (minimum interval: {MinSeconds}s)", 
-                (int)timeSinceLastRun.TotalSeconds, (int)_minimumMatchingInterval.TotalSeconds);
-            return;
-=======
             var timeSinceLastRun = DateTime.UtcNow - lastRun;
             if (timeSinceLastRun < _minimumRunInterval)
             {
@@ -490,21 +348,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                     playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
                 throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before rebuilding again");
             }
->>>>>>> beta
         }
         
-<<<<<<< HEAD
-        await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
-        _lastRunTimes[playlistName] = DateTime.UtcNow;
-    }
-
-    private async Task MatchAllPlaylistsAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("=== STARTING TRACK MATCHING FOR ALL PLAYLISTS ===");
-||||||| f68706f
-        _logger.LogInformation("=== STARTING TRACK MATCHING ===");
-        _lastMatchingRun = DateTime.UtcNow;
-=======
         await RebuildSinglePlaylistAsync(playlistName, CancellationToken.None);
         _lastRunTimes[playlistName] = DateTime.UtcNow;
     }
@@ -544,35 +389,10 @@ public class SpotifyTrackMatchingService : BackgroundService
         await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
         _lastRunTimes[playlistName] = DateTime.UtcNow;
     }
-    
-    /// <summary>
-    /// Public method to trigger matching for a specific playlist (called from controller).
-    /// This bypasses cron schedules and runs immediately.
-    /// </summary>
-    public async Task TriggerMatchingForPlaylistAsync(string playlistName)
-    {
-        _logger.LogInformation("Manual track matching triggered for playlist: {Playlist} (bypassing cron schedule)", playlistName);
-        
-        // Check cooldown to prevent abuse
-        if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
-        {
-            var timeSinceLastRun = DateTime.UtcNow - lastRun;
-            if (timeSinceLastRun < _minimumRunInterval)
-            {
-                _logger.LogWarning("Skipping manual refresh for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)", 
-                    playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
-                throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before refreshing again");
-            }
-        }
-        
-        await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
-        _lastRunTimes[playlistName] = DateTime.UtcNow;
-    }
 
     private async Task RebuildAllPlaylistsAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("=== STARTING FULL REBUILD FOR ALL PLAYLISTS ===");
->>>>>>> beta
         
         var playlists = _spotifySettings.Playlists;
         if (playlists.Count == 0)
@@ -587,22 +407,6 @@ public class SpotifyTrackMatchingService : BackgroundService
             
             try
             {
-<<<<<<< HEAD
-                await MatchSinglePlaylistAsync(playlist.Name, cancellationToken);
-||||||| f68706f
-                if (playlistFetcher != null)
-                {
-                    // Use new direct API mode with ISRC support
-                    await MatchPlaylistTracksWithIsrcAsync(
-                        playlist.Name, playlistFetcher, metadataService, cancellationToken);
-                }
-                else
-                {
-                    // Fall back to legacy mode
-                    await MatchPlaylistTracksLegacyAsync(
-                        playlist.Name, metadataService, cancellationToken);
-                }
-=======
                 await RebuildSinglePlaylistAsync(playlist.Name, cancellationToken);
             }
             catch (Exception ex)
@@ -632,7 +436,6 @@ public class SpotifyTrackMatchingService : BackgroundService
             try
             {
                 await MatchSinglePlaylistAsync(playlist.Name, cancellationToken);
->>>>>>> beta
             }
             catch (Exception ex)
             {
@@ -959,15 +762,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                 }
                 catch (Exception ex)
                 {
-<<<<<<< HEAD
-                    _logger.LogError(ex, "Failed to match track: {Title} - {Artist}", 
-                        spotifyTrack.Title, spotifyTrack.PrimaryArtist);
-||||||| f68706f
-                    _logger.LogDebug(ex, "Failed to match track: {Title} - {Artist}", 
-                        spotifyTrack.Title, spotifyTrack.PrimaryArtist);
-=======
                     _logger.LogError(ex, "Failed to match track: {Title}", spotifyTrack.Title);
->>>>>>> beta
                     return (spotifyTrack, new List<(Song, double, string)>());
                 }
             }).ToList();
@@ -1070,42 +865,6 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         if (matchedTracks.Count > 0)
         {
-<<<<<<< HEAD
-            // Calculate cache expiration: until next cron run (not just cache duration from settings)
-            var playlist = _spotifySettings.Playlists
-                .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
-            
-            var cacheExpiration = TimeSpan.FromHours(24); // Default 24 hours
-            
-            if (playlist != null && !string.IsNullOrEmpty(playlist.SyncSchedule))
-            {
-                try
-                {
-                    var cron = CronExpression.Parse(playlist.SyncSchedule);
-                    var nextRun = cron.GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc);
-                    
-                    if (nextRun.HasValue)
-                    {
-                        var timeUntilNextRun = nextRun.Value - DateTime.UtcNow;
-                        // Add 5 minutes buffer to ensure cache doesn't expire before next run
-                        cacheExpiration = timeUntilNextRun + TimeSpan.FromMinutes(5);
-                        
-                        _logger.LogInformation("Cache will persist until next cron run: {NextRun} UTC (in {Hours:F1} hours)", 
-                            nextRun.Value, timeUntilNextRun.TotalHours);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Could not calculate next cron run for {Playlist}, using default cache duration", playlistName);
-                }
-            }
-            
-            // Cache matched tracks with position data until next cron run
-            await _cache.SetAsync(matchedTracksKey, matchedTracks, cacheExpiration);
-||||||| f68706f
-            // Cache matched tracks with position data
-            await _cache.SetAsync(matchedTracksKey, matchedTracks, TimeSpan.FromHours(1));
-=======
             // UPDATE STATS CACHE: Calculate and cache stats immediately after matching
             var statsLocalCount = localMatches.Count;
             var statsExternalCount = externalAssignments.Count;
@@ -1155,7 +914,6 @@ public class SpotifyTrackMatchingService : BackgroundService
             
             // Cache matched tracks with position data until next cron run
             await _cache.SetAsync(matchedTracksKey, matchedTracks, cacheExpiration);
->>>>>>> beta
             
             // Save matched tracks to file for persistence across restarts
             await SaveMatchedTracksToFileAsync(playlistName, matchedTracks);
@@ -1878,47 +1636,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                             var jellyfinId = jellyfinIdObj.ToString();
                             if (!string.IsNullOrEmpty(jellyfinId))
                             {
-<<<<<<< HEAD
-                                if (!itemDict.ContainsKey("ProviderIds"))
-                                {
-                                    itemDict["ProviderIds"] = new Dictionary<string, string>();
-                                }
-                                
-                                // Handle ProviderIds which might be a JsonElement or Dictionary
-                                Dictionary<string, string>? providerIds = null;
-                                
-                                if (itemDict["ProviderIds"] is Dictionary<string, string> dict)
-                                {
-                                    providerIds = dict;
-                                }
-                                else if (itemDict["ProviderIds"] is JsonElement jsonEl && jsonEl.ValueKind == JsonValueKind.Object)
-                                {
-                                    // Convert JsonElement to Dictionary
-                                    providerIds = new Dictionary<string, string>();
-                                    foreach (var prop in jsonEl.EnumerateObject())
-                                    {
-                                        providerIds[prop.Name] = prop.Value.GetString() ?? "";
-                                    }
-                                    // Replace the JsonElement with the Dictionary
-                                    itemDict["ProviderIds"] = providerIds;
-                                }
-                                
-                                if (providerIds != null && !providerIds.ContainsKey("Jellyfin"))
-                                {
-                                    providerIds["Jellyfin"] = jellyfinId;
-                                    _logger.LogDebug("Fuzzy matched local track {Title} with Jellyfin ID {Id} (score: {Score:F1})", 
-                                        spotifyTrack.Title, jellyfinId, bestScore);
-                                }
-||||||| f68706f
-                                itemDict["ProviderIds"] = new Dictionary<string, string>();
-                            }
-                            
-                            var providerIds = itemDict["ProviderIds"] as Dictionary<string, string>;
-                            if (providerIds != null && !providerIds.ContainsKey("Spotify"))
-                            {
-                                providerIds["Spotify"] = spotifyTrack.SpotifyId;
-                                _logger.LogDebug("Added Spotify ID {SpotifyId} to fuzzy-matched local track for lyrics support", spotifyTrack.SpotifyId);
-=======
                                 if (!itemDict.ContainsKey("ProviderIds"))
                                 {
                                     itemDict["ProviderIds"] = new Dictionary<string, string>();
@@ -1959,7 +1676,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                                     _logger.LogDebug("Fuzzy matched local track {Title} with Jellyfin ID {Id} (score: {Score:F1})", 
                                         spotifyTrack.Title, jellyfinId, bestScore);
                                 }
->>>>>>> beta
                             }
                         }
                         
@@ -1981,24 +1697,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                         // Convert external song to Jellyfin item format
                         var externalItem = responseBuilder.ConvertSongToJellyfinItem(matched.MatchedSong);
                         
-<<<<<<< HEAD
-||||||| f68706f
-                        // Add Spotify ID to ProviderIds so lyrics can work
-                        if (!string.IsNullOrEmpty(spotifyTrack.SpotifyId))
-                        {
-                            if (!externalItem.ContainsKey("ProviderIds"))
-                            {
-                                externalItem["ProviderIds"] = new Dictionary<string, string>();
-                            }
-                            
-                            var providerIds = externalItem["ProviderIds"] as Dictionary<string, string>;
-                            if (providerIds != null && !providerIds.ContainsKey("Spotify"))
-                            {
-                                providerIds["Spotify"] = spotifyTrack.SpotifyId;
-                            }
-                        }
-                        
-=======
                         // Add Spotify ID to ProviderIds for matching in track details endpoint
                         if (!string.IsNullOrEmpty(spotifyTrack.SpotifyId))
                         {
@@ -2014,7 +1712,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                             }
                         }
                         
->>>>>>> beta
                         finalItems.Add(externalItem);
                         matchedSpotifyIds.Add(spotifyTrack.SpotifyId); // Mark as matched (external)
                         externalUsedCount++;
@@ -2028,88 +1725,6 @@ public class SpotifyTrackMatchingService : BackgroundService
             
             if (finalItems.Count > 0)
             {
-<<<<<<< HEAD
-                // Enrich external tracks with genres from MusicBrainz
-                if (externalUsedCount > 0)
-                {
-                    try
-                    {
-                        var genreEnrichment = _serviceProvider.GetService<GenreEnrichmentService>();
-                        if (genreEnrichment != null)
-                        {
-                            _logger.LogDebug("🎨 Enriching {Count} external tracks with genres from MusicBrainz...", externalUsedCount);
-                            
-                            // Extract external songs from externalMatchedTracks that were actually used
-                            var usedExternalSpotifyIds = finalItems
-                                .Where(item => item.TryGetValue("Id", out var idObj) && 
-                                              idObj is string id && id.StartsWith("ext-"))
-                                .Select(item =>
-                                {
-                                    // Try to get Spotify ID from ProviderIds
-                                    if (item.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj is Dictionary<string, string> providerIds)
-                                    {
-                                        providerIds.TryGetValue("Spotify", out var spotifyId);
-                                        return spotifyId;
-                                    }
-                                    return null;
-                                })
-                                .Where(id => !string.IsNullOrEmpty(id))
-                                .ToHashSet();
-                            
-                            var externalSongs = externalMatchedTracks
-                                .Where(t => t.MatchedSong != null && 
-                                           !t.MatchedSong.IsLocal && 
-                                           usedExternalSpotifyIds.Contains(t.SpotifyId))
-                                .Select(t => t.MatchedSong!)
-                                .ToList();
-                            
-                            // Enrich genres in parallel
-                            await genreEnrichment.EnrichSongsGenresAsync(externalSongs);
-                            
-                            // Update the genres in finalItems
-                            foreach (var item in finalItems)
-                            {
-                                if (item.TryGetValue("Id", out var idObj) && idObj is string id && id.StartsWith("ext-"))
-                                {
-                                    // Find the corresponding song
-                                    var song = externalSongs.FirstOrDefault(s => s.Id == id);
-                                    if (song != null && !string.IsNullOrEmpty(song.Genre))
-                                    {
-                                        // Update Genres array
-                                        item["Genres"] = new[] { song.Genre };
-                                        
-                                        // Update GenreItems array
-                                        item["GenreItems"] = new[]
-                                        {
-                                            new Dictionary<string, object?>
-                                            {
-                                                ["Name"] = song.Genre,
-                                                ["Id"] = $"genre-{song.Genre.ToLowerInvariant()}"
-                                            }
-                                        };
-                                        
-                                        _logger.LogDebug("✓ Enriched {Title} with genre: {Genre}", song.Title, song.Genre);
-                                    }
-                                }
-                            }
-                            
-                            _logger.LogInformation("✅ Genre enrichment complete for {Playlist}", playlistName);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to enrich genres for {Playlist}, continuing without genres", playlistName);
-                    }
-                }
-                
-                // Save to Redis cache with same expiration as matched tracks (until next cron run)
-                var cacheKey = $"spotify:playlist:items:{playlistName}";
-                await _cache.SetAsync(cacheKey, finalItems, cacheExpiration);
-||||||| f68706f
-                // Save to Redis cache
-                var cacheKey = $"spotify:playlist:items:{playlistName}";
-                await _cache.SetAsync(cacheKey, finalItems, TimeSpan.FromHours(24));
-=======
                 // Enrich external tracks with genres from MusicBrainz
                 if (externalUsedCount > 0)
                 {
@@ -2186,7 +1801,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                 // Save to Redis cache with same expiration as matched tracks (until next cron run)
                 var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
                 await _cache.SetAsync(cacheKey, finalItems, cacheExpiration);
->>>>>>> beta
                 
                 // Save to file cache for persistence
                 await SavePlaylistItemsToFileAsync(playlistName, finalItems);

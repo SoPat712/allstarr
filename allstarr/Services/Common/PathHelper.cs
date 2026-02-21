@@ -41,14 +41,6 @@ public static class PathHelper
         var albumFolder = Path.Combine(artistFolder, safeAlbum);
         
         var trackPrefix = trackNumber.HasValue ? $"{trackNumber:D2} - " : "";
-<<<<<<< HEAD
-        var idSuffix = !string.IsNullOrEmpty(provider) && !string.IsNullOrEmpty(externalId) 
-            ? $" [{provider}-{externalId}]" 
-            : "";
-        var fileName = $"{trackPrefix}{safeTitle}{idSuffix}{extension}";
-||||||| f68706f
-        var fileName = $"{trackPrefix}{safeTitle}{extension}";
-=======
         // Sanitize provider and external id to avoid path traversal or invalid filename segments
         string? safeProvider = null;
         string? safeExternalId = null;
@@ -67,7 +59,6 @@ public static class PathHelper
             ? $" [{safeProvider}-{safeExternalId}]"
             : "";
         var fileName = $"{trackPrefix}{safeTitle}{idSuffix}{extension}";
->>>>>>> beta
         
         return Path.Combine(albumFolder, fileName);
     }

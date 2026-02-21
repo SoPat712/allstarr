@@ -584,15 +584,6 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClient>();
 // Register Spotify lyrics service (uses Spotify's color-lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
 
-<<<<<<< HEAD
-// Register LyricsPlus service (multi-source lyrics API)
-builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
-
-// Register Lyrics Orchestrator (manages priority-based lyrics fetching)
-builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
-
-||||||| f68706f
-=======
 // Register LyricsPlus service (multi-source lyrics API)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 
@@ -608,7 +599,6 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingValidation
 // Register Spotify mapping migration service (migrates legacy per-playlist mappings to global format)
 builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMappingMigrationService>();
 
->>>>>>> beta
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
@@ -746,14 +736,6 @@ catch (Exception ex)
 }
 
 // Configure the HTTP request pipeline.
-<<<<<<< HEAD
-
-// IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
-// This processes X-Forwarded-For, X-Real-IP, etc. from nginx
-app.UseForwardedHeaders();
-
-||||||| f68706f
-=======
 
 // IMPORTANT: UseForwardedHeaders must be called BEFORE other middleware
 // This processes X-Forwarded-For, X-Real-IP, etc. from nginx
@@ -762,7 +744,6 @@ app.UseForwardedHeaders();
 // Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
->>>>>>> beta
 app.UseExceptionHandler(_ => { }); // Global exception handler
 
 // Enable response compression EARLY in the pipeline

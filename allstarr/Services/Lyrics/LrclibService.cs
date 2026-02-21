@@ -18,13 +18,7 @@ public class LrclibService
         ILogger<LrclibService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-<<<<<<< HEAD
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.1 (https://github.com/SoPat712/allstarr)");
-||||||| f68706f
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.0 (https://github.com/SoPat712/allstarr)");
-=======
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
->>>>>>> beta
         _cache = cache;
         _logger = logger;
     }

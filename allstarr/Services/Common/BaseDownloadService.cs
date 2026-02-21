@@ -101,31 +101,12 @@ public abstract class BaseDownloadService : IDownloadService
     
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
         {
-<<<<<<< HEAD
-            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
-            
-            // Update write time for cache cleanup (extends cache lifetime)
-            if (SubsonicSettings.StorageMode == StorageMode.Cache)
-||||||| f68706f
-            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
-            
-            // Update access time for cache cleanup
-            if (SubsonicSettings.StorageMode == StorageMode.Cache)
-=======
             var startTime = DateTime.UtcNow;
 
             // Check if already downloaded locally
             var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
             if (localPath != null && IOFile.Exists(localPath))
->>>>>>> beta
             {
-<<<<<<< HEAD
-                IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
-||||||| f68706f
-                IOFile.SetLastAccessTime(localPath, DateTime.UtcNow);
-=======
                 var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
                 Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
 
@@ -173,7 +154,6 @@ public abstract class BaseDownloadService : IDownloadService
                 var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
                 Logger.LogError(ex, "Download failed after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
                 throw;
->>>>>>> beta
             }
         }
 
