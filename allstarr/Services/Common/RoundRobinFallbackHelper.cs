@@ -6,6 +6,7 @@ namespace allstarr.Services.Common;
 /// </summary>
 public class RoundRobinFallbackHelper
 {
+    private const int PreferredFastEndpointCount = 2;
     private readonly List<string> _apiUrls;
     private int _currentUrlIndex = 0;
     private readonly object _urlIndexLock = new object();
@@ -144,6 +145,40 @@ public class RoundRobinFallbackHelper
         return healthyEndpoints;
     }
 
+    private List<string> BuildTryOrder(List<string> endpointsToTry)
+    {
+        if (endpointsToTry.Count <= 1)
+        {
+            return endpointsToTry;
+        }
+
+        // Prefer the fastest endpoints first (benchmark order), while still keeping
+        // all remaining endpoints available as fallback.
+        var preferredCount = Math.Min(PreferredFastEndpointCount, endpointsToTry.Count);
+
+        int preferredStartIndex;
+        lock (_urlIndexLock)
+        {
+            preferredStartIndex = _currentUrlIndex % preferredCount;
+            _currentUrlIndex = (_currentUrlIndex + 1) % preferredCount;
+        }
+
+        var ordered = new List<string>(endpointsToTry.Count);
+
+        for (int i = 0; i < preferredCount; i++)
+        {
+            var index = (preferredStartIndex + i) % preferredCount;
+            ordered.Add(endpointsToTry[index]);
+        }
+
+        for (int i = preferredCount; i < endpointsToTry.Count; i++)
+        {
+            ordered.Add(endpointsToTry[i]);
+        }
+
+        return ordered;
+    }
+
     /// <summary>
     /// Updates the endpoint order based on benchmark results (fastest first).
     /// </summary>
@@ -179,30 +214,23 @@ public class RoundRobinFallbackHelper
     {
         // Get healthy endpoints first (with caching to avoid excessive checks)
         var healthyEndpoints = await GetHealthyEndpointsAsync();
-        
-        // Start with the next URL in round-robin to distribute load
-        var startIndex = 0;
-        lock (_urlIndexLock)
-        {
-            startIndex = _currentUrlIndex;
-            _currentUrlIndex = (_currentUrlIndex + 1) % _apiUrls.Count;
-        }
-        
+
         // Try healthy endpoints first, then fall back to all if needed
         var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count 
             ? healthyEndpoints.Concat(_apiUrls.Except(healthyEndpoints)).ToList()
             : healthyEndpoints;
+
+        var orderedEndpoints = BuildTryOrder(endpointsToTry);
         
-        // Try all URLs starting from the round-robin selected one
-        for (int attempt = 0; attempt < endpointsToTry.Count; attempt++)
+        // Try preferred fast endpoints first, then full fallback pool.
+        for (int attempt = 0; attempt < orderedEndpoints.Count; attempt++)
         {
-            var urlIndex = (startIndex + attempt) % endpointsToTry.Count;
-            var baseUrl = endpointsToTry[urlIndex];
+            var baseUrl = orderedEndpoints[attempt];
             
             try
             {
                 _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})", 
-                    _serviceName, baseUrl, attempt + 1, endpointsToTry.Count);
+                    _serviceName, baseUrl, attempt + 1, orderedEndpoints.Count);
                 return await action(baseUrl);
             }
             catch (Exception ex)
@@ -216,9 +244,9 @@ public class RoundRobinFallbackHelper
                     _healthCache[baseUrl] = (false, DateTime.UtcNow);
                 }
                 
-                if (attempt == endpointsToTry.Count - 1)
+                if (attempt == orderedEndpoints.Count - 1)
                 {
-                    _logger.LogError("All {Count} {Service} endpoints failed", endpointsToTry.Count, _serviceName);
+                    _logger.LogError("All {Count} {Service} endpoints failed", orderedEndpoints.Count, _serviceName);
                     throw;
                 }
             }
@@ -302,30 +330,23 @@ public class RoundRobinFallbackHelper
     {
         // Get healthy endpoints first (with caching to avoid excessive checks)
         var healthyEndpoints = await GetHealthyEndpointsAsync();
-        
-        // Start with the next URL in round-robin to distribute load
-        var startIndex = 0;
-        lock (_urlIndexLock)
-        {
-            startIndex = _currentUrlIndex;
-            _currentUrlIndex = (_currentUrlIndex + 1) % _apiUrls.Count;
-        }
-        
+
         // Try healthy endpoints first, then fall back to all if needed
         var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count 
             ? healthyEndpoints.Concat(_apiUrls.Except(healthyEndpoints)).ToList()
             : healthyEndpoints;
+
+        var orderedEndpoints = BuildTryOrder(endpointsToTry);
         
-        // Try all URLs starting from the round-robin selected one
-        for (int attempt = 0; attempt < endpointsToTry.Count; attempt++)
+        // Try preferred fast endpoints first, then full fallback pool.
+        for (int attempt = 0; attempt < orderedEndpoints.Count; attempt++)
         {
-            var urlIndex = (startIndex + attempt) % endpointsToTry.Count;
-            var baseUrl = endpointsToTry[urlIndex];
+            var baseUrl = orderedEndpoints[attempt];
             
             try
             {
                 _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})", 
-                    _serviceName, baseUrl, attempt + 1, endpointsToTry.Count);
+                    _serviceName, baseUrl, attempt + 1, orderedEndpoints.Count);
                 return await action(baseUrl);
             }
             catch (Exception ex)
@@ -339,10 +360,10 @@ public class RoundRobinFallbackHelper
                     _healthCache[baseUrl] = (false, DateTime.UtcNow);
                 }
                 
-                if (attempt == endpointsToTry.Count - 1)
+                if (attempt == orderedEndpoints.Count - 1)
                 {
                     _logger.LogError("All {Count} {Service} endpoints failed, returning default value", 
-                        endpointsToTry.Count, _serviceName);
+                        orderedEndpoints.Count, _serviceName);
                     return defaultValue;
                 }
             }

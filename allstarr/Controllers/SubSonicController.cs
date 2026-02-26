@@ -30,7 +30,7 @@ public class SubsonicController : ControllerBase
     private readonly PlaylistSyncService? _playlistSyncService;
     private readonly RedisCacheService _cache;
     private readonly ILogger<SubsonicController> _logger;
-    
+
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
         IMusicMetadataService metadataService,
@@ -79,9 +79,9 @@ public class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         var query = parameters.GetValueOrDefault("query", "");
         var format = parameters.GetValueOrDefault("f", "xml");
-        
+
         var cleanQuery = query.Trim().Trim('"');
-        
+
         if (string.IsNullOrWhiteSpace(cleanQuery))
         {
             try
@@ -103,7 +103,7 @@ public class SubsonicController : ControllerBase
             int.TryParse(parameters.GetValueOrDefault("albumCount", "20"), out var ac) ? ac : 20,
             int.TryParse(parameters.GetValueOrDefault("artistCount", "20"), out var arc) ? arc : 20
         );
-        
+
         // Search playlists if enabled
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
             ? _metadataService.SearchPlaylistsAsync(cleanQuery, ac) // Use same limit as albums
@@ -154,7 +154,7 @@ public class SubsonicController : ControllerBase
             {
                 _logger.LogError(ex, "Failed to update last write time for {Path}", localPath);
             }
-            
+
             var stream = System.IO.File.OpenRead(localPath);
             return File(stream, GetContentType(localPath), enableRangeProcessing: true);
         }
@@ -166,7 +166,8 @@ public class SubsonicController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = $"Failed to stream: {ex.Message}" });
+            _logger.LogError(ex, "Failed to stream external Subsonic item {Id}", id);
+            return StatusCode(500, new { error = "Failed to stream" });
         }
     }
 
@@ -234,7 +235,7 @@ public class SubsonicController : ControllerBase
             }
 
             var albums = await _metadataService.GetArtistAlbumsAsync(provider!, externalId!);
-            
+
             // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
             foreach (var album in albums)
             {
@@ -247,12 +248,12 @@ public class SubsonicController : ControllerBase
                     album.ArtistId = artist.Id;
                 }
             }
-            
+
             return _responseBuilder.CreateArtistResponse(format, artist, albums);
         }
 
         var navidromeResult = await _proxyService.RelaySafeAsync("rest/getArtist", parameters);
-        
+
         if (!navidromeResult.Success || navidromeResult.Body == null)
         {
             return _responseBuilder.CreateError(format, 70, "Artist not found");
@@ -272,7 +273,7 @@ public class SubsonicController : ControllerBase
             {
                 artistName = artistElement.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "";
                 artistData = _responseBuilder.ConvertSubsonicJsonElement(artistElement, true);
-                
+
                 if (artistElement.TryGetProperty("album", out var albums))
                 {
                     foreach (var album in albums.EnumerateArray())
@@ -290,14 +291,14 @@ public class SubsonicController : ControllerBase
 
         var deezerArtists = await _metadataService.SearchArtistsAsync(artistName, 1);
         var deezerAlbums = new List<Album>();
-        
+
         if (deezerArtists.Count > 0)
         {
             var deezerArtist = deezerArtists[0];
             if (deezerArtist.Name.Equals(artistName, StringComparison.OrdinalIgnoreCase))
             {
                 deezerAlbums = await _metadataService.GetArtistAlbumsAsync("deezer", deezerArtist.ExternalId!);
-                
+
                 // Fill artist info for each album (Deezer API doesn't include it in artist/albums endpoint)
                 // Use local artist ID and name so albums link back to the local artist
                 foreach (var album in deezerAlbums)
@@ -362,24 +363,24 @@ public class SubsonicController : ControllerBase
         {
             return _responseBuilder.CreateError(format, 10, "Missing id parameter");
         }
-        
+
         // Check if this is an external playlist
         if (PlaylistIdHelper.IsExternalPlaylist(id))
         {
             try
             {
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
-                
+
                 // Get playlist metadata
                 var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
                 if (playlist == null)
                 {
                     return _responseBuilder.CreateError(format, 70, "Playlist not found");
                 }
-                
+
                 // Get playlist tracks
                 var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
-                
+
                 // Add all tracks to playlist cache so when they're played, we know they belong to this playlist
                 if (_playlistSyncService != null)
                 {
@@ -391,10 +392,10 @@ public class SubsonicController : ControllerBase
                             _playlistSyncService.AddTrackToPlaylistCache(trackId, id);
                         }
                     }
-                    
+
                     _logger.LogDebug("Added {TrackCount} tracks to playlist cache for {PlaylistId}", tracks.Count, id);
                 }
-                
+
                 // Convert to album response (playlist as album)
                 return _responseBuilder.CreatePlaylistAsAlbumResponse(format, playlist, tracks);
             }
@@ -420,7 +421,7 @@ public class SubsonicController : ControllerBase
         }
 
         var navidromeResult = await _proxyService.RelaySafeAsync("rest/getAlbum", parameters);
-        
+
         if (!navidromeResult.Success || navidromeResult.Body == null)
         {
             return _responseBuilder.CreateError(format, 70, "Album not found");
@@ -441,7 +442,7 @@ public class SubsonicController : ControllerBase
                 albumName = albumElement.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "";
                 artistName = albumElement.TryGetProperty("artist", out var artist) ? artist.GetString() ?? "" : "";
                 albumData = _responseBuilder.ConvertSubsonicJsonElement(albumElement, true);
-                
+
                 if (albumElement.TryGetProperty("song", out var songs))
                 {
                     foreach (var song in songs.EnumerateArray())
@@ -460,11 +461,11 @@ public class SubsonicController : ControllerBase
         var searchQuery = $"{artistName} {albumName}";
         var deezerAlbums = await _metadataService.SearchAlbumsAsync(searchQuery, 5);
         Album? deezerAlbum = null;
-        
+
         // Find matching album on Deezer (exact match first)
         foreach (var candidate in deezerAlbums)
         {
-            if (candidate.Artist != null && 
+            if (candidate.Artist != null &&
                 candidate.Artist.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
                 candidate.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase))
             {
@@ -478,7 +479,7 @@ public class SubsonicController : ControllerBase
         {
             foreach (var candidate in deezerAlbums)
             {
-                if (candidate.Artist != null && 
+                if (candidate.Artist != null &&
                     candidate.Artist.Contains(artistName, StringComparison.OrdinalIgnoreCase) &&
                     (candidate.Title.Contains(albumName, StringComparison.OrdinalIgnoreCase) ||
                      albumName.Contains(candidate.Title, StringComparison.OrdinalIgnoreCase)))
@@ -510,8 +511,8 @@ public class SubsonicController : ControllerBase
             }
 
             mergedSongs = mergedSongs
-                .OrderBy(s => s is Dictionary<string, object> dict && dict.TryGetValue("track", out var track) 
-                    ? Convert.ToInt32(track) 
+                .OrderBy(s => s is Dictionary<string, object> dict && dict.TryGetValue("track", out var track)
+                    ? Convert.ToInt32(track)
                     : 0)
                 .ToList();
 
@@ -519,7 +520,7 @@ public class SubsonicController : ControllerBase
             {
                 albumDict["song"] = mergedSongs;
                 albumDict["songCount"] = mergedSongs.Count;
-                
+
                 var totalDuration = 0;
                 foreach (var song in mergedSongs)
                 {
@@ -556,7 +557,7 @@ public class SubsonicController : ControllerBase
         {
             return NotFound();
         }
-        
+
         // Check if this is a playlist cover art request
         if (PlaylistIdHelper.IsExternalPlaylist(id))
         {
@@ -565,35 +566,35 @@ public class SubsonicController : ControllerBase
                 // Check cache first (1 hour TTL for playlist images since they can change)
                 var cacheKey = $"playlist:image:{id}";
                 var cachedImage = await _cache.GetAsync<byte[]>(cacheKey);
-                
+
                 if (cachedImage != null)
                 {
                     _logger.LogDebug("Serving cached playlist cover art for {Id}", id);
                     return File(cachedImage, "image/jpeg");
                 }
-                
+
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
                 var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
-                
+
                 if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
                 {
                     return NotFound();
                 }
-                
+
                 // Download and return the cover image
                 var imageResponse = await new HttpClient().GetAsync(playlist.CoverUrl);
                 if (!imageResponse.IsSuccessStatusCode)
                 {
                     return NotFound();
                 }
-                
+
                 var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync();
                 var contentType = imageResponse.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-                
+
                 // Cache for configurable duration (playlists can change)
                 await _cache.SetAsync(cacheKey, imageBytes, CacheExtensions.PlaylistImagesTTL);
                 _logger.LogDebug("Cached playlist cover art for {Id}", id);
-                
+
                 return File(imageBytes, contentType);
             }
             catch (Exception ex)
@@ -620,7 +621,7 @@ public class SubsonicController : ControllerBase
         }
 
         string? coverUrl = null;
-        
+
         // Use type to determine which API to call first
         switch (type)
         {
@@ -631,7 +632,7 @@ public class SubsonicController : ControllerBase
                     coverUrl = artist.ImageUrl;
                 }
                 break;
-                
+
             case "album":
                 var album = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
                 if (album?.CoverArtUrl != null)
@@ -639,7 +640,7 @@ public class SubsonicController : ControllerBase
                     coverUrl = album.CoverArtUrl;
                 }
                 break;
-                
+
             case "song":
             default:
                 // For songs, try to get from song first, then album
@@ -659,7 +660,7 @@ public class SubsonicController : ControllerBase
                 }
                 break;
         }
-        
+
         if (coverUrl != null)
         {
             using var httpClient = new HttpClient();
@@ -689,9 +690,9 @@ public class SubsonicController : ControllerBase
 
         var isJson = format == "json" || subsonicResult.ContentType?.Contains("json") == true;
         var (mergedSongs, mergedAlbums, mergedArtists) = _modelMapper.MergeSearchResults(
-            localSongs, 
-            localAlbums, 
-            localArtists, 
+            localSongs,
+            localAlbums,
+            localArtists,
             externalResult,
             playlistResult,
             isJson);
@@ -714,7 +715,7 @@ public class SubsonicController : ControllerBase
         {
             var ns = XNamespace.Get("http://subsonic.org/restapi");
             var searchResult3 = new XElement(ns + "searchResult3");
-            
+
             foreach (var artist in mergedArtists.Cast<XElement>())
             {
                 searchResult3.Add(artist);
@@ -767,19 +768,19 @@ public class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
-        
+
         // Check if this is a playlist
         var playlistId = parameters.GetValueOrDefault("id", "");
-        
+
         if (!string.IsNullOrEmpty(playlistId) && PlaylistIdHelper.IsExternalPlaylist(playlistId))
         {
             if (_playlistSyncService == null)
             {
                 return _responseBuilder.CreateError(format, 0, "Playlist functionality is not enabled");
             }
-            
+
             _logger.LogInformation("Starring external playlist {PlaylistId}, triggering download", playlistId);
-            
+
             // Trigger playlist download in background
             _ = Task.Run(async () =>
             {
@@ -792,11 +793,11 @@ public class SubsonicController : ControllerBase
                     _logger.LogError(ex, "Failed to download playlist {PlaylistId}", playlistId);
                 }
             });
-            
+
             // Return success response immediately
             return _responseBuilder.CreateResponse(format, "starred", new { });
         }
-        
+
         // For non-playlist items, relay to real Subsonic server
         try
         {
@@ -806,7 +807,8 @@ public class SubsonicController : ControllerBase
         }
         catch (HttpRequestException ex)
         {
-            return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
+            _logger.LogError(ex, "Error connecting to Subsonic server for star operation");
+            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
         }
     }
 
@@ -817,7 +819,7 @@ public class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
-        
+
         try
         {
             var result = await _proxyService.RelayAsync(endpoint, parameters);
@@ -827,7 +829,8 @@ public class SubsonicController : ControllerBase
         catch (HttpRequestException ex)
         {
             // Return Subsonic-compatible error response
-            return _responseBuilder.CreateError(format, 0, $"Error connecting to Subsonic server: {ex.Message}");
+            _logger.LogError(ex, "Error connecting to Subsonic server for endpoint {Endpoint}", endpoint);
+            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
         }
     }
 }

@@ -50,9 +50,10 @@ public class AddPlaylistRequest
 
 public class LinkPlaylistRequest
 {
-    public string Name { get; set; } = string.Empty;
+    public string? Name { get; set; }
     public string SpotifyPlaylistId { get; set; } = string.Empty;
     public string SyncSchedule { get; set; } = "0 8 * * *";
+    public string? UserId { get; set; }
 }
 
 public class UpdateScheduleRequest

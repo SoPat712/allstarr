@@ -45,13 +45,13 @@ public class CacheWarmingService : IHostedService
 
             // Warm playlist cache
             playlistsWarmed = await WarmPlaylistCacheAsync(cancellationToken);
-            
+
             // Warm manual mappings cache
             mappingsWarmed = await WarmManualMappingsCacheAsync(cancellationToken);
-            
+
             // Warm lyrics mappings cache
             lyricsMappingsWarmed = await WarmLyricsMappingsCacheAsync(cancellationToken);
-            
+
             // Warm lyrics cache
             lyricsWarmed = await WarmLyricsCacheAsync(cancellationToken);
 
@@ -104,7 +104,7 @@ public class CacheWarmingService : IHostedService
 
                 if (cacheEntry != null && !string.IsNullOrEmpty(cacheEntry.CacheKey))
                 {
-                    var redisKey = $"genre:{cacheEntry.CacheKey}";
+                    var redisKey = CacheKeyBuilder.BuildGenreEnrichmentKey(cacheEntry.CacheKey);
                     await _cache.SetAsync(redisKey, cacheEntry.Genre, CacheExtensions.GenreTTL);
                     warmedCount++;
                 }
@@ -165,7 +165,7 @@ public class CacheWarmingService : IHostedService
                     await _cache.SetAsync(redisKey, items, CacheExtensions.SpotifyPlaylistItemsTTL);
                     warmedCount++;
 
-                    _logger.LogDebug("🔥 Warmed playlist items cache for {Playlist} ({Count} items)", 
+                    _logger.LogDebug("🔥 Warmed playlist items cache for {Playlist} ({Count} items)",
                         playlistName, items.Count);
                 }
             }
@@ -203,7 +203,7 @@ public class CacheWarmingService : IHostedService
                     await _cache.SetAsync(redisKey, matchedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
                     warmedCount++;
 
-                    _logger.LogInformation("🔥 Warmed matched tracks cache for {Playlist} ({Count} tracks)", 
+                    _logger.LogInformation("🔥 Warmed matched tracks cache for {Playlist} ({Count} tracks)",
                         playlistName, matchedTracks.Count);
                 }
             }
@@ -220,7 +220,7 @@ public class CacheWarmingService : IHostedService
 
         return warmedCount;
     }
-    
+
     /// <summary>
     /// Warms manual mappings cache from file system.
     /// Manual mappings NEVER expire - they are permanent user decisions.
@@ -256,21 +256,21 @@ public class CacheWarmingService : IHostedService
                         if (!string.IsNullOrEmpty(mapping.JellyfinId))
                         {
                             // Jellyfin mapping
-                            var redisKey = $"spotify:manual-map:{playlistName}:{mapping.SpotifyId}";
+                            var redisKey = CacheKeyBuilder.BuildSpotifyManualMappingKey(playlistName, mapping.SpotifyId);
                             await _cache.SetAsync(redisKey, mapping.JellyfinId);
                             warmedCount++;
                         }
                         else if (!string.IsNullOrEmpty(mapping.ExternalProvider) && !string.IsNullOrEmpty(mapping.ExternalId))
                         {
                             // External mapping
-                            var redisKey = $"spotify:external-map:{playlistName}:{mapping.SpotifyId}";
+                            var redisKey = CacheKeyBuilder.BuildSpotifyExternalMappingKey(playlistName, mapping.SpotifyId);
                             var externalMapping = new { provider = mapping.ExternalProvider, id = mapping.ExternalId };
                             await _cache.SetAsync(redisKey, externalMapping);
                             warmedCount++;
                         }
                     }
 
-                    _logger.LogDebug("🔥 Warmed {Count} manual mappings for {Playlist}", 
+                    _logger.LogDebug("🔥 Warmed {Count} manual mappings for {Playlist}",
                         mappings.Count, playlistName);
                 }
             }
@@ -287,7 +287,7 @@ public class CacheWarmingService : IHostedService
 
         return warmedCount;
     }
-    
+
     /// <summary>
     /// Warms lyrics mappings cache from file system.
     /// Lyrics mappings NEVER expire - they are permanent user decisions.
@@ -295,7 +295,7 @@ public class CacheWarmingService : IHostedService
     private async Task<int> WarmLyricsMappingsCacheAsync(CancellationToken cancellationToken)
     {
         var mappingsFile = "/app/cache/lyrics_mappings.json";
-        
+
         if (!File.Exists(mappingsFile))
         {
             return 0;
@@ -314,7 +314,7 @@ public class CacheWarmingService : IHostedService
                         break;
 
                     // Store in Redis with NO EXPIRATION (permanent)
-                    var redisKey = $"lyrics:manual-map:{mapping.Artist}:{mapping.Title}";
+                    var redisKey = CacheKeyBuilder.BuildLyricsManualMappingKey(mapping.Artist, mapping.Title);
                     await _cache.SetStringAsync(redisKey, mapping.LyricsId.ToString());
                 }
 
@@ -329,7 +329,7 @@ public class CacheWarmingService : IHostedService
 
         return 0;
     }
-    
+
     /// <summary>
     /// Warms lyrics cache from file system using the LyricsPrefetchService.
     /// </summary>
@@ -340,18 +340,18 @@ public class CacheWarmingService : IHostedService
             // Get the LyricsPrefetchService from DI
             using var scope = _serviceProvider.CreateScope();
             var lyricsPrefetchService = scope.ServiceProvider.GetService<allstarr.Services.Lyrics.LyricsPrefetchService>();
-            
+
             if (lyricsPrefetchService != null)
             {
                 await lyricsPrefetchService.WarmCacheFromFilesAsync();
-                
+
                 // Count files to return warmed count
                 if (Directory.Exists(LyricsCacheDirectory))
                 {
                     return Directory.GetFiles(LyricsCacheDirectory, "*.json").Length;
                 }
             }
-            
+
             return 0;
         }
         catch (Exception ex)
@@ -367,7 +367,7 @@ public class CacheWarmingService : IHostedService
         public string Genre { get; set; } = "";
         public DateTime CachedAt { get; set; }
     }
-    
+
     private class MatchedTrack
     {
         public int Position { get; set; }
@@ -378,7 +378,7 @@ public class CacheWarmingService : IHostedService
         public string MatchType { get; set; } = "";
         public Song? MatchedSong { get; set; }
     }
-    
+
     private class ManualMappingEntry
     {
         public string SpotifyId { get; set; } = "";
@@ -387,7 +387,7 @@ public class CacheWarmingService : IHostedService
         public string? ExternalId { get; set; }
         public DateTime CreatedAt { get; set; }
     }
-    
+
     private class LyricsMappingEntry
     {
         public string Artist { get; set; } = "";

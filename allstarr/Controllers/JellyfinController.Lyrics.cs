@@ -318,7 +318,7 @@ public partial class JellyfinController
     /// Proactively fetches and caches lyrics for a track in the background.
     /// Called when playback starts to ensure lyrics are ready when requested.
     /// </summary>
-    private async Task PrefetchLyricsForTrackAsync(string itemId, bool isExternal, string? provider, string? externalId)
+    private async Task PrefetchLyricsForTrackAsync(string itemId, bool isExternal, string? provider, string? externalId, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -339,7 +339,7 @@ public partial class JellyfinController
                     if (string.IsNullOrEmpty(spotifyTrackId) && provider == "squidwtf")
                     {
                         spotifyTrackId =
-                            await _odesliService.ConvertTidalToSpotifyIdAsync(externalId, HttpContext.RequestAborted);
+                            await _odesliService.ConvertTidalToSpotifyIdAsync(externalId, cancellationToken);
                     }
                 }
             }
@@ -463,7 +463,7 @@ public partial class JellyfinController
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error prefetching lyrics for track {ItemId}", itemId);
+            _logger.LogWarning("Failed to prefetch lyrics for track {ItemId}: {Message}", itemId, ex.Message);
         }
     }
 

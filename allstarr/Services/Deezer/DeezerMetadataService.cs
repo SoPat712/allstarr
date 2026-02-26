@@ -12,7 +12,7 @@ namespace allstarr.Services.Deezer;
 /// <summary>
 /// Metadata service implementation using the Deezer API (free, no key required)
 /// </summary>
-public class DeezerMetadataService : IMusicMetadataService
+public class DeezerMetadataService : TrackParserBase, IMusicMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
@@ -20,7 +20,7 @@ public class DeezerMetadataService : IMusicMetadataService
     private const string BaseUrl = "https://api.deezer.com";
 
     public DeezerMetadataService(
-        IHttpClientFactory httpClientFactory, 
+        IHttpClientFactory httpClientFactory,
         IOptions<SubsonicSettings> settings,
         GenreEnrichmentService? genreEnrichment = null)
     {
@@ -29,18 +29,18 @@ public class DeezerMetadataService : IMusicMetadataService
         _genreEnrichment = genreEnrichment;
     }
 
-    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
+    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var url = $"{BaseUrl}/search/track?q={Uri.EscapeDataString(query)}&limit={limit}";
-            var response = await _httpClient.GetAsync(url);
-            
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
             if (!response.IsSuccessStatusCode) return new List<Song>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var songs = new List<Song>();
             if (result.RootElement.TryGetProperty("data", out var data))
             {
@@ -53,7 +53,7 @@ public class DeezerMetadataService : IMusicMetadataService
                     }
                 }
             }
-            
+
             return songs;
         }
         catch
@@ -62,18 +62,18 @@ public class DeezerMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
+    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var url = $"{BaseUrl}/search/album?q={Uri.EscapeDataString(query)}&limit={limit}";
-            var response = await _httpClient.GetAsync(url);
-            
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
             if (!response.IsSuccessStatusCode) return new List<Album>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var albums = new List<Album>();
             if (result.RootElement.TryGetProperty("data", out var data))
             {
@@ -82,7 +82,7 @@ public class DeezerMetadataService : IMusicMetadataService
                     albums.Add(ParseDeezerAlbum(album));
                 }
             }
-            
+
             return albums;
         }
         catch
@@ -91,18 +91,18 @@ public class DeezerMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
+    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var url = $"{BaseUrl}/search/artist?q={Uri.EscapeDataString(query)}&limit={limit}";
-            var response = await _httpClient.GetAsync(url);
-            
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
             if (!response.IsSuccessStatusCode) return new List<Artist>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var artists = new List<Artist>();
             if (result.RootElement.TryGetProperty("data", out var data))
             {
@@ -111,7 +111,7 @@ public class DeezerMetadataService : IMusicMetadataService
                     artists.Add(ParseDeezerArtist(artist));
                 }
             }
-            
+
             return artists;
         }
         catch
@@ -120,15 +120,15 @@ public class DeezerMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
+    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
         // Execute searches in parallel
-        var songsTask = SearchSongsAsync(query, songLimit);
-        var albumsTask = SearchAlbumsAsync(query, albumLimit);
-        var artistsTask = SearchArtistsAsync(query, artistLimit);
-        
+        var songsTask = SearchSongsAsync(query, songLimit, cancellationToken);
+        var albumsTask = SearchAlbumsAsync(query, albumLimit, cancellationToken);
+        var artistsTask = SearchArtistsAsync(query, artistLimit, cancellationToken);
+
         await Task.WhenAll(songsTask, albumsTask, artistsTask);
-        
+
         return new SearchResult
         {
             Songs = await songsTask,
@@ -137,23 +137,23 @@ public class DeezerMetadataService : IMusicMetadataService
         };
     }
 
-    public async Task<Song?> GetSongAsync(string externalProvider, string externalId)
+    public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return null;
-        
+
         var url = $"{BaseUrl}/track/{externalId}";
-        var response = await _httpClient.GetAsync(url);
-        
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+
         if (!response.IsSuccessStatusCode) return null;
-        
-        var json = await response.Content.ReadAsStringAsync();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var track = JsonDocument.Parse(json).RootElement;
-        
+
         if (track.TryGetProperty("error", out _)) return null;
-        
+
         // For an individual track, get full metadata
         var song = ParseDeezerTrackFull(track);
-        
+
         // Get additional info from album (genre, total track count, label, copyright)
         if (track.TryGetProperty("album", out var albumRef) &&
             albumRef.TryGetProperty("id", out var albumIdEl))
@@ -162,33 +162,33 @@ public class DeezerMetadataService : IMusicMetadataService
             try
             {
                 var albumUrl = $"{BaseUrl}/album/{albumId}";
-                var albumResponse = await _httpClient.GetAsync(albumUrl);
+                var albumResponse = await _httpClient.GetAsync(albumUrl, cancellationToken);
                 if (albumResponse.IsSuccessStatusCode)
                 {
-                    var albumJson = await albumResponse.Content.ReadAsStringAsync();
+                    var albumJson = await albumResponse.Content.ReadAsStringAsync(cancellationToken);
                     var albumData = JsonDocument.Parse(albumJson).RootElement;
-                    
+
                     // Genre
-                    if (albumData.TryGetProperty("genres", out var genres) && 
+                    if (albumData.TryGetProperty("genres", out var genres) &&
                         genres.TryGetProperty("data", out var genresData) &&
                         genresData.GetArrayLength() > 0 &&
                         genresData[0].TryGetProperty("name", out var genreName))
                     {
                         song.Genre = genreName.GetString();
                     }
-                    
+
                     // Total track count
                     if (albumData.TryGetProperty("nb_tracks", out var nbTracks))
                     {
                         song.TotalTracks = nbTracks.GetInt32();
                     }
-                    
+
                     // Label
                     if (albumData.TryGetProperty("label", out var label))
                     {
                         song.Label = label.GetString();
                     }
-                    
+
                     // Cover art XL if not already set
                     if (string.IsNullOrEmpty(song.CoverArtUrlLarge))
                     {
@@ -208,7 +208,7 @@ public class DeezerMetadataService : IMusicMetadataService
                 // If we can't get the album, continue with track info only
             }
         }
-        
+
         // Enrich with MusicBrainz genres if missing
         if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
         {
@@ -225,26 +225,26 @@ public class DeezerMetadataService : IMusicMetadataService
                 }
             });
         }
-        
+
         return song;
     }
 
-    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId)
+    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return null;
-        
+
         var url = $"{BaseUrl}/album/{externalId}";
-        var response = await _httpClient.GetAsync(url);
-        
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+
         if (!response.IsSuccessStatusCode) return null;
-        
-        var json = await response.Content.ReadAsStringAsync();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var albumElement = JsonDocument.Parse(json).RootElement;
-        
+
         if (albumElement.TryGetProperty("error", out _)) return null;
-        
+
         var album = ParseDeezerAlbum(albumElement);
-        
+
         // Get album songs
         if (albumElement.TryGetProperty("tracks", out var tracks) &&
             tracks.TryGetProperty("data", out var tracksData))
@@ -254,12 +254,12 @@ public class DeezerMetadataService : IMusicMetadataService
             {
                 // Pass the album artist to ensure proper folder organization
                 var song = ParseDeezerTrack(track, trackIndex, album.Artist);
-                
+
                 // Ensure album metadata is set (tracks in album response may not have full album object)
                 song.Album = album.Title;
                 song.AlbumId = album.Id;
                 song.AlbumArtist = album.Artist;
-                
+
                 if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                 {
                     album.Songs.Add(song);
@@ -267,39 +267,39 @@ public class DeezerMetadataService : IMusicMetadataService
                 trackIndex++;
             }
         }
-        
+
         return album;
     }
 
-    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId)
+    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return null;
-        
+
         var url = $"{BaseUrl}/artist/{externalId}";
-        var response = await _httpClient.GetAsync(url);
-        
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+
         if (!response.IsSuccessStatusCode) return null;
-        
-        var json = await response.Content.ReadAsStringAsync();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var artist = JsonDocument.Parse(json).RootElement;
-        
+
         if (artist.TryGetProperty("error", out _)) return null;
-        
+
         return ParseDeezerArtist(artist);
     }
 
-    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId)
+    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return new List<Album>();
-        
+
         var url = $"{BaseUrl}/artist/{externalId}/albums";
-        var response = await _httpClient.GetAsync(url);
-        
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+
         if (!response.IsSuccessStatusCode) return new List<Album>();
-        
-        var json = await response.Content.ReadAsStringAsync();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var result = JsonDocument.Parse(json);
-        
+
         var albums = new List<Album>();
         if (result.RootElement.TryGetProperty("data", out var data))
         {
@@ -308,22 +308,22 @@ public class DeezerMetadataService : IMusicMetadataService
                 albums.Add(ParseDeezerAlbum(album));
             }
         }
-        
+
         return albums;
     }
 
-    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return new List<Song>();
-        
+
         var url = $"{BaseUrl}/artist/{externalId}/top?limit=50";
-        var response = await _httpClient.GetAsync(url);
-        
+        var response = await _httpClient.GetAsync(url, cancellationToken);
+
         if (!response.IsSuccessStatusCode) return new List<Song>();
-        
-        var json = await response.Content.ReadAsStringAsync();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         var result = JsonDocument.Parse(json);
-        
+
         var tracks = new List<Song>();
         if (result.RootElement.TryGetProperty("data", out var data))
         {
@@ -332,45 +332,45 @@ public class DeezerMetadataService : IMusicMetadataService
                 tracks.Add(ParseDeezerTrack(track));
             }
         }
-        
+
         return tracks;
     }
 
     private Song ParseDeezerTrack(JsonElement track, int? fallbackTrackNumber = null, string? albumArtist = null)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();
-        
+
         // Try to get track_position from API, fallback to provided index
-        int? trackNumber = track.TryGetProperty("track_position", out var trackPos) 
-            ? trackPos.GetInt32() 
+        int? trackNumber = track.TryGetProperty("track_position", out var trackPos)
+            ? trackPos.GetInt32()
             : fallbackTrackNumber;
-        
+
         // Explicit content lyrics value
-        int? explicitContentLyrics = track.TryGetProperty("explicit_content_lyrics", out var ecl) 
-            ? ecl.GetInt32() 
+        int? explicitContentLyrics = track.TryGetProperty("explicit_content_lyrics", out var ecl)
+            ? ecl.GetInt32()
             : null;
-        
+
         return new Song
         {
-            Id = $"ext-deezer-song-{externalId}",
+            Id = BuildExternalSongId("deezer", externalId),
             Title = track.GetProperty("title").GetString() ?? "",
-            Artist = track.TryGetProperty("artist", out var artist) 
-                ? artist.GetProperty("name").GetString() ?? "" 
+            Artist = track.TryGetProperty("artist", out var artist)
+                ? artist.GetProperty("name").GetString() ?? ""
                 : "",
-            ArtistId = track.TryGetProperty("artist", out var artistForId) 
-                ? $"ext-deezer-artist-{artistForId.GetProperty("id").GetInt64()}" 
+            ArtistId = track.TryGetProperty("artist", out var artistForId)
+                ? BuildExternalArtistId("deezer", artistForId.GetProperty("id").GetInt64().ToString())
                 : null,
-            Album = track.TryGetProperty("album", out var album) 
-                ? album.GetProperty("title").GetString() ?? "" 
+            Album = track.TryGetProperty("album", out var album)
+                ? album.GetProperty("title").GetString() ?? ""
                 : "",
-            AlbumId = track.TryGetProperty("album", out var albumForId) 
-                ? $"ext-deezer-album-{albumForId.GetProperty("id").GetInt64()}" 
+            AlbumId = track.TryGetProperty("album", out var albumForId)
+                ? BuildExternalAlbumId("deezer", albumForId.GetProperty("id").GetInt64().ToString())
                 : null,
-            Duration = track.TryGetProperty("duration", out var duration) 
-                ? duration.GetInt32() 
+            Duration = track.TryGetProperty("duration", out var duration)
+                ? duration.GetInt32()
                 : null,
             Track = trackNumber,
-            CoverArtUrl = track.TryGetProperty("album", out var albumForCover) && 
+            CoverArtUrl = track.TryGetProperty("album", out var albumForCover) &&
                           albumForCover.TryGetProperty("cover_medium", out var cover)
                 ? cover.GetString()
                 : null,
@@ -389,48 +389,40 @@ public class DeezerMetadataService : IMusicMetadataService
     private Song ParseDeezerTrackFull(JsonElement track)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();
-        
+
         // Track position et disc number
-        int? trackNumber = track.TryGetProperty("track_position", out var trackPos) 
-            ? trackPos.GetInt32() 
+        int? trackNumber = track.TryGetProperty("track_position", out var trackPos)
+            ? trackPos.GetInt32()
             : null;
-        int? discNumber = track.TryGetProperty("disk_number", out var diskNum) 
-            ? diskNum.GetInt32() 
+        int? discNumber = track.TryGetProperty("disk_number", out var diskNum)
+            ? diskNum.GetInt32()
             : null;
-        
+
         // BPM
         int? bpm = track.TryGetProperty("bpm", out var bpmVal) && bpmVal.ValueKind == JsonValueKind.Number
-            ? (int)bpmVal.GetDouble() 
+            ? (int)bpmVal.GetDouble()
             : null;
-        
+
         // ISRC
-        string? isrc = track.TryGetProperty("isrc", out var isrcVal) 
-            ? isrcVal.GetString() 
+        string? isrc = track.TryGetProperty("isrc", out var isrcVal)
+            ? isrcVal.GetString()
             : null;
-        
+
         // Release date from album
         string? releaseDate = null;
         int? year = null;
         if (track.TryGetProperty("release_date", out var relDate))
         {
             releaseDate = relDate.GetString();
-            if (!string.IsNullOrEmpty(releaseDate) && releaseDate.Length >= 4)
-            {
-                if (int.TryParse(releaseDate.Substring(0, 4), out var y))
-                    year = y;
-            }
+            year = ParseYearFromDateString(releaseDate);
         }
-        else if (track.TryGetProperty("album", out var albumForDate) && 
+        else if (track.TryGetProperty("album", out var albumForDate) &&
                  albumForDate.TryGetProperty("release_date", out var albumRelDate))
         {
             releaseDate = albumRelDate.GetString();
-            if (!string.IsNullOrEmpty(releaseDate) && releaseDate.Length >= 4)
-            {
-                if (int.TryParse(releaseDate.Substring(0, 4), out var y))
-                    year = y;
-            }
+            year = ParseYearFromDateString(releaseDate);
         }
-        
+
         // Contributors (all artists including features)
         var contributors = new List<string>();
         var contributorIds = new List<string>();
@@ -438,7 +430,7 @@ public class DeezerMetadataService : IMusicMetadataService
         {
             foreach (var contrib in contribs.EnumerateArray())
             {
-                if (contrib.TryGetProperty("name", out var contribName) && 
+                if (contrib.TryGetProperty("name", out var contribName) &&
                     contrib.TryGetProperty("id", out var contribId))
                 {
                     var name = contribName.GetString();
@@ -446,60 +438,60 @@ public class DeezerMetadataService : IMusicMetadataService
                     if (!string.IsNullOrEmpty(name))
                     {
                         contributors.Add(name);
-                        contributorIds.Add($"ext-deezer-artist-{id}");
+                        contributorIds.Add(BuildExternalArtistId("deezer", id.ToString()));
                     }
                 }
             }
         }
-        
+
         // Album artist (first artist from album, or main track artist)
         string? albumArtist = null;
-        if (track.TryGetProperty("album", out var albumForArtist) && 
+        if (track.TryGetProperty("album", out var albumForArtist) &&
             albumForArtist.TryGetProperty("artist", out var albumArtistEl))
         {
-            albumArtist = albumArtistEl.TryGetProperty("name", out var aName) 
-                ? aName.GetString() 
+            albumArtist = albumArtistEl.TryGetProperty("name", out var aName)
+                ? aName.GetString()
                 : null;
         }
-        
+
         // Cover art URLs (different sizes)
         string? coverMedium = null;
         string? coverLarge = null;
         if (track.TryGetProperty("album", out var albumForCover))
         {
-            coverMedium = albumForCover.TryGetProperty("cover_medium", out var cm) 
-                ? cm.GetString() 
+            coverMedium = albumForCover.TryGetProperty("cover_medium", out var cm)
+                ? cm.GetString()
                 : null;
-            coverLarge = albumForCover.TryGetProperty("cover_xl", out var cxl) 
-                ? cxl.GetString() 
+            coverLarge = albumForCover.TryGetProperty("cover_xl", out var cxl)
+                ? cxl.GetString()
                 : (albumForCover.TryGetProperty("cover_big", out var cb) ? cb.GetString() : null);
         }
-        
+
         // Explicit content lyrics value
-        int? explicitContentLyrics = track.TryGetProperty("explicit_content_lyrics", out var ecl) 
-            ? ecl.GetInt32() 
+        int? explicitContentLyrics = track.TryGetProperty("explicit_content_lyrics", out var ecl)
+            ? ecl.GetInt32()
             : null;
-        
+
         return new Song
         {
-            Id = $"ext-deezer-song-{externalId}",
+            Id = BuildExternalSongId("deezer", externalId),
             Title = track.GetProperty("title").GetString() ?? "",
-            Artist = track.TryGetProperty("artist", out var artist) 
-                ? artist.GetProperty("name").GetString() ?? "" 
+            Artist = track.TryGetProperty("artist", out var artist)
+                ? artist.GetProperty("name").GetString() ?? ""
                 : "",
-            ArtistId = track.TryGetProperty("artist", out var artistForId) 
-                ? $"ext-deezer-artist-{artistForId.GetProperty("id").GetInt64()}" 
+            ArtistId = track.TryGetProperty("artist", out var artistForId)
+                ? BuildExternalArtistId("deezer", artistForId.GetProperty("id").GetInt64().ToString())
                 : null,
             Artists = contributors.Count > 0 ? contributors : new List<string>(),
             ArtistIds = contributorIds.Count > 0 ? contributorIds : new List<string>(),
-            Album = track.TryGetProperty("album", out var album) 
-                ? album.GetProperty("title").GetString() ?? "" 
+            Album = track.TryGetProperty("album", out var album)
+                ? album.GetProperty("title").GetString() ?? ""
                 : "",
-            AlbumId = track.TryGetProperty("album", out var albumForId) 
-                ? $"ext-deezer-album-{albumForId.GetProperty("id").GetInt64()}" 
+            AlbumId = track.TryGetProperty("album", out var albumForId)
+                ? BuildExternalAlbumId("deezer", albumForId.GetProperty("id").GetInt64().ToString())
                 : null,
-            Duration = track.TryGetProperty("duration", out var duration) 
-                ? duration.GetInt32() 
+            Duration = track.TryGetProperty("duration", out var duration)
+                ? duration.GetInt32()
                 : null,
             Track = trackNumber,
             DiscNumber = discNumber,
@@ -521,27 +513,27 @@ public class DeezerMetadataService : IMusicMetadataService
     private Album ParseDeezerAlbum(JsonElement album)
     {
         var externalId = album.GetProperty("id").GetInt64().ToString();
-        
+
         return new Album
         {
-            Id = $"ext-deezer-album-{externalId}",
+            Id = BuildExternalAlbumId("deezer", externalId),
             Title = album.GetProperty("title").GetString() ?? "",
-            Artist = album.TryGetProperty("artist", out var artist) 
-                ? artist.GetProperty("name").GetString() ?? "" 
+            Artist = album.TryGetProperty("artist", out var artist)
+                ? artist.GetProperty("name").GetString() ?? ""
                 : "",
-            ArtistId = album.TryGetProperty("artist", out var artistForId) 
-                ? $"ext-deezer-artist-{artistForId.GetProperty("id").GetInt64()}" 
+            ArtistId = album.TryGetProperty("artist", out var artistForId)
+                ? BuildExternalArtistId("deezer", artistForId.GetProperty("id").GetInt64().ToString())
                 : null,
-            Year = album.TryGetProperty("release_date", out var releaseDate) 
-                ? int.TryParse(releaseDate.GetString()?.Split('-')[0], out var year) ? year : null
+            Year = album.TryGetProperty("release_date", out var releaseDate)
+                ? ParseYearFromDateString(releaseDate.GetString())
                 : null,
-            SongCount = album.TryGetProperty("nb_tracks", out var nbTracks) 
-                ? nbTracks.GetInt32() 
+            SongCount = album.TryGetProperty("nb_tracks", out var nbTracks)
+                ? nbTracks.GetInt32()
                 : null,
             CoverArtUrl = album.TryGetProperty("cover_medium", out var cover)
                 ? cover.GetString()
                 : null,
-            Genre = album.TryGetProperty("genres", out var genres) && 
+            Genre = album.TryGetProperty("genres", out var genres) &&
                     genres.TryGetProperty("data", out var genresData) &&
                     genresData.GetArrayLength() > 0
                 ? genresData[0].GetProperty("name").GetString()
@@ -555,16 +547,16 @@ public class DeezerMetadataService : IMusicMetadataService
     private Artist ParseDeezerArtist(JsonElement artist)
     {
         var externalId = artist.GetProperty("id").GetInt64().ToString();
-        
+
         return new Artist
         {
-            Id = $"ext-deezer-artist-{externalId}",
+            Id = BuildExternalArtistId("deezer", externalId),
             Name = artist.GetProperty("name").GetString() ?? "",
             ImageUrl = artist.TryGetProperty("picture_medium", out var picture)
                 ? picture.GetString()
                 : null,
-            AlbumCount = artist.TryGetProperty("nb_album", out var nbAlbum) 
-                ? nbAlbum.GetInt32() 
+            AlbumCount = artist.TryGetProperty("nb_album", out var nbAlbum)
+                ? nbAlbum.GetInt32()
                 : null,
             IsLocal = false,
             ExternalProvider = "deezer",
@@ -572,18 +564,18 @@ public class DeezerMetadataService : IMusicMetadataService
         };
     }
 
-    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20)
+    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var url = $"{BaseUrl}/search/playlist?q={Uri.EscapeDataString(query)}&limit={limit}";
-            var response = await _httpClient.GetAsync(url);
-            
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
             if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var playlists = new List<ExternalPlaylist>();
             if (result.RootElement.TryGetProperty("data", out var data))
             {
@@ -592,7 +584,7 @@ public class DeezerMetadataService : IMusicMetadataService
                     playlists.Add(ParseDeezerPlaylist(playlist));
                 }
             }
-            
+
             return playlists;
         }
         catch
@@ -600,23 +592,23 @@ public class DeezerMetadataService : IMusicMetadataService
             return new List<ExternalPlaylist>();
         }
     }
-    
-    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
+
+    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return null;
-        
+
         try
         {
             var url = $"{BaseUrl}/playlist/{externalId}";
-            var response = await _httpClient.GetAsync(url);
-            
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
             if (!response.IsSuccessStatusCode) return null;
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var playlistElement = JsonDocument.Parse(json).RootElement;
-            
+
             if (playlistElement.TryGetProperty("error", out _)) return null;
-            
+
             return ParseDeezerPlaylist(playlistElement);
         }
         catch
@@ -624,30 +616,30 @@ public class DeezerMetadataService : IMusicMetadataService
             return null;
         }
     }
-    
-    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId)
+
+    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "deezer") return new List<Song>();
-        
+
         try
         {
             var url = $"{BaseUrl}/playlist/{externalId}";
-            var response = await _httpClient.GetAsync(url);
-            
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+
             if (!response.IsSuccessStatusCode) return new List<Song>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var playlistElement = JsonDocument.Parse(json).RootElement;
-            
+
             if (playlistElement.TryGetProperty("error", out _)) return new List<Song>();
-            
+
             var songs = new List<Song>();
-            
+
             // Get playlist name for album field
             var playlistName = playlistElement.TryGetProperty("title", out var titleEl)
                 ? titleEl.GetString() ?? "Unknown Playlist"
                 : "Unknown Playlist";
-            
+
             if (playlistElement.TryGetProperty("tracks", out var tracks) &&
                 tracks.TryGetProperty("data", out var tracksData))
             {
@@ -656,14 +648,14 @@ public class DeezerMetadataService : IMusicMetadataService
                 {
                     // For playlists, use the track's own artist (not a single album artist)
                     var song = ParseDeezerTrack(track, trackIndex);
-                    
+
                     // Override album name to be the playlist name
                     song.Album = playlistName;
-                    
+
                     // Playlists should not have disc numbers - always set to null
                     // This prevents Jellyfin from splitting the playlist into multiple "discs"
                     song.DiscNumber = null;
-                    
+
                     if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
                     {
                         songs.Add(song);
@@ -671,7 +663,7 @@ public class DeezerMetadataService : IMusicMetadataService
                     trackIndex++;
                 }
             }
-            
+
             return songs;
         }
         catch
@@ -683,7 +675,7 @@ public class DeezerMetadataService : IMusicMetadataService
     private ExternalPlaylist ParseDeezerPlaylist(JsonElement playlist)
     {
         var externalId = playlist.GetProperty("id").GetInt64().ToString();
-        
+
         // Get curator/creator name
         string? curatorName = null;
         if (playlist.TryGetProperty("user", out var user) &&
@@ -696,7 +688,7 @@ public class DeezerMetadataService : IMusicMetadataService
         {
             curatorName = creatorName.GetString();
         }
-        
+
         // Get creation date
         DateTime? createdDate = null;
         if (playlist.TryGetProperty("creation_date", out var creationDateEl))
@@ -707,27 +699,27 @@ public class DeezerMetadataService : IMusicMetadataService
                 createdDate = date;
             }
         }
-        
+
         return new ExternalPlaylist
         {
             Id = Common.PlaylistIdHelper.CreatePlaylistId("deezer", externalId),
             Name = playlist.GetProperty("title").GetString() ?? "",
-            Description = playlist.TryGetProperty("description", out var desc) 
-                ? desc.GetString() 
+            Description = playlist.TryGetProperty("description", out var desc)
+                ? desc.GetString()
                 : null,
             CuratorName = curatorName,
             Provider = "deezer",
             ExternalId = externalId,
-            TrackCount = playlist.TryGetProperty("nb_tracks", out var nbTracks) 
-                ? nbTracks.GetInt32() 
+            TrackCount = playlist.TryGetProperty("nb_tracks", out var nbTracks)
+                ? nbTracks.GetInt32()
                 : 0,
-            Duration = playlist.TryGetProperty("duration", out var duration) 
-                ? duration.GetInt32() 
+            Duration = playlist.TryGetProperty("duration", out var duration)
+                ? duration.GetInt32()
                 : 0,
-            CoverUrl = playlist.TryGetProperty("picture_medium", out var picture) 
-                ? picture.GetString() 
-                : (playlist.TryGetProperty("picture_big", out var pictureBig) 
-                    ? pictureBig.GetString() 
+            CoverUrl = playlist.TryGetProperty("picture_medium", out var picture)
+                ? picture.GetString()
+                : (playlist.TryGetProperty("picture_big", out var pictureBig)
+                    ? pictureBig.GetString()
                     : null),
             CreatedDate = createdDate
         };

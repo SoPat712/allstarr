@@ -19,6 +19,8 @@ public class SpotifyAdminController : ControllerBase
 {
     private readonly ILogger<SpotifyAdminController> _logger;
     private readonly SpotifyApiClient _spotifyClient;
+    private readonly SpotifyApiClientFactory _spotifyClientFactory;
+    private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly SpotifyMappingService _mappingService;
     private readonly RedisCacheService _cache;
     private readonly IServiceProvider _serviceProvider;
@@ -29,6 +31,8 @@ public class SpotifyAdminController : ControllerBase
     public SpotifyAdminController(
         ILogger<SpotifyAdminController> logger,
         SpotifyApiClient spotifyClient,
+        SpotifyApiClientFactory spotifyClientFactory,
+        SpotifySessionCookieService spotifySessionCookieService,
         SpotifyMappingService mappingService,
         RedisCacheService cache,
         IServiceProvider serviceProvider,
@@ -38,6 +42,8 @@ public class SpotifyAdminController : ControllerBase
     {
         _logger = logger;
         _spotifyClient = spotifyClient;
+        _spotifyClientFactory = spotifyClientFactory;
+        _spotifySessionCookieService = spotifySessionCookieService;
         _mappingService = mappingService;
         _cache = cache;
         _serviceProvider = serviceProvider;
@@ -47,30 +53,78 @@ public class SpotifyAdminController : ControllerBase
     }
 
     [HttpGet("spotify/user-playlists")]
-    public async Task<IActionResult> GetSpotifyUserPlaylists()
+    public async Task<IActionResult> GetSpotifyUserPlaylists([FromQuery] string? userId = null)
     {
-        if (!_spotifyApiSettings.Enabled || string.IsNullOrEmpty(_spotifyApiSettings.SessionCookie))
+        if (!_spotifyApiSettings.Enabled)
         {
-            return BadRequest(new { error = "Spotify API not configured. Please set sp_dc session cookie." });
+            return BadRequest(new { error = "Spotify API is not enabled." });
         }
-        
+
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) ||
+            sessionObj is not AdminAuthSession session)
+        {
+            return Unauthorized(new { error = "Authentication required" });
+        }
+
+        var requestedUserId = string.IsNullOrWhiteSpace(userId) ? null : userId.Trim();
+        if (!session.IsAdministrator)
+        {
+            if (!string.IsNullOrWhiteSpace(requestedUserId) &&
+                !requestedUserId.Equals(session.UserId, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new { error = "You can only access your own playlist links" });
+            }
+
+            requestedUserId = session.UserId;
+        }
+
+        var cookieScopeUserId = requestedUserId ?? session.UserId;
+        var sessionCookie = await _spotifySessionCookieService.ResolveSessionCookieAsync(cookieScopeUserId);
+        if (string.IsNullOrWhiteSpace(sessionCookie))
+        {
+            return BadRequest(new
+            {
+                error = "No Spotify session cookie configured for this user.",
+                message = "Set a user-scoped sp_dc cookie via POST /api/admin/spotify/session-cookie."
+            });
+        }
+
+        SpotifyApiClient spotifyClient = _spotifyClient;
+        SpotifyApiClient? scopedSpotifyClient = null;
+
+        if (!string.Equals(sessionCookie, _spotifyApiSettings.SessionCookie, StringComparison.Ordinal))
+        {
+            scopedSpotifyClient = _spotifyClientFactory.Create(sessionCookie);
+            spotifyClient = scopedSpotifyClient;
+        }
+
         try
         {
-            // Get list of already-configured Spotify playlist IDs
+            // Get list of already-configured Spotify playlist IDs in the selected ownership scope.
             var configuredPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+
+            var scopedConfiguredPlaylists = configuredPlaylists.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(requestedUserId))
+            {
+                scopedConfiguredPlaylists = scopedConfiguredPlaylists.Where(p =>
+                    string.IsNullOrWhiteSpace(p.UserId) ||
+                    p.UserId.Equals(requestedUserId, StringComparison.OrdinalIgnoreCase));
+            }
+
             var linkedSpotifyIds = new HashSet<string>(
-                configuredPlaylists.Select(p => p.Id),
+                scopedConfiguredPlaylists.Select(p => p.Id),
                 StringComparer.OrdinalIgnoreCase
             );
-            
+
             // Use SpotifyApiClient's GraphQL method - much less rate-limited than REST API
-            var spotifyPlaylists = await _spotifyClient.GetUserPlaylistsAsync(searchName: null);
-            
+            var spotifyPlaylists = await spotifyClient.GetUserPlaylistsAsync(searchName: null);
+
             if (spotifyPlaylists == null || spotifyPlaylists.Count == 0)
             {
                 return Ok(new { playlists = new List<object>() });
             }
-            
+
             var playlists = spotifyPlaylists.Select(p => new
             {
                 id = p.SpotifyId,
@@ -80,16 +134,90 @@ public class SpotifyAdminController : ControllerBase
                 isPublic = p.Public,
                 isLinked = linkedSpotifyIds.Contains(p.SpotifyId)
             }).ToList();
-            
+
             return Ok(new { playlists });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching Spotify user playlists");
-            return StatusCode(500, new { error = "Failed to fetch Spotify playlists", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to fetch Spotify playlists" });
+        }
+        finally
+        {
+            scopedSpotifyClient?.Dispose();
         }
     }
-    
+
+    [HttpGet("spotify/session-cookie/status")]
+    public async Task<IActionResult> GetSpotifySessionCookieStatus([FromQuery] string? userId = null)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) ||
+            sessionObj is not AdminAuthSession session)
+        {
+            return Unauthorized(new { error = "Authentication required" });
+        }
+
+        var requestedUserId = string.IsNullOrWhiteSpace(userId) ? null : userId.Trim();
+        if (!session.IsAdministrator)
+        {
+            requestedUserId = session.UserId;
+        }
+
+        var status = await _spotifySessionCookieService.GetCookieStatusAsync(requestedUserId);
+        var cookieSetDate = string.IsNullOrWhiteSpace(requestedUserId)
+            ? null
+            : await _spotifySessionCookieService.GetCookieSetDateAsync(requestedUserId);
+
+        return Ok(new
+        {
+            userId = requestedUserId ?? session.UserId,
+            hasCookie = status.HasCookie,
+            usingGlobalFallback = status.UsingGlobalFallback,
+            cookieSetDate = cookieSetDate?.ToString("o")
+        });
+    }
+
+    [HttpPost("spotify/session-cookie")]
+    public async Task<IActionResult> SetSpotifySessionCookie([FromBody] SetSpotifySessionCookieRequest request)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) ||
+            sessionObj is not AdminAuthSession session)
+        {
+            return Unauthorized(new { error = "Authentication required" });
+        }
+
+        var targetUserId = string.IsNullOrWhiteSpace(request.UserId)
+            ? session.UserId
+            : request.UserId.Trim();
+
+        if (!session.IsAdministrator &&
+            !targetUserId.Equals(session.UserId, StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "You can only update your own Spotify session cookie"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(targetUserId))
+        {
+            return BadRequest(new { error = "User ID is required" });
+        }
+
+        var saveResult = await _spotifySessionCookieService.SetUserSessionCookieAsync(targetUserId, request.SessionCookie);
+        if (saveResult is ObjectResult { StatusCode: >= 400 } failure)
+        {
+            return failure;
+        }
+
+        return Ok(new
+        {
+            success = true,
+            message = "Spotify session cookie saved for user scope.",
+            userId = targetUserId
+        });
+    }
+
     /// <summary>
     /// Get all playlists from Jellyfin
     /// </summary>
@@ -104,7 +232,7 @@ public class SpotifyAdminController : ControllerBase
             }
 
             _logger.LogInformation("Manual Spotify sync triggered via admin endpoint");
-            
+
             // Find the SpotifyMissingTracksFetcher service
             var fetcherService = hostedServices
                 .OfType<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>()
@@ -121,9 +249,9 @@ public class SpotifyAdminController : ControllerBase
                 try
                 {
                     // Use reflection to call the private ExecuteOnceAsync method
-                    var method = fetcherService.GetType().GetMethod("ExecuteOnceAsync", 
+                    var method = fetcherService.GetType().GetMethod("ExecuteOnceAsync",
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    
+
                     if (method != null)
                     {
                         await (Task)method.Invoke(fetcherService, new object[] { CancellationToken.None })!;
@@ -140,7 +268,7 @@ public class SpotifyAdminController : ControllerBase
                 }
             });
 
-            return Ok(new { 
+            return Ok(new {
                 message = "Spotify sync started in background",
                 timestamp = DateTime.UtcNow
             });
@@ -166,7 +294,7 @@ public class SpotifyAdminController : ControllerBase
             }
 
             _logger.LogInformation("Manual Spotify track matching triggered via admin endpoint");
-            
+
             // Find the SpotifyTrackMatchingService
             var matchingService = hostedServices
                 .OfType<allstarr.Services.Spotify.SpotifyTrackMatchingService>()
@@ -183,9 +311,9 @@ public class SpotifyAdminController : ControllerBase
                 try
                 {
                     // Use reflection to call the private ExecuteOnceAsync method
-                    var method = matchingService.GetType().GetMethod("ExecuteOnceAsync", 
+                    var method = matchingService.GetType().GetMethod("ExecuteOnceAsync",
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                    
+
                     if (method != null)
                     {
                         await (Task)method.Invoke(matchingService, new object[] { CancellationToken.None })!;
@@ -202,7 +330,7 @@ public class SpotifyAdminController : ControllerBase
                 }
             });
 
-            return Ok(new { 
+            return Ok(new {
                 message = "Spotify track matching started in background",
                 timestamp = DateTime.UtcNow
             });
@@ -223,7 +351,7 @@ public class SpotifyAdminController : ControllerBase
         try
         {
             var clearedKeys = new List<string>();
-            
+
             // Clear Redis cache for all configured playlists
             foreach (var playlist in _spotifyImportSettings.Playlists)
             {
@@ -233,17 +361,17 @@ public class SpotifyAdminController : ControllerBase
                     CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name),
                     CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name)
                 };
-                
+
                 foreach (var key in keys)
                 {
                     await _cache.DeleteAsync(key);
                     clearedKeys.Add(key);
                 }
             }
-            
+
             _logger.LogDebug("Cleared Spotify cache for {Count} keys via admin endpoint", clearedKeys.Count);
-            
-            return Ok(new { 
+
+            return Ok(new {
                 message = "Spotify cache cleared successfully",
                 clearedKeys = clearedKeys,
                 timestamp = DateTime.UtcNow
@@ -263,8 +391,8 @@ public class SpotifyAdminController : ControllerBase
     /// </summary>
     [HttpGet("spotify/mappings")]
     public async Task<IActionResult> GetSpotifyMappings(
-        [FromQuery] int page = 1, 
-        [FromQuery] int pageSize = 50, 
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
         [FromQuery] bool enrichMetadata = true,
         [FromQuery] string? targetType = null,
         [FromQuery] string? source = null,
@@ -277,28 +405,28 @@ public class SpotifyAdminController : ControllerBase
             // Get all mappings (we'll filter and sort in memory for now)
             var allMappings = await _mappingService.GetAllMappingsAsync(0, int.MaxValue);
             var stats = await _mappingService.GetStatsAsync();
-            
+
             // Enrich metadata for external tracks that are missing it
             if (enrichMetadata)
             {
                 await EnrichExternalMappingsMetadataAsync(allMappings);
             }
-            
+
             // Apply filters
             var filteredMappings = allMappings.AsEnumerable();
-            
+
             if (!string.IsNullOrEmpty(targetType) && targetType != "all")
             {
-                filteredMappings = filteredMappings.Where(m => 
+                filteredMappings = filteredMappings.Where(m =>
                     m.TargetType.Equals(targetType, StringComparison.OrdinalIgnoreCase));
             }
-            
+
             if (!string.IsNullOrEmpty(source) && source != "all")
             {
-                filteredMappings = filteredMappings.Where(m => 
+                filteredMappings = filteredMappings.Where(m =>
                     m.Source.Equals(source, StringComparison.OrdinalIgnoreCase));
             }
-            
+
             if (!string.IsNullOrEmpty(search))
             {
                 var searchLower = search.ToLower();
@@ -307,43 +435,43 @@ public class SpotifyAdminController : ControllerBase
                     (m.Metadata?.Title?.ToLower().Contains(searchLower) ?? false) ||
                     (m.Metadata?.Artist?.ToLower().Contains(searchLower) ?? false));
             }
-            
+
             // Apply sorting
             if (!string.IsNullOrEmpty(sortBy))
             {
                 var isDescending = sortOrder?.ToLower() == "desc";
-                
+
                 filteredMappings = sortBy.ToLower() switch
                 {
-                    "title" => isDescending 
-                        ? filteredMappings.OrderByDescending(m => m.Metadata?.Title ?? "") 
+                    "title" => isDescending
+                        ? filteredMappings.OrderByDescending(m => m.Metadata?.Title ?? "")
                         : filteredMappings.OrderBy(m => m.Metadata?.Title ?? ""),
-                    "artist" => isDescending 
-                        ? filteredMappings.OrderByDescending(m => m.Metadata?.Artist ?? "") 
+                    "artist" => isDescending
+                        ? filteredMappings.OrderByDescending(m => m.Metadata?.Artist ?? "")
                         : filteredMappings.OrderBy(m => m.Metadata?.Artist ?? ""),
-                    "spotifyid" => isDescending 
-                        ? filteredMappings.OrderByDescending(m => m.SpotifyId) 
+                    "spotifyid" => isDescending
+                        ? filteredMappings.OrderByDescending(m => m.SpotifyId)
                         : filteredMappings.OrderBy(m => m.SpotifyId),
-                    "type" => isDescending 
-                        ? filteredMappings.OrderByDescending(m => m.TargetType) 
+                    "type" => isDescending
+                        ? filteredMappings.OrderByDescending(m => m.TargetType)
                         : filteredMappings.OrderBy(m => m.TargetType),
-                    "source" => isDescending 
-                        ? filteredMappings.OrderByDescending(m => m.Source) 
+                    "source" => isDescending
+                        ? filteredMappings.OrderByDescending(m => m.Source)
                         : filteredMappings.OrderBy(m => m.Source),
-                    "created" => isDescending 
-                        ? filteredMappings.OrderByDescending(m => m.CreatedAt) 
+                    "created" => isDescending
+                        ? filteredMappings.OrderByDescending(m => m.CreatedAt)
                         : filteredMappings.OrderBy(m => m.CreatedAt),
                     _ => filteredMappings
                 };
             }
-            
+
             var filteredList = filteredMappings.ToList();
             var totalCount = filteredList.Count;
-            
+
             // Apply pagination
             var skip = (page - 1) * pageSize;
             var pagedMappings = filteredList.Skip(skip).Take(pageSize).ToList();
-            
+
             return Ok(new
             {
                 mappings = pagedMappings,
@@ -363,7 +491,7 @@ public class SpotifyAdminController : ControllerBase
             return StatusCode(500, new { error = "Failed to get mappings" });
         }
     }
-    
+
     /// <summary>
     /// Gets a specific Spotify track mapping
     /// </summary>
@@ -377,7 +505,7 @@ public class SpotifyAdminController : ControllerBase
             {
                 return NotFound(new { error = "Mapping not found" });
             }
-            
+
             return Ok(mapping);
         }
         catch (Exception ex)
@@ -386,7 +514,7 @@ public class SpotifyAdminController : ControllerBase
             return StatusCode(500, new { error = "Failed to get mapping" });
         }
     }
-    
+
     /// <summary>
     /// Creates or updates a Spotify track mapping (manual override)
     /// </summary>
@@ -403,7 +531,7 @@ public class SpotifyAdminController : ControllerBase
                 ArtworkUrl = request.Metadata.ArtworkUrl,
                 DurationMs = request.Metadata.DurationMs
             } : null;
-            
+
             var success = await _mappingService.SaveManualMappingAsync(
                 request.SpotifyId,
                 request.TargetType,
@@ -411,23 +539,23 @@ public class SpotifyAdminController : ControllerBase
                 request.ExternalProvider,
                 request.ExternalId,
                 metadata);
-            
+
             if (success)
             {
-                _logger.LogInformation("Saved manual mapping: {SpotifyId} → {TargetType}", 
+                _logger.LogInformation("Saved manual mapping: {SpotifyId} → {TargetType}",
                     request.SpotifyId, request.TargetType);
                 return Ok(new { success = true });
             }
-            
+
             return StatusCode(500, new { error = "Failed to save mapping" });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to save Spotify mapping");
-            return StatusCode(500, new { error = ex.Message });
+            return StatusCode(500, new { error = "Failed to save mapping" });
         }
     }
-    
+
     /// <summary>
     /// Deletes a Spotify track mapping
     /// </summary>
@@ -442,7 +570,7 @@ public class SpotifyAdminController : ControllerBase
                 _logger.LogInformation("Deleted mapping for {SpotifyId}", spotifyId);
                 return Ok(new { success = true });
             }
-            
+
             return NotFound(new { error = "Mapping not found" });
         }
         catch (Exception ex)
@@ -451,7 +579,7 @@ public class SpotifyAdminController : ControllerBase
             return StatusCode(500, new { error = "Failed to delete mapping" });
         }
     }
-    
+
     /// <summary>
     /// Gets statistics about Spotify track mappings
     /// </summary>
@@ -469,7 +597,7 @@ public class SpotifyAdminController : ControllerBase
             return StatusCode(500, new { error = "Failed to get stats" });
         }
     }
-    
+
     /// <summary>
     /// Enriches metadata for external mappings that are missing title/artist/artwork
     /// </summary>
@@ -481,30 +609,30 @@ public class SpotifyAdminController : ControllerBase
             _logger.LogWarning("No metadata service available for enrichment");
             return;
         }
-        
+
         foreach (var mapping in mappings)
         {
             // Skip if not external or already has metadata
-            if (mapping.TargetType != "external" || 
-                string.IsNullOrEmpty(mapping.ExternalProvider) || 
+            if (mapping.TargetType != "external" ||
+                string.IsNullOrEmpty(mapping.ExternalProvider) ||
                 string.IsNullOrEmpty(mapping.ExternalId))
             {
                 continue;
             }
-            
+
             // Skip if already has complete metadata
-            if (mapping.Metadata != null && 
-                !string.IsNullOrEmpty(mapping.Metadata.Title) && 
+            if (mapping.Metadata != null &&
+                !string.IsNullOrEmpty(mapping.Metadata.Title) &&
                 !string.IsNullOrEmpty(mapping.Metadata.Artist))
             {
                 continue;
             }
-            
+
             try
             {
                 // Fetch track details from external provider
                 var song = await metadataService.GetSongAsync(mapping.ExternalProvider.ToLowerInvariant(), mapping.ExternalId);
-                
+
                 if (song != null)
                 {
                     // Update metadata
@@ -512,26 +640,32 @@ public class SpotifyAdminController : ControllerBase
                     {
                         mapping.Metadata = new TrackMetadata();
                     }
-                    
+
                     mapping.Metadata.Title = song.Title;
                     mapping.Metadata.Artist = song.Artist;
                     mapping.Metadata.Album = song.Album;
                     mapping.Metadata.ArtworkUrl = song.CoverArtUrl;
                     mapping.Metadata.DurationMs = song.Duration.HasValue ? song.Duration.Value * 1000 : null;
-                    
+
                     // Save enriched metadata back to cache
                     await _mappingService.SaveMappingAsync(mapping);
-                    
-                    _logger.LogDebug("Enriched metadata for {SpotifyId} from {Provider}: {Title} by {Artist}", 
+
+                    _logger.LogDebug("Enriched metadata for {SpotifyId} from {Provider}: {Title} by {Artist}",
                         mapping.SpotifyId, mapping.ExternalProvider, song.Title, song.Artist);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to enrich metadata for {SpotifyId} from {Provider}:{ExternalId}", 
+                _logger.LogWarning(ex, "Failed to enrich metadata for {SpotifyId} from {Provider}:{ExternalId}",
                     mapping.SpotifyId, mapping.ExternalProvider, mapping.ExternalId);
             }
         }
     }
-    
+
+    public class SetSpotifySessionCookieRequest
+    {
+        public required string SessionCookie { get; set; }
+        public string? UserId { get; set; }
+    }
+
 }

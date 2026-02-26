@@ -1,0 +1,411 @@
+import { escapeHtml, showToast, formatCookieAge } from "./utils.js";
+import * as API from "./api.js";
+import * as UI from "./ui.js";
+import { renderCookieAge } from "./settings-editor.js";
+import { runAction } from "./operations.js";
+
+let playlistAutoRefreshInterval = null;
+let dashboardRefreshInterval = null;
+
+let isAuthenticated = () => false;
+let isAdminSession = () => false;
+let getCurrentUserId = () => null;
+let onCookieNeedsInit = async () => {};
+let setCurrentConfigState = () => {};
+let syncConfigUiExtras = () => {};
+let loadScrobblingConfig = () => {};
+
+async function fetchStatus() {
+  try {
+    const data = await API.fetchStatus();
+    UI.updateStatusUI(data);
+
+    const hasCookie = data.spotify.hasCookie;
+    const age = formatCookieAge(data.spotify.cookieSetDate, hasCookie);
+    renderCookieAge("spotify-cookie-age", age);
+    renderCookieAge("config-cookie-age", age);
+
+    if (age.needsInit) {
+      console.log("Cookie exists but date not set, initializing...");
+      onCookieNeedsInit();
+    }
+  } catch (error) {
+    console.error("Failed to fetch status:", error);
+    showToast("Failed to fetch status: " + error.message, "error");
+    UI.showErrorState(error.message);
+  }
+}
+
+async function fetchPlaylists(silent = false) {
+  try {
+    const data = await API.fetchPlaylists();
+    UI.updatePlaylistsUI(data);
+  } catch (error) {
+    if (!silent) {
+      console.error("Failed to fetch playlists:", error);
+      showToast("Failed to fetch playlists", "error");
+    }
+  }
+}
+
+async function fetchTrackMappings() {
+  try {
+    const data = await API.fetchTrackMappings();
+    UI.updateTrackMappingsUI(data);
+  } catch (error) {
+    console.error("Failed to fetch track mappings:", error);
+    showToast("Failed to fetch track mappings", "error");
+  }
+}
+
+function bindMissingTrackActionButtons(tbody) {
+  tbody.querySelectorAll(".missing-track-search-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const query = btn.getAttribute("data-query") || "";
+      const provider = btn.getAttribute("data-provider") || "squidwtf";
+      if (typeof window.searchProvider === "function") {
+        window.searchProvider(query, provider);
+      }
+    });
+  });
+
+  tbody.querySelectorAll(".missing-track-local-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const playlistName = btn.getAttribute("data-playlist") || "";
+      const position = Number.parseInt(
+        btn.getAttribute("data-position") || "0",
+        10,
+      );
+      const title = btn.getAttribute("data-title") || "";
+      const artist = btn.getAttribute("data-artist") || "";
+      const spotifyId = btn.getAttribute("data-spotify-id") || "";
+      if (typeof window.openMapToLocal === "function") {
+        window.openMapToLocal(
+          playlistName,
+          Number.isFinite(position) ? position : 0,
+          title,
+          artist,
+          spotifyId,
+        );
+      }
+    });
+  });
+
+  tbody.querySelectorAll(".missing-track-external-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const playlistName = btn.getAttribute("data-playlist") || "";
+      const position = Number.parseInt(
+        btn.getAttribute("data-position") || "0",
+        10,
+      );
+      const title = btn.getAttribute("data-title") || "";
+      const artist = btn.getAttribute("data-artist") || "";
+      const spotifyId = btn.getAttribute("data-spotify-id") || "";
+      if (typeof window.openMapToExternal === "function") {
+        window.openMapToExternal(
+          playlistName,
+          Number.isFinite(position) ? position : 0,
+          title,
+          artist,
+          spotifyId,
+        );
+      }
+    });
+  });
+}
+
+async function fetchMissingTracks() {
+  try {
+    const data = await API.fetchPlaylists();
+    const tbody = document.getElementById("missing-tracks-table-body");
+    const missingTracks = [];
+
+    for (const playlist of data.playlists) {
+      if (playlist.externalMissing > 0) {
+        try {
+          const tracksData = await API.fetchPlaylistTracks(playlist.name);
+          const missing = tracksData.tracks.filter((t) => t.isLocal === null);
+          missing.forEach((t) => {
+            missingTracks.push({
+              playlist: playlist.name,
+              ...t,
+            });
+          });
+        } catch (err) {
+          console.error(`Failed to fetch tracks for ${playlist.name}:`, err);
+        }
+      }
+    }
+
+    document.getElementById("missing-total").textContent = missingTracks.length;
+
+    if (missingTracks.length === 0) {
+      tbody.innerHTML =
+        '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:40px;">🎉 No missing tracks! All tracks are matched.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = missingTracks
+      .map((t) => {
+        const artist =
+          t.artists && t.artists.length > 0 ? t.artists.join(", ") : "";
+        const searchQuery = `${t.title} ${artist}`;
+        const trackPosition = Number.isFinite(t.position)
+          ? Number(t.position)
+          : 0;
+        return `
+                <tr>
+                    <td><strong>${escapeHtml(t.playlist)}</strong></td>
+                    <td>${escapeHtml(t.title)}</td>
+                    <td>${escapeHtml(artist)}</td>
+                    <td style="color:var(--text-secondary);">${t.album ? escapeHtml(t.album) : "-"}</td>
+                    <td class="mapping-actions-cell">
+                        <button class="map-action-btn map-action-search missing-track-search-btn"
+                            data-query="${escapeHtml(searchQuery)}"
+                            data-provider="squidwtf">🔍 Search</button>
+                        <button class="map-action-btn map-action-local missing-track-local-btn"
+                            data-playlist="${escapeHtml(t.playlist)}"
+                            data-position="${trackPosition}"
+                            data-title="${escapeHtml(t.title)}"
+                            data-artist="${escapeHtml(artist)}"
+                            data-spotify-id="${escapeHtml(t.spotifyId || "")}">Map to Local</button>
+                        <button class="map-action-btn map-action-external missing-track-external-btn"
+                            data-playlist="${escapeHtml(t.playlist)}"
+                            data-position="${trackPosition}"
+                            data-title="${escapeHtml(t.title)}"
+                            data-artist="${escapeHtml(artist)}"
+                            data-spotify-id="${escapeHtml(t.spotifyId || "")}">Map to External</button>
+                    </td>
+                </tr>
+            `;
+      })
+      .join("");
+
+    bindMissingTrackActionButtons(tbody);
+  } catch (error) {
+    console.error("Failed to fetch missing tracks:", error);
+    showToast("Failed to fetch missing tracks", "error");
+  }
+}
+
+async function fetchDownloads() {
+  try {
+    const data = await API.fetchDownloads();
+    const tbody = document.getElementById("downloads-table-body");
+
+    document.getElementById("downloads-count").textContent = data.count;
+    document.getElementById("downloads-size").textContent =
+      data.totalSizeFormatted;
+
+    if (data.count === 0) {
+      tbody.innerHTML =
+        '<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:40px;">No downloaded files found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.files
+      .map((f) => {
+        return `
+                <tr data-path="${escapeHtml(f.path)}">
+                    <td><strong>${escapeHtml(f.artist)}</strong></td>
+                    <td>${escapeHtml(f.album)}</td>
+                    <td style="font-family:monospace;font-size:0.85rem;">${escapeHtml(f.fileName)}</td>
+                    <td style="color:var(--text-secondary);">${f.sizeFormatted}</td>
+                    <td>
+                        <button onclick="downloadFile('${escapeJs(f.path)}')"
+                            style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:var(--accent);border-color:var(--accent);">Download</button>
+                        <button onclick="deleteDownload('${escapeJs(f.path)}')"
+                            class="danger" style="font-size:0.75rem;padding:4px 8px;">Delete</button>
+                    </td>
+                </tr>
+            `;
+      })
+      .join("");
+  } catch (error) {
+    console.error("Failed to fetch downloads:", error);
+    showToast("Failed to fetch downloads", "error");
+  }
+}
+
+async function fetchConfig() {
+  try {
+    const data = await API.fetchConfig();
+    setCurrentConfigState(data);
+    UI.updateConfigUI(data);
+    syncConfigUiExtras(data);
+  } catch (error) {
+    console.error("Failed to fetch config:", error);
+  }
+}
+
+async function fetchJellyfinPlaylists() {
+  const tbody = document.getElementById("jellyfin-playlist-table-body");
+  tbody.innerHTML =
+    '<tr><td colspan="4" class="loading"><span class="spinner"></span> Loading Jellyfin playlists...</td></tr>';
+
+  try {
+    const userId = isAdminSession()
+      ? document.getElementById("jellyfin-user-select")?.value
+      : null;
+    const data = await API.fetchJellyfinPlaylists(userId);
+    UI.updateJellyfinPlaylistsUI(data);
+  } catch (error) {
+    console.error("Failed to fetch Jellyfin playlists:", error);
+    tbody.innerHTML =
+      '<tr><td colspan="4" style="text-align:center;color:var(--error);padding:40px;">Failed to fetch playlists</td></tr>';
+  }
+}
+
+async function fetchJellyfinUsers() {
+  if (!isAdminSession()) {
+    return;
+  }
+
+  try {
+    const data = await API.fetchJellyfinUsers();
+    if (data) {
+      UI.updateJellyfinUsersUI(data, getCurrentUserId());
+    }
+  } catch (error) {
+    console.error("Failed to fetch users:", error);
+  }
+}
+
+async function fetchEndpointUsage() {
+  try {
+    const topSelect = document.getElementById("endpoints-top-select");
+    const top = topSelect ? topSelect.value : 50;
+    const data = await API.fetchEndpointUsage(top);
+    UI.updateEndpointUsageUI(data);
+  } catch (error) {
+    console.error("Failed to fetch endpoint usage:", error);
+    const tbody = document.getElementById("endpoints-table-body");
+    tbody.innerHTML =
+      '<tr><td colspan="4" style="text-align:center;color:var(--error);padding:40px;">Failed to load endpoint usage data</td></tr>';
+  }
+}
+
+async function clearEndpointUsage() {
+  const result = await runAction({
+    confirmMessage:
+      "Are you sure you want to clear all endpoint usage data? This cannot be undone.",
+    task: () => API.clearEndpointUsage(),
+    success: (data) => data.message || "Endpoint usage data cleared",
+    error: "Failed to clear endpoint usage data",
+  });
+
+  if (result) {
+    fetchEndpointUsage();
+  }
+}
+
+function startPlaylistAutoRefresh() {
+  if (playlistAutoRefreshInterval) {
+    clearInterval(playlistAutoRefreshInterval);
+  }
+
+  playlistAutoRefreshInterval = setInterval(() => {
+    const playlistsTab = document.getElementById("tab-playlists");
+    if (playlistsTab && playlistsTab.classList.contains("active")) {
+      fetchPlaylists(true);
+    }
+  }, 5000);
+}
+
+function stopPlaylistAutoRefresh() {
+  if (playlistAutoRefreshInterval) {
+    clearInterval(playlistAutoRefreshInterval);
+    playlistAutoRefreshInterval = null;
+  }
+}
+
+function stopDashboardRefresh() {
+  if (dashboardRefreshInterval) {
+    clearInterval(dashboardRefreshInterval);
+    dashboardRefreshInterval = null;
+  }
+  stopPlaylistAutoRefresh();
+}
+
+function startDashboardRefresh() {
+  stopDashboardRefresh();
+  startPlaylistAutoRefresh();
+
+  dashboardRefreshInterval = setInterval(() => {
+    if (!isAuthenticated()) {
+      return;
+    }
+
+    if (isAdminSession()) {
+      fetchStatus();
+      fetchPlaylists();
+      fetchTrackMappings();
+      fetchMissingTracks();
+      fetchDownloads();
+
+      const endpointsTab = document.getElementById("tab-endpoints");
+      if (endpointsTab && endpointsTab.classList.contains("active")) {
+        fetchEndpointUsage();
+      }
+    } else {
+      fetchJellyfinPlaylists();
+    }
+  }, 30000);
+}
+
+async function loadDashboardData() {
+  if (isAdminSession()) {
+    await Promise.allSettled([
+      fetchStatus(),
+      fetchPlaylists(),
+      fetchTrackMappings(),
+      fetchMissingTracks(),
+      fetchDownloads(),
+      fetchConfig(),
+      fetchEndpointUsage(),
+    ]);
+
+    // Ensure user filter defaults are populated before loading Link Playlists rows.
+    await fetchJellyfinUsers();
+    await fetchJellyfinPlaylists();
+
+    loadScrobblingConfig();
+  } else {
+    await Promise.allSettled([fetchJellyfinPlaylists()]);
+  }
+
+  startDashboardRefresh();
+}
+
+export function initDashboardData(options) {
+  isAuthenticated = options.isAuthenticated;
+  isAdminSession = options.isAdminSession;
+  getCurrentUserId = options.getCurrentUserId || (() => null);
+  onCookieNeedsInit = options.onCookieNeedsInit;
+  setCurrentConfigState = options.setCurrentConfigState;
+  syncConfigUiExtras = options.syncConfigUiExtras;
+  loadScrobblingConfig = options.loadScrobblingConfig;
+
+  window.fetchStatus = fetchStatus;
+  window.fetchPlaylists = fetchPlaylists;
+  window.fetchTrackMappings = fetchTrackMappings;
+  window.fetchMissingTracks = fetchMissingTracks;
+  window.fetchDownloads = fetchDownloads;
+  window.fetchConfig = fetchConfig;
+  window.fetchJellyfinPlaylists = fetchJellyfinPlaylists;
+  window.fetchJellyfinUsers = fetchJellyfinUsers;
+  window.fetchEndpointUsage = fetchEndpointUsage;
+  window.clearEndpointUsage = clearEndpointUsage;
+
+  return {
+    stopDashboardRefresh,
+    startDashboardRefresh,
+    loadDashboardData,
+    fetchPlaylists,
+    fetchTrackMappings,
+    fetchDownloads,
+    fetchJellyfinPlaylists,
+    fetchConfig,
+    fetchStatus,
+  };
+}

@@ -37,14 +37,14 @@ public class LyricsPlusService
         // Validate input parameters
         if (string.IsNullOrWhiteSpace(trackName) || artistNames == null || artistNames.Length == 0)
         {
-            _logger.LogDebug("Invalid parameters for LyricsPlus search: trackName={TrackName}, artistCount={ArtistCount}", 
+            _logger.LogDebug("Invalid parameters for LyricsPlus search: trackName={TrackName}, artistCount={ArtistCount}",
                 trackName, artistNames?.Length ?? 0);
             return null;
         }
-        
+
         var artistName = string.Join(", ", artistNames);
-        var cacheKey = $"lyricsplus:{artistName}:{trackName}:{albumName}:{durationSeconds}";
-        
+        var cacheKey = CacheKeyBuilder.BuildLyricsPlusKey(artistName, trackName, albumName, durationSeconds);
+
         // Check cache
         var cached = await _cache.GetStringAsync(cacheKey);
         if (!string.IsNullOrEmpty(cached))
@@ -63,24 +63,24 @@ public class LyricsPlusService
         {
             // Build URL with query parameters
             var url = $"{BaseUrl}?title={Uri.EscapeDataString(trackName)}&artist={Uri.EscapeDataString(artistName)}";
-            
+
             if (!string.IsNullOrEmpty(albumName))
             {
                 url += $"&album={Uri.EscapeDataString(albumName)}";
             }
-            
+
             if (durationSeconds > 0)
             {
                 url += $"&duration={durationSeconds}";
             }
-            
+
             // Add sources: apple, lyricsplus, musixmatch, spotify, musixmatch-word
             url += "&source=apple,lyricsplus,musixmatch,spotify,musixmatch-word";
 
             _logger.LogDebug("Fetching lyrics from LyricsPlus: {Url}", url);
 
             var response = await _httpClient.GetAsync(url);
-            
+
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 _logger.LogDebug("Lyrics not found on LyricsPlus for {Artist} - {Track}", artistName, trackName);
@@ -88,7 +88,7 @@ public class LyricsPlusService
             }
 
             response.EnsureSuccessStatusCode();
-            
+
             var json = await response.Content.ReadAsStringAsync();
             var lyricsResponse = JsonSerializer.Deserialize<LyricsPlusResponse>(json, JsonOptions);
 
@@ -100,14 +100,14 @@ public class LyricsPlusService
 
             // Convert to LyricsInfo format
             var result = ConvertToLyricsInfo(lyricsResponse, trackName, artistName, albumName, durationSeconds);
-            
+
             if (result != null)
             {
                 await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), CacheExtensions.LyricsTTL);
-                _logger.LogInformation("✓ Retrieved lyrics from LyricsPlus for {Artist} - {Track} (type: {Type}, source: {Source})", 
+                _logger.LogInformation("✓ Retrieved lyrics from LyricsPlus for {Artist} - {Track} (type: {Type}, source: {Source})",
                     artistName, trackName, lyricsResponse.Type, lyricsResponse.Metadata?.Source);
             }
-            
+
             return result;
         }
         catch (HttpRequestException ex)
@@ -166,7 +166,7 @@ public class LyricsPlusService
     private string ConvertLineTimingToLrc(List<LyricsPlusLine> lines)
     {
         var lrcLines = new List<string>();
-        
+
         foreach (var line in lines)
         {
             if (line.Time.HasValue)
@@ -175,7 +175,7 @@ public class LyricsPlusService
                 var mm = (int)timestamp.TotalMinutes;
                 var ss = timestamp.Seconds;
                 var cs = timestamp.Milliseconds / 10; // Convert to centiseconds
-                
+
                 lrcLines.Add($"[{mm:D2}:{ss:D2}.{cs:D2}]{line.Text}");
             }
             else
@@ -184,7 +184,7 @@ public class LyricsPlusService
                 lrcLines.Add(line.Text);
             }
         }
-        
+
         return string.Join("\n", lrcLines);
     }
 
@@ -205,10 +205,10 @@ public class LyricsPlusService
     {
         [JsonPropertyName("type")]
         public string Type { get; set; } = string.Empty; // "Word", "Line", or "Static"
-        
+
         [JsonPropertyName("metadata")]
         public LyricsPlusMetadata? Metadata { get; set; }
-        
+
         [JsonPropertyName("lyrics")]
         public List<LyricsPlusLine> Lyrics { get; set; } = new();
     }
@@ -217,10 +217,10 @@ public class LyricsPlusService
     {
         [JsonPropertyName("source")]
         public string? Source { get; set; }
-        
+
         [JsonPropertyName("title")]
         public string? Title { get; set; }
-        
+
         [JsonPropertyName("language")]
         public string? Language { get; set; }
     }
@@ -229,13 +229,13 @@ public class LyricsPlusService
     {
         [JsonPropertyName("time")]
         public long? Time { get; set; } // Milliseconds
-        
+
         [JsonPropertyName("duration")]
         public long? Duration { get; set; }
-        
+
         [JsonPropertyName("text")]
         public string Text { get; set; } = string.Empty;
-        
+
         [JsonPropertyName("syllabus")]
         public List<LyricsPlusSyllable>? Syllabus { get; set; }
     }
@@ -244,10 +244,10 @@ public class LyricsPlusService
     {
         [JsonPropertyName("time")]
         public long Time { get; set; }
-        
+
         [JsonPropertyName("duration")]
         public long Duration { get; set; }
-        
+
         [JsonPropertyName("text")]
         public string Text { get; set; } = string.Empty;
     }

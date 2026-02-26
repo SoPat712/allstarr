@@ -182,7 +182,7 @@ public class JellyfinProxyServiceTests
         // Assert
         Assert.NotNull(captured);
         var url = captured!.RequestUri!.ToString();
-        
+
         // Verify the query parameters are properly URL encoded
         Assert.Contains("searchTerm=", url);
         Assert.Contains("test", url);
@@ -192,7 +192,7 @@ public class JellyfinProxyServiceTests
         Assert.Contains("MusicAlbum", url);
         Assert.Contains("limit=25", url);
         Assert.Contains("recursive=true", url);
-        
+
         // Verify spaces are encoded (either as %20 or +)
         var uri = captured.RequestUri;
         var searchTermValue = System.Web.HttpUtility.ParseQueryString(uri!.Query).Get("searchTerm");
@@ -223,6 +223,67 @@ public class JellyfinProxyServiceTests
         Assert.Contains("/Items/abc-123", captured!.RequestUri!.ToString());
         Assert.NotNull(body);
         Assert.Equal(200, statusCode);
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_WithEndpointQuery_PreservesCallerParameters()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Id\":\"abc-123\"}")
+            });
+
+        // Act
+        await _service.GetJsonAsync(
+            "Users/user-abc/Items/abc-123?api_key=query-token&Fields=DateCreated,PremiereDate,ProductionYear");
+
+        // Assert
+        Assert.NotNull(captured);
+        var requestUri = captured!.RequestUri!;
+        Assert.Contains("/Users/user-abc/Items/abc-123", requestUri.ToString());
+
+        var query = System.Web.HttpUtility.ParseQueryString(requestUri.Query);
+        Assert.Equal("query-token", query.Get("api_key"));
+        Assert.Equal("DateCreated,PremiereDate,ProductionYear", query.Get("Fields"));
+    }
+
+    [Fact]
+    public async Task GetJsonAsync_WithEndpointAndExplicitQuery_MergesWithExplicitPrecedence()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        // Act
+        await _service.GetJsonAsync(
+            "Items/abc-123?api_key=endpoint-token&Fields=DateCreated",
+            new Dictionary<string, string>
+            {
+                ["api_key"] = "explicit-token",
+                ["UserId"] = "route-user"
+            });
+
+        // Assert
+        Assert.NotNull(captured);
+        var query = System.Web.HttpUtility.ParseQueryString(captured!.RequestUri!.Query);
+        Assert.Equal("explicit-token", query.Get("api_key"));
+        Assert.Equal("DateCreated", query.Get("Fields"));
+        Assert.Equal("route-user", query.Get("UserId"));
     }
 
     [Fact]

@@ -5,7 +5,7 @@ namespace allstarr.Models.Settings;
 /// </summary>
 public class MusicBrainzSettings
 {
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; } = false;
     public string? Username { get; set; }
     public string? Password { get; set; }
     

@@ -2,8 +2,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Filters;
+using allstarr.Models.Admin;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
+using allstarr.Services.Admin;
+using allstarr.Services.Spotify;
+using allstarr.Services.Scrobbling;
+using allstarr.Services.SquidWTF;
 using System.Runtime;
 
 namespace allstarr.Controllers;
@@ -22,6 +27,7 @@ public class DiagnosticsController : ControllerBase
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWTFSettings _squidWtfSettings;
     private readonly RedisCacheService _cache;
+    private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly List<string> _squidWtfApiUrls;
     private static int _urlIndex = 0;
     private static readonly object _urlIndexLock = new();
@@ -35,6 +41,8 @@ public class DiagnosticsController : ControllerBase
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
         IOptions<SquidWTFSettings> squidWtfSettings,
+        SpotifySessionCookieService spotifySessionCookieService,
+        SquidWtfEndpointCatalog squidWtfEndpointCatalog,
         RedisCacheService cache)
     {
         _logger = logger;
@@ -45,52 +53,42 @@ public class DiagnosticsController : ControllerBase
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
         _squidWtfSettings = squidWtfSettings.Value;
+        _spotifySessionCookieService = spotifySessionCookieService;
         _cache = cache;
-        _squidWtfApiUrls = DecodeSquidWtfUrls();
-    }
-
-    private static List<string> DecodeSquidWtfUrls()
-    {
-        var encodedUrls = new[]
-        {
-            "aHR0cHM6Ly90cml0b24uc3F1aWQud3Rm",
-            "aHR0cHM6Ly90aWRhbC5raW5vcGx1cy5vbmxpbmU=",
-            "aHR0cHM6Ly9oaWZpLXR3by5zcG90aXNhdmVyLm5ldA==",
-            "aHR0cHM6Ly9oaWZpLW9uZS5zcG90aXNhdmVyLm5ldA==",
-            "aHR0cHM6Ly93b2xmLnFxZGwuc2l0ZQ==",
-            "aHR0cDovL2h1bmQucXFkbC5zaXRl",
-            "aHR0cHM6Ly9rYXR6ZS5xcWRsLnNpdGU=",
-            "aHR0cHM6Ly92b2dlbC5xcWRsLnNpdGU=",
-            "aHR0cHM6Ly9tYXVzLnFxZGwuc2l0ZQ==",
-            "aHR0cHM6Ly9ldS1jZW50cmFsLm1vbm9jaHJvbWUudGY=",
-            "aHR0cHM6Ly91cy13ZXN0Lm1vbm9jaHJvbWUudGY=",
-            "aHR0cHM6Ly9hcnJhbi5tb25vY2hyb21lLnRm",
-            "aHR0cHM6Ly9hcGkubW9ub2Nocm9tZS50Zg==",
-            "aHR0cHM6Ly9odW5kLnFxZGwuc2l0ZQ=="
-        };
-        return encodedUrls.Select(encoded => System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encoded))).ToList();
+        _squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
     }
 
     [HttpGet("status")]
-    public IActionResult GetStatus()
+    public async Task<IActionResult> GetStatus()
     {
         // Determine Spotify auth status based on configuration only
         // DO NOT call Spotify API here - this endpoint is polled frequently
         var spotifyAuthStatus = "not_configured";
         string? spotifyUser = null;
-        
-        if (_spotifyApiSettings.Enabled && !string.IsNullOrEmpty(_spotifyApiSettings.SessionCookie))
+        var sessionUserId = GetAuthenticatedUserId();
+        var cookieStatus = await _spotifySessionCookieService.GetCookieStatusAsync(sessionUserId);
+        var userCookieSetDate = !string.IsNullOrWhiteSpace(sessionUserId)
+            ? await _spotifySessionCookieService.GetCookieSetDateAsync(sessionUserId)
+            : null;
+        var effectiveCookieSetDate = userCookieSetDate?.ToString("o");
+
+        if (string.IsNullOrWhiteSpace(effectiveCookieSetDate) && cookieStatus.UsingGlobalFallback)
+        {
+            effectiveCookieSetDate = _spotifyApiSettings.SessionCookieSetDate;
+        }
+
+        if (_spotifyApiSettings.Enabled && cookieStatus.HasCookie)
         {
             // If cookie is set, assume it's working until proven otherwise
             // Actual validation happens when playlists are fetched
             spotifyAuthStatus = "configured";
-            spotifyUser = "(cookie set)";
+            spotifyUser = cookieStatus.UsingGlobalFallback ? "(global fallback cookie set)" : "(user cookie set)";
         }
         else if (_spotifyApiSettings.Enabled)
         {
             spotifyAuthStatus = "missing_cookie";
         }
-        
+
         return Ok(new
         {
             version = AppVersion.Version,
@@ -101,8 +99,9 @@ public class DiagnosticsController : ControllerBase
                 apiEnabled = _spotifyApiSettings.Enabled,
                 authStatus = spotifyAuthStatus,
                 user = spotifyUser,
-                hasCookie = !string.IsNullOrEmpty(_spotifyApiSettings.SessionCookie),
-                cookieSetDate = _spotifyApiSettings.SessionCookieSetDate,
+                hasCookie = cookieStatus.HasCookie,
+                usingGlobalFallback = cookieStatus.UsingGlobalFallback,
+                cookieSetDate = effectiveCookieSetDate,
                 cacheDurationMinutes = _spotifyApiSettings.CacheDurationMinutes,
                 preferIsrcMatching = _spotifyApiSettings.PreferIsrcMatching
             },
@@ -128,7 +127,19 @@ public class DiagnosticsController : ControllerBase
             }
         });
     }
-    
+
+    private string? GetAuthenticatedUserId()
+    {
+        if (HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) &&
+            sessionObj is AdminAuthSession session &&
+            !string.IsNullOrWhiteSpace(session.UserId))
+        {
+            return session.UserId;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Get a random SquidWTF base URL for searching (round-robin)
     /// </summary>
@@ -139,21 +150,21 @@ public class DiagnosticsController : ControllerBase
         {
             return NotFound(new { error = "No SquidWTF base URLs configured" });
         }
-        
+
         string baseUrl;
         lock (_urlIndexLock)
         {
             baseUrl = _squidWtfApiUrls[_urlIndex];
             _urlIndex = (_urlIndex + 1) % _squidWtfApiUrls.Count;
         }
-        
+
         return Ok(new { baseUrl });
     }
-    
+
     /// <summary>
     /// Get current configuration including cache settings
     /// </summary>
-    
+
     /// <summary>
     /// Get list of configured playlists with their current data
     /// </summary>
@@ -167,7 +178,7 @@ public class DiagnosticsController : ControllerBase
             var gen0Before = GC.CollectionCount(0);
             var gen1Before = GC.CollectionCount(1);
             var gen2Before = GC.CollectionCount(2);
-            
+
             // Force garbage collection to get accurate numbers
             GC.Collect();
             GC.WaitForPendingFinalizers();
@@ -177,10 +188,10 @@ public class DiagnosticsController : ControllerBase
             var gen0After = GC.CollectionCount(0);
             var gen1After = GC.CollectionCount(1);
             var gen2After = GC.CollectionCount(2);
-            
+
             // Get process memory info
             var process = System.Diagnostics.Process.GetCurrentProcess();
-            
+
             return Ok(new {
                 Timestamp = DateTime.UtcNow,
                 BeforeGC = new {
@@ -215,7 +226,8 @@ public class DiagnosticsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new { error = ex.Message });
+            _logger.LogError(ex, "Failed to collect memory statistics");
+            return BadRequest(new { error = "Failed to collect memory statistics" });
         }
     }
 
@@ -229,15 +241,15 @@ public class DiagnosticsController : ControllerBase
         {
             var memoryBefore = GC.GetTotalMemory(false);
             var processBefore = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-            
+
             // Force full garbage collection
             GC.Collect(2, GCCollectionMode.Forced);
             GC.WaitForPendingFinalizers();
             GC.Collect(2, GCCollectionMode.Forced);
-            
+
             var memoryAfter = GC.GetTotalMemory(false);
             var processAfter = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-            
+
             return Ok(new {
                 Timestamp = DateTime.UtcNow,
                 MemoryFreedMB = Math.Round((memoryBefore - memoryAfter) / (1024.0 * 1024.0), 2),
@@ -250,7 +262,8 @@ public class DiagnosticsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new { error = ex.Message });
+            _logger.LogError(ex, "Failed to force garbage collection");
+            return BadRequest(new { error = "Failed to force garbage collection" });
         }
     }
 
@@ -273,7 +286,32 @@ public class DiagnosticsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new { error = ex.Message });
+            _logger.LogError(ex, "Failed to get active sessions");
+            return BadRequest(new { error = "Failed to get active sessions" });
+        }
+    }
+
+    /// <summary>
+    /// Gets current active scrobbling sessions for debugging.
+    /// </summary>
+    [HttpGet("scrobbling-sessions")]
+    public IActionResult GetScrobblingSessions()
+    {
+        try
+        {
+            var scrobblingOrchestrator = HttpContext.RequestServices.GetService<ScrobblingOrchestrator>();
+            if (scrobblingOrchestrator == null)
+            {
+                return BadRequest(new { error = "Scrobbling orchestrator not available" });
+            }
+
+            var sessionInfo = scrobblingOrchestrator.GetSessionsInfo();
+            return Ok(sessionInfo);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get scrobbling sessions");
+            return BadRequest(new { error = "Failed to get scrobbling sessions" });
         }
     }
 
@@ -288,24 +326,24 @@ public class DiagnosticsController : ControllerBase
         try
         {
             var logFile = "/app/cache/endpoint-usage/endpoints.csv";
-            
+
             if (!System.IO.File.Exists(logFile))
             {
-                return Ok(new { 
+                return Ok(new {
                     message = "No endpoint usage data available",
                     endpoints = new object[0]
                 });
             }
-            
+
             var lines = await System.IO.File.ReadAllLinesAsync(logFile);
             var usage = new Dictionary<string, int>();
             DateTime? sinceDate = null;
-            
+
             if (!string.IsNullOrEmpty(since) && DateTime.TryParse(since, out var parsedDate))
             {
                 sinceDate = parsedDate;
             }
-            
+
             foreach (var line in lines.Skip(1)) // Skip header
             {
                 var parts = line.Split(',');
@@ -314,27 +352,27 @@ public class DiagnosticsController : ControllerBase
                     var timestamp = parts[0];
                     var method = parts[1];
                     var endpoint = parts[2];
-                    
+
                     // Combine method and endpoint for better clarity
                     var fullEndpoint = $"{method} {endpoint}";
-                    
+
                     // Filter by date if specified
                     if (sinceDate.HasValue && DateTime.TryParse(timestamp, out var logDate))
                     {
                         if (logDate < sinceDate.Value)
                             continue;
                     }
-                    
+
                     usage[fullEndpoint] = usage.GetValueOrDefault(fullEndpoint, 0) + 1;
                 }
             }
-            
+
             var topEndpoints = usage
                 .OrderByDescending(kv => kv.Value)
                 .Take(top)
                 .Select(kv => new { endpoint = kv.Key, count = kv.Value })
                 .ToArray();
-            
+
             return Ok(new {
                 totalEndpoints = usage.Count,
                 totalRequests = usage.Values.Sum(),
@@ -359,20 +397,20 @@ public class DiagnosticsController : ControllerBase
         try
         {
             var logFile = "/app/cache/endpoint-usage/endpoints.csv";
-            
+
             if (System.IO.File.Exists(logFile))
             {
                 System.IO.File.Delete(logFile);
                 _logger.LogDebug("Cleared endpoint usage log via admin endpoint");
-                
-                return Ok(new { 
+
+                return Ok(new {
                     message = "Endpoint usage log cleared successfully",
                     timestamp = DateTime.UtcNow
                 });
             }
             else
             {
-                return Ok(new { 
+                return Ok(new {
                     message = "No endpoint usage log file found",
                     timestamp = DateTime.UtcNow
                 });
@@ -385,8 +423,8 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    
-    
+
+
     /// <summary>
     /// Saves a manual mapping to file for persistence across restarts.
     /// Manual mappings NEVER expire - they are permanent user decisions.

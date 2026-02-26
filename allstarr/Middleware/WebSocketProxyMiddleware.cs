@@ -26,7 +26,7 @@ public class WebSocketProxyMiddleware
         _settings = settings.Value;
         _logger = logger;
         _sessionManager = sessionManager;
-        
+
         _logger.LogInformation("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
     }
 
@@ -35,9 +35,9 @@ public class WebSocketProxyMiddleware
         // Log ALL requests for debugging
         var path = context.Request.Path.Value ?? "";
         var isWebSocket = context.WebSockets.IsWebSocketRequest;
-        
+
         // Log any request that might be WebSocket-related
-        if (path.Contains("socket", StringComparison.OrdinalIgnoreCase) || 
+        if (path.Contains("socket", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("ws", StringComparison.OrdinalIgnoreCase) ||
             isWebSocket ||
             context.Request.Headers.ContainsKey("Upgrade"))
@@ -54,7 +54,7 @@ public class WebSocketProxyMiddleware
         if (context.Request.Path.StartsWithSegments("/socket", StringComparison.OrdinalIgnoreCase) &&
             context.WebSockets.IsWebSocketRequest)
         {
-            _logger.LogDebug("🔌 WEBSOCKET: WebSocket connection request received from {RemoteIp}", 
+            _logger.LogDebug("🔌 WEBSOCKET: WebSocket connection request received from {RemoteIp}",
                 context.Connection.RemoteIpAddress);
 
             await HandleWebSocketProxyAsync(context);
@@ -270,23 +270,11 @@ public class WebSocketProxyMiddleware
                 if (result.EndOfMessage)
                 {
                     var messageBytes = messageBuffer.ToArray();
-                    
-                    // Log message for Server→Client direction to see remote control commands
-                    if (direction == "Server→Client")
+
+                    if (_logger.IsEnabled(LogLevel.Debug))
                     {
-                        var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
-                        _logger.LogDebug("📥 WEBSOCKET {Direction}: {Preview}",
-                            direction,
-                            messageText.Length > 500 ? messageText[..500] + "..." : messageText);
-                    }
-                    else if (_logger.IsEnabled(LogLevel.Debug))
-                    {
-                        var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
-                        _logger.LogDebug("{Direction}: {MessageType} message ({Size} bytes): {Preview}",
-                            direction,
-                            result.MessageType,
-                            messageBytes.Length,
-                            messageText.Length > 200 ? messageText[..200] + "..." : messageText);
+                        _logger.LogDebug("WEBSOCKET {Direction}: {MessageType} message ({Size} bytes)",
+                            direction, result.MessageType, messageBytes.Length);
                     }
 
                     // Forward the complete message
