@@ -311,7 +311,7 @@ public class ListenBrainzScrobblingService : IScrobblingService
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "HTTP request failed");
+            _logger.LogWarning("HTTP request failed: {Message}", ex.Message);
             return ScrobbleResult.CreateError($"HTTP error: {ex.Message}", shouldRetry: true);
         }
     }

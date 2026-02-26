@@ -33,7 +33,7 @@ public class LyricsController : ControllerBase
         _serviceProvider = serviceProvider;
     }
 
-    
+
     /// <summary>
     /// Save manual lyrics ID mapping for a track
     /// </summary>
@@ -44,24 +44,24 @@ public class LyricsController : ControllerBase
         {
             return BadRequest(new { error = "Artist and Title are required" });
         }
-        
+
         if (request.LyricsId <= 0)
         {
             return BadRequest(new { error = "Valid LyricsId is required" });
         }
-        
+
         try
         {
             // Store lyrics mapping in cache (NO EXPIRATION - manual mappings are permanent)
             var mappingKey = $"lyrics:manual-map:{request.Artist}:{request.Title}";
             await _cache.SetStringAsync(mappingKey, request.LyricsId.ToString());
-            
+
             // Also save to file for persistence across restarts
             await _adminHelper.SaveLyricsMappingToFileAsync(request.Artist, request.Title, request.Album ?? "", request.DurationSeconds, request.LyricsId);
-            
-            _logger.LogInformation("Manual lyrics mapping saved: {Artist} - {Title} → Lyrics ID {LyricsId}", 
+
+            _logger.LogInformation("Manual lyrics mapping saved: {Artist} - {Title} → Lyrics ID {LyricsId}",
                 request.Artist, request.Title, request.LyricsId);
-            
+
             // Optionally fetch and cache the lyrics immediately
             try
             {
@@ -75,9 +75,9 @@ public class LyricsController : ControllerBase
                         var lyricsCacheKey = $"lyrics:{request.Artist}:{request.Title}:{request.Album ?? ""}:{request.DurationSeconds}";
                         await _cache.SetAsync(lyricsCacheKey, lyricsInfo.PlainLyrics);
                         _logger.LogDebug("✓ Fetched and cached lyrics for {Artist} - {Title}", request.Artist, request.Title);
-                        
-                        return Ok(new 
-                        { 
+
+                        return Ok(new
+                        {
                             message = "Lyrics mapping saved and lyrics cached successfully",
                             lyricsId = request.LyricsId,
                             cached = true,
@@ -98,9 +98,9 @@ public class LyricsController : ControllerBase
             {
                 _logger.LogError(ex, "Failed to fetch lyrics after mapping, but mapping was saved");
             }
-            
-            return Ok(new 
-            { 
+
+            return Ok(new
+            {
                 message = "Lyrics mapping saved successfully",
                 lyricsId = request.LyricsId,
                 cached = false
@@ -112,7 +112,7 @@ public class LyricsController : ControllerBase
             return StatusCode(500, new { error = "Failed to save lyrics mapping" });
         }
     }
-    
+
     /// <summary>
     /// Get manual lyrics mappings
     /// </summary>
@@ -122,15 +122,15 @@ public class LyricsController : ControllerBase
         try
         {
             var mappingsFile = "/app/cache/lyrics_mappings.json";
-            
+
             if (!System.IO.File.Exists(mappingsFile))
             {
                 return Ok(new { mappings = new List<object>() });
             }
-            
+
             var json = await System.IO.File.ReadAllTextAsync(mappingsFile);
             var mappings = JsonSerializer.Deserialize<List<LyricsMappingEntry>>(json) ?? new List<LyricsMappingEntry>();
-            
+
             return Ok(new { mappings });
         }
         catch (Exception ex)
@@ -139,9 +139,9 @@ public class LyricsController : ControllerBase
             return StatusCode(500, new { error = "Failed to get lyrics mappings" });
         }
     }
-    
-    
-    
+
+
+
     /// <summary>
     /// Test Spotify lyrics API by fetching lyrics for a specific Spotify track ID
     /// Example: GET /api/admin/lyrics/spotify/test?trackId=3yII7UwgLF6K5zW3xad3MP
@@ -153,30 +153,30 @@ public class LyricsController : ControllerBase
         {
             return BadRequest(new { error = "trackId parameter is required" });
         }
-        
+
         try
         {
             var spotifyLyricsService = _serviceProvider.GetService<allstarr.Services.Lyrics.SpotifyLyricsService>();
-            
+
             if (spotifyLyricsService == null)
             {
                 return StatusCode(500, new { error = "Spotify lyrics service not available" });
             }
-            
+
             _logger.LogInformation("Testing Spotify lyrics for track ID: {TrackId}", trackId);
-            
+
             var result = await spotifyLyricsService.GetLyricsByTrackIdAsync(trackId);
-            
+
             if (result == null)
             {
-                return NotFound(new 
-                { 
+                return NotFound(new
+                {
                     error = "No lyrics found",
                     trackId,
                     message = "Lyrics may not be available for this track, or the Spotify API is not configured correctly"
                 });
             }
-            
+
             return Ok(new
             {
                 success = true,
@@ -206,10 +206,10 @@ public class LyricsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to test Spotify lyrics for track {TrackId}", trackId);
-            return StatusCode(500, new { error = $"Failed to fetch lyrics: {ex.Message}" });
+            return StatusCode(500, new { error = "Failed to fetch lyrics" });
         }
     }
-    
+
     /// <summary>
     /// Prefetch lyrics for a specific playlist
     /// </summary>
@@ -217,22 +217,22 @@ public class LyricsController : ControllerBase
     public async Task<IActionResult> PrefetchPlaylistLyrics(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        
+
         try
         {
             var lyricsPrefetchService = _serviceProvider.GetService<allstarr.Services.Lyrics.LyricsPrefetchService>();
-            
+
             if (lyricsPrefetchService == null)
             {
                 return StatusCode(500, new { error = "Lyrics prefetch service not available" });
             }
-            
+
             _logger.LogInformation("Starting lyrics prefetch for playlist: {Playlist}", decodedName);
-            
+
             var (fetched, cached, missing) = await lyricsPrefetchService.PrefetchPlaylistLyricsAsync(
-                decodedName, 
+                decodedName,
                 HttpContext.RequestAborted);
-            
+
             return Ok(new
             {
                 message = "Lyrics prefetch complete",
@@ -246,12 +246,12 @@ public class LyricsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to prefetch lyrics for playlist {Playlist}", decodedName);
-            return StatusCode(500, new { error = $"Failed to prefetch lyrics: {ex.Message}" });
+            return StatusCode(500, new { error = "Failed to prefetch lyrics" });
         }
     }
-    
-    
-    
+
+
+
     /// <summary>
     /// Invalidates the cached playlist summary so it will be regenerated on next request
     /// </summary>

@@ -13,7 +13,7 @@ namespace allstarr.Services.Qobuz;
 /// Metadata service implementation using the Qobuz API
 /// Uses user authentication token instead of email/password
 /// </summary>
-public class QobuzMetadataService : IMusicMetadataService
+public class QobuzMetadataService : TrackParserBase, IMusicMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
@@ -22,11 +22,11 @@ public class QobuzMetadataService : IMusicMetadataService
     private readonly GenreEnrichmentService? _genreEnrichment;
     private readonly string? _userAuthToken;
     private readonly string? _userId;
-    
+
     private const string BaseUrl = "https://www.qobuz.com/api.json/0.2/";
 
     public QobuzMetadataService(
-        IHttpClientFactory httpClientFactory, 
+        IHttpClientFactory httpClientFactory,
         IOptions<SubsonicSettings> settings,
         IOptions<QobuzSettings> qobuzSettings,
         QobuzBundleService bundleService,
@@ -38,29 +38,29 @@ public class QobuzMetadataService : IMusicMetadataService
         _bundleService = bundleService;
         _logger = logger;
         _genreEnrichment = genreEnrichment;
-        
+
         var qobuzConfig = qobuzSettings.Value;
         _userAuthToken = qobuzConfig.UserAuthToken;
         _userId = qobuzConfig.UserId;
-        
+
         // Set up default headers
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
+        _httpClient.DefaultRequestHeaders.Add("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
     }
 
-    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20)
+    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}track/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Song>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var songs = new List<Song>();
             if (result.RootElement.TryGetProperty("tracks", out var tracks) &&
                 tracks.TryGetProperty("items", out var items))
@@ -71,7 +71,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     songs.Add(song);
                 }
             }
-            
+
             return songs;
         }
         catch (Exception ex)
@@ -81,19 +81,19 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20)
+    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}album/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Album>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var albums = new List<Album>();
             if (result.RootElement.TryGetProperty("albums", out var albumsData) &&
                 albumsData.TryGetProperty("items", out var items))
@@ -103,7 +103,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     albums.Add(ParseQobuzAlbum(album));
                 }
             }
-            
+
             return albums;
         }
         catch (Exception ex)
@@ -113,19 +113,19 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20)
+    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}artist/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Artist>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var artists = new List<Artist>();
             if (result.RootElement.TryGetProperty("artists", out var artistsData) &&
                 artistsData.TryGetProperty("items", out var items))
@@ -135,7 +135,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     artists.Add(ParseQobuzArtist(artist));
                 }
             }
-            
+
             return artists;
         }
         catch (Exception ex)
@@ -145,14 +145,14 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
+    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
-        var songsTask = SearchSongsAsync(query, songLimit);
-        var albumsTask = SearchAlbumsAsync(query, albumLimit);
-        var artistsTask = SearchArtistsAsync(query, artistLimit);
-        
+        var songsTask = SearchSongsAsync(query, songLimit, cancellationToken);
+        var albumsTask = SearchAlbumsAsync(query, albumLimit, cancellationToken);
+        var artistsTask = SearchArtistsAsync(query, artistLimit, cancellationToken);
+
         await Task.WhenAll(songsTask, albumsTask, artistsTask);
-        
+
         return new SearchResult
         {
             Songs = await songsTask,
@@ -161,25 +161,25 @@ public class QobuzMetadataService : IMusicMetadataService
         };
     }
 
-    public async Task<Song?> GetSongAsync(string externalProvider, string externalId)
+    public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
-        
+
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}track/get?track_id={externalId}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var track = JsonDocument.Parse(json).RootElement;
-            
+
             if (track.TryGetProperty("error", out _)) return null;
-            
+
             var song = ParseQobuzTrackFull(track);
-            
+
             // Enrich with MusicBrainz genres if missing
             if (_genreEnrichment != null && song != null && string.IsNullOrEmpty(song.Genre))
             {
@@ -196,7 +196,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     }
                 });
             }
-            
+
             return song;
         }
         catch (Exception ex)
@@ -206,25 +206,25 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId)
+    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
-        
+
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}album/get?album_id={externalId}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var albumElement = JsonDocument.Parse(json).RootElement;
-            
+
             if (albumElement.TryGetProperty("error", out _)) return null;
-            
+
             var album = ParseQobuzAlbum(albumElement);
-            
+
             // Get album tracks
             if (albumElement.TryGetProperty("tracks", out var tracks) &&
                 tracks.TryGetProperty("items", out var tracksData))
@@ -232,16 +232,16 @@ public class QobuzMetadataService : IMusicMetadataService
                 foreach (var track in tracksData.EnumerateArray())
                 {
                     var song = ParseQobuzTrack(track);
-                    
+
                     // Ensure album metadata is set (tracks in album response may not have full album object)
                     song.Album = album.Title;
                     song.AlbumId = album.Id;
                     song.AlbumArtist = album.Artist;
-                    
+
                     album.Songs.Add(song);
                 }
             }
-            
+
             return album;
         }
         catch (Exception ex)
@@ -251,23 +251,23 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId)
+    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
-        
+
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var artist = JsonDocument.Parse(json).RootElement;
-            
+
             if (artist.TryGetProperty("error", out _)) return null;
-            
+
             return ParseQobuzArtist(artist);
         }
         catch (Exception ex)
@@ -277,48 +277,48 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId)
+    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return new List<Album>();
-        
+
         try
         {
             var albums = new List<Album>();
             var appId = await _bundleService.GetAppIdAsync();
             int offset = 0;
             const int limit = 500;
-            
+
             // Qobuz requires pagination for artist albums
             while (true)
             {
                 var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}&limit={limit}&offset={offset}&extra=albums";
-                
-                var response = await GetWithAuthAsync(url);
+
+                var response = await GetWithAuthAsync(url, cancellationToken);
                 if (!response.IsSuccessStatusCode) break;
-                
-                var json = await response.Content.ReadAsStringAsync();
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 var result = JsonDocument.Parse(json);
-                
+
                 if (!result.RootElement.TryGetProperty("albums", out var albumsData) ||
                     !albumsData.TryGetProperty("items", out var items))
                 {
                     break;
                 }
-                
+
                 var itemsArray = items.EnumerateArray().ToList();
                 if (itemsArray.Count == 0) break;
-                
+
                 foreach (var album in itemsArray)
                 {
                     albums.Add(ParseQobuzAlbum(album));
                 }
-                
+
                 // If we got less than the limit, we've reached the end
                 if (itemsArray.Count < limit) break;
-                
+
                 offset += limit;
             }
-            
+
             return albums;
         }
         catch (Exception ex)
@@ -328,7 +328,7 @@ public class QobuzMetadataService : IMusicMetadataService
         }
     }
 
-    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId)
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         // Qobuz doesn't have a dedicated "artist top tracks" endpoint
         // Return empty list - clients will need to browse albums instead
@@ -336,19 +336,19 @@ public class QobuzMetadataService : IMusicMetadataService
         return new List<Song>();
     }
 
-    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20)
+    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}playlist/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var result = JsonDocument.Parse(json);
-            
+
             var playlists = new List<ExternalPlaylist>();
             if (result.RootElement.TryGetProperty("playlists", out var playlistsData) &&
                 playlistsData.TryGetProperty("items", out var items))
@@ -358,7 +358,7 @@ public class QobuzMetadataService : IMusicMetadataService
                     playlists.Add(ParseQobuzPlaylist(playlist));
                 }
             }
-            
+
             return playlists;
         }
         catch (Exception ex)
@@ -367,24 +367,24 @@ public class QobuzMetadataService : IMusicMetadataService
             return new List<ExternalPlaylist>();
         }
     }
-    
-    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId)
+
+    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
-        
+
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var playlistElement = JsonDocument.Parse(json).RootElement;
-            
+
             if (playlistElement.TryGetProperty("error", out _)) return null;
-            
+
             return ParseQobuzPlaylist(playlistElement);
         }
         catch (Exception ex)
@@ -393,31 +393,31 @@ public class QobuzMetadataService : IMusicMetadataService
             return null;
         }
     }
-    
-    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId)
+
+    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return new List<Song>();
-        
+
         try
         {
             var appId = await _bundleService.GetAppIdAsync();
             var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}&extra=tracks";
-            
-            var response = await GetWithAuthAsync(url);
+
+            var response = await GetWithAuthAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<Song>();
-            
-            var json = await response.Content.ReadAsStringAsync();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
             var playlistElement = JsonDocument.Parse(json).RootElement;
-            
+
             if (playlistElement.TryGetProperty("error", out _)) return new List<Song>();
-            
+
             var songs = new List<Song>();
-            
+
             // Get playlist name for album field
             var playlistName = playlistElement.TryGetProperty("name", out var nameEl)
                 ? nameEl.GetString() ?? "Unknown Playlist"
                 : "Unknown Playlist";
-            
+
             if (playlistElement.TryGetProperty("tracks", out var tracks) &&
                 tracks.TryGetProperty("items", out var tracksData))
             {
@@ -426,20 +426,20 @@ public class QobuzMetadataService : IMusicMetadataService
                 {
                     // For playlists, use the track's own artist (not a single album artist)
                     var song = ParseQobuzTrack(track);
-                    
+
                     // Override album name to be the playlist name
                     song.Album = playlistName;
                     song.Track = trackIndex;
-                    
+
                     // Playlists should not have disc numbers - always set to null
                     // This prevents Jellyfin from splitting the playlist into multiple "discs"
                     song.DiscNumber = null;
-                    
+
                     songs.Add(song);
                     trackIndex++;
                 }
             }
-            
+
             return songs;
         }
         catch (Exception ex)
@@ -448,11 +448,11 @@ public class QobuzMetadataService : IMusicMetadataService
             return new List<Song>();
         }
     }
-    
+
     private ExternalPlaylist ParseQobuzPlaylist(JsonElement playlist)
     {
         var externalId = GetIdAsString(playlist.GetProperty("id"));
-        
+
         // Get curator/creator name
         string? curatorName = null;
         if (playlist.TryGetProperty("owner", out var owner) &&
@@ -460,7 +460,7 @@ public class QobuzMetadataService : IMusicMetadataService
         {
             curatorName = ownerName.GetString();
         }
-        
+
         // Get creation date
         DateTime? createdDate = null;
         if (playlist.TryGetProperty("created_at", out var createdAtEl))
@@ -468,7 +468,7 @@ public class QobuzMetadataService : IMusicMetadataService
             var timestamp = createdAtEl.GetInt64();
             createdDate = DateTimeOffset.FromUnixTimeSeconds(timestamp).DateTime;
         }
-        
+
         // Get cover URL from images
         string? coverUrl = null;
         if (playlist.TryGetProperty("images300", out var images300))
@@ -487,7 +487,7 @@ public class QobuzMetadataService : IMusicMetadataService
                 coverUrl = imagesArray[0].GetString();
             }
         }
-        
+
         return new ExternalPlaylist
         {
             Id = Common.PlaylistIdHelper.CreatePlaylistId("qobuz", externalId),
@@ -512,42 +512,29 @@ public class QobuzMetadataService : IMusicMetadataService
     }
 
     /// <summary>
-    /// Safely gets an ID value as a string, handling both number and string types from JSON
-    /// </summary>
-    private string GetIdAsString(JsonElement element)
-    {
-        return element.ValueKind switch
-        {
-            JsonValueKind.Number => element.GetInt64().ToString(),
-            JsonValueKind.String => element.GetString() ?? "",
-            _ => ""
-        };
-    }
-
-    /// <summary>
     /// Makes an HTTP GET request with Qobuz authentication headers
     /// </summary>
-    private async Task<HttpResponseMessage> GetWithAuthAsync(string url)
+    private async Task<HttpResponseMessage> GetWithAuthAsync(string url, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        
+
         var appId = await _bundleService.GetAppIdAsync();
         request.Headers.Add("X-App-Id", appId);
-        
+
         if (!string.IsNullOrEmpty(_userAuthToken))
         {
             request.Headers.Add("X-User-Auth-Token", _userAuthToken);
         }
-        
-        return await _httpClient.SendAsync(request);
+
+        return await _httpClient.SendAsync(request, cancellationToken);
     }
 
     private Song ParseQobuzTrack(JsonElement track)
     {
         var externalId = GetIdAsString(track.GetProperty("id"));
-        
+
         var title = track.GetProperty("title").GetString() ?? "";
-        
+
         // Add version to title if present (e.g., "Remastered", "Live")
         if (track.TryGetProperty("version", out var version))
         {
@@ -557,7 +544,7 @@ public class QobuzMetadataService : IMusicMetadataService
                 title = $"{title} ({versionStr})";
             }
         }
-        
+
         // For classical music, prepend work name
         if (track.TryGetProperty("work", out var work))
         {
@@ -567,32 +554,32 @@ public class QobuzMetadataService : IMusicMetadataService
                 title = $"{workStr}: {title}";
             }
         }
-        
+
         var performerName = track.TryGetProperty("performer", out var performer)
             ? performer.GetProperty("name").GetString() ?? ""
             : "";
-        
+
         var albumTitle = track.TryGetProperty("album", out var album)
             ? album.GetProperty("title").GetString() ?? ""
             : "";
-        
+
         var albumId = track.TryGetProperty("album", out var albumForId)
-            ? $"ext-qobuz-album-{GetIdAsString(albumForId.GetProperty("id"))}"
+            ? BuildExternalAlbumId("qobuz", GetIdAsString(albumForId.GetProperty("id")))
             : null;
-        
+
         // Get album artist
         var albumArtist = track.TryGetProperty("album", out var albumForArtist) &&
                           albumForArtist.TryGetProperty("artist", out var albumArtistEl)
             ? albumArtistEl.GetProperty("name").GetString()
             : performerName;
-        
+
         return new Song
         {
-            Id = $"ext-qobuz-song-{externalId}",
+            Id = BuildExternalSongId("qobuz", externalId),
             Title = title,
             Artist = performerName,
             ArtistId = track.TryGetProperty("performer", out var performerForId)
-                ? $"ext-qobuz-artist-{GetIdAsString(performerForId.GetProperty("id"))}"
+                ? BuildExternalArtistId("qobuz", GetIdAsString(performerForId.GetProperty("id")))
                 : null,
             Album = albumTitle,
             AlbumId = albumId,
@@ -616,24 +603,24 @@ public class QobuzMetadataService : IMusicMetadataService
     private Song ParseQobuzTrackFull(JsonElement track)
     {
         var song = ParseQobuzTrack(track);
-        
+
         // Add additional metadata for full track
         if (track.TryGetProperty("composer", out var composer) &&
             composer.TryGetProperty("name", out var composerName))
         {
             song.Contributors = new List<string> { composerName.GetString() ?? "" };
         }
-        
+
         if (track.TryGetProperty("isrc", out var isrc))
         {
             song.Isrc = isrc.GetString();
         }
-        
+
         if (track.TryGetProperty("copyright", out var copyright))
         {
             song.Copyright = FormatCopyright(copyright.GetString() ?? "");
         }
-        
+
         // Get release date from album
         if (track.TryGetProperty("album", out var album))
         {
@@ -641,39 +628,33 @@ public class QobuzMetadataService : IMusicMetadataService
             {
                 var dateStr = releaseDate.GetString();
                 song.ReleaseDate = dateStr;
-                
-                if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4)
-                {
-                    if (int.TryParse(dateStr.Substring(0, 4), out var year))
-                    {
-                        song.Year = year;
-                    }
-                }
+
+                song.Year = ParseYearFromDateString(dateStr);
             }
-            
+
             if (album.TryGetProperty("tracks_count", out var tracksCount))
             {
                 song.TotalTracks = tracksCount.GetInt32();
             }
-            
+
             if (album.TryGetProperty("genres_list", out var genres))
             {
                 song.Genre = FormatGenres(genres);
             }
-            
+
             // Get large cover art
             song.CoverArtUrlLarge = GetLargeCoverArtUrl(album);
         }
-        
+
         return song;
     }
 
     private Album ParseQobuzAlbum(JsonElement album)
     {
         var externalId = GetIdAsString(album.GetProperty("id"));
-        
+
         var title = album.GetProperty("title").GetString() ?? "";
-        
+
         // Add version to title if present
         if (album.TryGetProperty("version", out var version))
         {
@@ -683,31 +664,25 @@ public class QobuzMetadataService : IMusicMetadataService
                 title = $"{title} ({versionStr})";
             }
         }
-        
+
         var artistName = album.TryGetProperty("artist", out var artist)
             ? artist.GetProperty("name").GetString() ?? ""
             : "";
-        
+
         int? year = null;
         if (album.TryGetProperty("release_date_original", out var releaseDate))
         {
             var dateStr = releaseDate.GetString();
-            if (!string.IsNullOrEmpty(dateStr) && dateStr.Length >= 4)
-            {
-                if (int.TryParse(dateStr.Substring(0, 4), out var y))
-                {
-                    year = y;
-                }
-            }
+                year = ParseYearFromDateString(dateStr);
         }
-        
+
         return new Album
         {
-            Id = $"ext-qobuz-album-{externalId}",
+            Id = BuildExternalAlbumId("qobuz", externalId),
             Title = title,
             Artist = artistName,
             ArtistId = album.TryGetProperty("artist", out var artistForId)
-                ? $"ext-qobuz-artist-{GetIdAsString(artistForId.GetProperty("id"))}"
+                ? BuildExternalArtistId("qobuz", GetIdAsString(artistForId.GetProperty("id")))
                 : null,
             Year = year,
             SongCount = album.TryGetProperty("tracks_count", out var tracksCount)
@@ -726,10 +701,10 @@ public class QobuzMetadataService : IMusicMetadataService
     private Artist ParseQobuzArtist(JsonElement artist)
     {
         var externalId = GetIdAsString(artist.GetProperty("id"));
-        
+
         return new Artist
         {
-            Id = $"ext-qobuz-artist-{externalId}",
+            Id = BuildExternalArtistId("qobuz", externalId),
             Name = artist.GetProperty("name").GetString() ?? "",
             ImageUrl = GetArtistImageUrl(artist),
             AlbumCount = artist.TryGetProperty("albums_count", out var albumsCount)
@@ -751,7 +726,7 @@ public class QobuzMetadataService : IMusicMetadataService
         {
             element = album;
         }
-        
+
         if (element.TryGetProperty("image", out var image))
         {
             // Prefer thumbnail (230x230), fallback to small
@@ -764,7 +739,7 @@ public class QobuzMetadataService : IMusicMetadataService
                 return small.GetString();
             }
         }
-        
+
         return null;
     }
 
@@ -780,7 +755,7 @@ public class QobuzMetadataService : IMusicMetadataService
             // Replace _600.jpg with _org.jpg for original quality
             return url?.Replace("_600.jpg", "_org.jpg");
         }
-        
+
         return null;
     }
 
@@ -794,7 +769,7 @@ public class QobuzMetadataService : IMusicMetadataService
         {
             return large.GetString();
         }
-        
+
         return null;
     }
 
@@ -805,7 +780,7 @@ public class QobuzMetadataService : IMusicMetadataService
     private string FormatGenres(JsonElement genresList)
     {
         var genres = new List<string>();
-        
+
         foreach (var genre in genresList.EnumerateArray())
         {
             var genreStr = genre.GetString();
@@ -823,7 +798,7 @@ public class QobuzMetadataService : IMusicMetadataService
                 }
             }
         }
-        
+
         return string.Join(", ", genres);
     }
 

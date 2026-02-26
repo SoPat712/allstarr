@@ -14,7 +14,7 @@ public partial class JellyfinController
     /// <summary>
     /// Gets tracks for a Spotify playlist by matching missing tracks against external providers
     /// and merging with existing local tracks from Jellyfin.
-    /// 
+    ///
     /// Supports two modes:
     /// 1. Direct Spotify API (new): Uses SpotifyPlaylistFetcher for ordered tracks with ISRC matching
     /// 2. Jellyfin Plugin (legacy): Uses MissingTrack data from Jellyfin Spotify Import plugin
@@ -31,8 +31,7 @@ public partial class JellyfinController
             }
 
             // Spotify API not enabled or no ordered tracks - proxy through without modification
-            _logger.LogInformation(
-                "Spotify API not enabled or no tracks found, proxying playlist {PlaylistName} without modification",
+            _logger.LogDebug("Spotify API not enabled or no tracks found, proxying playlist {PlaylistName} without modification",
                 spotifyPlaylistName);
 
             var endpoint = $"Playlists/{playlistId}/Items";
@@ -117,7 +116,7 @@ public partial class JellyfinController
             return null; // Fall back to legacy mode
         }
 
-        _logger.LogInformation("Using {Count} ordered matched tracks for {Playlist}",
+        _logger.LogDebug("Using {Count} ordered matched tracks for {Playlist}",
             orderedTracks.Count, spotifyPlaylistName);
 
         // Get existing Jellyfin playlist items (RAW - don't convert!)
@@ -142,7 +141,7 @@ public partial class JellyfinController
             playlistItemsUrl = $"{playlistItemsUrl}&{queryString}";
         }
 
-        _logger.LogInformation("🔍 Fetching existing tracks from Jellyfin playlist {PlaylistId} with UserId {UserId}",
+        _logger.LogDebug("🔍 Fetching existing tracks from Jellyfin playlist {PlaylistId} with UserId {UserId}",
             playlistId, userId);
 
         var (existingTracksResponse, statusCode) = await _proxyService.GetJsonAsync(
@@ -188,7 +187,7 @@ public partial class JellyfinController
                 }
             }
 
-            _logger.LogInformation("✅ Found {Count} existing LOCAL tracks in Jellyfin playlist", jellyfinItems.Count);
+            _logger.LogDebug("✅ Found {Count} existing LOCAL tracks in Jellyfin playlist", jellyfinItems.Count);
         }
         else
         {
@@ -247,6 +246,8 @@ public partial class JellyfinController
             {
                 // Use the raw Jellyfin item (preserves ALL metadata including MediaSources!)
                 var itemDict = JsonElementToDictionary(matchedJellyfinItem.Value);
+                ProviderIdsEnricher.EnsureSpotifyProviderIds(itemDict, spotifyTrack.SpotifyId, spotifyTrack.AlbumId);
+                ApplySpotifyAddedAtDateCreated(itemDict, spotifyTrack.AddedAt);
                 finalItems.Add(itemDict);
                 usedJellyfinItems.Add(matchedKey);
                 localUsedCount++;
@@ -271,6 +272,9 @@ public partial class JellyfinController
                         {
                             // Found the full Jellyfin item - use it!
                             var itemDict = JsonElementToDictionary(jellyfinItem);
+                            ProviderIdsEnricher.EnsureSpotifyProviderIds(itemDict, spotifyTrack.SpotifyId,
+                                spotifyTrack.AlbumId);
+                            ApplySpotifyAddedAtDateCreated(itemDict, spotifyTrack.AddedAt);
                             finalItems.Add(itemDict);
                             localUsedCount++;
                             _logger.LogDebug("✅ Position #{Pos}: '{Title}' → LOCAL from cache (ID: {Id})",
@@ -288,20 +292,11 @@ public partial class JellyfinController
                     // External track or local track not found - convert Song to Jellyfin item format
                     var externalItem = _responseBuilder.ConvertSongToJellyfinItem(matched.MatchedSong);
 
-                    // Add Spotify ID to ProviderIds so lyrics can work
-                    if (!string.IsNullOrEmpty(spotifyTrack.SpotifyId))
-                    {
-                        if (!externalItem.ContainsKey("ProviderIds"))
-                        {
-                            externalItem["ProviderIds"] = new Dictionary<string, string>();
-                        }
+                    // Enhance with additional Spotify metadata
+                    ProviderIdsEnricher.EnsureSpotifyProviderIds(externalItem, spotifyTrack.SpotifyId,
+                        spotifyTrack.AlbumId);
 
-                        var providerIds = externalItem["ProviderIds"] as Dictionary<string, string>;
-                        if (providerIds != null && !providerIds.ContainsKey("Spotify"))
-                        {
-                            providerIds["Spotify"] = spotifyTrack.SpotifyId;
-                        }
-                    }
+                    ApplySpotifyAddedAtDateCreated(externalItem, spotifyTrack.AddedAt);
 
                     finalItems.Add(externalItem);
                     externalUsedCount++;
@@ -338,6 +333,18 @@ public partial class JellyfinController
             TotalRecordCount = finalItems.Count,
             StartIndex = 0
         });
+    }
+
+    private static void ApplySpotifyAddedAtDateCreated(
+        Dictionary<string, object?> item,
+        DateTime? addedAt)
+    {
+        if (!addedAt.HasValue)
+        {
+            return;
+        }
+
+        item["DateCreated"] = addedAt.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
     }
 
     /// <summary>
@@ -424,14 +431,6 @@ public partial class JellyfinController
             var fileName = Path.GetFileName(sourceFilePath);
             var keptFilePath = Path.Combine(keptAlbumPath, fileName);
 
-            // Double-check in case of race condition (multiple favorite clicks)
-            if (System.IO.File.Exists(keptFilePath))
-            {
-                _logger.LogInformation("Track already exists in kept folder (race condition): {Path}", keptFilePath);
-                await MarkTrackAsFavoritedAsync(itemId, song);
-                return;
-            }
-
             // Create hard link instead of copying to save space
             // Both locations will point to the same file data on disk
             try
@@ -451,22 +450,47 @@ public partial class JellyfinController
                     if (process != null)
                     {
                         await process.WaitForExitAsync();
-                        _logger.LogDebug("✓ Created hard link to kept folder: {Path}", keptFilePath);
+
+                        // Check if link was created successfully
+                        if (process.ExitCode != 0)
+                        {
+                            throw new IOException($"ln command failed with exit code {process.ExitCode}");
+                        }
+
+                        _logger.LogInformation("🔗 Created hard link: {Source} → {Destination}", sourceFilePath, keptFilePath);
                     }
                 }
                 else
                 {
                     // Fall back to copy on Windows
                     System.IO.File.Copy(sourceFilePath, keptFilePath, overwrite: false);
-                    _logger.LogDebug("✓ Copied track to kept folder: {Path}", keptFilePath);
+                    _logger.LogInformation("📋 Copied track: {Source} → {Destination}", sourceFilePath, keptFilePath);
                 }
+            }
+            catch (IOException ex) when (ex.Message.Contains("already exists") || System.IO.File.Exists(keptFilePath))
+            {
+                // Race condition - file was created by another request
+                _logger.LogInformation("Track already exists in kept folder (race condition): {Path}", keptFilePath);
+                await MarkTrackAsFavoritedAsync(itemId, song);
+                return;
             }
             catch (Exception ex)
             {
                 // Fall back to copy if hard link fails (e.g., different filesystems)
                 _logger.LogWarning(ex, "Failed to create hard link, falling back to copy");
-                System.IO.File.Copy(sourceFilePath, keptFilePath, overwrite: false);
-                _logger.LogDebug("✓ Copied track to kept folder: {Path}", keptFilePath);
+
+                try
+                {
+                    System.IO.File.Copy(sourceFilePath, keptFilePath, overwrite: false);
+                    _logger.LogInformation("📋 Copied track (fallback): {Source} → {Destination}", sourceFilePath, keptFilePath);
+                }
+                catch (IOException copyEx) when (copyEx.Message.Contains("already exists") || System.IO.File.Exists(keptFilePath))
+                {
+                    // Race condition on copy fallback
+                    _logger.LogInformation("Track already exists in kept folder (race condition on copy): {Path}", keptFilePath);
+                    await MarkTrackAsFavoritedAsync(itemId, song);
+                    return;
+                }
             }
 
             // Also create hard link for cover art if it exists
@@ -492,20 +516,35 @@ public partial class JellyfinController
                             if (process != null)
                             {
                                 await process.WaitForExitAsync();
-                                _logger.LogDebug("Created hard link for cover art");
+                                _logger.LogDebug("🔗 Created hard link for cover: {Source} → {Destination}", sourceCoverPath, keptCoverPath);
                             }
                         }
                         else
                         {
                             System.IO.File.Copy(sourceCoverPath, keptCoverPath, overwrite: false);
-                            _logger.LogDebug("Copied cover art to kept folder");
+                            _logger.LogDebug("📋 Copied cover: {Source} → {Destination}", sourceCoverPath, keptCoverPath);
                         }
                     }
-                    catch
+                    catch (IOException ex) when (ex.Message.Contains("already exists") || System.IO.File.Exists(keptCoverPath))
+                    {
+                        // Race condition - cover already exists
+                        _logger.LogDebug("Cover art already exists (race condition)");
+                    }
+                    catch (Exception ex)
                     {
                         // Fall back to copy if hard link fails
-                        System.IO.File.Copy(sourceCoverPath, keptCoverPath, overwrite: false);
-                        _logger.LogDebug("Copied cover art to kept folder");
+                        _logger.LogDebug(ex, "Failed to create hard link for cover, falling back to copy");
+
+                        try
+                        {
+                            System.IO.File.Copy(sourceCoverPath, keptCoverPath, overwrite: false);
+                            _logger.LogDebug("📋 Copied cover (fallback): {Source} → {Destination}", sourceCoverPath, keptCoverPath);
+                        }
+                        catch (IOException copyEx) when (copyEx.Message.Contains("already exists") || System.IO.File.Exists(keptCoverPath))
+                        {
+                            // Race condition on copy fallback
+                            _logger.LogDebug("Cover art already exists (race condition on copy)");
+                        }
                     }
                 }
             }
@@ -558,7 +597,7 @@ public partial class JellyfinController
 
             await Task.WhenAll(downloadTasks);
 
-            _logger.LogInformation("✓ Finished downloading album: {Artist} - {Album}", album.Artist, album.Title);
+            _logger.LogInformation("Finished downloading album: {Artist} - {Album}", album.Artist, album.Title);
         }
         catch (Exception ex)
         {

@@ -13,7 +13,6 @@ public class GenreEnrichmentService
     private readonly MusicBrainzService _musicBrainz;
     private readonly RedisCacheService _cache;
     private readonly ILogger<GenreEnrichmentService> _logger;
-    private const string GenreCachePrefix = "genre:";
     private const string GenreCacheDirectory = "/app/cache/genres";
     private static readonly TimeSpan GenreCacheDuration = TimeSpan.FromDays(30);
 
@@ -25,7 +24,7 @@ public class GenreEnrichmentService
         _musicBrainz = musicBrainz;
         _cache = cache;
         _logger = logger;
-        
+
         // Ensure cache directory exists
         Directory.CreateDirectory(GenreCacheDirectory);
     }
@@ -43,15 +42,15 @@ public class GenreEnrichmentService
         }
 
         var cacheKey = $"{song.Title}:{song.Artist}";
-        
+
         // Check Redis cache first
-        var redisCacheKey = $"{GenreCachePrefix}{cacheKey}";
+        var redisCacheKey = CacheKeyBuilder.BuildGenreEnrichmentKey(cacheKey);
         var cachedGenre = await _cache.GetAsync<string>(redisCacheKey);
-        
+
         if (cachedGenre != null)
         {
             song.Genre = cachedGenre;
-            _logger.LogDebug("Using Redis cached genre for {Title} - {Artist}: {Genre}", 
+            _logger.LogDebug("Using Redis cached genre for {Title} - {Artist}: {Genre}",
                 song.Title, song.Artist, cachedGenre);
             return;
         }
@@ -63,7 +62,7 @@ public class GenreEnrichmentService
             song.Genre = fileCachedGenre;
             // Restore to Redis cache
             await _cache.SetAsync(redisCacheKey, fileCachedGenre, GenreCacheDuration);
-            _logger.LogDebug("Using file cached genre for {Title} - {Artist}: {Genre}", 
+            _logger.LogDebug("Using file cached genre for {Title} - {Artist}: {Genre}",
                 song.Title, song.Artist, fileCachedGenre);
             return;
         }
@@ -72,17 +71,17 @@ public class GenreEnrichmentService
         try
         {
             var genres = await _musicBrainz.GetGenresForSongAsync(song.Title, song.Artist, song.Isrc);
-            
+
             if (genres.Count > 0)
             {
                 // Use the top genre
                 song.Genre = genres[0];
-                
+
                 // Cache in both Redis and file
                 await _cache.SetAsync(redisCacheKey, song.Genre, GenreCacheDuration);
                 await SaveToFileCacheAsync(cacheKey, song.Genre);
-                
-                _logger.LogInformation("Enriched {Title} - {Artist} with genre: {Genre}", 
+
+                _logger.LogInformation("Enriched {Title} - {Artist} with genre: {Genre}",
                     song.Title, song.Artist, song.Genre);
             }
             else
@@ -93,7 +92,7 @@ public class GenreEnrichmentService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to enrich genre for {Title} - {Artist}", 
+            _logger.LogError(ex, "Failed to enrich genre for {Title} - {Artist}",
                 song.Title, song.Artist);
         }
     }
@@ -106,7 +105,7 @@ public class GenreEnrichmentService
         var tasks = songs
             .Where(s => string.IsNullOrEmpty(s.Genre))
             .Select(s => EnrichSongGenreAsync(s));
-        
+
         await Task.WhenAll(tasks);
     }
 
@@ -148,7 +147,7 @@ public class GenreEnrichmentService
 
             var json = await File.ReadAllTextAsync(filePath);
             var cacheEntry = JsonSerializer.Deserialize<GenreCacheEntry>(json);
-            
+
             return cacheEntry?.Genre;
         }
         catch (Exception ex)

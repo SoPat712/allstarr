@@ -75,6 +75,58 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("USRC12345678", providerIds["ISRC"]);
     }
 
+    [Theory]
+    [InlineData("deezer")]
+    [InlineData("qobuz")]
+    [InlineData("squidwtf")]
+    [InlineData("Deezer")]
+    [InlineData("Qobuz")]
+    [InlineData("SquidWTF")]
+    public void ConvertSongToJellyfinItem_ExternalStreamingProviders_DisableTranscoding(string provider)
+    {
+        // Arrange
+        var song = new Song
+        {
+            Id = $"ext-{provider}-song-123",
+            Title = "External Track",
+            Artist = "External Artist",
+            IsLocal = false,
+            ExternalProvider = provider,
+            ExternalId = "123"
+        };
+
+        // Act
+        var result = _builder.ConvertSongToJellyfinItem(song);
+
+        // Assert
+        var mediaSources = Assert.IsAssignableFrom<object[]>(result["MediaSources"]);
+        var mediaSource = Assert.IsType<Dictionary<string, object?>>(mediaSources[0]);
+        Assert.False(Assert.IsType<bool>(mediaSource["SupportsTranscoding"]));
+    }
+
+    [Fact]
+    public void ConvertSongToJellyfinItem_OtherExternalProviders_KeepTranscodingEnabled()
+    {
+        // Arrange
+        var song = new Song
+        {
+            Id = "ext-spotify-song-123",
+            Title = "External Track",
+            Artist = "External Artist",
+            IsLocal = false,
+            ExternalProvider = "spotify",
+            ExternalId = "123"
+        };
+
+        // Act
+        var result = _builder.ConvertSongToJellyfinItem(song);
+
+        // Assert
+        var mediaSources = Assert.IsAssignableFrom<object[]>(result["MediaSources"]);
+        var mediaSource = Assert.IsType<Dictionary<string, object?>>(mediaSources[0]);
+        Assert.True(Assert.IsType<bool>(mediaSource["SupportsTranscoding"]));
+    }
+
     [Fact]
     public void ConvertAlbumToJellyfinItem_SetsCorrectFields()
     {

@@ -4,6 +4,7 @@ WORKDIR /src
 
 COPY allstarr.sln .
 COPY allstarr/allstarr.csproj allstarr/
+COPY allstarr/AppVersion.cs allstarr/
 COPY allstarr.Tests/allstarr.Tests.csproj allstarr.Tests/
 
 RUN dotnet restore

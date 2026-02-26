@@ -113,7 +113,7 @@ public class JellyfinProxyService
             var parts = endpoint.Split('?', 2);
             var baseEndpoint = parts[0];
             var existingQuery = parts[1];
-            
+
             // Parse existing query string
             var mergedParams = new Dictionary<string, string>();
             foreach (var param in existingQuery.Split('&'))
@@ -124,7 +124,7 @@ public class JellyfinProxyService
                     mergedParams[Uri.UnescapeDataString(kv[0])] = Uri.UnescapeDataString(kv[1]);
                 }
             }
-            
+
             // Merge with provided queryParams (provided params take precedence)
             if (queryParams != null)
             {
@@ -133,19 +133,19 @@ public class JellyfinProxyService
                     mergedParams[kv.Key] = kv.Value;
                 }
             }
-            
+
             var url = BuildUrl(baseEndpoint, mergedParams);
             return await GetJsonAsyncInternal(url, clientHeaders);
         }
-        
+
         var finalUrl = BuildUrl(endpoint, queryParams);
         return await GetJsonAsyncInternal(finalUrl, clientHeaders);
     }
-    
+
     private async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string url, IHeaderDictionary? clientHeaders)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        
+
         // Forward client IP address to Jellyfin so it can identify the real client
         if (_httpContextAccessor.HttpContext != null)
         {
@@ -156,33 +156,33 @@ public class JellyfinProxyService
                 request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
             }
         }
-        
+
         bool authHeaderAdded = false;
-        
+
         // Check if this is a browser request for static assets (favicon, etc.)
         bool isBrowserStaticRequest = url.Contains("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
                                       url.Contains("/web/", StringComparison.OrdinalIgnoreCase) ||
-                                      (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) && 
+                                      (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) &&
                                                               h.Value.ToString().Contains("Mozilla", StringComparison.OrdinalIgnoreCase)) == true &&
-                                       clientHeaders?.Any(h => h.Key.Equals("sec-fetch-dest", StringComparison.OrdinalIgnoreCase) && 
+                                       clientHeaders?.Any(h => h.Key.Equals("sec-fetch-dest", StringComparison.OrdinalIgnoreCase) &&
                                                               (h.Value.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) ||
                                                                h.Value.ToString().Contains("document", StringComparison.OrdinalIgnoreCase))) == true);
-        
+
         // Check if this is a public endpoint that doesn't require authentication
         bool isPublicEndpoint = url.Contains("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
                                url.Contains("/Branding/", StringComparison.OrdinalIgnoreCase) ||
                                url.Contains("/Startup/", StringComparison.OrdinalIgnoreCase);
-        
+
         // Forward authentication headers from client if provided
         if (clientHeaders != null && clientHeaders.Count > 0)
         {
             authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
-            
+
             if (authHeaderAdded)
             {
                 _logger.LogTrace("Forwarded authentication headers");
             }
-            
+
             // Check for api_key query parameter (some clients use this)
             if (!authHeaderAdded && url.Contains("api_key=", StringComparison.OrdinalIgnoreCase))
             {
@@ -190,23 +190,23 @@ public class JellyfinProxyService
                 _logger.LogTrace("Using api_key from query string");
             }
         }
-        
+
         // Only log warnings for non-public, non-browser requests without auth
         if (!authHeaderAdded && !isBrowserStaticRequest && !isPublicEndpoint)
         {
             _logger.LogDebug("No client auth provided for {Url} - Jellyfin will handle authentication", url);
         }
-        
+
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         var response = await _httpClient.SendAsync(request);
-        
+
         var statusCode = (int)response.StatusCode;
-        
+
         // Always parse the response, even for errors
         // The caller needs to see 401s so the client can re-authenticate
         var content = await response.Content.ReadAsStringAsync();
-        
+
         if (!response.IsSuccessStatusCode)
         {
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
@@ -218,7 +218,7 @@ public class JellyfinProxyService
             {
                 _logger.LogError("Jellyfin request failed: {StatusCode} for {Url}", response.StatusCode, url);
             }
-            
+
             // Try to parse error response to pass through to client
             if (!string.IsNullOrWhiteSpace(content))
             {
@@ -232,7 +232,7 @@ public class JellyfinProxyService
                     // Not valid JSON, return null
                 }
             }
-            
+
             return (null, statusCode);
         }
 
@@ -247,9 +247,9 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> PostJsonAsync(string endpoint, string body, IHeaderDictionary clientHeaders)
     {
         var url = BuildUrl(endpoint, null);
-        
+
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        
+
         // Forward client IP address to Jellyfin so it can identify the real client
         if (_httpContextAccessor.HttpContext != null)
         {
@@ -260,9 +260,9 @@ public class JellyfinProxyService
                 request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
             }
         }
-        
+
         // Handle special case for playback endpoints
-        // NOTE: Jellyfin API expects PlaybackStartInfo/PlaybackProgressInfo/PlaybackStopInfo 
+        // NOTE: Jellyfin API expects PlaybackStartInfo/PlaybackProgressInfo/PlaybackStopInfo
         // DIRECTLY as the body, NOT wrapped in a field. Do NOT wrap the body.
         var bodyToSend = body;
         if (string.IsNullOrWhiteSpace(body))
@@ -270,27 +270,27 @@ public class JellyfinProxyService
             bodyToSend = "{}";
             _logger.LogWarning("POST body was empty for {Url}, sending empty JSON object", url);
         }
-        
+
         request.Content = new StringContent(bodyToSend, System.Text.Encoding.UTF8, "application/json");
-        
+
         bool authHeaderAdded = false;
         bool isAuthEndpoint = endpoint.Contains("Authenticate", StringComparison.OrdinalIgnoreCase);
-        
+
         // Forward authentication headers from client
         authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
-        
+
         if (authHeaderAdded)
         {
             _logger.LogTrace("Forwarded authentication headers");
         }
-        
+
         // For authentication endpoints, credentials are in the body, not headers
         // For other endpoints without auth, let Jellyfin reject the request
         if (!authHeaderAdded && !isAuthEndpoint)
         {
             _logger.LogDebug("No client auth provided for POST {Url} - Jellyfin will handle authentication", url);
         }
-        
+
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         // DO NOT log the body for auth endpoints - it contains passwords!
@@ -302,15 +302,15 @@ public class JellyfinProxyService
         {
             _logger.LogTrace("POST to Jellyfin: {Url}, body length: {Length} bytes", url, bodyToSend.Length);
         }
-        
+
         var response = await _httpClient.SendAsync(request);
-        
+
         var statusCode = (int)response.StatusCode;
-        
+
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-            
+
             // 401 is expected when tokens expire - don't spam logs
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
@@ -318,10 +318,10 @@ public class JellyfinProxyService
             }
             else
             {
-                _logger.LogError("Jellyfin POST request failed: {StatusCode} for {Url}. Response: {Response}", 
+                _logger.LogError("Jellyfin POST request failed: {StatusCode} for {Url}. Response: {Response}",
                     response.StatusCode, url, errorContent.Length > 200 ? errorContent[..200] + "..." : errorContent);
             }
-            
+
             // Try to parse error response as JSON to pass through to client
             if (!string.IsNullOrWhiteSpace(errorContent))
             {
@@ -335,7 +335,7 @@ public class JellyfinProxyService
                     // Not valid JSON, return null
                 }
             }
-            
+
             return (null, statusCode);
         }
 
@@ -352,13 +352,13 @@ public class JellyfinProxyService
         }
 
         var responseContent = await response.Content.ReadAsStringAsync();
-        
+
         // Handle empty responses
         if (string.IsNullOrWhiteSpace(responseContent))
         {
             return (null, statusCode);
         }
-        
+
         return (JsonDocument.Parse(responseContent), statusCode);
     }
 
@@ -369,7 +369,7 @@ public class JellyfinProxyService
     public async Task<(byte[] Body, string? ContentType)> GetBytesAsync(string endpoint, Dictionary<string, string>? queryParams = null)
     {
         var url = BuildUrl(endpoint, queryParams);
-        
+
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("Authorization", GetAuthorizationHeader());
 
@@ -394,7 +394,7 @@ public class JellyfinProxyService
     public async Task<(Stream Stream, string? ContentType, long? ContentLength)> GetStreamAsync(string endpoint, Dictionary<string, string>? queryParams = null)
     {
         var url = BuildUrl(endpoint, queryParams);
-        
+
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("Authorization", GetAuthorizationHeader());
 
@@ -416,9 +416,9 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> DeleteAsync(string endpoint, IHeaderDictionary clientHeaders)
     {
         var url = BuildUrl(endpoint, null);
-        
+
         using var request = new HttpRequestMessage(HttpMethod.Delete, url);
-        
+
         // Forward client IP address to Jellyfin so it can identify the real client
         if (_httpContextAccessor.HttpContext != null)
         {
@@ -429,12 +429,12 @@ public class JellyfinProxyService
                 request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
             }
         }
-        
+
         bool authHeaderAdded = false;
-        
+
         // Forward authentication headers from client
         authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
-        
+
         if (!authHeaderAdded)
         {
             _logger.LogDebug("No client auth provided for DELETE {Url} - forwarding without auth", url);
@@ -443,19 +443,19 @@ public class JellyfinProxyService
         {
             _logger.LogTrace("Forwarded authentication headers");
         }
-        
+
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        
+
         _logger.LogDebug("DELETE to Jellyfin: {Url}", url);
-        
+
         var response = await _httpClient.SendAsync(request);
-        
+
         var statusCode = (int)response.StatusCode;
-        
+
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-            _logger.LogError("Jellyfin DELETE request failed: {StatusCode} for {Url}. Response: {Response}", 
+            _logger.LogError("Jellyfin DELETE request failed: {StatusCode} for {Url}. Response: {Response}",
                 response.StatusCode, url, errorContent);
             return (null, statusCode);
         }
@@ -467,13 +467,13 @@ public class JellyfinProxyService
         }
 
         var responseContent = await response.Content.ReadAsStringAsync();
-        
+
         // Handle empty responses
         if (string.IsNullOrWhiteSpace(responseContent))
         {
             return (null, statusCode);
         }
-        
+
         return (JsonDocument.Parse(responseContent), statusCode);
     }
 
@@ -481,7 +481,7 @@ public class JellyfinProxyService
     /// Safely sends a GET request to the Jellyfin server, returning null on failure.
     /// </summary>
     public async Task<(byte[]? Body, string? ContentType, bool Success)> GetBytesSafeAsync(
-        string endpoint, 
+        string endpoint,
         Dictionary<string, string>? queryParams = null)
     {
         try
@@ -535,7 +535,23 @@ public class JellyfinProxyService
             queryParams["includeItemTypes"] = string.Join(",", includeItemTypes);
         }
 
-        return await GetJsonAsync("Items", queryParams, clientHeaders);
+        var (body, statusCode) = await GetJsonAsync("Items", queryParams, clientHeaders);
+
+        var count = 0;
+        if (body != null && body.RootElement.TryGetProperty("Items", out var itemsEl) && itemsEl.ValueKind == JsonValueKind.Array)
+        {
+            count = itemsEl.GetArrayLength();
+        }
+
+        _logger.LogInformation(
+            "SEARCH TRACE: JellyfinProxy.SearchAsync query='{Query}', includeItemTypes='{ItemTypes}', limit={Limit}, status={StatusCode}, returnedItems={ItemCount}",
+            searchTerm,
+            includeItemTypes == null ? "" : string.Join(",", includeItemTypes),
+            limit,
+            statusCode,
+            count);
+
+        return (body, statusCode);
     }
 
     /// <summary>
@@ -600,7 +616,7 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> GetItemAsync(string itemId, IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>();
-        
+
         if (!string.IsNullOrEmpty(_settings.UserId))
         {
             queryParams["userId"] = _settings.UserId;
@@ -652,7 +668,7 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> GetArtistAsync(string artistIdOrName, IHeaderDictionary? clientHeaders = null)
     {
         var queryParams = new Dictionary<string, string>();
-        
+
         if (!string.IsNullOrEmpty(_settings.UserId))
         {
             queryParams["userId"] = _settings.UserId;
@@ -747,7 +763,7 @@ public class JellyfinProxyService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error streaming from Jellyfin item {ItemId}", itemId);
-            return new ObjectResult(new { error = $"Error streaming: {ex.Message}" })
+            return new ObjectResult(new { error = "Error streaming" })
             {
                 StatusCode = 500
             };
@@ -765,7 +781,7 @@ public class JellyfinProxyService
     {
         // Build cache key
         var cacheKey = $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}";
-        
+
         // Try cache first
         var cached = await _cache.GetStringAsync(cacheKey);
         if (!string.IsNullOrEmpty(cached))
@@ -792,14 +808,14 @@ public class JellyfinProxyService
         }
 
         var result = await GetBytesSafeAsync($"Items/{itemId}/Images/{imageType}", queryParams);
-        
+
         // Cache for 7 days if successful
         if (result.Success && result.Body != null)
         {
             var cacheValue = $"{Convert.ToBase64String(result.Body)}|{result.ContentType}";
             await _cache.SetStringAsync(cacheKey, cacheValue, CacheExtensions.ProxyImagesTTL);
         }
-        
+
         return (result.Body, result.ContentType);
     }
 
@@ -816,11 +832,11 @@ public class JellyfinProxyService
                 return (false, null, null);
             }
 
-            var serverName = result.RootElement.TryGetProperty("ServerName", out var name) 
-                ? name.GetString() 
+            var serverName = result.RootElement.TryGetProperty("ServerName", out var name)
+                ? name.GetString()
                 : null;
-            var version = result.RootElement.TryGetProperty("Version", out var ver) 
-                ? ver.GetString() 
+            var version = result.RootElement.TryGetProperty("Version", out var ver)
+                ? ver.GetString()
                 : null;
 
             return (true, serverName, version);
@@ -855,14 +871,14 @@ public class JellyfinProxyService
             {
                 foreach (var item in items.EnumerateArray())
                 {
-                    var collectionType = item.TryGetProperty("CollectionType", out var ct) 
-                        ? ct.GetString() 
+                    var collectionType = item.TryGetProperty("CollectionType", out var ct)
+                        ? ct.GetString()
                         : null;
-                    
+
                     if (collectionType == "music")
                     {
-                        return item.TryGetProperty("Id", out var id) 
-                            ? id.GetString() 
+                        return item.TryGetProperty("Id", out var id)
+                            ? id.GetString()
                             : null;
                     }
                 }
@@ -884,7 +900,7 @@ public class JellyfinProxyService
 
         if (queryParams != null && queryParams.Count > 0)
         {
-            var query = string.Join("&", queryParams.Select(kv => 
+            var query = string.Join("&", queryParams.Select(kv =>
                 $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
             url = $"{url}?{query}";
         }
@@ -899,22 +915,22 @@ public class JellyfinProxyService
     public async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string endpoint, Dictionary<string, string>? queryParams = null)
     {
         var url = BuildUrl(endpoint, queryParams);
-        
+
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        
+
         // Use server's API key for authentication
         var authHeader = GetAuthorizationHeader();
         request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
-        
+
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         var response = await _httpClient.SendAsync(request);
         var statusCode = (int)response.StatusCode;
         var content = await response.Content.ReadAsStringAsync();
-        
+
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Jellyfin internal request returned {StatusCode} for {Url}: {Content}", 
+            _logger.LogWarning("Jellyfin internal request returned {StatusCode} for {Url}: {Content}",
                 statusCode, url, content);
             return (null, statusCode);
         }

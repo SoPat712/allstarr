@@ -87,20 +87,20 @@ public partial class JellyfinController
             }
 
             // Check if this is a Spotify playlist (by ID)
-            _logger.LogInformation("Spotify Import Enabled: {Enabled}, Configured Playlists: {Count}",
+            _logger.LogDebug("Spotify Import Enabled: {Enabled}, Configured Playlists: {Count}",
                 _spotifySettings.Enabled, _spotifySettings.Playlists.Count);
 
             if (_spotifySettings.Enabled && _spotifySettings.IsSpotifyPlaylist(playlistId))
             {
                 // Get playlist info from Jellyfin to get the name for matching missing tracks
-                _logger.LogInformation("Fetching playlist info from Jellyfin for ID: {PlaylistId}", playlistId);
+                _logger.LogDebug("Fetching playlist info from Jellyfin for ID: {PlaylistId}", playlistId);
                 var (playlistInfo, _) = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
 
                 if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
                 {
                     var playlistName = nameElement.GetString() ?? "";
                     _logger.LogInformation(
-                        "✓ MATCHED! Intercepting Spotify playlist: {PlaylistName} (ID: {PlaylistId})",
+                        "Intercepting Spotify playlist: {PlaylistName} (ID: {PlaylistId})",
                         playlistName, playlistId);
                     return await GetSpotifyPlaylistTracksAsync(playlistName, playlistId);
                 }
@@ -154,7 +154,16 @@ public partial class JellyfinController
                 return NotFound();
             }
 
-            var response = await _proxyService.HttpClient.GetAsync(playlist.CoverUrl);
+            if (!OutboundRequestGuard.TryCreateSafeHttpUri(playlist.CoverUrl, out var validatedCoverUri,
+                    out var validationReason) || validatedCoverUri == null)
+            {
+                _logger.LogWarning("Blocked playlist image URL fetch for {PlaylistId}: {Reason}",
+                    playlistId, validationReason);
+                return NotFound();
+            }
+
+            var coverUri = validatedCoverUri!;
+            var response = await _proxyService.HttpClient.GetAsync(coverUri);
             if (!response.IsSuccessStatusCode)
             {
                 return NotFound();

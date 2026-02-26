@@ -32,18 +32,18 @@ public class MusicBrainzService
         _httpClient = httpClientFactory.CreateClient();
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        
+
         _settings = settings.Value;
         _cacheSettings = cacheSettings.Value;
         _cache = cache;
         _logger = logger;
-        
+
         // Set up digest authentication if credentials provided
         if (!string.IsNullOrEmpty(_settings.Username) && !string.IsNullOrEmpty(_settings.Password))
         {
             var credentials = Convert.ToBase64String(
                 Encoding.ASCII.GetBytes($"{_settings.Username}:{_settings.Password}"));
-            _httpClient.DefaultRequestHeaders.Authorization = 
+            _httpClient.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Basic", credentials);
         }
     }
@@ -59,7 +59,7 @@ public class MusicBrainzService
         }
 
         // Check cache first
-        var cacheKey = $"musicbrainz:isrc:{isrc}";
+        var cacheKey = CacheKeyBuilder.BuildMusicBrainzIsrcKey(isrc);
         var cached = await _cache.GetAsync<MusicBrainzRecording>(cacheKey);
         if (cached != null)
         {
@@ -75,7 +75,7 @@ public class MusicBrainzService
             _logger.LogDebug("MusicBrainz ISRC lookup: {Url}", url);
 
             var response = await _httpClient.GetAsync(url);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("MusicBrainz ISRC lookup failed: {StatusCode}", response.StatusCode);
@@ -121,7 +121,7 @@ public class MusicBrainzService
         }
 
         // Check cache first
-        var cacheKey = $"musicbrainz:search:{title.ToLowerInvariant()}:{artist.ToLowerInvariant()}:{limit}";
+        var cacheKey = CacheKeyBuilder.BuildMusicBrainzSearchKey(title, artist, limit);
         var cached = await _cache.GetAsync<List<MusicBrainzRecording>>(cacheKey);
         if (cached != null)
         {
@@ -138,11 +138,11 @@ public class MusicBrainzService
             var encodedQuery = Uri.EscapeDataString(query);
             // Note: Search API doesn't support inc=genres, only returns basic info + MBIDs
             var url = $"{_settings.BaseUrl}/recording?query={encodedQuery}&fmt=json&limit={limit}";
-            
+
             _logger.LogDebug("MusicBrainz search: {Url}", url);
 
             var response = await _httpClient.GetAsync(url);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("MusicBrainz search failed: {StatusCode}", response.StatusCode);
@@ -172,7 +172,7 @@ public class MusicBrainzService
             return new List<MusicBrainzRecording>();
         }
     }
-    
+
     /// <summary>
     /// Looks up a recording by MBID to get full details including genres.
     /// </summary>
@@ -184,7 +184,7 @@ public class MusicBrainzService
         }
 
         // Check cache first
-        var cacheKey = $"musicbrainz:mbid:{mbid}";
+        var cacheKey = CacheKeyBuilder.BuildMusicBrainzMbidKey(mbid);
         var cached = await _cache.GetAsync<MusicBrainzRecording>(cacheKey);
         if (cached != null)
         {
@@ -200,7 +200,7 @@ public class MusicBrainzService
             _logger.LogDebug("MusicBrainz MBID lookup: {Url}", url);
 
             var response = await _httpClient.GetAsync(url);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("MusicBrainz MBID lookup failed: {StatusCode}", response.StatusCode);
@@ -231,7 +231,7 @@ public class MusicBrainzService
             return null;
         }
     }
-    
+
     /// <summary>
     /// Enriches a song with genre information from MusicBrainz.
     /// First tries ISRC lookup, then falls back to title/artist search + MBID lookup.
@@ -256,7 +256,7 @@ public class MusicBrainzService
         {
             var recordings = await SearchRecordingsAsync(title, artist, limit: 1);
             var searchResult = recordings.FirstOrDefault();
-            
+
             // If we found a recording from search, do a full lookup by MBID to get genres
             if (searchResult != null && !string.IsNullOrEmpty(searchResult.Id))
             {
@@ -271,7 +271,7 @@ public class MusicBrainzService
 
         // Extract genres (prioritize official genres over tags)
         var genres = new List<string>();
-        
+
         if (recording.Genres != null && recording.Genres.Count > 0)
         {
             // Get top genres by vote count
@@ -338,7 +338,7 @@ public class MusicBrainzSearchResponse
 {
     [JsonPropertyName("recordings")]
     public List<MusicBrainzRecording>? Recordings { get; set; }
-    
+
     [JsonPropertyName("count")]
     public int Count { get; set; }
 }
@@ -350,25 +350,25 @@ public class MusicBrainzRecording
 {
     [JsonPropertyName("id")]
     public string? Id { get; set; }
-    
+
     [JsonPropertyName("title")]
     public string? Title { get; set; }
-    
+
     [JsonPropertyName("length")]
     public int? Length { get; set; } // in milliseconds
-    
+
     [JsonPropertyName("artist-credit")]
     public List<MusicBrainzArtistCredit>? ArtistCredit { get; set; }
-    
+
     [JsonPropertyName("releases")]
     public List<MusicBrainzRelease>? Releases { get; set; }
-    
+
     [JsonPropertyName("isrcs")]
     public List<string>? Isrcs { get; set; }
-    
+
     [JsonPropertyName("genres")]
     public List<MusicBrainzGenre>? Genres { get; set; }
-    
+
     [JsonPropertyName("tags")]
     public List<MusicBrainzTag>? Tags { get; set; }
 }
@@ -380,7 +380,7 @@ public class MusicBrainzArtistCredit
 {
     [JsonPropertyName("name")]
     public string? Name { get; set; }
-    
+
     [JsonPropertyName("artist")]
     public MusicBrainzArtist? Artist { get; set; }
 }
@@ -392,7 +392,7 @@ public class MusicBrainzArtist
 {
     [JsonPropertyName("id")]
     public string? Id { get; set; }
-    
+
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 }
@@ -404,10 +404,10 @@ public class MusicBrainzRelease
 {
     [JsonPropertyName("id")]
     public string? Id { get; set; }
-    
+
     [JsonPropertyName("title")]
     public string? Title { get; set; }
-    
+
     [JsonPropertyName("date")]
     public string? Date { get; set; }
 }
@@ -419,10 +419,10 @@ public class MusicBrainzGenre
 {
     [JsonPropertyName("id")]
     public string? Id { get; set; }
-    
+
     [JsonPropertyName("name")]
     public string? Name { get; set; }
-    
+
     [JsonPropertyName("count")]
     public int Count { get; set; }
 }
@@ -434,7 +434,7 @@ public class MusicBrainzTag
 {
     [JsonPropertyName("name")]
     public string? Name { get; set; }
-    
+
     [JsonPropertyName("count")]
     public int Count { get; set; }
 }

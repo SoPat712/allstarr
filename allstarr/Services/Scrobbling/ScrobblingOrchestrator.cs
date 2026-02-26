@@ -73,21 +73,41 @@ public class ScrobblingOrchestrator
     /// <summary>
     /// Handles playback progress - checks if track should be scrobbled.
     /// </summary>
-    public async Task OnPlaybackProgressAsync(string deviceId, string artist, string title, int positionSeconds)
+    public async Task OnPlaybackProgressAsync(string deviceId, ScrobbleTrack track, int positionSeconds)
     {
         if (!_settings.Enabled)
             return;
         
-        // Find the session for this track
-        var session = _sessions.Values.FirstOrDefault(s => 
-            s.DeviceId == deviceId && 
-            s.Track.Artist == artist && 
-            s.Track.Title == title);
+        // Find the session for this track.
+        // If we never saw a start event (client skipped it or metadata failed earlier),
+        // recover by creating a session from the first progress event.
+        var session = FindSession(deviceId, track.Artist, track.Title);
         
         if (session == null)
         {
-            _logger.LogDebug("No active session found for progress update: {Artist} - {Track}", artist, title);
-            return;
+            var inferredStartTime = DateTimeOffset.UtcNow.AddSeconds(-Math.Max(positionSeconds, 0)).ToUnixTimeSeconds();
+            var recoveredTrack = track with { Timestamp = inferredStartTime };
+
+            var sessionId = $"{deviceId}:{track.Artist}:{track.Title}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+            session = new PlaybackSession
+            {
+                SessionId = sessionId,
+                DeviceId = deviceId,
+                Track = recoveredTrack,
+                StartTime = DateTime.UtcNow,
+                LastPositionSeconds = 0,
+                LastActivity = DateTime.UtcNow
+            };
+
+            _sessions[sessionId] = session;
+
+            _logger.LogInformation(
+                "Recovered missing scrobble session from progress: {Artist} - {Track} (position: {Position}s)",
+                track.Artist,
+                track.Title,
+                positionSeconds);
+
+            await SendNowPlayingAsync(session);
         }
         
         session.LastPositionSeconds = positionSeconds;
@@ -97,7 +117,7 @@ public class ScrobblingOrchestrator
         if (!session.Scrobbled && session.ShouldScrobble())
         {
             _logger.LogDebug("✓ Scrobble threshold reached for: {Artist} - {Track} (position: {Position}s)", 
-                artist, title, positionSeconds);
+                track.Artist, track.Title, positionSeconds);
             await ScrobbleAsync(session);
         }
     }
@@ -111,10 +131,7 @@ public class ScrobblingOrchestrator
             return;
         
         // Find and remove the session
-        var session = _sessions.Values.FirstOrDefault(s => 
-            s.DeviceId == deviceId && 
-            s.Track.Artist == artist && 
-            s.Track.Title == title);
+        var session = FindSession(deviceId, artist, title);
         
         if (session == null)
         {
@@ -241,13 +258,13 @@ public class ScrobblingOrchestrator
                         {
                             _logger.LogInformation("✓ Scrobbled to {Service}: {Artist} - {Track}", 
                                 service.ServiceName, session.Track.Artist, session.Track.Title);
-                            return; // Success, exit retry loop - prevents double scrobbling
+                            return true; // Success, exit retry loop - prevents double scrobbling
                         }
                         else if (result.Ignored)
                         {
                             _logger.LogDebug("⊘ Scrobble skipped by {Service}: {Reason}", 
                                 service.ServiceName, result.IgnoredReason);
-                            return; // Ignored, don't retry
+                            return true; // Ignored, don't retry
                         }
                         else if (result.ShouldRetry && attempt < maxRetries - 1)
                         {
@@ -259,7 +276,7 @@ public class ScrobblingOrchestrator
                         {
                             _logger.LogError("❌ Scrobble failed for {Service}: {Error} - No more retries", 
                                 service.ServiceName, result.ErrorMessage);
-                            return; // Don't retry or max retries reached
+                            return false; // Don't retry or max retries reached
                         }
                     }
                     catch (Exception ex)
@@ -274,14 +291,38 @@ public class ScrobblingOrchestrator
                         {
                             _logger.LogError(ex, "❌ Error scrobbling to {Service} after {Max} attempts", 
                                 service.ServiceName, maxRetries);
+                            return false;
                         }
                     }
                 }
+
+                return false;
             });
         
-        await Task.WhenAll(tasks);
-        session.Scrobbled = true;
-        _logger.LogDebug("Marked session as scrobbled: {SessionId}", session.SessionId);
+        var outcomes = await Task.WhenAll(tasks);
+        if (outcomes.Any(s => s))
+        {
+            session.Scrobbled = true;
+            _logger.LogDebug("Marked session as scrobbled: {SessionId}", session.SessionId);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Scrobble failed for all enabled services: {Artist} - {Track}. Will retry on next progress/stop.",
+                session.Track.Artist,
+                session.Track.Title);
+        }
+    }
+
+    private PlaybackSession? FindSession(string deviceId, string artist, string title)
+    {
+        return _sessions.Values
+            .Where(s =>
+                s.DeviceId == deviceId &&
+                string.Equals(s.Track.Artist, artist, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.Track.Title, title, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(s => s.StartTime)
+            .FirstOrDefault();
     }
     
     /// <summary>

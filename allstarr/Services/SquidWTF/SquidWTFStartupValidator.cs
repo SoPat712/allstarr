@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
@@ -13,24 +12,29 @@ namespace allstarr.Services.SquidWTF;
 public class SquidWTFStartupValidator : BaseStartupValidator
 {
     private readonly SquidWTFSettings _settings;
-    private readonly RoundRobinFallbackHelper _fallbackHelper;
+    private readonly List<string> _apiUrls;
+    private readonly List<string> _streamingUrls;
+    private readonly RoundRobinFallbackHelper _apiFallbackHelper;
+    private readonly RoundRobinFallbackHelper _streamingFallbackHelper;
     private readonly EndpointBenchmarkService _benchmarkService;
-    private readonly ILogger<SquidWTFStartupValidator> _logger;
 
     public override string ServiceName => "SquidWTF";
 
     public SquidWTFStartupValidator(
         IOptions<SquidWTFSettings> settings, 
         HttpClient httpClient, 
-        List<string> apiUrls, 
+        List<string> apiUrls,
+        List<string> streamingUrls,
         EndpointBenchmarkService benchmarkService,
         ILogger<SquidWTFStartupValidator> logger)
         : base(httpClient)
     {
         _settings = settings.Value;
-        _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
+        _apiUrls = apiUrls;
+        _streamingUrls = streamingUrls;
+        _apiFallbackHelper = new RoundRobinFallbackHelper(_apiUrls, logger, "SquidWTF API");
+        _streamingFallbackHelper = new RoundRobinFallbackHelper(_streamingUrls, logger, "SquidWTF Streaming");
         _benchmarkService = benchmarkService;
-        _logger = logger;
     }
     
 	
@@ -50,74 +54,14 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 
         WriteStatus("SquidWTF Quality", quality, ConsoleColor.Cyan);
 
-        // Benchmark all endpoints to determine fastest
-        var apiUrls = _fallbackHelper.EndpointCount > 0 
-            ? Enumerable.Range(0, _fallbackHelper.EndpointCount).Select(_ => "").ToList() // Placeholder, we'll get actual URLs from fallback helper
-            : new List<string>();
+        WriteStatus("SquidWTF API Endpoints", _apiUrls.Count.ToString(), ConsoleColor.Cyan);
+        WriteStatus("SquidWTF Streaming Endpoints", _streamingUrls.Count.ToString(), ConsoleColor.Cyan);
 
-        // Get the actual API URLs by reflection (not ideal, but works for now)
-        var fallbackHelperType = _fallbackHelper.GetType();
-        var apiUrlsField = fallbackHelperType.GetField("_apiUrls", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (apiUrlsField != null)
-        {
-            apiUrls = (List<string>)apiUrlsField.GetValue(_fallbackHelper)!;
-        }
+        await BenchmarkEndpointPoolAsync("API", _apiUrls, _apiFallbackHelper, cancellationToken);
+        await BenchmarkEndpointPoolAsync("streaming", _streamingUrls, _streamingFallbackHelper, cancellationToken);
 
-        if (apiUrls.Count > 1)
-        {
-            WriteStatus("Benchmarking Endpoints", $"{apiUrls.Count} endpoints", ConsoleColor.Cyan);
-            
-            var orderedEndpoints = await _benchmarkService.BenchmarkEndpointsAsync(
-                apiUrls,
-                async (endpoint, ct) =>
-                {
-                    try
-                    {
-                        // 5 second timeout per ping - mark slow endpoints as failed
-                        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-                        
-                        var response = await _httpClient.GetAsync(endpoint, timeoutCts.Token);
-                        return response.IsSuccessStatusCode;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                },
-                pingCount: 5,
-                cancellationToken);
-
-            if (orderedEndpoints.Count > 0)
-            {
-                _fallbackHelper.SetEndpointOrder(orderedEndpoints);
-                
-                // Show top 5 endpoints with their metrics
-                var topEndpoints = orderedEndpoints.Take(5).ToList();
-                WriteDetail($"Fastest endpoint: {topEndpoints.First()}");
-                
-                if (topEndpoints.Count > 1)
-                {
-                    WriteDetail("Top 5 endpoints by average latency:");
-                    for (int i = 0; i < topEndpoints.Count; i++)
-                    {
-                        var endpoint = topEndpoints[i];
-                        var metrics = _benchmarkService.GetMetrics(endpoint);
-                        if (metrics != null)
-                        {
-                            WriteDetail($"  {i + 1}. {endpoint} - {metrics.AverageResponseMs}ms avg ({metrics.SuccessRate:P0} success)");
-                        }
-                        else
-                        {
-                            WriteDetail($"  {i + 1}. {endpoint}");
-                        }
-                    }
-                }
-            }
-        }
-
-        // Test connectivity with fallback
-        var result = await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        // Validate API endpoints and search functionality.
+        var apiResult = await _apiFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
@@ -135,9 +79,97 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             {
                 throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
             }
-        }, ValidationResult.Failure("-1", "All SquidWTF endpoints failed"));
+        }, ValidationResult.Failure("-1", "All SquidWTF API endpoints failed"));
 
-        return result;
+        if (!apiResult.IsValid)
+        {
+            return apiResult;
+        }
+
+        // Validate streaming endpoints independently to avoid API-only endpoints for streaming.
+        var streamingResult = await _streamingFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        {
+            var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                WriteStatus("SquidWTF Streaming", $"REACHABLE ({baseUrl})", ConsoleColor.Green);
+                return ValidationResult.Success("SquidWTF streaming endpoint validation completed");
+            }
+
+            throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
+        }, ValidationResult.Failure("-2", "All SquidWTF streaming endpoints failed"));
+
+        if (!streamingResult.IsValid)
+        {
+            return streamingResult;
+        }
+
+        return ValidationResult.Success("SquidWTF API and streaming validation completed");
+    }
+
+    private async Task BenchmarkEndpointPoolAsync(
+        string poolName,
+        List<string> endpoints,
+        RoundRobinFallbackHelper fallbackHelper,
+        CancellationToken cancellationToken)
+    {
+        if (endpoints.Count <= 1)
+        {
+            return;
+        }
+
+        WriteStatus($"Benchmarking {poolName} endpoints", $"{endpoints.Count} endpoints", ConsoleColor.Cyan);
+
+        var orderedEndpoints = await _benchmarkService.BenchmarkEndpointsAsync(
+            endpoints,
+            async (endpoint, ct) =>
+            {
+                try
+                {
+                    // 5 second timeout per ping - mark slow endpoints as failed.
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+                    var response = await _httpClient.GetAsync(endpoint, timeoutCts.Token);
+                    return response.IsSuccessStatusCode;
+                }
+                catch
+                {
+                    return false;
+                }
+            },
+            pingCount: 5,
+            cancellationToken);
+
+        if (orderedEndpoints.Count == 0)
+        {
+            WriteDetail($"No healthy {poolName} endpoints detected during benchmark");
+            return;
+        }
+
+        fallbackHelper.SetEndpointOrder(orderedEndpoints);
+
+        var topEndpoints = orderedEndpoints.Take(5).ToList();
+        WriteDetail($"Fastest {poolName} endpoint: {topEndpoints.First()}");
+
+        if (topEndpoints.Count > 1)
+        {
+            WriteDetail($"Top {topEndpoints.Count} {poolName} endpoints by average latency:");
+            for (int i = 0; i < topEndpoints.Count; i++)
+            {
+                var endpoint = topEndpoints[i];
+                var metrics = _benchmarkService.GetMetrics(endpoint);
+                if (metrics != null)
+                {
+                    WriteDetail($"  {i + 1}. {endpoint} - {metrics.AverageResponseMs}ms avg ({metrics.SuccessRate:P0} success)");
+                }
+                else
+                {
+                    WriteDetail($"  {i + 1}. {endpoint}");
+                }
+            }
+        }
     }
 
     private async Task ValidateSearchFunctionality(string baseUrl, CancellationToken cancellationToken)

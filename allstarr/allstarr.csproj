@@ -5,9 +5,15 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RootNamespace>allstarr</RootNamespace>
-        <Version>1.1.1</Version>
-        <AssemblyVersion>1.1.1.0</AssemblyVersion>
-        <FileVersion>1.1.1.0</FileVersion>
+
+        <!-- Keep build/package version in sync with AppVersion.cs -->
+        <AppVersionFile>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'AppVersion.cs'))</AppVersionFile>
+        <AppVersionText>$([System.IO.File]::ReadAllText('$(AppVersionFile)'))</AppVersionText>
+        <AppVersion>$([System.Text.RegularExpressions.Regex]::Match('$(AppVersionText)', 'Version\s*=\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"').Groups[1].Value)</AppVersion>
+
+        <Version>$(AppVersion)</Version>
+        <AssemblyVersion>$(AppVersion).0</AssemblyVersion>
+        <FileVersion>$(AppVersion).0</FileVersion>
     </PropertyGroup>
 
     <ItemGroup>

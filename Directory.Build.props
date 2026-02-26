@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!--
+      Default NuGet vulnerability audit off to avoid NU1900 in offline/local environments.
+      Re-enable explicitly with: dotnet test -p:NuGetAudit=true
+    -->
+    <NuGetAudit Condition="'$(NuGetAudit)' == ''">false</NuGetAudit>
+  </PropertyGroup>
+</Project>

@@ -115,7 +115,7 @@ public partial class JellyfinController
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during authentication");
-            return StatusCode(500, new { error = $"Authentication error: {ex.Message}" });
+            return StatusCode(500, new { error = "Authentication error" });
         }
     }
 

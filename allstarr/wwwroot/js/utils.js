@@ -7,7 +7,13 @@ export function escapeHtml(text) {
 }
 
 export function escapeJs(text) {
-    return text.replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    return String(text ?? "")
+        .replace(/\\/g, "\\\\")
+        .replace(/&/g, "&amp;")
+        .replace(/'/g, "\\'")
+        .replace(/"/g, "&quot;")
+        .replace(/\r/g, "\\r")
+        .replace(/\n/g, "\\n");
 }
 
 export function showToast(message, type = 'success', duration = 3000) {

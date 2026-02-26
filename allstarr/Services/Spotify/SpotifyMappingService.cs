@@ -12,8 +12,6 @@ public class SpotifyMappingService
 {
     private readonly RedisCacheService _cache;
     private readonly ILogger<SpotifyMappingService> _logger;
-    private const string MappingKeyPrefix = "spotify:global-map:";
-    private const string AllMappingsKey = "spotify:global-map:all-ids";
 
     public SpotifyMappingService(
         RedisCacheService cache,
@@ -28,14 +26,14 @@ public class SpotifyMappingService
     /// </summary>
     public async Task<SpotifyTrackMapping?> GetMappingAsync(string spotifyId)
     {
-        var key = $"{MappingKeyPrefix}{spotifyId}";
+        var key = CacheKeyBuilder.BuildSpotifyGlobalMappingKey(spotifyId);
         var mapping = await _cache.GetAsync<SpotifyTrackMapping>(key);
-        
+
         if (mapping != null)
         {
             _logger.LogDebug("Found mapping for Spotify ID {SpotifyId}: {TargetType}", spotifyId, mapping.TargetType);
         }
-        
+
         return mapping;
     }
 
@@ -59,69 +57,69 @@ public class SpotifyMappingService
             return false;
         }
 
-        if (mapping.TargetType == "external" && 
+        if (mapping.TargetType == "external" &&
             (string.IsNullOrEmpty(mapping.ExternalProvider) || string.IsNullOrEmpty(mapping.ExternalId)))
         {
             _logger.LogWarning("Cannot save external mapping: ExternalProvider and ExternalId are required");
             return false;
         }
 
-        var key = $"{MappingKeyPrefix}{mapping.SpotifyId}";
-        
+        var key = CacheKeyBuilder.BuildSpotifyGlobalMappingKey(mapping.SpotifyId);
+
         // Check if mapping already exists
         var existingMapping = await GetMappingAsync(mapping.SpotifyId);
-        
+
         // RULE 1: Never overwrite manual mappings with auto mappings
-        if (existingMapping != null && 
-            existingMapping.Source == "manual" && 
+        if (existingMapping != null &&
+            existingMapping.Source == "manual" &&
             mapping.Source == "auto")
         {
             _logger.LogDebug("Skipping auto mapping for {SpotifyId} - manual mapping exists", mapping.SpotifyId);
             return false;
         }
-        
+
         // RULE 2: Local always wins over external (even if existing is manual external)
-        if (existingMapping != null && 
-            existingMapping.TargetType == "external" && 
+        if (existingMapping != null &&
+            existingMapping.TargetType == "external" &&
             mapping.TargetType == "local")
         {
             _logger.LogInformation("🎉 UPGRADING: External → Local for {SpotifyId}", mapping.SpotifyId);
             // Allow the upgrade to proceed
         }
-        
+
         // RULE 3: Don't downgrade local to external
-        if (existingMapping != null && 
-            existingMapping.TargetType == "local" && 
+        if (existingMapping != null &&
+            existingMapping.TargetType == "local" &&
             mapping.TargetType == "external")
         {
             _logger.LogDebug("Skipping external mapping for {SpotifyId} - local mapping exists", mapping.SpotifyId);
             return false;
         }
-        
+
         // Set timestamps
         if (mapping.CreatedAt == default)
         {
             mapping.CreatedAt = DateTime.UtcNow;
         }
-        
+
         // Preserve CreatedAt from existing mapping
         if (existingMapping != null)
         {
             mapping.CreatedAt = existingMapping.CreatedAt;
         }
-        
+
         // Save mapping (permanent - no TTL)
         var success = await _cache.SetAsync(key, mapping, expiry: null);
-        
+
         if (success)
         {
             // Add to set of all mapping IDs for enumeration
             await AddToAllMappingsSetAsync(mapping.SpotifyId);
-            
+
             // Invalidate ALL playlist stats caches since this mapping could affect any playlist
             // This ensures the stats are recalculated on next request
             await InvalidateAllPlaylistStatsCachesAsync();
-            
+
             _logger.LogInformation(
                 "Saved {Source} mapping: Spotify {SpotifyId} → {TargetType} {TargetId}",
                 mapping.Source,
@@ -130,7 +128,7 @@ public class SpotifyMappingService
                 mapping.TargetType == "local" ? mapping.LocalId : $"{mapping.ExternalProvider}:{mapping.ExternalId}"
             );
         }
-        
+
         return success;
     }
 
@@ -210,15 +208,15 @@ public class SpotifyMappingService
     /// </summary>
     public async Task<bool> DeleteMappingAsync(string spotifyId)
     {
-        var key = $"{MappingKeyPrefix}{spotifyId}";
+        var key = CacheKeyBuilder.BuildSpotifyGlobalMappingKey(spotifyId);
         var success = await _cache.DeleteAsync(key);
-        
+
         if (success)
         {
             await RemoveFromAllMappingsSetAsync(spotifyId);
             _logger.LogInformation("Deleted mapping for Spotify ID {SpotifyId}", spotifyId);
         }
-        
+
         return success;
     }
 
@@ -227,7 +225,7 @@ public class SpotifyMappingService
     /// </summary>
     public async Task<List<string>> GetAllMappingIdsAsync()
     {
-        var json = await _cache.GetStringAsync(AllMappingsKey);
+        var json = await _cache.GetStringAsync(CacheKeyBuilder.BuildSpotifyGlobalMappingsIndexKey());
         if (string.IsNullOrEmpty(json))
         {
             return new List<string>();
@@ -251,9 +249,9 @@ public class SpotifyMappingService
     {
         var allIds = await GetAllMappingIdsAsync();
         var pagedIds = allIds.Skip(skip).Take(take).ToList();
-        
+
         var mappings = new List<SpotifyTrackMapping>();
-        
+
         foreach (var spotifyId in pagedIds)
         {
             var mapping = await GetMappingAsync(spotifyId);
@@ -262,7 +260,7 @@ public class SpotifyMappingService
                 mappings.Add(mapping);
             }
         }
-        
+
         return mappings;
     }
 
@@ -288,7 +286,7 @@ public class SpotifyMappingService
 
         // Sample first 1000 to get stats (avoid loading all mappings)
         var sampleIds = allIds.Take(1000).ToList();
-        
+
         foreach (var spotifyId in sampleIds)
         {
             var mapping = await GetMappingAsync(spotifyId);
@@ -330,23 +328,23 @@ public class SpotifyMappingService
     private async Task AddToAllMappingsSetAsync(string spotifyId)
     {
         var allIds = await GetAllMappingIdsAsync();
-        
+
         if (!allIds.Contains(spotifyId))
         {
             allIds.Add(spotifyId);
             var json = JsonSerializer.Serialize(allIds);
-            await _cache.SetStringAsync(AllMappingsKey, json, expiry: null);
+            await _cache.SetStringAsync(CacheKeyBuilder.BuildSpotifyGlobalMappingsIndexKey(), json, expiry: null);
         }
     }
 
     private async Task RemoveFromAllMappingsSetAsync(string spotifyId)
     {
         var allIds = await GetAllMappingIdsAsync();
-        
+
         if (allIds.Remove(spotifyId))
         {
             var json = JsonSerializer.Serialize(allIds);
-            await _cache.SetStringAsync(AllMappingsKey, json, expiry: null);
+            await _cache.SetStringAsync(CacheKeyBuilder.BuildSpotifyGlobalMappingsIndexKey(), json, expiry: null);
         }
     }
 
@@ -358,14 +356,14 @@ public class SpotifyMappingService
     {
         try
         {
-            // Delete all keys matching the pattern "spotify:playlist:stats:*"
+            // Delete all keys matching the pattern from CacheKeyBuilder (currently not enumerated).
             // Note: This is a simple implementation that deletes known patterns
             // In production, you might want to track playlist names or use Redis SCAN
-            
+
             // For now, we'll just log that stats should be recalculated
             // The stats will be recalculated on next request since they check global mappings
             _logger.LogDebug("Mapping changed - playlist stats will be recalculated on next request");
-            
+
             // Optionally: Delete the admin playlist summary cache to force immediate refresh
             var summaryFile = "/app/cache/admin_playlists_summary.json";
             if (File.Exists(summaryFile))

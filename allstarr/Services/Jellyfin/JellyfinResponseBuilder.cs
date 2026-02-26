@@ -16,7 +16,7 @@ public class JellyfinResponseBuilder
     public IActionResult CreateItemsResponse(List<Song> songs)
     {
         var items = songs.Select(ConvertSongToJellyfinItem).ToList();
-        
+
         return CreateJsonResponse(new
         {
             Items = items,
@@ -31,7 +31,7 @@ public class JellyfinResponseBuilder
     public IActionResult CreateAlbumsResponse(List<Album> albums)
     {
         var items = albums.Select(ConvertAlbumToJellyfinItem).ToList();
-        
+
         return CreateJsonResponse(new
         {
             Items = items,
@@ -46,7 +46,7 @@ public class JellyfinResponseBuilder
     public IActionResult CreateArtistsResponse(List<Artist> artists)
     {
         var items = artists.Select(ConvertArtistToJellyfinItem).ToList();
-        
+
         return CreateJsonResponse(new
         {
             Items = items,
@@ -69,13 +69,13 @@ public class JellyfinResponseBuilder
     public IActionResult CreateAlbumResponse(Album album)
     {
         var albumItem = ConvertAlbumToJellyfinItem(album);
-        
+
         // For album detail, include child items (songs)
         if (album.Songs.Count > 0)
         {
             albumItem["Children"] = album.Songs.Select(ConvertSongToJellyfinItem).ToList();
         }
-        
+
         return CreateJsonResponse(albumItem);
     }
 
@@ -86,7 +86,7 @@ public class JellyfinResponseBuilder
     {
         var artistItem = ConvertArtistToJellyfinItem(artist);
         artistItem["Albums"] = albums.Select(ConvertAlbumToJellyfinItem).ToList();
-        
+
         return CreateJsonResponse(artistItem);
     }
 
@@ -97,8 +97,8 @@ public class JellyfinResponseBuilder
         {
             var totalDuration = tracks.Sum(s => s.Duration ?? 0);
 
-            var curatorName = !string.IsNullOrEmpty(playlist.CuratorName) 
-                ? playlist.CuratorName 
+            var curatorName = !string.IsNullOrEmpty(playlist.CuratorName)
+                ? playlist.CuratorName
                 : playlist.Provider;
 
             // Create artist items for the curator
@@ -118,13 +118,13 @@ public class JellyfinResponseBuilder
                 .Select(s => s.Genre!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            
+
             // If no genres found, fallback to "Playlist"
             if (genres.Count == 0)
             {
                 genres.Add("Playlist");
             }
-            
+
             var genreItems = genres.Select(g => new Dictionary<string, object>
             {
                 ["Name"] = g,
@@ -202,7 +202,7 @@ public class JellyfinResponseBuilder
         List<Artist> artists)
     {
         var searchHints = new List<Dictionary<string, object?>>();
-        
+
         // Add artists first
         foreach (var artist in artists)
         {
@@ -219,7 +219,7 @@ public class JellyfinResponseBuilder
                 }
             });
         }
-        
+
         // Add albums
         foreach (var album in albums)
         {
@@ -238,7 +238,7 @@ public class JellyfinResponseBuilder
                 }
             });
         }
-        
+
         // Add songs
         foreach (var song in songs)
         {
@@ -257,7 +257,7 @@ public class JellyfinResponseBuilder
                 }
             });
         }
-        
+
         return CreateJsonResponse(new
         {
             SearchHints = searchHints,
@@ -299,28 +299,28 @@ public class JellyfinResponseBuilder
         var artistName = song.Artist;
         var albumName = song.Album;
         var artistNames = song.Artists.ToList();
-        
+
         if (!song.IsLocal)
         {
             songTitle = $"{song.Title} [S]";
-            
+
             // Also add [S] to artist and album names for consistency
             if (!string.IsNullOrEmpty(artistName) && !artistName.EndsWith(" [S]"))
             {
                 artistName = $"{artistName} [S]";
             }
-            
+
             if (!string.IsNullOrEmpty(albumName) && !albumName.EndsWith(" [S]"))
             {
                 albumName = $"{albumName} [S]";
             }
-            
+
             // Add [S] to all artist names in the list
-            artistNames = artistNames.Select(a => 
+            artistNames = artistNames.Select(a =>
                 !string.IsNullOrEmpty(a) && !a.EndsWith(" [S]") ? $"{a} [S]" : a
             ).ToList();
         }
-        
+
         var item = new Dictionary<string, object?>
         {
             ["Name"] = songTitle,
@@ -339,8 +339,8 @@ public class JellyfinResponseBuilder
             ["Type"] = "Audio",
             ["ChannelId"] = (object?)null,
             ["ParentId"] = song.AlbumId,
-            ["Genres"] = !string.IsNullOrEmpty(song.Genre) 
-                ? new[] { song.Genre } 
+            ["Genres"] = !string.IsNullOrEmpty(song.Genre)
+                ? new[] { song.Genre }
                 : new string[0],
             ["GenreItems"] = !string.IsNullOrEmpty(song.Genre)
                 ? new[]
@@ -412,17 +412,19 @@ public class JellyfinResponseBuilder
         // Add provider IDs for external content
         if (!song.IsLocal && !string.IsNullOrEmpty(song.ExternalProvider))
         {
+            var supportsTranscoding = !ShouldDisableTranscoding(song.ExternalProvider);
+
             item["ProviderIds"] = new Dictionary<string, string>
             {
                 [song.ExternalProvider] = song.ExternalId ?? ""
             };
-            
+
             if (!string.IsNullOrEmpty(song.Isrc))
             {
                 var providerIds = (Dictionary<string, string>)item["ProviderIds"]!;
                 providerIds["ISRC"] = song.Isrc;
             }
-            
+
             // Add MediaSources with complete structure matching real Jellyfin
             item["MediaSources"] = new[]
             {
@@ -442,7 +444,7 @@ public class JellyfinResponseBuilder
                     ["IgnoreDts"] = false,
                     ["IgnoreIndex"] = false,
                     ["GenPtsInput"] = false,
-                    ["SupportsTranscoding"] = true,
+                    ["SupportsTranscoding"] = supportsTranscoding,
                     ["SupportsDirectStream"] = true,
                     ["SupportsDirectPlay"] = true,
                     ["IsInfiniteStream"] = false,
@@ -500,6 +502,13 @@ public class JellyfinResponseBuilder
         return item;
     }
 
+    private static bool ShouldDisableTranscoding(string provider)
+    {
+        return provider.Equals("deezer", StringComparison.OrdinalIgnoreCase) ||
+               provider.Equals("qobuz", StringComparison.OrdinalIgnoreCase) ||
+               provider.Equals("squidwtf", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Converts an Album domain model to a Jellyfin item.
     /// </summary>
@@ -511,7 +520,7 @@ public class JellyfinResponseBuilder
         {
             albumName = $"{album.Title} [S]";
         }
-        
+
         var item = new Dictionary<string, object?>
         {
             ["Name"] = albumName,
@@ -519,8 +528,8 @@ public class JellyfinResponseBuilder
             ["Id"] = album.Id,
             ["PremiereDate"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : null,
             ["ChannelId"] = (object?)null,
-            ["Genres"] = !string.IsNullOrEmpty(album.Genre) 
-                ? new[] { album.Genre } 
+            ["Genres"] = !string.IsNullOrEmpty(album.Genre)
+                ? new[] { album.Genre }
                 : new string[0],
             ["RunTimeTicks"] = 0, // Could calculate from songs
             ["ProductionYear"] = album.Year,
@@ -601,7 +610,7 @@ public class JellyfinResponseBuilder
         {
             artistName = $"{artist.Name} [S]";
         }
-        
+
         var item = new Dictionary<string, object?>
         {
             ["Name"] = artistName,
@@ -671,10 +680,10 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertPlaylistToJellyfinItem(ExternalPlaylist playlist)
     {
-        var curatorName = !string.IsNullOrEmpty(playlist.CuratorName) 
-            ? playlist.CuratorName 
+        var curatorName = !string.IsNullOrEmpty(playlist.CuratorName)
+            ? playlist.CuratorName
             : playlist.Provider;
-        
+
         var item = new Dictionary<string, object?>
         {
             ["Name"] = playlist.Name,
@@ -720,10 +729,10 @@ public class JellyfinResponseBuilder
     }
     public Dictionary<string, object?> ConvertPlaylistToAlbumItem(ExternalPlaylist playlist)
     {
-        var curatorName = !string.IsNullOrEmpty(playlist.CuratorName) 
-            ? playlist.CuratorName 
+        var curatorName = !string.IsNullOrEmpty(playlist.CuratorName)
+            ? playlist.CuratorName
             : playlist.Provider;
-        
+
         var item = new Dictionary<string, object?>
         {
             ["Name"] = $"{playlist.Name} [S/P]",
@@ -776,13 +785,13 @@ public class JellyfinResponseBuilder
                 [playlist.Provider] = playlist.ExternalId
             }
         };
-        
+
         if (playlist.CreatedDate.HasValue)
         {
             item["PremiereDate"] = playlist.CreatedDate.Value.ToString("o");
             item["ProductionYear"] = playlist.CreatedDate.Value.Year;
         }
-        
+
         return item;
     }
 }

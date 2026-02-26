@@ -40,6 +40,113 @@ public class JellyfinAdminController : ControllerBase
         _spotifyImportSettings = spotifyImportSettings.Value;
     }
 
+    private bool TryGetCurrentSession(out AdminAuthSession session)
+    {
+        session = null!;
+        if (HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) &&
+            sessionObj is AdminAuthSession typedSession)
+        {
+            session = typedSession;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool UserIdsEqual(string? left, string? right)
+    {
+        return !string.IsNullOrWhiteSpace(left) &&
+               !string.IsNullOrWhiteSpace(right) &&
+               left.Equals(right, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static SpotifyPlaylistConfig? ResolveScopedLinkedPlaylist(
+        IReadOnlyCollection<SpotifyPlaylistConfig> allLinkedForPlaylist,
+        bool isAdministrator,
+        string? requestedUserId,
+        string? sessionUserId)
+    {
+        if (isAdministrator && string.IsNullOrWhiteSpace(requestedUserId))
+        {
+            return allLinkedForPlaylist.FirstOrDefault();
+        }
+
+        var ownerUserId = requestedUserId ?? sessionUserId;
+
+        // Prefer user-scoped entries, but treat legacy/global entries (without UserId)
+        // as linked for all scopes so old configurations render correctly.
+        return allLinkedForPlaylist.FirstOrDefault(p => UserIdsEqual(p.UserId, ownerUserId))
+               ?? allLinkedForPlaylist.FirstOrDefault(p => string.IsNullOrWhiteSpace(p.UserId));
+    }
+
+    private static bool IsValidCronExpression(string cron)
+    {
+        var cronParts = cron.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        return cronParts.Length == 5;
+    }
+
+    private HttpRequestMessage CreateJellyfinRequestForSession(HttpMethod method, string url, AdminAuthSession session)
+    {
+        if (session.IsAdministrator)
+        {
+            return _helperService.CreateJellyfinRequest(method, url);
+        }
+
+        var request = new HttpRequestMessage(method, url);
+        var authHeader =
+            $"MediaBrowser Client=\"AllstarrAdmin\", Device=\"WebUI\", DeviceId=\"allstarr-admin-webui\", Version=\"{AppVersion.Version}\", Token=\"{session.JellyfinAccessToken}\"";
+        request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
+        request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
+        return request;
+    }
+
+    private async Task<(string? Name, IActionResult? Error)> TryGetJellyfinPlaylistNameAsync(
+        string jellyfinPlaylistId,
+        string userId,
+        AdminAuthSession session)
+    {
+        var playlistUrl = $"{_jellyfinSettings.Url}/Items/{jellyfinPlaylistId}?UserId={Uri.EscapeDataString(userId)}";
+        var playlistRequest = CreateJellyfinRequestForSession(HttpMethod.Get, playlistUrl, session);
+        var playlistResponse = await _jellyfinHttpClient.SendAsync(playlistRequest);
+
+        if (playlistResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return (null, NotFound(new { error = "Jellyfin playlist not found for this user" }));
+        }
+
+        if (playlistResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            return (null, StatusCode(StatusCodes.Status403Forbidden,
+                new { error = "User does not have access to this Jellyfin playlist" }));
+        }
+
+        if (!playlistResponse.IsSuccessStatusCode)
+        {
+            var errorBody = await playlistResponse.Content.ReadAsStringAsync();
+            _logger.LogError(
+                "Failed to resolve Jellyfin playlist {PlaylistId} for user {UserId}: {StatusCode} - {Body}",
+                jellyfinPlaylistId, userId, playlistResponse.StatusCode, errorBody);
+            return (null, StatusCode((int)playlistResponse.StatusCode,
+                new { error = "Failed to fetch Jellyfin playlist details" }));
+        }
+
+        using var playlistDoc = await JsonDocument.ParseAsync(await playlistResponse.Content.ReadAsStreamAsync());
+        var root = playlistDoc.RootElement;
+        var itemType = root.TryGetProperty("Type", out var typeProp) ? typeProp.GetString() : null;
+        if (!string.Equals(itemType, "Playlist", StringComparison.OrdinalIgnoreCase))
+        {
+            return (null, BadRequest(new { error = "Selected Jellyfin item is not a playlist" }));
+        }
+
+        var playlistName = root.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        if (string.IsNullOrWhiteSpace(playlistName))
+        {
+            return (null, BadRequest(new { error = "Jellyfin playlist name is missing" }));
+        }
+
+        return (playlistName.Trim(), null);
+    }
+
     [HttpGet("jellyfin/users")]
     public async Task<IActionResult> GetJellyfinUsers()
     {
@@ -47,44 +154,44 @@ public class JellyfinAdminController : ControllerBase
         {
             return BadRequest(new { error = "Jellyfin URL or API key not configured" });
         }
-        
+
         try
         {
             var url = $"{_jellyfinSettings.Url}/Users";
-            
+
             var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
-            
+
             var response = await _jellyfinHttpClient.SendAsync(request);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
                 _logger.LogError("Failed to fetch Jellyfin users: {StatusCode} - {Body}", response.StatusCode, errorBody);
                 return StatusCode((int)response.StatusCode, new { error = "Failed to fetch users from Jellyfin" });
             }
-            
+
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
-            
+
             var users = new List<object>();
-            
+
             foreach (var user in doc.RootElement.EnumerateArray())
             {
                 var id = user.GetProperty("Id").GetString();
                 var name = user.GetProperty("Name").GetString();
-                
+
                 users.Add(new { id, name });
             }
-            
+
             return Ok(new { users });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching Jellyfin users");
-            return StatusCode(500, new { error = "Failed to fetch users", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to fetch users" });
         }
     }
-    
+
     /// <summary>
     /// Get all Jellyfin libraries (virtual folders)
     /// </summary>
@@ -95,45 +202,45 @@ public class JellyfinAdminController : ControllerBase
         {
             return BadRequest(new { error = "Jellyfin URL or API key not configured" });
         }
-        
+
         try
         {
             var url = $"{_jellyfinSettings.Url}/Library/VirtualFolders";
-            
+
             var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
-            
+
             var response = await _jellyfinHttpClient.SendAsync(request);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
                 _logger.LogError("Failed to fetch Jellyfin libraries: {StatusCode} - {Body}", response.StatusCode, errorBody);
                 return StatusCode((int)response.StatusCode, new { error = "Failed to fetch libraries from Jellyfin" });
             }
-            
+
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
-            
+
             var libraries = new List<object>();
-            
+
             foreach (var lib in doc.RootElement.EnumerateArray())
             {
                 var name = lib.GetProperty("Name").GetString();
                 var itemId = lib.TryGetProperty("ItemId", out var id) ? id.GetString() : null;
                 var collectionType = lib.TryGetProperty("CollectionType", out var ct) ? ct.GetString() : null;
-                
+
                 libraries.Add(new { id = itemId, name, collectionType });
             }
-            
+
             return Ok(new { libraries });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching Jellyfin libraries");
-            return StatusCode(500, new { error = "Failed to fetch libraries", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to fetch libraries" });
         }
     }
-    
+
     /// <summary>
     /// Get all playlists from the user's Spotify account
     /// </summary>
@@ -144,71 +251,94 @@ public class JellyfinAdminController : ControllerBase
         {
             return BadRequest(new { error = "Jellyfin URL or API key not configured" });
         }
-        
+
+        if (!TryGetCurrentSession(out var session))
+        {
+            return Unauthorized(new { error = "Authentication required" });
+        }
+
+        var requestedUserId = string.IsNullOrWhiteSpace(userId) ? null : userId.Trim();
+        if (!session.IsAdministrator)
+        {
+            if (!string.IsNullOrWhiteSpace(requestedUserId) && !UserIdsEqual(requestedUserId, session.UserId))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    new { error = "You can only view your own Jellyfin playlists" });
+            }
+
+            requestedUserId = session.UserId;
+        }
+
         try
         {
-            // Build URL with optional userId filter
             var url = $"{_jellyfinSettings.Url}/Items?IncludeItemTypes=Playlist&Recursive=true&Fields=ProviderIds,ChildCount,RecursiveItemCount,SongCount";
-            
-            if (!string.IsNullOrEmpty(userId))
+            if (!string.IsNullOrWhiteSpace(requestedUserId))
             {
-                url += $"&UserId={userId}";
+                url += $"&UserId={Uri.EscapeDataString(requestedUserId)}";
             }
-            
-            var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
-            
+
+            var request = CreateJellyfinRequestForSession(HttpMethod.Get, url, session);
             var response = await _jellyfinHttpClient.SendAsync(request);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
                 _logger.LogError("Failed to fetch Jellyfin playlists: {StatusCode} - {Body}", response.StatusCode, errorBody);
                 return StatusCode((int)response.StatusCode, new { error = "Failed to fetch playlists from Jellyfin" });
             }
-            
+
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
-            
+
             var playlists = new List<object>();
-            
-            // Read current playlists from .env file for accurate linked status
             var configuredPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
-            
+
             if (doc.RootElement.TryGetProperty("Items", out var items))
             {
                 foreach (var item in items.EnumerateArray())
                 {
                     var id = item.GetProperty("Id").GetString();
                     var name = item.GetProperty("Name").GetString();
-                    
-                    // Try multiple fields for track count - Jellyfin may use different fields
+
                     var childCount = 0;
                     if (item.TryGetProperty("ChildCount", out var cc) && cc.ValueKind == JsonValueKind.Number)
+                    {
                         childCount = cc.GetInt32();
+                    }
                     else if (item.TryGetProperty("SongCount", out var sc) && sc.ValueKind == JsonValueKind.Number)
+                    {
                         childCount = sc.GetInt32();
+                    }
                     else if (item.TryGetProperty("RecursiveItemCount", out var ric) && ric.ValueKind == JsonValueKind.Number)
+                    {
                         childCount = ric.GetInt32();
-                    
-                    // Check if this playlist is configured in allstarr by Jellyfin ID
-                    var configuredPlaylist = configuredPlaylists
-                        .FirstOrDefault(p => p.JellyfinId.Equals(id, StringComparison.OrdinalIgnoreCase));
-                    var isConfigured = configuredPlaylist != null;
-                    var linkedSpotifyId = configuredPlaylist?.Id;
-                    
-                    // Only fetch detailed track stats for configured Spotify playlists
-                    // This avoids expensive queries for large non-Spotify playlists
+                    }
+
+                    var allLinkedForPlaylist = configuredPlaylists
+                        .Where(p => p.JellyfinId.Equals(id, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    var scopedLinkedPlaylist = ResolveScopedLinkedPlaylist(
+                        allLinkedForPlaylist,
+                        session.IsAdministrator,
+                        requestedUserId,
+                        session.UserId);
+
+                    var isConfigured = scopedLinkedPlaylist != null;
+                    var isLinkedByAnotherUser = !isConfigured && allLinkedForPlaylist.Count > 0;
+                    var linkedSpotifyId = scopedLinkedPlaylist?.Id;
+
+                    var statsUserId = requestedUserId;
                     var trackStats = (LocalTracks: 0, ExternalTracks: 0, ExternalAvailable: 0);
                     if (isConfigured)
                     {
-                        trackStats = await GetPlaylistTrackStats(id!);
+                        trackStats = await GetPlaylistTrackStats(id!, session, statsUserId);
                     }
-                    
-                    // Use actual track stats for configured playlists, otherwise use Jellyfin's count
-                    var actualTrackCount = isConfigured 
-                        ? trackStats.LocalTracks + trackStats.ExternalTracks 
+
+                    var actualTrackCount = isConfigured
+                        ? trackStats.LocalTracks + trackStats.ExternalTracks
                         : childCount;
-                    
+
                     playlists.Add(new
                     {
                         id,
@@ -216,39 +346,47 @@ public class JellyfinAdminController : ControllerBase
                         trackCount = actualTrackCount,
                         linkedSpotifyId,
                         isConfigured,
+                        isLinkedByAnotherUser,
+                        linkedOwnerUserId = scopedLinkedPlaylist?.UserId ??
+                                            allLinkedForPlaylist.FirstOrDefault()?.UserId,
                         localTracks = trackStats.LocalTracks,
                         externalTracks = trackStats.ExternalTracks,
                         externalAvailable = trackStats.ExternalAvailable
                     });
                 }
             }
-            
+
             return Ok(new { playlists });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error fetching Jellyfin playlists");
-            return StatusCode(500, new { error = "Failed to fetch playlists", details = ex.Message });
+            return StatusCode(500, new { error = "Failed to fetch playlists" });
         }
     }
-    
+
     /// <summary>
     /// Get track statistics for a playlist (local vs external)
     /// </summary>
-    private async Task<(int LocalTracks, int ExternalTracks, int ExternalAvailable)> GetPlaylistTrackStats(string playlistId)
+    private async Task<(int LocalTracks, int ExternalTracks, int ExternalAvailable)> GetPlaylistTrackStats(
+        string playlistId,
+        AdminAuthSession session,
+        string? requestedUserId = null)
     {
         try
         {
             // Jellyfin requires a UserId to fetch playlist items
-            // We'll use the first available user if not specified
-            var userId = _jellyfinSettings.UserId;
-            
-            // If no user configured, try to get the first user
-            if (string.IsNullOrEmpty(userId))
+            // Non-admin users are always scoped to their own Jellyfin user.
+            var userId = string.IsNullOrWhiteSpace(requestedUserId)
+                ? (session.IsAdministrator ? _jellyfinSettings.UserId : session.UserId)
+                : requestedUserId.Trim();
+
+            // Admin fallback: if no configured user, try to get the first Jellyfin user.
+            if (session.IsAdministrator && string.IsNullOrEmpty(userId))
             {
-                var usersRequest = _helperService.CreateJellyfinRequest(HttpMethod.Get, $"{_jellyfinSettings.Url}/Users");
+                var usersRequest = CreateJellyfinRequestForSession(HttpMethod.Get, $"{_jellyfinSettings.Url}/Users", session);
                 var usersResponse = await _jellyfinHttpClient.SendAsync(usersRequest);
-                
+
                 if (usersResponse.IsSuccessStatusCode)
                 {
                     var usersJson = await usersResponse.Content.ReadAsStringAsync();
@@ -259,40 +397,40 @@ public class JellyfinAdminController : ControllerBase
                     }
                 }
             }
-            
+
             if (string.IsNullOrEmpty(userId))
             {
                 _logger.LogWarning("No user ID available to fetch playlist items for {PlaylistId}", playlistId);
                 return (0, 0, 0);
             }
-            
+
             var url = $"{_jellyfinSettings.Url}/Playlists/{playlistId}/Items?UserId={userId}&Fields=Path";
-            var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
-            
+            var request = CreateJellyfinRequestForSession(HttpMethod.Get, url, session);
+
             var response = await _jellyfinHttpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("Failed to fetch playlist items for {PlaylistId}: {StatusCode}", playlistId, response.StatusCode);
                 return (0, 0, 0);
             }
-            
+
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
-            
+
             var localTracks = 0;
             var externalTracks = 0;
             var externalAvailable = 0;
-            
+
             if (doc.RootElement.TryGetProperty("Items", out var items))
             {
                 foreach (var item in items.EnumerateArray())
                 {
                     // Simpler detection: Check if Path exists and is not empty
                     // External tracks from allstarr won't have a Path property
-                    var hasPath = item.TryGetProperty("Path", out var pathProp) && 
+                    var hasPath = item.TryGetProperty("Path", out var pathProp) &&
                                   pathProp.ValueKind == JsonValueKind.String &&
                                   !string.IsNullOrEmpty(pathProp.GetString());
-                    
+
                     if (hasPath)
                     {
                         var pathStr = pathProp.GetString()!;
@@ -315,15 +453,15 @@ public class JellyfinAdminController : ControllerBase
                         externalAvailable++;
                     }
                 }
-                
-                _logger.LogDebug("Playlist {PlaylistId} stats: {Local} local, {External} external", 
+
+                _logger.LogDebug("Playlist {PlaylistId} stats: {Local} local, {External} external",
                     playlistId, localTracks, externalTracks);
             }
             else
             {
                 _logger.LogWarning("No Items property in playlist response for {PlaylistId}", playlistId);
             }
-            
+
             return (localTracks, externalTracks, externalAvailable);
         }
         catch (Exception ex)
@@ -332,69 +470,90 @@ public class JellyfinAdminController : ControllerBase
             return (0, 0, 0);
         }
     }
-    
+
     /// <summary>
     /// Link a Jellyfin playlist to a Spotify playlist
     /// </summary>
     [HttpPost("jellyfin/playlists/{jellyfinPlaylistId}/link")]
     public async Task<IActionResult> LinkPlaylist(string jellyfinPlaylistId, [FromBody] LinkPlaylistRequest request)
     {
-        if (string.IsNullOrEmpty(request.SpotifyPlaylistId))
+        if (string.IsNullOrEmpty(_jellyfinSettings.Url) || string.IsNullOrEmpty(_jellyfinSettings.ApiKey))
+        {
+            return BadRequest(new { error = "Jellyfin URL or API key not configured" });
+        }
+
+        if (!TryGetCurrentSession(out var session))
+        {
+            return Unauthorized(new { error = "Authentication required" });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SpotifyPlaylistId))
         {
             return BadRequest(new { error = "SpotifyPlaylistId is required" });
         }
-        
-        if (string.IsNullOrEmpty(request.Name))
+
+        var syncSchedule = string.IsNullOrWhiteSpace(request.SyncSchedule)
+            ? "0 8 * * *"
+            : request.SyncSchedule.Trim();
+        if (!IsValidCronExpression(syncSchedule))
         {
-            return BadRequest(new { error = "Name is required" });
+            return BadRequest(new { error = "Invalid cron format. Expected: minute hour day month dayofweek" });
         }
-        
-        _logger.LogInformation("Linking Jellyfin playlist {JellyfinId} to Spotify playlist {SpotifyId} with name {Name}", 
-            jellyfinPlaylistId, request.SpotifyPlaylistId, request.Name);
-        
-        // Read current playlists from .env file (not in-memory config which is stale)
+
+        var ownerUserId = string.IsNullOrWhiteSpace(request.UserId) ? session.UserId : request.UserId.Trim();
+        if (!session.IsAdministrator && !UserIdsEqual(ownerUserId, session.UserId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { error = "You can only link playlists for your own Jellyfin user" });
+        }
+
+        if (string.IsNullOrWhiteSpace(ownerUserId))
+        {
+            return BadRequest(new { error = "Unable to determine Jellyfin owner user" });
+        }
+
+        var (playlistName, playlistError) = await TryGetJellyfinPlaylistNameAsync(jellyfinPlaylistId, ownerUserId, session);
+        if (playlistError != null)
+        {
+            return playlistError;
+        }
+
+        _logger.LogInformation(
+            "Linking Jellyfin playlist {JellyfinId} ({PlaylistName}) to Spotify playlist {SpotifyId} for user {OwnerUserId}",
+            jellyfinPlaylistId, playlistName, request.SpotifyPlaylistId, ownerUserId);
+
         var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
-        
-        // Check if already configured by Jellyfin ID
+
         var existingByJellyfinId = currentPlaylists
             .FirstOrDefault(p => p.JellyfinId.Equals(jellyfinPlaylistId, StringComparison.OrdinalIgnoreCase));
-        
         if (existingByJellyfinId != null)
         {
-            return BadRequest(new { error = $"This Jellyfin playlist is already linked to '{existingByJellyfinId.Name}'" });
+            if (UserIdsEqual(existingByJellyfinId.UserId, ownerUserId))
+            {
+                return BadRequest(new { error = "This Jellyfin playlist is already linked for this user" });
+            }
+
+            return BadRequest(new { error = "This Jellyfin playlist is already linked by another user" });
         }
-        
-        // Check if already configured by name
+
         var existingByName = currentPlaylists
-            .FirstOrDefault(p => p.Name.Equals(request.Name, StringComparison.OrdinalIgnoreCase));
-        
+            .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
         if (existingByName != null)
         {
-            return BadRequest(new { error = $"Playlist name '{request.Name}' is already configured" });
+            return BadRequest(new { error = $"Playlist name '{playlistName}' is already configured" });
         }
-        
-        // Add the playlist to configuration
+
         currentPlaylists.Add(new SpotifyPlaylistConfig
         {
-            Name = request.Name,
-            Id = request.SpotifyPlaylistId,
+            Name = playlistName!,
+            Id = request.SpotifyPlaylistId.Trim(),
             JellyfinId = jellyfinPlaylistId,
-            LocalTracksPosition = LocalTracksPosition.First, // Use Spotify order
-            SyncSchedule = request.SyncSchedule ?? "0 8 * * *" // Default to daily 8 AM
+            LocalTracksPosition = LocalTracksPosition.First,
+            SyncSchedule = syncSchedule,
+            UserId = ownerUserId
         });
-        
-        // Convert to JSON format for env var: [["Name","SpotifyId","JellyfinId","first|last","cronSchedule"],...]
-        var playlistsJson = JsonSerializer.Serialize(
-            currentPlaylists.Select(p => new[] { 
-                p.Name, 
-                p.Id, 
-                p.JellyfinId, 
-                p.LocalTracksPosition.ToString().ToLower(),
-                p.SyncSchedule ?? "0 8 * * *"
-            }).ToArray()
-        );
-        
-        // Update .env file
+
+        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
         var updateRequest = new ConfigUpdateRequest
         {
             Updates = new Dictionary<string, string>
@@ -402,20 +561,54 @@ public class JellyfinAdminController : ControllerBase
                 ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
             }
         };
-        
+
         return await _helperService.UpdateEnvConfigAsync(updateRequest.Updates);
     }
-    
+
     /// <summary>
     /// Unlink a playlist (remove from configuration)
     /// </summary>
-    [HttpDelete("jellyfin/playlists/{name}/unlink")]
-    public async Task<IActionResult> UnlinkPlaylist(string name)
+    [HttpDelete("jellyfin/playlists/{jellyfinPlaylistId}/unlink")]
+    public async Task<IActionResult> UnlinkPlaylist(string jellyfinPlaylistId)
     {
-        var decodedName = Uri.UnescapeDataString(name);
-        return await _helperService.RemovePlaylistFromConfigAsync(decodedName);
+        if (!TryGetCurrentSession(out var session))
+        {
+            return Unauthorized(new { error = "Authentication required" });
+        }
+
+        var decodedIdentifier = Uri.UnescapeDataString(jellyfinPlaylistId);
+        var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var playlist = currentPlaylists.FirstOrDefault(p =>
+            p.JellyfinId.Equals(decodedIdentifier, StringComparison.OrdinalIgnoreCase));
+
+        // Backward compatibility: older UI versions unlink by playlist name.
+        if (playlist == null)
+        {
+            playlist = currentPlaylists.FirstOrDefault(p =>
+                p.Name.Equals(decodedIdentifier, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (playlist == null)
+        {
+            return NotFound(new { error = "Playlist link not found" });
+        }
+
+        if (!session.IsAdministrator && !UserIdsEqual(playlist.UserId, session.UserId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { error = "You can only unlink playlists you own" });
+        }
+
+        currentPlaylists.Remove(playlist);
+        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
+        var updates = new Dictionary<string, string>
+        {
+            ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
+        };
+
+        return await _helperService.UpdateEnvConfigAsync(updates);
     }
-    
+
     /// <summary>
     /// Update playlist sync schedule
     /// </summary>
@@ -423,42 +616,34 @@ public class JellyfinAdminController : ControllerBase
     public async Task<IActionResult> UpdatePlaylistSchedule(string name, [FromBody] UpdateScheduleRequest request)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        
+
         if (string.IsNullOrWhiteSpace(request.SyncSchedule))
         {
             return BadRequest(new { error = "SyncSchedule is required" });
         }
-        
+
         // Basic cron validation
         var cronParts = request.SyncSchedule.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         if (cronParts.Length != 5)
         {
             return BadRequest(new { error = "Invalid cron format. Expected: minute hour day month dayofweek" });
         }
-        
+
         // Read current playlists
         var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
         var playlist = currentPlaylists.FirstOrDefault(p => p.Name.Equals(decodedName, StringComparison.OrdinalIgnoreCase));
-        
+
         if (playlist == null)
         {
             return NotFound(new { error = $"Playlist '{decodedName}' not found" });
         }
-        
+
         // Update the schedule
         playlist.SyncSchedule = request.SyncSchedule.Trim();
-        
+
         // Save back to .env
-        var playlistsJson = JsonSerializer.Serialize(
-            currentPlaylists.Select(p => new[] { 
-                p.Name, 
-                p.Id, 
-                p.JellyfinId, 
-                p.LocalTracksPosition.ToString().ToLower(),
-                p.SyncSchedule ?? "0 8 * * *"
-            }).ToArray()
-        );
-        
+        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
+
         var updateRequest = new ConfigUpdateRequest
         {
             Updates = new Dictionary<string, string>
@@ -466,8 +651,8 @@ public class JellyfinAdminController : ControllerBase
                 ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
             }
         };
-        
+
         return await _helperService.UpdateEnvConfigAsync(updateRequest.Updates);
     }
-    
+
 }
