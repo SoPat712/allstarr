@@ -57,7 +57,7 @@ public class RedisCacheService
         try
         {
             var value = await _db!.StringGetAsync(key);
-            
+
             if (value.HasValue)
             {
                 _logger.LogDebug("Redis cache HIT: {Key}", key);
@@ -103,17 +103,95 @@ public class RedisCacheService
 
         try
         {
-            var result = await _db!.StringSetAsync(key, value, expiry);
-            if (result)
-            {
-                _logger.LogDebug("Redis cache SET: {Key} (TTL: {Expiry})", key, expiry?.ToString() ?? "none");
-            }
-            return result;
+            return await SetStringInternalAsync(key, value, expiry);
+        }
+        catch (RedisTimeoutException ex)
+        {
+            return await RetrySetAfterReconnectAsync(
+                key,
+                value,
+                expiry,
+                ex,
+                "Redis SET timeout for key: {Key}. Reconnecting and retrying once.");
+        }
+        catch (RedisConnectionException ex)
+        {
+            return await RetrySetAfterReconnectAsync(
+                key,
+                value,
+                expiry,
+                ex,
+                "Redis SET connection error for key: {Key}. Reconnecting and retrying once.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Redis SET failed for key: {Key}", key);
             return false;
+        }
+    }
+
+    private async Task<bool> SetStringInternalAsync(string key, string value, TimeSpan? expiry)
+    {
+        var result = await _db!.StringSetAsync(key, value, expiry);
+        if (result)
+        {
+            _logger.LogDebug("Redis cache SET: {Key} (TTL: {Expiry})", key, expiry?.ToString() ?? "none");
+        }
+        else
+        {
+            _logger.LogWarning("Redis SET returned false for key: {Key}", key);
+        }
+        return result;
+    }
+
+    private async Task<bool> RetrySetAfterReconnectAsync(
+        string key,
+        string value,
+        TimeSpan? expiry,
+        Exception ex,
+        string warningMessage)
+    {
+        _logger.LogWarning(ex, warningMessage, key);
+
+        if (!TryReconnect())
+        {
+            _logger.LogError("Redis reconnect failed; cannot retry SET for key: {Key}", key);
+            return false;
+        }
+
+        try
+        {
+            return await SetStringInternalAsync(key, value, expiry);
+        }
+        catch (Exception retryEx)
+        {
+            _logger.LogError(retryEx, "Redis SET retry failed for key: {Key}", key);
+            return false;
+        }
+    }
+
+    private bool TryReconnect()
+    {
+        lock (_lock)
+        {
+            if (!_settings.Enabled)
+            {
+                return false;
+            }
+
+            try
+            {
+                _redis?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error disposing Redis connection during reconnect");
+            }
+
+            _redis = null;
+            _db = null;
+            InitializeConnection();
+            return _db != null;
         }
     }
 
@@ -182,7 +260,7 @@ public class RedisCacheService
         {
             var server = _redis!.GetServer(_redis.GetEndPoints().First());
             var keys = server.Keys(pattern: pattern).ToArray();
-            
+
             if (keys.Length == 0)
             {
                 _logger.LogDebug("No keys found matching pattern: {Pattern}", pattern);

@@ -1,69 +1,32 @@
-using Xunit;
-using Moq;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Configuration;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
-using System.Net;
-using System.Net.Http;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Moq;
+using Xunit;
 
 namespace allstarr.Tests;
 
 public class ScrobblingAdminControllerTests
 {
-    private readonly Mock<IOptions<ScrobblingSettings>> _mockSettings;
-    private readonly Mock<IConfiguration> _mockConfiguration;
-    private readonly Mock<ILogger<ScrobblingAdminController>> _mockLogger;
-    private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
-    private readonly ScrobblingAdminController _controller;
-
-    public ScrobblingAdminControllerTests()
-    {
-        _mockSettings = new Mock<IOptions<ScrobblingSettings>>();
-        _mockConfiguration = new Mock<IConfiguration>();
-        _mockLogger = new Mock<ILogger<ScrobblingAdminController>>();
-        _mockHttpClientFactory = new Mock<IHttpClientFactory>();
-
-        var settings = new ScrobblingSettings
-        {
-            Enabled = true,
-            LastFm = new LastFmSettings
-            {
-                Enabled = true,
-                ApiKey = "cb3bdcd415fcb40cd572b137b2b255f5",
-                SharedSecret = "3a08f9fad6ddc4c35b0dce0062cecb5e",
-                SessionKey = "",
-                Username = null,
-                Password = null
-            }
-        };
-
-        _mockSettings.Setup(s => s.Value).Returns(settings);
-
-        _controller = new ScrobblingAdminController(
-            _mockSettings.Object,
-            _mockConfiguration.Object,
-            _mockHttpClientFactory.Object,
-            _mockLogger.Object,
-            null! // AdminHelperService not needed for these tests
-        );
-    }
-
     [Fact]
-    public void GetStatus_ReturnsCorrectConfiguration()
+    public void GetStatus_ReturnsOk()
     {
-        // Act
-        var result = _controller.GetStatus() as OkObjectResult;
+        var controller = CreateController(
+            CreateSettings(username: null, password: null),
+            new HttpResponseMessage(HttpStatusCode.OK));
 
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(200, result.StatusCode);
-        
-        dynamic? status = result.Value;
-        Assert.NotNull(status);
+        var result = controller.GetStatus();
+        Assert.IsType<OkObjectResult>(result);
     }
 
     [Theory]
@@ -73,119 +36,176 @@ public class ScrobblingAdminControllerTests
     [InlineData("username", null)]
     public async Task AuthenticateLastFm_MissingCredentials_ReturnsBadRequest(string? username, string? password)
     {
-        // Arrange - set credentials in settings
-        var settings = new ScrobblingSettings
+        var controller = CreateController(
+            CreateSettings(username, password),
+            new HttpResponseMessage(HttpStatusCode.OK));
+
+        var result = await controller.AuthenticateLastFm();
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task AuthenticateLastFm_WhenSessionSaveFails_DoesNotExposeSessionKey()
+    {
+        var sessionKey = "super-secret-session-key";
+        var successXml = $"<lfm status='ok'><session><name>testuser</name><key>{sessionKey}</key></session></lfm>";
+
+        var controller = CreateController(
+            CreateSettings("testuser", "password123"),
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(successXml, Encoding.UTF8, "application/xml")
+            },
+            adminHelper: null);
+
+        var result = await controller.AuthenticateLastFm();
+        var serverError = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status500InternalServerError, serverError.StatusCode);
+
+        var payload = JsonSerializer.Serialize(serverError.Value);
+        Assert.DoesNotContain("sessionKey", payload, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(sessionKey, payload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AuthenticateLastFm_SuccessResponse_DoesNotIncludeSessionKey()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"), "app");
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var successXml = "<lfm status='ok'><session><name>testuser</name><key>secret-session-key</key></session></lfm>";
+
+            var adminHelper = CreateAdminHelperService(tempRoot);
+            var controller = CreateController(
+                CreateSettings("testuser", "password123"),
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(successXml, Encoding.UTF8, "application/xml")
+                },
+                adminHelper);
+
+            var result = await controller.AuthenticateLastFm();
+            var ok = Assert.IsType<OkObjectResult>(result);
+            Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+
+            var payload = JsonSerializer.Serialize(ok.Value);
+            using var document = JsonDocument.Parse(payload);
+            Assert.False(document.RootElement.TryGetProperty("SessionKey", out _));
+            Assert.True(document.RootElement.GetProperty("Success").GetBoolean());
+        }
+        finally
+        {
+            var testRoot = Path.GetDirectoryName(tempRoot);
+            if (!string.IsNullOrEmpty(testRoot) && Directory.Exists(testRoot))
+            {
+                Directory.Delete(testRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ValidateListenBrainzToken_WhenSaveFails_DoesNotExposeUserToken()
+    {
+        var userToken = "listenbrainz-secret-token";
+        var validResponse = "{\"valid\":true,\"user_name\":\"listener\"}";
+
+        var controller = CreateController(
+            CreateSettings("testuser", "password123"),
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(validResponse, Encoding.UTF8, "application/json")
+            },
+            adminHelper: null);
+
+        var result = await controller.ValidateListenBrainzToken(
+            new ScrobblingAdminController.ValidateTokenRequest { UserToken = userToken });
+        var serverError = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status500InternalServerError, serverError.StatusCode);
+
+        var payload = JsonSerializer.Serialize(serverError.Value);
+        Assert.DoesNotContain("userToken", payload, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(userToken, payload, StringComparison.Ordinal);
+    }
+
+    private static ScrobblingSettings CreateSettings(string? username, string? password)
+    {
+        return new ScrobblingSettings
         {
             Enabled = true,
+            LocalTracksEnabled = false,
             LastFm = new LastFmSettings
             {
                 Enabled = true,
                 ApiKey = "cb3bdcd415fcb40cd572b137b2b255f5",
                 SharedSecret = "3a08f9fad6ddc4c35b0dce0062cecb5e",
-                SessionKey = "",
+                SessionKey = string.Empty,
                 Username = username,
                 Password = password
+            },
+            ListenBrainz = new ListenBrainzSettings
+            {
+                Enabled = true,
+                UserToken = string.Empty
             }
         };
-        _mockSettings.Setup(s => s.Value).Returns(settings);
-
-        var controller = new ScrobblingAdminController(
-            _mockSettings.Object,
-            _mockConfiguration.Object,
-            _mockHttpClientFactory.Object,
-            _mockLogger.Object,
-            null! // AdminHelperService not needed for this test
-        );
-
-        // Act
-        var result = await controller.AuthenticateLastFm() as BadRequestObjectResult;
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(400, result.StatusCode);
     }
 
-    [Fact]
-    public void DebugAuth_ValidCredentials_ReturnsDebugInfo()
+    private static AdminHelperService CreateAdminHelperService(string contentRootPath)
     {
-        // Arrange
-        var request = new ScrobblingAdminController.AuthenticateRequest
-        {
-            Username = "testuser",
-            Password = "testpass123"
-        };
+        var helperLogger = new Mock<ILogger<AdminHelperService>>();
+        var webHostEnvironment = new Mock<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>();
+        webHostEnvironment.SetupGet(e => e.EnvironmentName).Returns(Environments.Development);
+        webHostEnvironment.SetupGet(e => e.ContentRootPath).Returns(contentRootPath);
 
-        // Act
-        var result = _controller.DebugAuth(request) as OkObjectResult;
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(200, result.StatusCode);
-        
-        dynamic? debugInfo = result.Value;
-        Assert.NotNull(debugInfo);
+        return new AdminHelperService(
+            helperLogger.Object,
+            Options.Create(new JellyfinSettings()),
+            webHostEnvironment.Object);
     }
 
-    [Theory]
-    [InlineData("user!@#$%", "pass!@#$%")]
-    [InlineData("user with spaces", "pass with spaces")]
-    [InlineData("user\ttab", "pass\ttab")]
-    [InlineData("user'quote", "pass\"doublequote")]
-    [InlineData("user&ampersand", "pass&ampersand")]
-    [InlineData("user*asterisk", "pass*asterisk")]
-    [InlineData("user$dollar", "pass$dollar")]
-    [InlineData("user(paren)", "pass)paren")]
-    [InlineData("user[bracket]", "pass{bracket}")]
-    public void DebugAuth_SpecialCharacters_HandlesCorrectly(string username, string password)
+    private static ScrobblingAdminController CreateController(
+        ScrobblingSettings settings,
+        HttpResponseMessage httpResponse,
+        AdminHelperService? adminHelper = null)
     {
-        // Arrange
-        var request = new ScrobblingAdminController.AuthenticateRequest
-        {
-            Username = username,
-            Password = password
-        };
+        var mockSettings = new Mock<IOptions<ScrobblingSettings>>();
+        mockSettings.Setup(s => s.Value).Returns(settings);
 
-        // Act
-        var result = _controller.DebugAuth(request) as OkObjectResult;
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
 
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(200, result.StatusCode);
-        Assert.NotNull(result.Value);
-        
-        // Use reflection to access anonymous type properties
-        var passwordLengthProp = result.Value.GetType().GetProperty("PasswordLength");
-        Assert.NotNull(passwordLengthProp);
-        var passwordLength = (int?)passwordLengthProp.GetValue(result.Value);
-        Assert.Equal(password.Length, passwordLength);
+        var logger = new Mock<ILogger<ScrobblingAdminController>>();
+        var httpClientFactory = new Mock<IHttpClientFactory>();
+
+        var httpClient = new HttpClient(new StubHttpMessageHandler(httpResponse));
+        httpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        return new ScrobblingAdminController(
+            mockSettings.Object,
+            configuration,
+            httpClientFactory.Object,
+            logger.Object,
+            adminHelper!);
     }
 
-    [Theory]
-    [InlineData("test!pass456")]
-    [InlineData("p@ssw0rd!")]
-    [InlineData("test&test")]
-    [InlineData("my*password")]
-    [InlineData("pass$word")]
-    public void DebugAuth_PasswordsWithShellSpecialChars_CalculatesCorrectLength(string password)
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
     {
-        // Arrange
-        var request = new ScrobblingAdminController.AuthenticateRequest
+        private readonly HttpResponseMessage _response;
+
+        public StubHttpMessageHandler(HttpResponseMessage response)
         {
-            Username = "testuser",
-            Password = password
-        };
+            _response = response;
+        }
 
-        // Act
-        var result = _controller.DebugAuth(request) as OkObjectResult;
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.NotNull(result.Value);
-        
-        // Use reflection to access anonymous type properties
-        var passwordLengthProp = result.Value.GetType().GetProperty("PasswordLength");
-        Assert.NotNull(passwordLengthProp);
-        var passwordLength = (int?)passwordLengthProp.GetValue(result.Value);
-        Assert.Equal(password.Length, passwordLength);
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_response);
+        }
     }
 }

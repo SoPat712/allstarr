@@ -24,7 +24,7 @@ public class ParallelMetadataService
     /// Races all providers and returns the first successful result.
     /// Falls back to next provider if first one fails.
     /// </summary>
-    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20)
+    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
         if (!_providers.Any())
         {
@@ -41,7 +41,7 @@ public class ParallelMetadataService
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var result = await provider.SearchAllAsync(query, songLimit, albumLimit, artistLimit);
+                var result = await provider.SearchAllAsync(query, songLimit, albumLimit, artistLimit, cancellationToken);
                 sw.Stop();
                 
                 _logger.LogInformation("✅ {Provider} completed search in {Ms}ms ({Songs} songs, {Albums} albums, {Artists} artists)",
@@ -82,7 +82,7 @@ public class ParallelMetadataService
     /// Searches for a specific song by title and artist across all providers in parallel.
     /// Returns the first successful match.
     /// </summary>
-    public async Task<Song?> SearchSongAsync(string title, string artist, int limit = 5)
+    public async Task<Song?> SearchSongAsync(string title, string artist, int limit = 5, CancellationToken cancellationToken = default)
     {
         if (!_providers.Any())
         {
@@ -97,7 +97,7 @@ public class ParallelMetadataService
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var songs = await provider.SearchSongsAsync($"{title} {artist}", limit);
+                var songs = await provider.SearchSongsAsync($"{title} {artist}", limit, cancellationToken);
                 sw.Stop();
                 
                 var bestMatch = songs.FirstOrDefault();

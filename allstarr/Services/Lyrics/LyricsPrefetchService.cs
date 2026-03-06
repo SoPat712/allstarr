@@ -42,7 +42,7 @@ public class LyricsPrefetchService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("LyricsPrefetchService: Starting up...");
-        
+
         if (!_spotifySettings.Enabled)
         {
             _logger.LogInformation("Spotify playlist injection is DISABLED, lyrics prefetch will not run");
@@ -70,7 +70,7 @@ public class LyricsPrefetchService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
-            
+
             try
             {
                 await PrefetchAllPlaylistLyricsAsync(stoppingToken);
@@ -85,7 +85,7 @@ public class LyricsPrefetchService : BackgroundService
     private async Task PrefetchAllPlaylistLyricsAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("🎵 Starting lyrics prefetch for {Count} playlists", _spotifySettings.Playlists.Count);
-        
+
         var totalFetched = 0;
         var totalCached = 0;
         var totalMissing = 0;
@@ -107,12 +107,12 @@ public class LyricsPrefetchService : BackgroundService
             }
         }
 
-        _logger.LogInformation("✅ Lyrics prefetch complete: {Fetched} fetched, {Cached} already cached, {Missing} not found", 
+        _logger.LogInformation("✅ Lyrics prefetch complete: {Fetched} fetched, {Cached} already cached, {Missing} not found",
             totalFetched, totalCached, totalMissing);
     }
 
     public async Task<(int Fetched, int Cached, int Missing)> PrefetchPlaylistLyricsAsync(
-        string playlistName, 
+        string playlistName,
         CancellationToken cancellationToken)
     {
         _logger.LogDebug("Prefetching lyrics for playlist: {Playlist}", playlistName);
@@ -127,7 +127,7 @@ public class LyricsPrefetchService : BackgroundService
         // Get the pre-built playlist items cache which includes Jellyfin item IDs for local tracks
         var playlistItemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
         var playlistItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(playlistItemsKey);
-        
+
         // Build a map of Spotify ID -> Jellyfin Item ID for quick lookup
         var spotifyToJellyfinId = new Dictionary<string, string>();
         if (playlistItems != null)
@@ -138,7 +138,7 @@ public class LyricsPrefetchService : BackgroundService
                 if (item.TryGetValue("Id", out var idObj) && idObj != null)
                 {
                     var jellyfinId = idObj.ToString();
-                    
+
                     // Try to get Spotify provider ID
                     if (item.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
                     {
@@ -155,8 +155,8 @@ public class LyricsPrefetchService : BackgroundService
                     }
                 }
             }
-            
-            _logger.LogInformation("Found {Count} local Jellyfin tracks with Spotify IDs in playlist {Playlist}", 
+
+            _logger.LogInformation("Found {Count} local Jellyfin tracks with Spotify IDs in playlist {Playlist}",
                 spotifyToJellyfinId.Count, playlistName);
         }
 
@@ -173,7 +173,11 @@ public class LyricsPrefetchService : BackgroundService
                 // Check if lyrics are already cached
                 // Use same cache key format as LrclibService: join all artists with ", "
                 var artistName = string.Join(", ", track.Artists);
-                var cacheKey = $"lyrics:{artistName}:{track.Title}:{track.Album}:{track.DurationMs / 1000}";
+                var cacheKey = CacheKeyBuilder.BuildLyricsKey(
+                    artistName,
+                    track.Title,
+                    track.Album,
+                    track.DurationMs / 1000);
                 var existingLyrics = await _cache.GetStringAsync(cacheKey);
 
                 if (!string.IsNullOrEmpty(existingLyrics))
@@ -191,9 +195,9 @@ public class LyricsPrefetchService : BackgroundService
                     if (hasLocalLyrics)
                     {
                         cached++;
-                        _logger.LogWarning("✓ Local Jellyfin lyrics found for {Artist} - {Track}, skipping external fetch", 
+                        _logger.LogWarning("✓ Local Jellyfin lyrics found for {Artist} - {Track}, skipping external fetch",
                             track.PrimaryArtist, track.Title);
-                        
+
                         // Remove any previously cached LRCLib lyrics for this track
                         var artistNameForRemoval = string.Join(", ", track.Artists);
                         await RemoveCachedLyricsAsync(artistNameForRemoval, track.Title, track.Album, track.DurationMs / 1000);
@@ -221,9 +225,9 @@ public class LyricsPrefetchService : BackgroundService
                 if (lyrics != null)
                 {
                     fetched++;
-                    _logger.LogInformation("✓ Fetched lyrics for {Artist} - {Track} (synced: {HasSynced})", 
+                    _logger.LogInformation("✓ Fetched lyrics for {Artist} - {Track} (synced: {HasSynced})",
                         track.PrimaryArtist, track.Title, !string.IsNullOrEmpty(lyrics.SyncedLyrics));
-                    
+
                     // Save to file cache
                     var artistNameForSave = string.Join(", ", track.Artists);
                     await SaveLyricsToFileAsync(artistNameForSave, track.Title, track.Album, track.DurationMs / 1000, lyrics);
@@ -244,7 +248,7 @@ public class LyricsPrefetchService : BackgroundService
             }
         }
 
-        _logger.LogDebug("Playlist {Playlist}: {Fetched} fetched, {Cached} cached, {Missing} missing", 
+        _logger.LogDebug("Playlist {Playlist}: {Fetched} fetched, {Cached} cached, {Missing} missing",
             playlistName, fetched, cached, missing);
 
         return (fetched, cached, missing);
@@ -300,7 +304,11 @@ public class LyricsPrefetchService : BackgroundService
 
                     if (lyrics != null)
                     {
-                        var cacheKey = $"lyrics:{lyrics.ArtistName}:{lyrics.TrackName}:{lyrics.AlbumName}:{lyrics.Duration}";
+                        var cacheKey = CacheKeyBuilder.BuildLyricsKey(
+                            lyrics.ArtistName,
+                            lyrics.TrackName,
+                            lyrics.AlbumName,
+                            lyrics.Duration);
                         await _cache.SetStringAsync(cacheKey, json, CacheExtensions.LyricsTTL);
                         loaded++;
                     }
@@ -336,13 +344,13 @@ public class LyricsPrefetchService : BackgroundService
         try
         {
             // Remove from Redis cache
-            var cacheKey = $"lyrics:{artist}:{title}:{album}:{duration}";
+            var cacheKey = CacheKeyBuilder.BuildLyricsKey(artist, title, album, duration);
             await _cache.DeleteAsync(cacheKey);
-            
+
             // Remove from file cache
             var fileName = $"{SanitizeFileName(artist)}_{SanitizeFileName(title)}_{duration}.json";
             var filePath = Path.Combine(_lyricsCacheDir, fileName);
-            
+
             if (File.Exists(filePath))
             {
                 File.Delete(filePath);
@@ -365,17 +373,17 @@ public class LyricsPrefetchService : BackgroundService
         {
             using var scope = _serviceProvider.CreateScope();
             var spotifyLyricsService = scope.ServiceProvider.GetService<SpotifyLyricsService>();
-            
+
             if (spotifyLyricsService == null)
             {
                 return null;
             }
 
             var spotifyLyrics = await spotifyLyricsService.GetLyricsByTrackIdAsync(spotifyTrackId);
-            
+
             if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
             {
-                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines)", 
+                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines)",
                     artistName, trackTitle, spotifyLyrics.Lines.Count);
                 return spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
             }
@@ -399,7 +407,7 @@ public class LyricsPrefetchService : BackgroundService
         {
             using var scope = _serviceProvider.CreateScope();
             var proxyService = scope.ServiceProvider.GetService<JellyfinProxyService>();
-            
+
             if (proxyService == null)
             {
                 return false;
@@ -408,13 +416,13 @@ public class LyricsPrefetchService : BackgroundService
             // Directly check if this track has lyrics using the item ID
             // Use internal method with server API key since this is a background operation
             var (lyricsResult, lyricsStatusCode) = await proxyService.GetJsonAsyncInternal(
-                $"Audio/{jellyfinItemId}/Lyrics", 
+                $"Audio/{jellyfinItemId}/Lyrics",
                 null);
-            
+
             if (lyricsResult != null && lyricsStatusCode == 200)
             {
                 // Track has embedded lyrics in Jellyfin
-                _logger.LogDebug("Found embedded lyrics in Jellyfin for {Artist} - {Track} (ID: {JellyfinId})", 
+                _logger.LogDebug("Found embedded lyrics in Jellyfin for {Artist} - {Track} (ID: {JellyfinId})",
                     artistName, trackTitle, jellyfinItemId);
                 return true;
             }
@@ -438,7 +446,7 @@ public class LyricsPrefetchService : BackgroundService
         {
             using var scope = _serviceProvider.CreateScope();
             var proxyService = scope.ServiceProvider.GetService<JellyfinProxyService>();
-            
+
             if (proxyService == null)
             {
                 return false;
@@ -456,7 +464,7 @@ public class LyricsPrefetchService : BackgroundService
             };
 
             var (searchResult, statusCode) = await proxyService.GetJsonAsyncInternal("Items", searchParams);
-            
+
             if (searchResult == null || statusCode != 200)
             {
                 // Track not found in local library
@@ -464,7 +472,7 @@ public class LyricsPrefetchService : BackgroundService
             }
 
             // Check if we found any items
-            if (!searchResult.RootElement.TryGetProperty("Items", out var items) || 
+            if (!searchResult.RootElement.TryGetProperty("Items", out var items) ||
                 items.GetArrayLength() == 0)
             {
                 return false;
@@ -474,7 +482,7 @@ public class LyricsPrefetchService : BackgroundService
             string? bestMatchId = null;
             foreach (var item in items.EnumerateArray())
             {
-                if (!item.TryGetProperty("Name", out var nameEl) || 
+                if (!item.TryGetProperty("Name", out var nameEl) ||
                     !item.TryGetProperty("Id", out var idEl))
                 {
                     continue;
@@ -482,7 +490,7 @@ public class LyricsPrefetchService : BackgroundService
 
                 var itemTitle = nameEl.GetString() ?? "";
                 var itemId = idEl.GetString();
-                
+
                 // Check if title matches (case-insensitive)
                 if (itemTitle.Equals(trackTitle, StringComparison.OrdinalIgnoreCase))
                 {
@@ -496,7 +504,7 @@ public class LyricsPrefetchService : BackgroundService
                             break;  // Exact match found
                         }
                     }
-                    
+
                     // If no exact artist match but title matches, use it as fallback
                     if (bestMatchId == null)
                     {
@@ -513,13 +521,13 @@ public class LyricsPrefetchService : BackgroundService
             // Check if this track has lyrics
             // Use internal method with server API key since this is a background operation
             var (lyricsResult, lyricsStatusCode) = await proxyService.GetJsonAsyncInternal(
-                $"Audio/{bestMatchId}/Lyrics", 
+                $"Audio/{bestMatchId}/Lyrics",
                 null);
-            
+
             if (lyricsResult != null && lyricsStatusCode == 200)
             {
                 // Track has embedded lyrics in Jellyfin
-                _logger.LogDebug("Found embedded lyrics in Jellyfin for {Artist} - {Track} (Jellyfin ID: {JellyfinId})", 
+                _logger.LogDebug("Found embedded lyrics in Jellyfin for {Artist} - {Track} (Jellyfin ID: {JellyfinId})",
                     artistName, trackTitle, bestMatchId);
                 return true;
             }

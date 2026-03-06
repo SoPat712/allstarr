@@ -26,7 +26,7 @@ public class WebSocketProxyMiddleware
         _settings = settings.Value;
         _logger = logger;
         _sessionManager = sessionManager;
-        
+
         _logger.LogInformation("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
     }
 
@@ -35,9 +35,9 @@ public class WebSocketProxyMiddleware
         // Log ALL requests for debugging
         var path = context.Request.Path.Value ?? "";
         var isWebSocket = context.WebSockets.IsWebSocketRequest;
-        
+
         // Log any request that might be WebSocket-related
-        if (path.Contains("socket", StringComparison.OrdinalIgnoreCase) || 
+        if (path.Contains("socket", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("ws", StringComparison.OrdinalIgnoreCase) ||
             isWebSocket ||
             context.Request.Headers.ContainsKey("Upgrade"))
@@ -54,7 +54,7 @@ public class WebSocketProxyMiddleware
         if (context.Request.Path.StartsWithSegments("/socket", StringComparison.OrdinalIgnoreCase) &&
             context.WebSockets.IsWebSocketRequest)
         {
-            _logger.LogDebug("🔌 WEBSOCKET: WebSocket connection request received from {RemoteIp}", 
+            _logger.LogDebug("🔌 WEBSOCKET: WebSocket connection request received from {RemoteIp}",
                 context.Connection.RemoteIpAddress);
 
             await HandleWebSocketProxyAsync(context);
@@ -93,10 +93,6 @@ public class WebSocketProxyMiddleware
             {
                 _logger.LogDebug("🔍 WEBSOCKET: Client WebSocket for device {DeviceId}", deviceId);
             }
-
-            // Accept the WebSocket connection from the client
-            clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
-            _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
 
             // Build Jellyfin WebSocket URL
             var jellyfinUrl = _settings.Url?.TrimEnd('/') ?? "";
@@ -146,6 +142,11 @@ public class WebSocketProxyMiddleware
             await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
             _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
 
+            // Only accept the client socket after upstream auth/handshake succeeds.
+            // This ensures auth failures surface as HTTP status (401/403) instead of misleading 101 upgrades.
+            clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
+            _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
+
             // Start bidirectional proxying
             var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", context.RequestAborted);
             var serverToClient = ProxyMessagesAsync(serverWebSocket, clientWebSocket, "Server→Client", context.RequestAborted);
@@ -157,10 +158,25 @@ public class WebSocketProxyMiddleware
         }
         catch (WebSocketException wsEx)
         {
-            // 403 is expected when tokens expire or session ends - don't spam logs
-            if (wsEx.Message.Contains("403"))
+            var isAuthFailure =
+                wsEx.Message.Contains("403", StringComparison.OrdinalIgnoreCase) ||
+                wsEx.Message.Contains("401", StringComparison.OrdinalIgnoreCase) ||
+                wsEx.Message.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase) ||
+                wsEx.Message.Contains("Forbidden", StringComparison.OrdinalIgnoreCase);
+
+            if (isAuthFailure)
             {
-                _logger.LogWarning("WEBSOCKET: Connection rejected with 403 (token expired or session ended)");
+                _logger.LogWarning("WEBSOCKET: Connection rejected by Jellyfin auth (token expired or session ended)");
+                if (!context.Response.HasStarted)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        type = "https://tools.ietf.org/html/rfc9110#section-15.5.4",
+                        title = "Forbidden",
+                        status = StatusCodes.Status403Forbidden
+                    });
+                }
             }
             else
             {
@@ -201,8 +217,8 @@ public class WebSocketProxyMiddleware
             clientWebSocket?.Dispose();
             serverWebSocket?.Dispose();
 
-            // CRITICAL: Notify session manager that client disconnected
-            if (!string.IsNullOrEmpty(deviceId))
+            // CRITICAL: Notify session manager only when a client socket was accepted.
+            if (clientWebSocket != null && !string.IsNullOrEmpty(deviceId))
             {
                 _logger.LogInformation("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
                 await _sessionManager.RemoveSessionAsync(deviceId);
@@ -270,23 +286,11 @@ public class WebSocketProxyMiddleware
                 if (result.EndOfMessage)
                 {
                     var messageBytes = messageBuffer.ToArray();
-                    
-                    // Log message for Server→Client direction to see remote control commands
-                    if (direction == "Server→Client")
+
+                    if (_logger.IsEnabled(LogLevel.Debug))
                     {
-                        var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
-                        _logger.LogDebug("📥 WEBSOCKET {Direction}: {Preview}",
-                            direction,
-                            messageText.Length > 500 ? messageText[..500] + "..." : messageText);
-                    }
-                    else if (_logger.IsEnabled(LogLevel.Debug))
-                    {
-                        var messageText = System.Text.Encoding.UTF8.GetString(messageBytes);
-                        _logger.LogDebug("{Direction}: {MessageType} message ({Size} bytes): {Preview}",
-                            direction,
-                            result.MessageType,
-                            messageBytes.Length,
-                            messageText.Length > 200 ? messageText[..200] + "..." : messageText);
+                        _logger.LogDebug("WEBSOCKET {Direction}: {MessageType} message ({Size} bytes)",
+                            direction, result.MessageType, messageBytes.Length);
                     }
 
                     // Forward the complete message

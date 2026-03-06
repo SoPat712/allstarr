@@ -9,7 +9,7 @@ public enum LocalTracksPosition
     /// Local tracks appear first, external tracks appended at the end (default)
     /// </summary>
     First,
-    
+
     /// <summary>
     /// External tracks appear first, local tracks appended at the end
     /// </summary>
@@ -26,26 +26,26 @@ public class SpotifyPlaylistConfig
     /// Example: "Discover Weekly", "Release Radar"
     /// </summary>
     public string Name { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// Spotify playlist ID (get from Spotify playlist URL)
     /// Example: "37i9dQZF1DXcBWIGoYBM5M" (from open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M)
     /// Required for personalized playlists like Discover Weekly, Release Radar, etc.
     /// </summary>
     public string Id { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// Jellyfin playlist ID (internal Jellyfin GUID)
     /// Example: "4383a46d8bcac3be2ef9385053ea18df"
     /// This is the ID Jellyfin uses when requesting playlist tracks
     /// </summary>
     public string JellyfinId { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// Where to position local tracks: "first" or "last"
     /// </summary>
     public LocalTracksPosition LocalTracksPosition { get; set; } = LocalTracksPosition.First;
-    
+
     /// <summary>
     /// Cron schedule for syncing this playlist with Spotify
     /// Format: minute hour day month dayofweek
@@ -53,6 +53,12 @@ public class SpotifyPlaylistConfig
     /// Default: "0 8 * * *" (daily at 8 AM)
     /// </summary>
     public string SyncSchedule { get; set; } = "0 8 * * *";
+
+    /// <summary>
+    /// Optional Jellyfin user owner for this playlist link.
+    /// Null/empty means legacy/global playlist configuration.
+    /// </summary>
+    public string? UserId { get; set; }
 }
 
 /// <summary>
@@ -66,7 +72,7 @@ public class SpotifyImportSettings
     /// Enable Spotify playlist injection feature
     /// </summary>
     public bool Enabled { get; set; }
-    
+
     /// <summary>
     /// How often to run track matching in hours.
     /// Spotify playlists like Discover Weekly update once per week, Release Radar updates weekly.
@@ -75,28 +81,28 @@ public class SpotifyImportSettings
     /// Default: 24 hours
     /// </summary>
     public int MatchingIntervalHours { get; set; } = 24;
-    
+
     /// <summary>
     /// Combined playlist configuration as JSON array.
-    /// Format: [["Name","Id","first|last"],...]
-    /// Example: [["Discover Weekly","abc123","first"],["Release Radar","def456","last"]]
+    /// Format: [["Name","Id","JellyfinId","first|last","cron","UserId?"],...]
+    /// UserId is optional for legacy/global entries.
     /// </summary>
     public List<SpotifyPlaylistConfig> Playlists { get; set; } = new();
-    
+
     /// <summary>
     /// Legacy: Comma-separated list of Jellyfin playlist IDs to inject
     /// Deprecated: Use Playlists instead
     /// </summary>
     [Obsolete("Use Playlists instead")]
     public List<string> PlaylistIds { get; set; } = new();
-    
+
     /// <summary>
     /// Legacy: Comma-separated list of playlist names
     /// Deprecated: Use Playlists instead
     /// </summary>
     [Obsolete("Use Playlists instead")]
     public List<string> PlaylistNames { get; set; } = new();
-    
+
     /// <summary>
     /// Legacy: Comma-separated list of local track positions ("first" or "last")
     /// Deprecated: Use Playlists instead
@@ -104,25 +110,25 @@ public class SpotifyImportSettings
     /// </summary>
     [Obsolete("Use Playlists instead")]
     public List<string> PlaylistLocalTracksPositions { get; set; } = new();
-    
+
     /// <summary>
     /// Gets the playlist configuration by Jellyfin playlist ID.
     /// </summary>
     public SpotifyPlaylistConfig? GetPlaylistById(string playlistId) =>
         Playlists.FirstOrDefault(p => p.Id.Equals(playlistId, StringComparison.OrdinalIgnoreCase));
-    
+
     /// <summary>
     /// Gets the playlist configuration by Jellyfin playlist ID.
     /// </summary>
     public SpotifyPlaylistConfig? GetPlaylistByJellyfinId(string jellyfinPlaylistId) =>
         Playlists.FirstOrDefault(p => p.JellyfinId.Equals(jellyfinPlaylistId, StringComparison.OrdinalIgnoreCase));
-    
+
     /// <summary>
     /// Gets the playlist configuration by name.
     /// </summary>
     public SpotifyPlaylistConfig? GetPlaylistByName(string name) =>
         Playlists.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-    
+
     /// <summary>
     /// Checks if a Jellyfin playlist ID is configured for Spotify import.
     /// </summary>

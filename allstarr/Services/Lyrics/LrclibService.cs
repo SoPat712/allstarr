@@ -33,23 +33,23 @@ public class LrclibService
         // Validate input parameters
         if (string.IsNullOrWhiteSpace(trackName) || artistNames == null || artistNames.Length == 0)
         {
-            _logger.LogDebug("Invalid parameters for lyrics search: trackName={TrackName}, artistCount={ArtistCount}", 
+            _logger.LogDebug("Invalid parameters for lyrics search: trackName={TrackName}, artistCount={ArtistCount}",
                 trackName, artistNames?.Length ?? 0);
             return null;
         }
-        
+
         var artistName = string.Join(", ", artistNames);
-        var cacheKey = $"lyrics:{artistName}:{trackName}:{albumName}:{durationSeconds}";
-        
+        var cacheKey = CacheKeyBuilder.BuildLyricsKey(artistName, trackName, albumName, durationSeconds);
+
         // FIRST: Check for manual lyrics mapping
-        var manualMappingKey = $"lyrics:manual-map:{artistName}:{trackName}";
+        var manualMappingKey = CacheKeyBuilder.BuildLyricsManualMappingKey(artistName, trackName);
         var manualLyricsIdStr = await _cache.GetStringAsync(manualMappingKey);
-        
+
         if (!string.IsNullOrEmpty(manualLyricsIdStr) && int.TryParse(manualLyricsIdStr, out var manualLyricsId) && manualLyricsId > 0)
         {
-            _logger.LogInformation("✓ Manual lyrics mapping found for {Artist} - {Track}: Lyrics ID {Id}", 
+            _logger.LogInformation("✓ Manual lyrics mapping found for {Artist} - {Track}: Lyrics ID {Id}",
                 artistName, trackName, manualLyricsId);
-            
+
             // Fetch lyrics by ID
             var manualLyrics = await GetLyricsByIdAsync(manualLyricsId);
             if (manualLyrics != null && !string.IsNullOrEmpty(manualLyrics.PlainLyrics))
@@ -60,11 +60,11 @@ public class LrclibService
             }
             else
             {
-                _logger.LogWarning("Manual lyrics mapping points to invalid ID {Id} for {Artist} - {Track}", 
+                _logger.LogWarning("Manual lyrics mapping points to invalid ID {Id} for {Artist} - {Track}",
                     manualLyricsId, artistName, trackName);
             }
         }
-        
+
         // SECOND: Check standard cache
         var cached = await _cache.GetStringAsync(cacheKey);
         if (!string.IsNullOrEmpty(cached))
@@ -83,7 +83,7 @@ public class LrclibService
         {
             // Try searching with all artists joined (space-separated for better matching)
             var searchArtistName = string.Join(" ", artistNames);
-            
+
             // First try search API for fuzzy matching (more forgiving)
             var searchUrl = $"{BaseUrl}/search?" +
                            $"track_name={Uri.EscapeDataString(trackName)}&" +
@@ -92,7 +92,7 @@ public class LrclibService
             _logger.LogDebug("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
 
             var searchResponse = await _httpClient.GetAsync(searchUrl);
-            
+
             if (searchResponse.IsSuccessStatusCode)
             {
                 var searchJson = await searchResponse.Content.ReadAsStringAsync();
@@ -108,27 +108,27 @@ public class LrclibService
                     {
                         // Calculate similarity scores
                         var trackScore = CalculateSimilarity(trackName, result.TrackName ?? "");
-                        
+
                         // Count artists in the result
                         var resultArtistCount = CountArtists(result.ArtistName ?? "");
                         var expectedArtistCount = artistNames.Length;
-                        
+
                         // Artist matching - check if all our artists are present
                         var artistScore = CalculateArtistSimilarity(artistNames, result.ArtistName ?? "");
-                        
+
                         // STRONG bonus for matching artist count (this is critical!)
                         var artistCountBonus = resultArtistCount == expectedArtistCount ? 50.0 : 0.0;
-                        
+
                         // Duration match (within 5 seconds is good)
                         var durationDiff = result.Duration.HasValue ? Math.Abs(result.Duration.Value - durationSeconds) : 999;
                         var durationScore = durationDiff <= 5 ? 100.0 : Math.Max(0, 100 - (durationDiff * 2));
-                        
+
                         // Bonus for having synced lyrics (prefer synced over plain)
                         var syncedBonus = !string.IsNullOrEmpty(result.SyncedLyrics) ? 15.0 : 0.0;
-                        
+
                         // Weighted score: track name important, artist match critical, artist count VERY important
                         var totalScore = (trackScore * 0.3) + (artistScore * 0.3) + (durationScore * 0.15) + artistCountBonus + syncedBonus;
-                        
+
                         _logger.LogDebug("Candidate: {Track} by {Artist} ({ArtistCount} artists) - Score: {Score:F1} (track:{TrackScore:F1}, artist:{ArtistScore:F1}, duration:{DurationScore:F1}, countBonus:{CountBonus:F1}, synced:{Synced})",
                             result.TrackName, result.ArtistName, resultArtistCount, totalScore, trackScore, artistScore, durationScore, artistCountBonus, !string.IsNullOrEmpty(result.SyncedLyrics));
 
@@ -142,7 +142,7 @@ public class LrclibService
                     // Only use result if score is good enough (>60%)
                     if (bestMatch != null && bestScore >= 60)
                     {
-                        _logger.LogInformation("✓ Found lyrics via search for {Artist} - {Track} (ID: {Id}, score: {Score:F1}, synced: {HasSynced})", 
+                        _logger.LogInformation("✓ Found lyrics via search for {Artist} - {Track} (ID: {Id}, score: {Score:F1}, synced: {HasSynced})",
                             artistName, trackName, bestMatch.Id, bestScore, !string.IsNullOrEmpty(bestMatch.SyncedLyrics));
 
                         var result = new LyricsInfo
@@ -177,7 +177,7 @@ public class LrclibService
             _logger.LogDebug("Trying exact match from LRCLIB: {Url}", exactUrl);
 
             var exactResponse = await _httpClient.GetAsync(exactUrl);
-            
+
             if (exactResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 _logger.LogDebug("Lyrics not found for {Artist} - {Track}", artistName, trackName);
@@ -185,7 +185,7 @@ public class LrclibService
             }
 
             exactResponse.EnsureSuccessStatusCode();
-            
+
             var json = await exactResponse.Content.ReadAsStringAsync();
             var lyrics = JsonSerializer.Deserialize<LrclibResponse>(json, JsonOptions);
 
@@ -209,7 +209,7 @@ public class LrclibService
             await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(exactResult, JsonOptions), CacheExtensions.LyricsTTL);
 
             _logger.LogInformation("Retrieved lyrics via exact match for {Artist} - {Track} (ID: {Id})", artistName, trackName, lyrics.Id);
-            
+
             return exactResult;
         }
         catch (HttpRequestException ex)
@@ -231,11 +231,11 @@ public class LrclibService
     {
         if (string.IsNullOrWhiteSpace(artistString))
             return 0;
-        
+
         // Split by common separators: comma, ampersand, " e " (Portuguese/Spanish "and")
         var separators = new[] { ',', '&' };
         var parts = artistString.Split(separators, StringSplitOptions.RemoveEmptyEntries);
-        
+
         // Also check for " e " pattern (like "Julia Michaels e Alessia Cara")
         var count = parts.Length;
         foreach (var part in parts)
@@ -245,7 +245,7 @@ public class LrclibService
                 count += part.Split(new[] { " e " }, StringSplitOptions.RemoveEmptyEntries).Length - 1;
             }
         }
-        
+
         return Math.Max(1, count);
     }
 
@@ -256,14 +256,14 @@ public class LrclibService
     {
         if (expectedArtists.Length == 0 || string.IsNullOrWhiteSpace(resultArtistString))
             return 0;
-        
+
         var resultLower = resultArtistString.ToLowerInvariant();
         var matchedCount = 0;
-        
+
         foreach (var artist in expectedArtists)
         {
             var artistLower = artist.ToLowerInvariant();
-            
+
             // Check if this artist appears in the result string
             if (resultLower.Contains(artistLower))
             {
@@ -274,7 +274,7 @@ public class LrclibService
                 // Try token-based matching for partial matches
                 var artistTokens = artistLower.Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
                 var matchedTokens = artistTokens.Count(token => resultLower.Contains(token));
-                
+
                 // If most tokens match, count it as a partial match
                 if (matchedTokens >= artistTokens.Length * 0.7)
                 {
@@ -282,7 +282,7 @@ public class LrclibService
                 }
             }
         }
-        
+
         // Return percentage of artists matched
         return (matchedCount * 100.0) / expectedArtists.Length;
     }
@@ -320,14 +320,14 @@ public class LrclibService
                      $"duration={durationSeconds}";
 
             var response = await _httpClient.GetAsync(url);
-            
+
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 return null;
             }
 
             response.EnsureSuccessStatusCode();
-            
+
             var json = await response.Content.ReadAsStringAsync();
             var lyrics = JsonSerializer.Deserialize<LrclibResponse>(json, JsonOptions);
 
@@ -357,8 +357,8 @@ public class LrclibService
 
     public async Task<LyricsInfo?> GetLyricsByIdAsync(int id)
     {
-        var cacheKey = $"lyrics:id:{id}";
-        
+        var cacheKey = CacheKeyBuilder.BuildLyricsByIdKey(id);
+
         var cached = await _cache.GetStringAsync(cacheKey);
         if (!string.IsNullOrEmpty(cached))
         {
@@ -376,14 +376,14 @@ public class LrclibService
         {
             var url = $"{BaseUrl}/get/{id}";
             var response = await _httpClient.GetAsync(url);
-            
+
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 return null;
             }
 
             response.EnsureSuccessStatusCode();
-            
+
             var json = await response.Content.ReadAsStringAsync();
             var lyrics = JsonSerializer.Deserialize<LrclibResponse>(json, JsonOptions);
 
@@ -405,7 +405,7 @@ public class LrclibService
             };
 
             await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(result, JsonOptions), CacheExtensions.LyricsTTL);
-            
+
             return result;
         }
         catch (Exception ex)

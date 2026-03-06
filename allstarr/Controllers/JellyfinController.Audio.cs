@@ -144,7 +144,7 @@ public partial class JellyfinController
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to proxy stream from Jellyfin for {ItemId}", itemId);
-            return StatusCode(500, new { error = $"Streaming failed: {ex.Message}" });
+            return StatusCode(500, new { error = "Streaming failed" });
         }
     }
 
@@ -185,7 +185,7 @@ public partial class JellyfinController
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to stream external song {Provider}:{ExternalId}", provider, externalId);
-            return StatusCode(500, new { error = $"Streaming failed: {ex.Message}" });
+            return StatusCode(500, new { error = "Streaming failed" });
         }
     }
 

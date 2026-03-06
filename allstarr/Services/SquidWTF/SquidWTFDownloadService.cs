@@ -145,9 +145,16 @@ public class SquidWTFDownloadService : BaseDownloadService
             
             var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
             
+            Logger.LogDebug("Requesting track download info: {Url}", url);
+            
             // Get download info from this endpoint
             var infoResponse = await _httpClient.GetAsync(url, cancellationToken);
-            infoResponse.EnsureSuccessStatusCode();
+            
+            if (!infoResponse.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Track download request failed: {StatusCode} {Url}", infoResponse.StatusCode, url);
+                infoResponse.EnsureSuccessStatusCode();
+            }
             
             var json = await infoResponse.Content.ReadAsStringAsync(cancellationToken);
             var doc = JsonDocument.Parse(json);
@@ -251,7 +258,12 @@ public class SquidWTFDownloadService : BaseDownloadService
                 Logger.LogDebug("Fetching track download info from: {Url}", url);
 
                 var response = await _httpClient.GetAsync(url, cancellationToken);
-                response.EnsureSuccessStatusCode();
+                
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Track download info request failed: {StatusCode} {Url}", response.StatusCode, url);
+                    response.EnsureSuccessStatusCode();
+                }
                 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 var doc = JsonDocument.Parse(json);

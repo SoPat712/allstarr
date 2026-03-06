@@ -17,16 +17,39 @@
             style="background: transparent; border: 1px solid var(--bg-primary);">Dismiss</button>
     </div>
 
-    <div class="container">
+    <div class="auth-gate" id="auth-gate">
+        <div class="auth-card">
+            <h2>Sign In With Jellyfin</h2>
+            <p>Use your Jellyfin account to access the local Allstarr admin UI.</p>
+            <form id="auth-login-form" autocomplete="off">
+                <label for="auth-username">Username</label>
+                <input id="auth-username" type="text" required>
+
+                <label for="auth-password">Password</label>
+                <input id="auth-password" type="password" required>
+
+                <button class="primary" type="submit">Sign In</button>
+                <div class="auth-error" id="auth-error" role="alert"></div>
+            </form>
+        </div>
+    </div>
+
+    <div class="container" id="main-container" style="display:none;">
         <header>
             <h1>
                 Allstarr <span class="version" id="version">Loading...</span>
             </h1>
-            <div id="status-indicator">
-                <span class="status-badge" id="spotify-status">
-                    <span class="status-dot"></span>
-                    <span>Loading...</span>
-                </span>
+            <div class="header-actions">
+                <div class="auth-user" id="auth-user-display" style="display:none;">
+                    Signed in as <strong id="auth-user-name">-</strong>
+                </div>
+                <button id="auth-logout-btn" onclick="logoutAdminSession()" style="display:none;">Logout</button>
+                <div id="status-indicator">
+                    <span class="status-badge" id="spotify-status">
+                        <span class="status-dot"></span>
+                        <span>Loading...</span>
+                    </span>
+                </div>
             </div>
         </header>
 
@@ -88,7 +111,8 @@
                 <h2>
                     Quick Actions
                 </h2>
-                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <div id="dashboard-guidance" class="guidance-stack"></div>
+                <div class="card-actions-row">
                     <button class="primary" onclick="refreshPlaylists()">Refresh All Playlists</button>
                     <button onclick="clearCache()">Clear Cache</button>
                     <button onclick="openAddPlaylist()">Add Playlist</button>
@@ -112,8 +136,9 @@
                     <br><strong>Tip:</strong> Use the sp_dc cookie method for best results - it's simpler and more
                     reliable.
                 </p>
+                <div id="jellyfin-guidance" class="guidance-stack"></div>
 
-                <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+                <div id="jellyfin-user-filter" style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
                     <div class="form-group" style="margin: 0; flex: 1; min-width: 200px;">
                         <label
                             style="display: block; margin-bottom: 4px; color: var(--text-secondary); font-size: 0.85rem;">User</label>
@@ -128,16 +153,14 @@
                     <thead>
                         <tr>
                             <th>Name</th>
-                            <th>Local</th>
-                            <th>External</th>
-                            <th>Linked Spotify ID</th>
+                            <th>Tracks</th>
                             <th>Status</th>
-                            <th>Actions</th>
+                            <th>...</th>
                         </tr>
                     </thead>
                     <tbody id="jellyfin-playlist-table-body">
                         <tr>
-                            <td colspan="6" class="loading">
+                            <td colspan="4" class="loading">
                                 <span class="spinner"></span> Loading Jellyfin playlists...
                             </td>
                         </tr>
@@ -149,16 +172,15 @@
         <!-- Active Playlists Tab -->
         <div class="tab-content" id="tab-playlists">
             <!-- Warning Banner (hidden by default) -->
-            <div id="matching-warning-banner"
-                style="display:none;background:#f59e0b;color:#000;padding:16px;border-radius:8px;margin-bottom:16px;font-weight:600;text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+            <div id="matching-warning-banner" class="guidance-banner warning matching-progress-banner" style="display:none;">
                 ⚠️ TRACK MATCHING IN PROGRESS - Please wait for matching to complete before making changes to playlists
                 or mappings!
             </div>
 
             <div class="card">
                 <h2>Playlist Injection Settings</h2>
-                <div style="background: rgba(59, 130, 246, 0.15); border: 1px solid var(--primary); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem;">
-                    ℹ️ Music Library ID is required for injecting external playlists into Jellyfin. This tells Allstarr which library to inject playlists into. Get it from your Jellyfin library URL.
+                <div class="guidance-banner info compact">
+                    ℹ️ Music Library ID is required for playlist injection. Get it from your Jellyfin music library URL.
                 </div>
                 <div class="config-section">
                     <div class="config-item">
@@ -178,41 +200,40 @@
                             title="Re-match tracks when local library changed (uses cached Spotify data)">Rematch All</button>
                         <button onclick="refreshPlaylists()"
                             title="Fetch the latest playlist data from Spotify without re-matching tracks">Refresh All</button>
-                        <button onclick="refreshAndMatchAll()"
+                        <button class="primary" onclick="refreshAndMatchAll()"
                             title="Rebuild all playlists when Spotify playlists changed (clears cache, fetches fresh data, re-matches)"
-                            style="background:var(--accent);border-color:var(--accent);">Rebuild All</button>
+                            >Rebuild All</button>
                     </div>
                 </h2>
-                
-                <!-- Info box explaining the differences -->
-                <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 6px; padding: 14px; margin-bottom: 16px; font-size: 0.9rem;">
-                    <div style="font-weight: 600; margin-bottom: 8px; color: var(--text-primary);">📋 Button Guide:</div>
-                    <div style="display: grid; gap: 8px; color: var(--text-secondary);">
-                        <div><strong style="color: var(--text-primary);">Rematch:</strong> Re-match tracks when your <em>local Jellyfin library</em> changed (fast, uses cached Spotify data)</div>
-                        <div><strong style="color: var(--text-primary);">Refresh:</strong> Fetch latest data from Spotify without re-matching (updates track counts only)</div>
-                        <div><strong style="color: var(--accent);">Rebuild:</strong> Full rebuild when <em>Spotify playlist</em> changed (clears cache, fetches fresh data, re-matches everything - same as scheduled cron job)</div>
+
+                <details class="advanced-section">
+                    <summary>Advanced: Rematch vs Refresh vs Rebuild</summary>
+                    <div class="advanced-section-content">
+                        <div class="advanced-guide-list">
+                            <div><strong>Rematch</strong>: Use when your <em>local Jellyfin library</em> changed. Fast and uses cached Spotify data.</div>
+                            <div><strong>Refresh</strong>: Pull fresh Spotify playlist items without re-matching.</div>
+                            <div><strong>Rebuild</strong>: Full reset when <em>Spotify playlist content</em> changed. Clears cache and re-matches everything.</div>
+                        </div>
                     </div>
-                </div>
-                
+                </details>
+
                 <p style="color: var(--text-secondary); margin-bottom: 12px;">
                     These are the Spotify playlists currently being injected into Jellyfin with tracks from your music
                     service.
                 </p>
+                <div id="playlists-guidance" class="guidance-stack"></div>
                 <table class="playlist-table">
                     <thead>
                         <tr>
                             <th>Name</th>
-                            <th>Spotify ID</th>
-                            <th>Sync Schedule</th>
                             <th>Tracks</th>
-                            <th>Completion</th>
-                            <th>Cache Age</th>
-                            <th>Actions</th>
+                            <th>Status</th>
+                            <th>...</th>
                         </tr>
                     </thead>
                     <tbody id="playlist-table-body">
                         <tr>
-                            <td colspan="7" class="loading">
+                            <td colspan="4" class="loading">
                                 <span class="spinner"></span> Loading playlists...
                             </td>
                         </tr>
@@ -360,7 +381,7 @@
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     Scrobble your listening history to Last.fm and ListenBrainz. Tracks are scrobbled when you listen to at least half the track or 4 minutes (whichever comes first).
                 </p>
-                
+
                 <div class="config-section" style="margin-bottom: 24px;">
                     <div class="config-item">
                         <span class="label">Scrobbling Enabled</span>
@@ -372,13 +393,19 @@
                         <span class="value" id="local-tracks-enabled-value">-</span>
                         <button onclick="toggleLocalTracksEnabled()">Toggle</button>
                     </div>
+                    <div class="config-item">
+                        <span class="label">Synthetic Local Played Signal</span>
+                        <span class="value" id="synthetic-local-played-signal-enabled-value">-</span>
+                        <button onclick="toggleSyntheticLocalPlayedSignalEnabled()">Toggle</button>
+                    </div>
                 </div>
-                
+
                 <div style="background: rgba(255, 193, 7, 0.15); border: 1px solid #ffc107; border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-primary);">
                     ℹ️ <strong>Recommended:</strong> Keep local track scrobbling disabled and use native Jellyfin plugins instead:
                     <br>• <a href="https://github.com/danielfariati/jellyfin-plugin-lastfm" target="_blank" style="color: var(--accent);">Last.fm Plugin</a>
                     <br>• <a href="https://github.com/lyarenei/jellyfin-plugin-listenbrainz" target="_blank" style="color: var(--accent);">ListenBrainz Plugin</a>
                     <br>This ensures Allstarr only scrobbles external tracks (Spotify, Deezer, Qobuz).
+                    <br><strong>Default:</strong> keep Synthetic Local Played Signal disabled to avoid duplicate plugin scrobbles.
                 </div>
             </div>
 
@@ -387,7 +414,7 @@
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     Scrobble to Last.fm. Enter your Last.fm username and password below, then click "Authenticate & Save" to generate a session key.
                 </p>
-                
+
                 <div class="config-section" style="margin-bottom: 24px;">
                     <div class="config-item">
                         <span class="label">Last.fm Enabled</span>
@@ -413,20 +440,20 @@
                         <span class="value" id="lastfm-status-value">-</span>
                     </div>
                 </div>
-                
+
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                     <button class="primary" onclick="authenticateLastFm()">Authenticate & Save</button>
                     <button onclick="testLastFmConnection()">Test Connection</button>
                 </div>
             </div>
-            
+
             <div class="card">
                 <h2>ListenBrainz</h2>
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     Scrobble to ListenBrainz. Get your user token from <a href="https://listenbrainz.org/settings/" target="_blank" style="color: var(--accent);">ListenBrainz Settings</a>.
                     <br><strong>Note:</strong> Only external tracks (Spotify, Deezer, Qobuz) are scrobbled to ListenBrainz. Local library tracks are not scrobbled.
                 </p>
-                
+
                 <div class="config-section" style="margin-bottom: 24px;">
                     <div class="config-item">
                         <span class="label">ListenBrainz Enabled</span>
@@ -443,7 +470,7 @@
                         <span class="value" id="listenbrainz-status-value">-</span>
                     </div>
                 </div>
-                
+
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                     <button class="primary" onclick="validateListenBrainzToken()">Validate & Save Token</button>
                     <button onclick="testListenBrainzConnection()">Test Connection</button>
@@ -490,7 +517,7 @@
                         <span class="label">Explicit Filter</span>
                         <span class="value" id="config-explicit-filter">-</span>
                         <button
-                            onclick="openEditSetting('EXPLICIT_FILTER', 'Explicit Filter', 'select', 'Filter explicit content', ['All', 'Explicit', 'Clean'])">Edit</button>
+                            onclick="openEditSetting('EXPLICIT_FILTER', 'Explicit Filter', 'select', 'Filter explicit content', ['All', 'ExplicitOnly', 'CleanOnly'])">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Enable External Playlists</span>
@@ -513,17 +540,42 @@
             </div>
 
             <div class="card">
-                <h2>Debug Settings</h2>
+                <h2>Admin Network Settings</h2>
+                <div
+                    style="background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warning); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem;">
+                    Keep admin UI on localhost by default. If you enable LAN bind, restrict access with trusted CIDR
+                    subnets (for example: <code>192.168.1.0/24,10.0.0.0/8</code>).
+                </div>
                 <div class="config-section">
                     <div class="config-item">
-                        <span class="label">Log All Requests</span>
-                        <span class="value" id="config-debug-log-requests">-</span>
-                        <button onclick="openEditSetting('DEBUG_LOG_ALL_REQUESTS', 'Log All Requests', 'toggle', 'Enable detailed logging of every HTTP request (useful for debugging client issues)')">Edit</button>
+                        <span class="label">Bind Admin UI On LAN</span>
+                        <span class="value" id="config-admin-bind-any-ip">-</span>
+                        <button onclick="openEditSetting('ADMIN_BIND_ANY_IP', 'Bind Admin UI On LAN', 'toggle')">Edit</button>
                     </div>
-                    <div style="background: rgba(59, 130, 246, 0.15); border: 1px solid var(--primary); border-radius: 6px; padding: 12px; margin-top: 12px; color: var(--text-secondary); font-size: 0.9rem;">
-                        ℹ️ When enabled, logs every incoming request with method, path, headers, and response status. Auth tokens are automatically masked for security.
+                    <div class="config-item">
+                        <span class="label">Trusted Subnets (CIDR)</span>
+                        <span class="value" id="config-admin-trusted-subnets">-</span>
+                        <button onclick="openEditSetting('ADMIN_TRUSTED_SUBNETS', 'Trusted Subnets (CIDR)', 'text', 'Comma-separated CIDRs allowed on admin port 5275. Example: 192.168.1.0/24,10.0.0.0/8')">Edit</button>
                     </div>
                 </div>
+            </div>
+
+            <div class="card">
+                <details class="advanced-section">
+                    <summary>Advanced: Debug Settings</summary>
+                    <div class="advanced-section-content">
+                        <div class="config-section">
+                            <div class="config-item">
+                                <span class="label">Log All Requests</span>
+                                <span class="value" id="config-debug-log-requests">-</span>
+                                <button onclick="openEditSetting('DEBUG_LOG_ALL_REQUESTS', 'Log All Requests', 'toggle', 'Enable detailed logging of every HTTP request (useful for debugging client issues)')">Edit</button>
+                            </div>
+                            <div class="guidance-banner info compact" style="margin-top: 12px;">
+                                ℹ️ When enabled, logs every incoming request with method, path, headers, and response status. Auth tokens are automatically masked.
+                            </div>
+                        </div>
+                    </div>
+                </details>
             </div>
 
             <div class="card">
@@ -601,7 +653,7 @@
                         <span class="label">Enabled</span>
                         <span class="value" id="config-musicbrainz-enabled">-</span>
                         <button
-                            onclick="openEditSetting('MUSICBRAINZ_ENABLED', 'MusicBrainz Enabled', 'select', '', ['true', 'false'])">Edit</button>
+                            onclick="openEditSetting('MUSICBRAINZ_ENABLED', 'MusicBrainz Enabled', 'toggle')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Username</span>
@@ -705,66 +757,69 @@
                         <span class="label">Search Results (minutes)</span>
                         <span class="value" id="config-cache-search">-</span>
                         <button
-                            onclick="openEditCacheSetting('SearchResultsMinutes', 'Search Results Cache (minutes)', 'How long to cache search results')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_SEARCH_RESULTS_MINUTES', 'Search Results Cache (minutes)', 'How long to cache search results')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Playlist Images (hours)</span>
                         <span class="value" id="config-cache-playlist-images">-</span>
                         <button
-                            onclick="openEditCacheSetting('PlaylistImagesHours', 'Playlist Images Cache (hours)', 'How long to cache playlist cover images')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_PLAYLIST_IMAGES_HOURS', 'Playlist Images Cache (hours)', 'How long to cache playlist cover images')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Spotify Playlist Items (hours)</span>
                         <span class="value" id="config-cache-spotify-items">-</span>
                         <button
-                            onclick="openEditCacheSetting('SpotifyPlaylistItemsHours', 'Spotify Playlist Items Cache (hours)', 'How long to cache Spotify playlist data')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS', 'Spotify Playlist Items Cache (hours)', 'How long to cache Spotify playlist data')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Spotify Matched Tracks (days)</span>
                         <span class="value" id="config-cache-matched-tracks">-</span>
                         <button
-                            onclick="openEditCacheSetting('SpotifyMatchedTracksDays', 'Matched Tracks Cache (days)', 'How long to cache Spotify ID to track mappings')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_SPOTIFY_MATCHED_TRACKS_DAYS', 'Matched Tracks Cache (days)', 'How long to cache Spotify ID to track mappings')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Lyrics (days)</span>
                         <span class="value" id="config-cache-lyrics">-</span>
                         <button
-                            onclick="openEditCacheSetting('LyricsDays', 'Lyrics Cache (days)', 'How long to cache fetched lyrics')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_LYRICS_DAYS', 'Lyrics Cache (days)', 'How long to cache fetched lyrics')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Genre Data (days)</span>
                         <span class="value" id="config-cache-genres">-</span>
                         <button
-                            onclick="openEditCacheSetting('GenreDays', 'Genre Cache (days)', 'How long to cache genre information')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_GENRE_DAYS', 'Genre Cache (days)', 'How long to cache genre information')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">External Metadata (days)</span>
                         <span class="value" id="config-cache-metadata">-</span>
                         <button
-                            onclick="openEditCacheSetting('MetadataDays', 'Metadata Cache (days)', 'How long to cache SquidWTF/Deezer/Qobuz metadata')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_METADATA_DAYS', 'Metadata Cache (days)', 'How long to cache SquidWTF/Deezer/Qobuz metadata')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Odesli Lookups (days)</span>
                         <span class="value" id="config-cache-odesli">-</span>
                         <button
-                            onclick="openEditCacheSetting('OdesliLookupDays', 'Odesli Lookup Cache (days)', 'How long to cache Odesli URL conversions')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_ODESLI_LOOKUP_DAYS', 'Odesli Lookup Cache (days)', 'How long to cache Odesli URL conversions')">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Proxy Images (days)</span>
                         <span class="value" id="config-cache-proxy-images">-</span>
                         <button
-                            onclick="openEditCacheSetting('ProxyImagesDays', 'Proxy Images Cache (days)', 'How long to cache proxied Jellyfin images')">Edit</button>
+                            onclick="openEditCacheSetting('CACHE_PROXY_IMAGES_DAYS', 'Proxy Images Cache (days)', 'How long to cache proxied Jellyfin images')">Edit</button>
                     </div>
                 </div>
             </div>
 
-            <div class="card">
+            <div class="card" id="config-backup-card">
                 <h2>Configuration Backup</h2>
-                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                <p style="color: var(--text-secondary); margin-bottom: 16px;" id="config-backup-description">
                     Export your .env configuration for backup or import a previously saved configuration.
                 </p>
+                <p style="color: var(--warning); margin-bottom: 12px; display: none;" id="export-env-disabled-hint">
+                    .env export is disabled by default for security.
+                </p>
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                    <button onclick="exportEnv()">📥 Export .env</button>
+                    <button id="export-env-btn" onclick="exportEnv()">📥 Export .env</button>
                     <button onclick="document.getElementById('import-env-input').click()">📤 Import .env</button>
                     <input type="file" id="import-env-input" accept=".env" style="display:none"
                         onchange="importEnv(event)">
@@ -930,7 +985,7 @@
 
     <!-- Manual Track Mapping Modal -->
     <div class="modal" id="manual-map-modal">
-        <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-content" style="max-width: 760px; width: min(94vw, 760px);">
             <h3>Map Track to External Provider</h3>
             <p style="color: var(--text-secondary); margin-bottom: 16px;">
                 Map this track to an external provider (SquidWTF, Deezer, or Qobuz). For local Jellyfin tracks, use the
@@ -957,11 +1012,19 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label>Search External Provider</label>
+                    <input type="text" id="map-external-search" placeholder="Search for track name or artist...">
+                    <button onclick="searchExternalTracks()" style="margin-top: 8px; width: 100%;">🔍 Search</button>
+                </div>
+                <div id="map-external-results" style="max-height: 240px; overflow-y: auto; margin-top: 8px; margin-bottom: 12px;">
+                    <p style="color: var(--text-secondary); text-align: center; padding: 20px;">Enter search terms and click Search</p>
+                </div>
+                <div class="form-group">
                     <label>External Provider ID</label>
                     <input type="text" id="map-external-id" placeholder="Enter the provider-specific track ID..."
                         oninput="validateExternalMapping()">
                     <small style="color: var(--text-secondary); display: block; margin-top: 4px;">
-                        For SquidWTF: Use the track ID from the search results or URL<br>
+                        For SquidWTF: Use a numeric track ID or full track URL<br>
                         For Deezer: Use the track ID from Deezer URLs<br>
                         For Qobuz: Use the track ID from Qobuz URLs
                     </small>

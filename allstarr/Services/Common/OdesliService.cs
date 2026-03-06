@@ -29,7 +29,7 @@ public class OdesliService
     public async Task<string?> ConvertTidalToSpotifyIdAsync(string tidalTrackId, CancellationToken cancellationToken = default)
     {
         // Check cache first (7 day TTL - these mappings don't change)
-        var cacheKey = $"odesli:tidal-to-spotify:{tidalTrackId}";
+        var cacheKey = CacheKeyBuilder.BuildOdesliTidalToSpotifyKey(tidalTrackId);
         var cached = await _cache.GetAsync<string>(cacheKey);
         if (!string.IsNullOrEmpty(cached))
         {
@@ -64,10 +64,10 @@ public class OdesliService
                         {
                             var spotifyId = match.Groups[1].Value;
                             _logger.LogDebug("✓ Converted Tidal/{TidalId} → Spotify ID {SpotifyId}", tidalTrackId, spotifyId);
-                            
+
                             // Cache for configurable duration
                             await _cache.SetAsync(cacheKey, spotifyId, CacheExtensions.OdesliLookupTTL);
-                            
+
                             return spotifyId;
                         }
                     }
@@ -89,7 +89,7 @@ public class OdesliService
     public async Task<string?> ConvertUrlToSpotifyIdAsync(string musicUrl, CancellationToken cancellationToken = default)
     {
         // Check cache first
-        var cacheKey = $"odesli:url-to-spotify:{musicUrl}";
+        var cacheKey = CacheKeyBuilder.BuildOdesliUrlToSpotifyKey(musicUrl);
         var cached = await _cache.GetAsync<string>(cacheKey);
         if (!string.IsNullOrEmpty(cached))
         {
@@ -123,10 +123,10 @@ public class OdesliService
                         {
                             var spotifyId = match.Groups[1].Value;
                             _logger.LogDebug("✓ Converted URL → Spotify ID {SpotifyId}", spotifyId);
-                            
+
                             // Cache for configurable duration
                             await _cache.SetAsync(cacheKey, spotifyId, CacheExtensions.OdesliLookupTTL);
-                            
+
                             return spotifyId;
                         }
                     }

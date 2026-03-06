@@ -1,411 +1,650 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Track Mappings - Allstarr</title>
-    <style>
-        :root {
-            --bg-primary: #0d1117;
-            --bg-secondary: #161b22;
-            --bg-tertiary: #21262d;
-            --text-primary: #f0f6fc;
-            --text-secondary: #8b949e;
-            --accent: #58a6ff;
-            --accent-hover: #79c0ff;
-            --success: #3fb950;
-            --warning: #d29922;
-            --error: #f85149;
-            --border: #30363d;
-        }
-        
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.5;
-            min-height: 100vh;
-        }
-        
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px 0;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 30px;
-        }
-        
-        h1 {
-            font-size: 1.8rem;
-            font-weight: 600;
-        }
-        
-        .back-link {
-            color: var(--accent);
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        
-        .back-link:hover {
-            color: var(--accent-hover);
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 30px;
-        }
-        
-        .stat-card {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 20px;
-        }
-        
-        .stat-label {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-            margin-bottom: 8px;
-        }
-        
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 600;
-            color: var(--accent);
-        }
-        
-        .mappings-table {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        
-        .table-header {
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--border);
-        }
-        
-        .table-controls {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 16px;
-            margin-bottom: 12px;
-        }
-        
-        .table-header h2 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        
-        .filters {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-        
-        .filter-select {
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 8px 12px;
-            color: var(--text-primary);
-            cursor: pointer;
-        }
-        
-        .filter-select:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-        
-        .search-box {
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 8px 12px;
-            color: var(--text-primary);
-            flex: 1;
-            max-width: 400px;
-        }
-        
-        .search-box:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-        
-        .action-btn {
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            color: var(--text-primary);
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            transition: all 0.2s;
-        }
-        
-        .action-btn:hover {
-            background: var(--bg-secondary);
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-        
-        .action-btn.danger:hover {
-            border-color: var(--error);
-            color: var(--error);
-        }
-        
-        .actions-cell {
-            display: flex;
-            gap: 8px;
-        }
-        
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        thead {
-            background: var(--bg-tertiary);
-        }
-        
-        th {
-            text-align: left;
-            padding: 12px 20px;
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            border-bottom: 1px solid var(--border);
-        }
-        
-        th.sortable {
-            cursor: pointer;
-            user-select: none;
-            transition: color 0.2s;
-        }
-        
-        th.sortable:hover {
-            color: var(--accent);
-        }
-        
-        td {
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--border);
-        }
-        
-        tr:last-child td {
-            border-bottom: none;
-        }
-        
-        tbody tr:hover {
-            background: var(--bg-tertiary);
-        }
-        
-        .track-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .track-artwork {
-            width: 48px;
-            height: 48px;
-            border-radius: 4px;
-            object-fit: cover;
-            background: var(--bg-tertiary);
-        }
-        
-        .track-details {
-            flex: 1;
-        }
-        
-        .track-title {
-            font-weight: 500;
-            margin-bottom: 4px;
-        }
-        
-        .track-artist {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-        
-        .badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        
-        .badge.local {
-            background: rgba(63, 185, 80, 0.2);
-            color: var(--success);
-        }
-        
-        .badge.external {
-            background: rgba(88, 166, 255, 0.2);
-            color: var(--accent);
-        }
-        
-        .badge.manual {
-            background: rgba(210, 153, 34, 0.2);
-            color: var(--warning);
-        }
-        
-        .badge.auto {
-            background: rgba(139, 148, 158, 0.2);
-            color: var(--text-secondary);
-        }
-        
-        .mono {
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-        }
-        
-        .pagination {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 12px;
-            padding: 20px;
-        }
-        
-        .pagination button {
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            color: var(--text-primary);
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-        }
-        
-        .pagination button:hover:not(:disabled) {
-            background: var(--bg-secondary);
-            border-color: var(--accent);
-        }
-        
-        .pagination button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        .pagination .page-info {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-secondary);
-        }
-        
-        .error {
-            background: rgba(248, 81, 73, 0.1);
-            border: 1px solid var(--error);
-            border-radius: 8px;
-            padding: 16px;
-            margin: 20px 0;
-            color: var(--error);
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--text-secondary);
-        }
-        
-        .empty-state h3 {
-            font-size: 1.2rem;
-            margin-bottom: 8px;
-            color: var(--text-primary);
-        }
-    </style>
-    <script src="/spotify-mappings.js" defer></script>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Spotify Track Mappings</h1>
-            <a href="/" class="back-link">
-                ← Back to Dashboard
-            </a>
-        </header>
-        
-        <div class="stats-grid" id="stats">
-            <div class="stat-card">
-                <div class="stat-label">Total Mappings</div>
-                <div class="stat-value" id="stat-total">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Local Tracks</div>
-                <div class="stat-value" id="stat-local">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">External Tracks</div>
-                <div class="stat-value" id="stat-external">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Manual Mappings</div>
-                <div class="stat-value" id="stat-manual">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Auto Mappings</div>
-                <div class="stat-value" id="stat-auto">-</div>
-            </div>
-        </div>
-        
-        <div class="mappings-table">
-            <div class="table-header">
-                <h2>All Mappings</h2>
-                <div class="table-controls">
-                    <div class="filters">
-                        <select class="filter-select" id="filter-type">
-                            <option value="all">All Types</option>
-                            <option value="local">Local Only</option>
-                            <option value="external">External Only</option>
-                        </select>
-                        <select class="filter-select" id="filter-source">
-                            <option value="all">All Sources</option>
-                            <option value="manual">Manual Only</option>
-                            <option value="auto">Auto Only</option>
-                        </select>
-                    </div>
-                    <input type="text" class="search-box" placeholder="Search by title, artist, or Spotify ID..." id="search">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Spotify Track Mappings - Allstarr</title>
+        <style>
+            :root {
+                --bg-primary: #0d1117;
+                --bg-secondary: #161b22;
+                --bg-tertiary: #21262d;
+                --text-primary: #f0f6fc;
+                --text-secondary: #8b949e;
+                --accent: #58a6ff;
+                --accent-hover: #79c0ff;
+                --success: #3fb950;
+                --warning: #d29922;
+                --error: #f85149;
+                --border: #30363d;
+            }
+
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    Oxygen, Ubuntu, sans-serif;
+                background: var(--bg-primary);
+                color: var(--text-primary);
+                line-height: 1.5;
+                min-height: 100vh;
+            }
+
+            .container {
+                max-width: 1400px;
+                margin: 0 auto;
+                padding: 20px;
+            }
+
+            header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 20px 0;
+                border-bottom: 1px solid var(--border);
+                margin-bottom: 30px;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+                font-weight: 600;
+            }
+
+            .back-link {
+                color: var(--accent);
+                text-decoration: none;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .back-link:hover {
+                color: var(--accent-hover);
+            }
+
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 16px;
+                margin-bottom: 30px;
+            }
+
+            .stat-card {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 20px;
+            }
+
+            .stat-label {
+                color: var(--text-secondary);
+                font-size: 0.9rem;
+                margin-bottom: 8px;
+            }
+
+            .stat-value {
+                font-size: 2rem;
+                font-weight: 600;
+                color: var(--accent);
+            }
+
+            .mappings-table {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+
+            .table-header {
+                padding: 16px 20px;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .table-controls {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                margin-bottom: 12px;
+            }
+
+            .table-header h2 {
+                font-size: 1.1rem;
+                font-weight: 600;
+                margin-bottom: 12px;
+            }
+
+            .filters {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+            }
+
+            .filter-select {
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: var(--text-primary);
+                cursor: pointer;
+            }
+
+            .filter-select:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
+
+            .search-box {
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 8px 12px;
+                color: var(--text-primary);
+                flex: 1;
+                max-width: 400px;
+            }
+
+            .search-box:focus {
+                outline: none;
+                border-color: var(--accent);
+            }
+
+            .action-btn {
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border);
+                color: var(--text-primary);
+                padding: 6px 10px;
+                border-radius: 999px;
+                cursor: pointer;
+                font-size: 0.78rem;
+                transition: all 0.2s;
+            }
+
+            .action-btn:hover {
+                transform: translateY(-1px);
+            }
+
+            .action-btn.local {
+                background: rgba(63, 185, 80, 0.18);
+                border-color: rgba(63, 185, 80, 0.5);
+                color: #78d487;
+            }
+
+            .action-btn.external {
+                background: rgba(210, 153, 34, 0.18);
+                border-color: rgba(210, 153, 34, 0.5);
+                color: #e8ba5d;
+            }
+
+            .action-btn.danger {
+                background: rgba(248, 81, 73, 0.16);
+                border-color: rgba(248, 81, 73, 0.45);
+                color: #f57f78;
+            }
+
+            .action-btn.danger:hover {
+                border-color: var(--error);
+                color: var(--error);
+            }
+
+            .actions-cell {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+
+            thead {
+                background: var(--bg-tertiary);
+            }
+
+            th {
+                text-align: left;
+                padding: 12px 20px;
+                font-weight: 600;
+                font-size: 0.9rem;
+                color: var(--text-secondary);
+                border-bottom: 1px solid var(--border);
+            }
+
+            th.sortable {
+                cursor: pointer;
+                user-select: none;
+                transition: color 0.2s;
+            }
+
+            th.sortable:hover {
+                color: var(--accent);
+            }
+
+            td {
+                padding: 16px 20px;
+                border-bottom: 1px solid var(--border);
+            }
+
+            tr:last-child td {
+                border-bottom: none;
+            }
+
+            tbody tr:hover {
+                background: var(--bg-tertiary);
+            }
+
+            .track-info {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .track-artwork {
+                width: 48px;
+                height: 48px;
+                border-radius: 4px;
+                object-fit: cover;
+                background: var(--bg-tertiary);
+            }
+
+            .track-details {
+                flex: 1;
+            }
+
+            .track-title {
+                font-weight: 500;
+                margin-bottom: 4px;
+            }
+
+            .track-artist {
+                color: var(--text-secondary);
+                font-size: 0.9rem;
+            }
+
+            .badge {
+                display: inline-block;
+                padding: 4px 10px;
+                border-radius: 12px;
+                font-size: 0.85rem;
+                font-weight: 500;
+            }
+
+            .badge.local {
+                background: rgba(63, 185, 80, 0.2);
+                color: var(--success);
+            }
+
+            .badge.external {
+                background: rgba(88, 166, 255, 0.2);
+                color: var(--accent);
+            }
+
+            .badge.manual {
+                background: rgba(210, 153, 34, 0.2);
+                color: var(--warning);
+            }
+
+            .badge.auto {
+                background: rgba(139, 148, 158, 0.2);
+                color: var(--text-secondary);
+            }
+
+            .mono {
+                font-family:
+                    "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas,
+                    monospace;
+                font-size: 0.85rem;
+                color: var(--text-secondary);
+            }
+
+            .pagination {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 12px;
+                padding: 20px;
+            }
+
+            .pagination button {
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border);
+                color: var(--text-primary);
+                padding: 8px 16px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.9rem;
+            }
+
+            .pagination button:hover:not(:disabled) {
+                background: var(--bg-secondary);
+                border-color: var(--accent);
+            }
+
+            .pagination button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            .pagination .page-info {
+                color: var(--text-secondary);
+                font-size: 0.9rem;
+            }
+
+            .loading {
+                text-align: center;
+                padding: 40px;
+                color: var(--text-secondary);
+            }
+
+            .error {
+                background: rgba(248, 81, 73, 0.1);
+                border: 1px solid var(--error);
+                border-radius: 8px;
+                padding: 16px;
+                margin: 20px 0;
+                color: var(--error);
+            }
+
+            .empty-state {
+                text-align: center;
+                padding: 60px 20px;
+                color: var(--text-secondary);
+            }
+
+            .empty-state h3 {
+                font-size: 1.2rem;
+                margin-bottom: 8px;
+                color: var(--text-primary);
+            }
+
+            .modal-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.62);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+                z-index: 1000;
+            }
+
+            .modal-overlay.active {
+                display: flex;
+            }
+
+            .modal-card {
+                width: min(760px, 100%);
+                max-height: 90vh;
+                overflow: auto;
+                background: var(--bg-secondary);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 18px;
+            }
+
+            .modal-card h3 {
+                margin-bottom: 10px;
+            }
+
+            .modal-track-info {
+                margin-bottom: 14px;
+                padding: 10px 12px;
+                border-radius: 8px;
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border);
+            }
+
+            .modal-row {
+                margin-bottom: 12px;
+            }
+
+            .modal-row label {
+                display: block;
+                margin-bottom: 6px;
+                color: var(--text-secondary);
+                font-size: 0.86rem;
+            }
+
+            .modal-row input,
+            .modal-row select {
+                width: 100%;
+                padding: 8px 10px;
+                border-radius: 6px;
+                border: 1px solid var(--border);
+                background: var(--bg-tertiary);
+                color: var(--text-primary);
+            }
+
+            .modal-actions {
+                margin-top: 14px;
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+            }
+
+            .modal-actions .primary {
+                background: var(--accent);
+                border-color: var(--accent);
+                color: white;
+            }
+
+            .modal-actions .primary:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+
+            .local-results {
+                max-height: 280px;
+                overflow: auto;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                background: rgba(13, 17, 23, 0.36);
+            }
+
+            .local-result {
+                display: flex;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 10px 12px;
+                border-bottom: 1px solid var(--border);
+                cursor: pointer;
+            }
+
+            .local-result:last-child {
+                border-bottom: none;
+            }
+
+            .local-result:hover {
+                background: var(--bg-tertiary);
+            }
+
+            .local-result.selected {
+                border-left: 2px solid var(--accent);
+                background: rgba(88, 166, 255, 0.12);
+            }
+
+            .local-result .meta {
+                color: var(--text-secondary);
+                font-size: 0.82rem;
+            }
+
+            .toast {
+                position: fixed;
+                right: 20px;
+                bottom: 20px;
+                z-index: 1200;
+                padding: 10px 14px;
+                border-radius: 8px;
+                border: 1px solid var(--border);
+                background: var(--bg-secondary);
+            }
+
+            .toast.success {
+                border-color: rgba(63, 185, 80, 0.6);
+                color: var(--success);
+            }
+
+            .toast.error {
+                border-color: rgba(248, 81, 73, 0.6);
+                color: var(--error);
+            }
+        </style>
+        <script src="/spotify-mappings.js" defer></script>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>Spotify Track Mappings</h1>
+                <a href="/" class="back-link"> ← Back to Dashboard </a>
+            </header>
+
+            <div class="stats-grid" id="stats">
+                <div class="stat-card">
+                    <div class="stat-label">Total Mappings</div>
+                    <div class="stat-value" id="stat-total">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Local Tracks</div>
+                    <div class="stat-value" id="stat-local">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">External Tracks</div>
+                    <div class="stat-value" id="stat-external">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Manual Mappings</div>
+                    <div class="stat-value" id="stat-manual">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Auto Mappings</div>
+                    <div class="stat-value" id="stat-auto">-</div>
                 </div>
             </div>
-            
-            <div id="content">
-                <div class="loading">Loading mappings...</div>
-            </div>
-            
-            <div class="pagination" id="pagination" style="display: none;">
-                <button id="prev-btn">← Previous</button>
-                <span class="page-info" id="page-info">Page 1 of 1</span>
-                <button id="next-btn">Next →</button>
+
+            <div class="mappings-table">
+                <div class="table-header">
+                    <h2>All Mappings</h2>
+                    <div class="table-controls">
+                        <div class="filters">
+                            <select class="filter-select" id="filter-type">
+                                <option value="all">All Types</option>
+                                <option value="local">Local Only</option>
+                                <option value="external">External Only</option>
+                            </select>
+                            <select class="filter-select" id="filter-source">
+                                <option value="all">All Sources</option>
+                                <option value="manual">Manual Only</option>
+                                <option value="auto">Auto Only</option>
+                            </select>
+                        </div>
+                        <input
+                            type="text"
+                            class="search-box"
+                            placeholder="Search by title, artist, or Spotify ID..."
+                            id="search"
+                        />
+                    </div>
+                </div>
+
+                <div id="content">
+                    <div class="loading">Loading mappings...</div>
+                </div>
+
+                <div class="pagination" id="pagination" style="display: none">
+                    <button id="prev-btn">← Previous</button>
+                    <span class="page-info" id="page-info">Page 1 of 1</span>
+                    <button id="next-btn">Next →</button>
+                </div>
             </div>
         </div>
-    </div>
-</body>
+
+        <div class="modal-overlay" id="local-map-modal">
+            <div class="modal-card">
+                <h3>Map Spotify Track to Local Jellyfin Track</h3>
+                <div class="modal-track-info">
+                    <strong id="local-map-title"></strong><br />
+                    <span
+                        style="color: var(--text-secondary)"
+                        id="local-map-artist"
+                    ></span
+                    ><br />
+                    <span class="mono" id="local-map-spotify-id"></span>
+                </div>
+
+                <div class="modal-row">
+                    <label for="local-map-search"
+                        >Search Jellyfin Library</label
+                    >
+                    <div style="display: flex; gap: 8px">
+                        <input
+                            id="local-map-search"
+                            type="text"
+                            placeholder="Track title or artist"
+                        />
+                        <button id="local-map-search-btn" class="action-btn">
+                            Search
+                        </button>
+                    </div>
+                </div>
+
+                <div class="local-results" id="local-map-results">
+                    <div class="loading" style="padding: 16px">
+                        Search to find matching local tracks.
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button id="local-map-cancel-btn">Cancel</button>
+                    <button id="local-map-save-btn" class="primary" disabled>
+                        Save Mapping
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="external-map-modal">
+            <div class="modal-card">
+                <h3>Map Spotify Track to External Provider</h3>
+                <div class="modal-track-info">
+                    <strong id="external-map-title"></strong><br />
+                    <span
+                        style="color: var(--text-secondary)"
+                        id="external-map-artist"
+                    ></span
+                    ><br />
+                    <span class="mono" id="external-map-spotify-id"></span>
+                </div>
+
+                <div class="modal-row">
+                    <label for="external-map-provider">Provider</label>
+                    <select id="external-map-provider">
+                        <option value="squidwtf">SquidWTF</option>
+                        <option value="deezer">Deezer</option>
+                        <option value="qobuz">Qobuz</option>
+                    </select>
+                </div>
+                <div class="modal-row">
+                    <label for="external-map-id">External ID</label>
+                    <input
+                        id="external-map-id"
+                        type="text"
+                        placeholder="Provider track ID or URL"
+                    />
+                </div>
+
+                <div class="modal-actions">
+                    <button id="external-map-cancel-btn">Cancel</button>
+                    <button id="external-map-save-btn" class="primary" disabled>
+                        Save Mapping
+                    </button>
+                </div>
+            </div>
+        </div>
+    </body>
 </html>

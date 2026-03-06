@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using allstarr.Models.Domain;
 using allstarr.Models.Spotify;
 using allstarr.Services.Common;
@@ -62,6 +63,7 @@ public partial class JellyfinController
             var itemsArray = items.EnumerateArray().ToList();
             var modified = false;
             var updatedItems = new List<Dictionary<string, object>>();
+            var spotifyPlaylistCreatedDates = new Dictionary<string, DateTime?>(StringComparer.OrdinalIgnoreCase);
 
             _logger.LogDebug("Checking {Count} items for Spotify playlists", itemsArray.Count);
 
@@ -81,23 +83,34 @@ public partial class JellyfinController
 
                     if (!string.IsNullOrEmpty(playlistId) && _spotifySettings.IsSpotifyPlaylist(playlistId))
                     {
-                        _logger.LogInformation("Found Spotify playlist: {Id}", playlistId);
+                        _logger.LogDebug("Found Spotify playlist: {Id}", playlistId);
 
                         // This is a Spotify playlist - get the actual track count
                         var playlistConfig = _spotifySettings.GetPlaylistByJellyfinId(playlistId);
 
                         if (playlistConfig != null)
                         {
-                            _logger.LogInformation(
+                            _logger.LogDebug(
                                 "Found playlist config for Jellyfin ID {JellyfinId}: {Name} (Spotify ID: {SpotifyId})",
                                 playlistId, playlistConfig.Name, playlistConfig.Id);
                             var playlistName = playlistConfig.Name;
+
+                            if (!spotifyPlaylistCreatedDates.TryGetValue(playlistName, out var playlistCreatedDate))
+                            {
+                                playlistCreatedDate = await ResolveSpotifyPlaylistCreatedDateAsync(playlistName);
+                                spotifyPlaylistCreatedDates[playlistName] = playlistCreatedDate;
+                            }
+
+                            if (ApplySpotifyPlaylistCreatedDate(itemDict, playlistCreatedDate))
+                            {
+                                modified = true;
+                            }
 
                             // Get matched external tracks (tracks that were successfully downloaded/matched)
                             var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
                             var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
 
-                            _logger.LogInformation("Cache lookup for {Key}: {Count} matched tracks",
+                            _logger.LogDebug("Cache lookup for {Key}: {Count} matched tracks",
                                 matchedTracksKey, matchedTracks?.Count ?? 0);
 
                             // Fallback to legacy cache format
@@ -210,7 +223,7 @@ public partial class JellyfinController
 
             if (!modified)
             {
-                _logger.LogInformation("No Spotify playlists found to update");
+                _logger.LogDebug("No Spotify playlists found to update");
                 return response;
             }
 
@@ -224,7 +237,11 @@ public partial class JellyfinController
             {
                 responseDict["Items"] = updatedItems;
                 var updatedJson = JsonSerializer.Serialize(responseDict);
-                return JsonDocument.Parse(updatedJson);
+
+                // Parse new document and dispose the old one to prevent memory leak
+                var newDocument = JsonDocument.Parse(updatedJson);
+                response.Dispose();
+                return newDocument;
             }
 
             return response;
@@ -236,9 +253,78 @@ public partial class JellyfinController
         }
     }
 
+    private async Task<DateTime?> ResolveSpotifyPlaylistCreatedDateAsync(string playlistName)
+    {
+        try
+        {
+            var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName);
+            var cachedPlaylist = await _cache.GetAsync<SpotifyPlaylist>(cacheKey);
+            var createdAt = GetCreatedDateFromSpotifyPlaylist(cachedPlaylist);
+            if (createdAt.HasValue)
+            {
+                return createdAt.Value;
+            }
+
+            if (_spotifyPlaylistFetcher == null)
+            {
+                return null;
+            }
+
+            var tracks = await _spotifyPlaylistFetcher.GetPlaylistTracksAsync(playlistName);
+            var earliestTrackAddedAt = tracks
+                .Where(t => t.AddedAt.HasValue)
+                .Select(t => t.AddedAt!.Value.ToUniversalTime())
+                .OrderBy(t => t)
+                .FirstOrDefault();
+            return earliestTrackAddedAt == default ? null : earliestTrackAddedAt;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve created date for Spotify playlist {PlaylistName}", playlistName);
+            return null;
+        }
+    }
+
+    private static DateTime? GetCreatedDateFromSpotifyPlaylist(SpotifyPlaylist? playlist)
+    {
+        if (playlist == null)
+        {
+            return null;
+        }
+
+        if (playlist.CreatedAt.HasValue)
+        {
+            return playlist.CreatedAt.Value.ToUniversalTime();
+        }
+
+        var earliestTrackAddedAt = playlist.Tracks
+            .Where(t => t.AddedAt.HasValue)
+            .Select(t => t.AddedAt!.Value.ToUniversalTime())
+            .OrderBy(t => t)
+            .FirstOrDefault();
+        return earliestTrackAddedAt == default ? null : earliestTrackAddedAt;
+    }
+
+    private static bool ApplySpotifyPlaylistCreatedDate(Dictionary<string, object> itemDict, DateTime? playlistCreatedDate)
+    {
+        if (!playlistCreatedDate.HasValue)
+        {
+            return false;
+        }
+
+        var createdUtc = playlistCreatedDate.Value.ToUniversalTime();
+        var createdAtIso = createdUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+
+        itemDict["DateCreated"] = createdAtIso;
+        itemDict["PremiereDate"] = createdAtIso;
+        itemDict["ProductionYear"] = createdUtc.Year;
+        return true;
+    }
+
     /// <summary>
     /// Logs endpoint usage to a file for analysis.
-    /// Creates a CSV file with timestamp, method, path, and query string.
+    /// Creates a CSV file with timestamp, method, and path only.
+    /// Query strings are intentionally excluded to avoid persisting sensitive data.
     /// </summary>
     private async Task LogEndpointUsageAsync(string path, string method)
     {
@@ -249,13 +335,11 @@ public partial class JellyfinController
 
             var logFile = Path.Combine(logDir, "endpoints.csv");
             var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-            var queryString = Request.QueryString.HasValue ? Request.QueryString.Value : "";
 
-            // Sanitize path and query for CSV (remove commas, quotes, newlines)
+            // Sanitize path for CSV (remove commas, quotes, newlines)
             var sanitizedPath = path.Replace(",", ";").Replace("\"", "'").Replace("\n", " ").Replace("\r", " ");
-            var sanitizedQuery = queryString.Replace(",", ";").Replace("\"", "'").Replace("\n", " ").Replace("\r", " ");
 
-            var logLine = $"{timestamp},{method},{sanitizedPath},{sanitizedQuery}\n";
+            var logLine = $"{timestamp},{method},{sanitizedPath}\n";
 
             // Append to file (thread-safe)
             await System.IO.File.AppendAllTextAsync(logFile, logLine);
@@ -267,6 +351,41 @@ public partial class JellyfinController
         }
     }
 
+    // Redacts security-sensitive query params before any logging or analytics persistence.
+    private static string MaskSensitiveQueryString(string? queryString)
+    {
+        if (string.IsNullOrEmpty(queryString))
+        {
+            return string.Empty;
+        }
+
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
+        var parts = new List<string>();
+
+        foreach (var kv in query)
+        {
+            var key = kv.Key;
+            var value = kv.Value.ToString();
+            if (string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "token", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "auth", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "authorization", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "x-emby-token", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "x-emby-authorization", StringComparison.OrdinalIgnoreCase) ||
+                key.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                key.Contains("auth", StringComparison.OrdinalIgnoreCase))
+            {
+                parts.Add($"{key}=<redacted>");
+            }
+            else
+            {
+                parts.Add($"{key}={value}");
+            }
+        }
+
+        return parts.Count > 0 ? "?" + string.Join("&", parts) : string.Empty;
+    }
+
     private static string[]? ParseItemTypes(string? includeItemTypes)
     {
         if (string.IsNullOrWhiteSpace(includeItemTypes))
@@ -275,6 +394,131 @@ public partial class JellyfinController
         }
 
         return includeItemTypes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    /// <summary>
+    /// Determines whether Spotify playlist count enrichment should run for a response.
+    /// We only run enrichment for playlist-oriented payloads to avoid mutating unrelated item lists
+    /// (for example, album browse responses requested by clients like Finer).
+    /// </summary>
+    private bool ShouldProcessSpotifyPlaylistCounts(JsonDocument response, string? includeItemTypes)
+    {
+        if (!_spotifySettings.Enabled)
+        {
+            return false;
+        }
+
+        if (response.RootElement.ValueKind != JsonValueKind.Object ||
+            !response.RootElement.TryGetProperty("Items", out var items) ||
+            items.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var requestedTypes = ParseItemTypes(includeItemTypes);
+        if (requestedTypes != null && requestedTypes.Length > 0)
+        {
+            return requestedTypes.Contains("Playlist", StringComparer.OrdinalIgnoreCase);
+        }
+
+        // If the request did not explicitly constrain types, inspect payload types.
+        foreach (var item in items.EnumerateArray())
+        {
+            if (!item.TryGetProperty("Type", out var typeProp))
+            {
+                continue;
+            }
+
+            if (string.Equals(typeProp.GetString(), "Playlist", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Recovers SearchTerm directly from raw query string.
+    /// Handles malformed clients that do not URL-encode '&' inside SearchTerm.
+    /// </summary>
+    private static string? RecoverSearchTermFromRawQuery(string? rawQueryString)
+    {
+        if (string.IsNullOrWhiteSpace(rawQueryString))
+        {
+            return null;
+        }
+
+        var query = rawQueryString[0] == '?' ? rawQueryString[1..] : rawQueryString;
+        const string key = "SearchTerm=";
+        var start = query.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+        {
+            return null;
+        }
+
+        var valueStart = start + key.Length;
+        if (valueStart >= query.Length)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        var i = valueStart;
+        while (i < query.Length)
+        {
+            var ch = query[i];
+            if (ch == '&')
+            {
+                var next = i + 1;
+                var equalsIndex = query.IndexOf('=', next);
+                var nextAmp = query.IndexOf('&', next);
+
+                var isParameterDelimiter = equalsIndex > next &&
+                                           (nextAmp < 0 || equalsIndex < nextAmp);
+
+                if (isParameterDelimiter)
+                {
+                    break;
+                }
+            }
+
+            sb.Append(ch);
+            i++;
+        }
+
+        var encoded = sb.ToString();
+        if (string.IsNullOrWhiteSpace(encoded))
+        {
+            return string.Empty;
+        }
+
+        var plusAsSpace = encoded.Replace("+", " ");
+        return Uri.UnescapeDataString(plusAsSpace);
+    }
+
+    /// <summary>
+    /// Uses model-bound SearchTerm when valid; falls back to raw query recovery when needed.
+    /// </summary>
+    private static string? GetEffectiveSearchTerm(string? boundSearchTerm, string? rawQueryString)
+    {
+        var recovered = RecoverSearchTermFromRawQuery(rawQueryString);
+        if (string.IsNullOrWhiteSpace(recovered))
+        {
+            return boundSearchTerm;
+        }
+
+        if (string.IsNullOrWhiteSpace(boundSearchTerm))
+        {
+            return recovered;
+        }
+
+        // Prefer recovered when it is meaningfully longer (common malformed '&' case).
+        var boundTrimmed = boundSearchTerm.Trim();
+        var recoveredTrimmed = recovered.Trim();
+        return recoveredTrimmed.Length > boundTrimmed.Length
+            ? recoveredTrimmed
+            : boundSearchTerm;
     }
 
     private static string GetContentType(string filePath)

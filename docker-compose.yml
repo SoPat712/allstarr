@@ -37,13 +37,13 @@ services:
     # For beta/testing: ghcr.io/sopat712/allstarr:beta
     # To build locally instead, uncomment the build section below
     image: ghcr.io/sopat712/allstarr:latest
-    
+
     # Uncomment to build locally instead of using GHCR image:
     # build:
     #   context: .
     #   dockerfile: Dockerfile
     # image: allstarr:local
-    
+
     container_name: allstarr
     restart: unless-stopped
     ports:
@@ -68,11 +68,14 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       # Backend type: Subsonic or Jellyfin (default: Subsonic)
       - Backend__Type=${BACKEND_TYPE:-Subsonic}
-      
+      # Admin network controls (port 5275)
+      - Admin__BindAnyIp=${ADMIN_BIND_ANY_IP:-false}
+      - Admin__TrustedSubnets=${ADMIN_TRUSTED_SUBNETS:-}
+
       # ===== REDIS CACHE =====
       - Redis__ConnectionString=redis:6379
       - Redis__Enabled=${REDIS_ENABLED:-true}
-      
+
       # ===== CACHE TTL SETTINGS =====
       - Cache__SearchResultsMinutes=${CACHE_SEARCH_RESULTS_MINUTES:-120}
       - Cache__PlaylistImagesHours=${CACHE_PLAYLIST_IMAGES_HOURS:-168}
@@ -83,7 +86,7 @@ services:
       - Cache__MetadataDays=${CACHE_METADATA_DAYS:-7}
       - Cache__OdesliLookupDays=${CACHE_ODESLI_LOOKUP_DAYS:-60}
       - Cache__ProxyImagesDays=${CACHE_PROXY_IMAGES_DAYS:-14}
-      
+
       # ===== SUBSONIC BACKEND =====
       - Subsonic__Url=${SUBSONIC_URL:-http://localhost:4533}
       - Subsonic__ExplicitFilter=${EXPLICIT_FILTER:-ExplicitOnly}
@@ -92,7 +95,8 @@ services:
       - Subsonic__StorageMode=${STORAGE_MODE:-Permanent}
       - Subsonic__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
       - Subsonic__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
-      
+      - Subsonic__PlaylistsDirectory=${PLAYLISTS_DIRECTORY:-playlists}
+
       # ===== JELLYFIN BACKEND =====
       - Jellyfin__Url=${JELLYFIN_URL:-http://localhost:8096}
       - Jellyfin__ApiKey=${JELLYFIN_API_KEY:-}
@@ -105,17 +109,19 @@ services:
       - Jellyfin__StorageMode=${STORAGE_MODE:-Permanent}
       - Jellyfin__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
       - Jellyfin__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
-      
+      - Jellyfin__PlaylistsDirectory=${PLAYLISTS_DIRECTORY:-playlists}
+
       # ===== SPOTIFY PLAYLIST INJECTION (JELLYFIN ONLY) =====
       - SpotifyImport__Enabled=${SPOTIFY_IMPORT_ENABLED:-false}
       - SpotifyImport__SyncStartHour=${SPOTIFY_IMPORT_SYNC_START_HOUR:-16}
       - SpotifyImport__SyncStartMinute=${SPOTIFY_IMPORT_SYNC_START_MINUTE:-15}
       - SpotifyImport__SyncWindowHours=${SPOTIFY_IMPORT_SYNC_WINDOW_HOURS:-2}
+      - SpotifyImport__MatchingIntervalHours=${SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS:-24}
       - SpotifyImport__Playlists=${SPOTIFY_IMPORT_PLAYLISTS:-}
       - SpotifyImport__PlaylistIds=${SPOTIFY_IMPORT_PLAYLIST_IDS:-}
       - SpotifyImport__PlaylistNames=${SPOTIFY_IMPORT_PLAYLIST_NAMES:-}
       - SpotifyImport__PlaylistLocalTracksPositions=${SPOTIFY_IMPORT_PLAYLIST_LOCAL_TRACKS_POSITIONS:-}
-      
+
       # ===== SPOTIFY DIRECT API (for lyrics, ISRC matching, track ordering) =====
       - SpotifyApi__Enabled=${SPOTIFY_API_ENABLED:-false}
       - SpotifyApi__SessionCookie=${SPOTIFY_API_SESSION_COOKIE:-}
@@ -125,9 +131,11 @@ services:
       - SpotifyApi__PreferIsrcMatching=${SPOTIFY_API_PREFER_ISRC_MATCHING:-true}
       # Spotify Lyrics API sidecar service URL (internal)
       - SpotifyApi__LyricsApiUrl=${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}
-      
+
       # ===== SCROBBLING (LAST.FM, LISTENBRAINZ) =====
       - Scrobbling__Enabled=${SCROBBLING_ENABLED:-false}
+      - Scrobbling__LocalTracksEnabled=${SCROBBLING_LOCAL_TRACKS_ENABLED:-false}
+      - Scrobbling__SyntheticLocalPlayedSignalEnabled=${SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED:-false}
       - Scrobbling__LastFm__Enabled=${SCROBBLING_LASTFM_ENABLED:-false}
       - Scrobbling__LastFm__ApiKey=${SCROBBLING_LASTFM_API_KEY:-}
       - Scrobbling__LastFm__SharedSecret=${SCROBBLING_LASTFM_SHARED_SECRET:-}
@@ -136,10 +144,11 @@ services:
       - Scrobbling__LastFm__Password=${SCROBBLING_LASTFM_PASSWORD:-}
       - Scrobbling__ListenBrainz__Enabled=${SCROBBLING_LISTENBRAINZ_ENABLED:-false}
       - Scrobbling__ListenBrainz__UserToken=${SCROBBLING_LISTENBRAINZ_USER_TOKEN:-}
-      
+
       # ===== DEBUG SETTINGS =====
       - Debug__LogAllRequests=${DEBUG_LOG_ALL_REQUESTS:-false}
-      
+      - Debug__RedactSensitiveRequestValues=${DEBUG_REDACT_SENSITIVE_REQUEST_VALUES:-false}
+
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
       - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
@@ -149,6 +158,9 @@ services:
       - Qobuz__UserAuthToken=${QOBUZ_USER_AUTH_TOKEN:-}
       - Qobuz__UserId=${QOBUZ_USER_ID:-}
       - Qobuz__Quality=${QOBUZ_QUALITY:-FLAC}
+      - MusicBrainz__Enabled=${MUSICBRAINZ_ENABLED:-true}
+      - MusicBrainz__Username=${MUSICBRAINZ_USERNAME:-}
+      - MusicBrainz__Password=${MUSICBRAINZ_PASSWORD:-}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
       - ${KEPT_PATH:-./kept}:/app/kept

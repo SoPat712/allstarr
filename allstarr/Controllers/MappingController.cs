@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using allstarr.Models.Admin;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
+using allstarr.Services.Spotify;
 using allstarr.Filters;
 using System.Text.Json;
 
@@ -15,15 +16,18 @@ public class MappingController : ControllerBase
     private readonly ILogger<MappingController> _logger;
     private readonly RedisCacheService _cache;
     private readonly AdminHelperService _adminHelper;
+    private readonly SpotifyMappingService _mappingService;
 
     public MappingController(
         ILogger<MappingController> logger,
         RedisCacheService cache,
-        AdminHelperService adminHelper)
+        AdminHelperService adminHelper,
+        SpotifyMappingService mappingService)
     {
         _logger = logger;
         _cache = cache;
         _adminHelper = adminHelper;
+        _mappingService = mappingService;
     }
 
     
@@ -144,6 +148,9 @@ public class MappingController : ControllerBase
             // Also remove from Redis cache
             var cacheKey = $"manual:mapping:{playlist}:{spotifyId}";
             await _cache.DeleteAsync(cacheKey);
+
+            // Keep global Spotify mapping index in sync as well.
+            await _mappingService.DeleteMappingAsync(spotifyId);
             
             return Ok(new { success = true, message = "Mapping deleted successfully" });
         }

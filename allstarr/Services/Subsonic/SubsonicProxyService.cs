@@ -26,25 +26,25 @@ public class SubsonicProxyService
     /// Relays a request to the Subsonic server and returns the response.
     /// </summary>
     public async Task<(byte[] Body, string? ContentType)> RelayAsync(
-        string endpoint, 
+        string endpoint,
         Dictionary<string, string> parameters)
     {
-        var query = string.Join("&", parameters.Select(kv => 
+        var query = string.Join("&", parameters.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
         var url = $"{_subsonicSettings.Url}/{endpoint}?{query}";
-        
+
         HttpResponseMessage response = await _httpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
-        
+
         var body = await response.Content.ReadAsByteArrayAsync();
         var contentType = response.Content.Headers.ContentType?.ToString();
-        
+
         // Trigger GC for large files to prevent memory leaks
         if (body.Length > 1024 * 1024) // 1MB threshold
         {
             GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
         }
-        
+
         return (body, contentType);
     }
 
@@ -52,7 +52,7 @@ public class SubsonicProxyService
     /// Safely relays a request to the Subsonic server, returning null on failure.
     /// </summary>
     public async Task<(byte[]? Body, string? ContentType, bool Success)> RelaySafeAsync(
-        string endpoint, 
+        string endpoint,
         Dictionary<string, string> parameters)
     {
         try
@@ -93,14 +93,14 @@ public class SubsonicProxyService
                     StatusCode = 500
                 };
             }
-            
+
             var incomingRequest = httpContext.Request;
             var outgoingResponse = httpContext.Response;
 
-            var query = string.Join("&", parameters.Select(kv => 
+            var query = string.Join("&", parameters.Select(kv =>
                 $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
             var url = $"{_subsonicSettings.Url}/rest/stream?{query}";
-            
+
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
             // Forward Range headers for progressive streaming support (iOS clients)
@@ -108,17 +108,17 @@ public class SubsonicProxyService
             {
                 request.Headers.TryAddWithoutValidation("Range", range.ToArray());
             }
-            
+
             if (incomingRequest.Headers.TryGetValue("If-Range", out var ifRange))
             {
                 request.Headers.TryAddWithoutValidation("If-Range", ifRange.ToArray());
             }
-            
+
             var response = await _httpClient.SendAsync(
-                request, 
-                HttpCompletionOption.ResponseHeadersRead, 
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 return new StatusCodeResult((int)response.StatusCode);
@@ -139,15 +139,15 @@ public class SubsonicProxyService
 
             var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
-            
+
             return new FileStreamResult(stream, contentType)
             {
                 EnableRangeProcessing = true
             };
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return new ObjectResult(new { error = $"Error streaming from Subsonic: {ex.Message}" })
+            return new ObjectResult(new { error = "Error streaming from Subsonic" })
             {
                 StatusCode = 500
             };
