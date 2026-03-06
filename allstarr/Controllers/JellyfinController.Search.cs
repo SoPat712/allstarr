@@ -189,10 +189,14 @@ public partial class JellyfinController
 
             var endpoint = userId != null ? $"Users/{userId}/Items" : "Items";
 
-            // Ensure MediaSources is included in Fields parameter for bitrate info
+            // Include MediaSources only for audio-oriented browse requests (bitrate needs).
+            // Album/artist browse requests should stay as close to raw Jellyfin responses as possible.
             var queryString = Request.QueryString.Value ?? "";
+            var requestedTypes = ParseItemTypes(includeItemTypes);
+            var shouldIncludeMediaSources = requestedTypes != null &&
+                                            requestedTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase);
 
-            if (!string.IsNullOrEmpty(queryString))
+            if (shouldIncludeMediaSources && !string.IsNullOrEmpty(queryString))
             {
                 // Parse query string to modify Fields parameter
                 var queryParams = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
@@ -231,13 +235,16 @@ public partial class JellyfinController
                     queryString = $"{queryString}&Fields=MediaSources";
                 }
             }
-            else
+            else if (shouldIncludeMediaSources)
             {
                 // No query string at all
                 queryString = "?Fields=MediaSources";
             }
 
-            endpoint = $"{endpoint}{queryString}";
+            if (!string.IsNullOrEmpty(queryString))
+            {
+                endpoint = $"{endpoint}{queryString}";
+            }
 
             var (browseResult, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
 
@@ -249,7 +256,7 @@ public partial class JellyfinController
             }
 
             // Update Spotify playlist counts if enabled and response contains playlists
-            if (_spotifySettings.Enabled && browseResult.RootElement.TryGetProperty("Items", out var _))
+            if (ShouldProcessSpotifyPlaylistCounts(browseResult, includeItemTypes))
             {
                 _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");
                 browseResult = await UpdateSpotifyPlaylistCounts(browseResult);
@@ -409,6 +416,11 @@ public partial class JellyfinController
 
         // Merge albums and playlists using score-based interleaving (albums keep a light priority over playlists).
         var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 2.0, boostMinScore: 70);
+        mergedAlbumsAndPlaylists = ApplyRequestedAlbumOrderingIfApplicable(
+            mergedAlbumsAndPlaylists,
+            itemTypes,
+            Request.Query["SortBy"].ToString(),
+            Request.Query["SortOrder"].ToString());
 
         _logger.LogDebug(
             "Merged results: Songs={Songs}, Albums+Playlists={AlbumsPlaylists}, Artists={Artists}",
@@ -708,6 +720,152 @@ public partial class JellyfinController
             $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value ?? string.Empty)}"));
 
         return MaskSensitiveQueryString(query);
+    }
+
+    private List<Dictionary<string, object?>> ApplyRequestedAlbumOrderingIfApplicable(
+        List<Dictionary<string, object?>> items,
+        string[]? requestedTypes,
+        string? sortBy,
+        string? sortOrder)
+    {
+        if (items.Count <= 1 || string.IsNullOrWhiteSpace(sortBy))
+        {
+            return items;
+        }
+
+        if (requestedTypes == null || requestedTypes.Length == 0)
+        {
+            return items;
+        }
+
+        var isAlbumOnlyRequest = requestedTypes.All(type =>
+            string.Equals(type, "MusicAlbum", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(type, "Playlist", StringComparison.OrdinalIgnoreCase));
+
+        if (!isAlbumOnlyRequest)
+        {
+            return items;
+        }
+
+        var sortFields = sortBy
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(field => !string.IsNullOrWhiteSpace(field))
+            .ToList();
+
+        if (sortFields.Count == 0)
+        {
+            return items;
+        }
+
+        var descending = string.Equals(sortOrder, "Descending", StringComparison.OrdinalIgnoreCase);
+        var sorted = items.ToList();
+        sorted.Sort((left, right) => CompareAlbumItemsByRequestedSort(left, right, sortFields, descending));
+        return sorted;
+    }
+
+    private int CompareAlbumItemsByRequestedSort(
+        Dictionary<string, object?> left,
+        Dictionary<string, object?> right,
+        IReadOnlyList<string> sortFields,
+        bool descending)
+    {
+        foreach (var field in sortFields)
+        {
+            var comparison = CompareAlbumItemsByField(left, right, field);
+            if (comparison == 0)
+            {
+                continue;
+            }
+
+            return descending ? -comparison : comparison;
+        }
+
+        return string.Compare(GetItemStringValue(left, "Name"), GetItemStringValue(right, "Name"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private int CompareAlbumItemsByField(Dictionary<string, object?> left, Dictionary<string, object?> right, string field)
+    {
+        return field.ToLowerInvariant() switch
+        {
+            "sortname" => string.Compare(GetItemStringValue(left, "SortName"), GetItemStringValue(right, "SortName"), StringComparison.OrdinalIgnoreCase),
+            "name" => string.Compare(GetItemStringValue(left, "Name"), GetItemStringValue(right, "Name"), StringComparison.OrdinalIgnoreCase),
+            "datecreated" => DateTime.Compare(GetItemDateValue(left, "DateCreated"), GetItemDateValue(right, "DateCreated")),
+            "premieredate" => DateTime.Compare(GetItemDateValue(left, "PremiereDate"), GetItemDateValue(right, "PremiereDate")),
+            "productionyear" => CompareIntValues(GetItemIntValue(left, "ProductionYear"), GetItemIntValue(right, "ProductionYear")),
+            _ => 0
+        };
+    }
+
+    private static int CompareIntValues(int? left, int? right)
+    {
+        if (left.HasValue && right.HasValue)
+        {
+            return left.Value.CompareTo(right.Value);
+        }
+
+        if (left.HasValue)
+        {
+            return 1;
+        }
+
+        if (right.HasValue)
+        {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    private static DateTime GetItemDateValue(Dictionary<string, object?> item, string key)
+    {
+        if (!item.TryGetValue(key, out var value) || value == null)
+        {
+            return DateTime.MinValue;
+        }
+
+        if (value is JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == JsonValueKind.String &&
+                DateTime.TryParse(jsonElement.GetString(), out var parsedDate))
+            {
+                return parsedDate;
+            }
+
+            return DateTime.MinValue;
+        }
+
+        if (DateTime.TryParse(value.ToString(), out var parsed))
+        {
+            return parsed;
+        }
+
+        return DateTime.MinValue;
+    }
+
+    private static int? GetItemIntValue(Dictionary<string, object?> item, string key)
+    {
+        if (!item.TryGetValue(key, out var value) || value == null)
+        {
+            return null;
+        }
+
+        if (value is JsonElement jsonElement)
+        {
+            if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var intValue))
+            {
+                return intValue;
+            }
+
+            if (jsonElement.ValueKind == JsonValueKind.String &&
+                int.TryParse(jsonElement.GetString(), out var parsedInt))
+            {
+                return parsedInt;
+            }
+
+            return null;
+        }
+
+        return int.TryParse(value.ToString(), out var parsed) ? parsed : null;
     }
 
     /// <summary>

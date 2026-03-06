@@ -52,4 +52,10 @@ public record ScrobbleTrack
     /// ListenBrainz only scrobbles external tracks.
     /// </summary>
     public bool IsExternal { get; init; } = false;
+
+    /// <summary>
+    /// Playback position in seconds when this listen started.
+    /// Used to prevent scrobbling resumed external tracks that did not start near the beginning.
+    /// </summary>
+    public int? StartPositionSeconds { get; init; }
 }

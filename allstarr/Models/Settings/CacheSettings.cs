@@ -8,9 +8,9 @@ public class CacheSettings
 {
     /// <summary>
     /// Search results cache duration in minutes.
-    /// Default: 120 minutes (2 hours)
+    /// Default: 1 minute (60 seconds)
     /// </summary>
-    public int SearchResultsMinutes { get; set; } = 120;
+    public int SearchResultsMinutes { get; set; } = 1;
 
     /// <summary>
     /// Playlist cover images cache duration in hours.

@@ -101,7 +101,8 @@ public class ScrobblingHelper
                 DurationSeconds = durationSeconds,
                 MusicBrainzId = musicBrainzId,
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                IsExternal = isExternal
+                IsExternal = isExternal,
+                StartPositionSeconds = 0
             };
         }
         catch (Exception ex)
@@ -119,7 +120,8 @@ public class ScrobblingHelper
         string artist,
         string? album = null,
         string? albumArtist = null,
-        int? durationSeconds = null)
+        int? durationSeconds = null,
+        int? startPositionSeconds = null)
     {
         if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(artist))
         {
@@ -134,7 +136,8 @@ public class ScrobblingHelper
             AlbumArtist = albumArtist,
             DurationSeconds = durationSeconds,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            IsExternal = true // Explicitly mark as external
+            IsExternal = true, // Explicitly mark as external
+            StartPositionSeconds = startPositionSeconds
         };
     }
     

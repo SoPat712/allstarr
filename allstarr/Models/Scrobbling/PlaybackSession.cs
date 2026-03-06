@@ -5,6 +5,8 @@ namespace allstarr.Models.Scrobbling;
 /// </summary>
 public class PlaybackSession
 {
+    private const int ExternalStartToleranceSeconds = 5;
+
     /// <summary>
     /// Unique identifier for this playback session.
     /// </summary>
@@ -54,13 +56,18 @@ public class PlaybackSession
     {
         if (Scrobbled)
             return false; // Already scrobbled
-        
+
         if (Track.DurationSeconds == null || Track.DurationSeconds <= 30)
             return false; // Track too short or duration unknown
-        
+
+        // External scrobbles should only count if playback started near the beginning.
+        // This avoids duplicate/resume scrobbles when users jump into a track mid-way.
+        if (Track.IsExternal && (Track.StartPositionSeconds ?? 0) > ExternalStartToleranceSeconds)
+            return false;
+
         var halfDuration = Track.DurationSeconds.Value / 2;
         var scrobbleThreshold = Math.Min(halfDuration, 240); // 4 minutes = 240 seconds
-        
+
         return LastPositionSeconds >= scrobbleThreshold;
     }
 }

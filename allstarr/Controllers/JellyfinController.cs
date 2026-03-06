@@ -202,25 +202,37 @@ public partial class JellyfinController : ControllerBase
     private async Task<IActionResult> GetExternalChildItems(string provider, string type, string externalId, string? includeItemTypes, CancellationToken cancellationToken = default)
     {
         var itemTypes = ParseItemTypes(includeItemTypes);
+        var itemTypesUnspecified = itemTypes == null || itemTypes.Length == 0;
 
         _logger.LogDebug("GetExternalChildItems: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}",
             provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
 
-        // Check if asking for audio (album tracks or artist songs)
-        if (itemTypes?.Contains("Audio") == true)
+        // Albums are track containers in Jellyfin clients; when ParentId points to an album,
+        // return tracks even if IncludeItemTypes is omitted.
+        if (type == "album" && (itemTypesUnspecified || itemTypes!.Contains("Audio", StringComparer.OrdinalIgnoreCase)))
         {
-            if (type == "album")
+            _logger.LogDebug("Fetching album tracks for {Provider}/{ExternalId}", provider, externalId);
+            var album = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+            if (album == null)
             {
-                _logger.LogDebug("Fetching album tracks for {Provider}/{ExternalId}", provider, externalId);
-                var album = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
-                if (album == null)
-                {
-                    return _responseBuilder.CreateError(404, "Album not found");
-                }
-
-                return _responseBuilder.CreateItemsResponse(album.Songs);
+                return _responseBuilder.CreateError(404, "Album not found");
             }
-            else if (type == "artist")
+
+            var sortedAndPagedSongs = ApplySongSortAndPagingForCurrentRequest(album.Songs, out var totalRecordCount, out var startIndex);
+            var items = sortedAndPagedSongs.Select(_responseBuilder.ConvertSongToJellyfinItem).ToList();
+
+            return _responseBuilder.CreateJsonResponse(new
+            {
+                Items = items,
+                TotalRecordCount = totalRecordCount,
+                StartIndex = startIndex
+            });
+        }
+
+        // Check if asking for audio (artist songs)
+        if (itemTypes?.Contains("Audio", StringComparer.OrdinalIgnoreCase) == true)
+        {
+            if (type == "artist")
             {
                 // For artist + Audio, fetch top tracks from the artist endpoint
                 _logger.LogDebug("Fetching artist tracks for {Provider}/{ExternalId}", provider, externalId);
@@ -238,7 +250,7 @@ public partial class JellyfinController : ControllerBase
         }
 
         // Check if asking for albums (artist albums)
-        if (itemTypes?.Contains("MusicAlbum") == true || itemTypes == null)
+        if (itemTypes?.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase) == true || itemTypesUnspecified)
         {
             if (type == "artist")
             {
@@ -266,6 +278,78 @@ public partial class JellyfinController : ControllerBase
         _logger.LogWarning("Unhandled GetExternalChildItems request: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}",
             provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
         return _responseBuilder.CreateItemsResponse(new List<Song>());
+    }
+
+    private List<Song> ApplySongSortAndPagingForCurrentRequest(IReadOnlyCollection<Song> songs, out int totalRecordCount, out int startIndex)
+    {
+        var sortBy = Request.Query["SortBy"].ToString();
+        var sortOrder = Request.Query["SortOrder"].ToString();
+        var descending = sortOrder.Equals("Descending", StringComparison.OrdinalIgnoreCase);
+        var sortFields = ParseSortFields(sortBy);
+
+        var sortedSongs = songs.ToList();
+        sortedSongs.Sort((left, right) => CompareSongs(left, right, sortFields, descending));
+
+        totalRecordCount = sortedSongs.Count;
+        startIndex = 0;
+        if (int.TryParse(Request.Query["StartIndex"], out var parsedStartIndex) && parsedStartIndex > 0)
+        {
+            startIndex = parsedStartIndex;
+        }
+
+        if (int.TryParse(Request.Query["Limit"], out var parsedLimit) && parsedLimit > 0)
+        {
+            return sortedSongs.Skip(startIndex).Take(parsedLimit).ToList();
+        }
+
+        return sortedSongs.Skip(startIndex).ToList();
+    }
+
+    private static int CompareSongs(Song left, Song right, IReadOnlyList<string> sortFields, bool descending)
+    {
+        var effectiveSortFields = sortFields.Count > 0
+            ? sortFields
+            : new[] { "ParentIndexNumber", "IndexNumber", "SortName" };
+
+        foreach (var field in effectiveSortFields)
+        {
+            var comparison = CompareSongsByField(left, right, field);
+            if (comparison == 0)
+            {
+                continue;
+            }
+
+            return descending ? -comparison : comparison;
+        }
+
+        return string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int CompareSongsByField(Song left, Song right, string field)
+    {
+        return field.ToLowerInvariant() switch
+        {
+            "parentindexnumber" => Nullable.Compare(left.DiscNumber, right.DiscNumber),
+            "indexnumber" => Nullable.Compare(left.Track, right.Track),
+            "sortname" => string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase),
+            "name" => string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase),
+            "datecreated" => Nullable.Compare(left.Year, right.Year),
+            "productionyear" => Nullable.Compare(left.Year, right.Year),
+            _ => 0
+        };
+    }
+
+    private static List<string> ParseSortFields(string sortBy)
+    {
+        if (string.IsNullOrWhiteSpace(sortBy))
+        {
+            return new List<string>();
+        }
+
+        return sortBy
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(field => !string.IsNullOrWhiteSpace(field))
+            .ToList();
     }
     private async Task<IActionResult> GetCuratorPlaylists(string provider, string externalId, string? includeItemTypes, CancellationToken cancellationToken = default)
         {
@@ -509,7 +593,8 @@ public partial class JellyfinController : ControllerBase
         string imageType,
         int imageIndex = 0,
         [FromQuery] int? maxWidth = null,
-        [FromQuery] int? maxHeight = null)
+        [FromQuery] int? maxHeight = null,
+        [FromQuery(Name = "tag")] string? tag = null)
     {
         if (string.IsNullOrWhiteSpace(itemId))
         {
@@ -531,7 +616,8 @@ public partial class JellyfinController : ControllerBase
                 itemId,
                 imageType,
                 maxWidth,
-                maxHeight);
+                maxHeight,
+                tag);
 
             if (imageBytes == null || contentType == null)
             {
@@ -1374,9 +1460,7 @@ public partial class JellyfinController : ControllerBase
 
             // Modify response if it contains Spotify playlists to update ChildCount
             // Only check for Items if the response is an object (not a string or array)
-            if (_spotifySettings.Enabled &&
-                result.RootElement.ValueKind == JsonValueKind.Object &&
-                result.RootElement.TryGetProperty("Items", out var items))
+            if (ShouldProcessSpotifyPlaylistCounts(result, Request.Query["IncludeItemTypes"].ToString()))
             {
                 _logger.LogDebug("Response has Items property, checking for Spotify playlists to update counts");
                 result = await UpdateSpotifyPlaylistCounts(result);

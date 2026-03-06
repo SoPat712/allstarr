@@ -51,6 +51,7 @@ public class ScrobblingAdminController : ControllerBase
         {
             Enabled = _settings.Enabled,
             LocalTracksEnabled = _settings.LocalTracksEnabled,
+            SyntheticLocalPlayedSignalEnabled = _settings.SyntheticLocalPlayedSignalEnabled,
             LastFm = new
             {
                 Enabled = _settings.LastFm.Enabled,

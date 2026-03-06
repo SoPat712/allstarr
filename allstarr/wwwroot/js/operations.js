@@ -141,7 +141,7 @@ async function refreshPlaylist(name) {
 
 async function clearPlaylistCache(name) {
   const result = await runAction({
-    confirmMessage: `Rebuild "${name}" from scratch?\n\nThis will:\n• Clear all caches\n• Fetch fresh Spotify playlist data\n• Re-match all tracks\n\nThis is the SAME process as the scheduled cron job.\n\nUse this when the Spotify playlist has changed.\n\nThis may take a minute.`,
+    confirmMessage: `Rebuild "${name}" from scratch?\n\nThis will:\n• Clear all caches\n• Fetch fresh Spotify playlist data\n• Re-match all tracks\n\nThis uses the same workflow as that playlist's scheduled cron rebuild.\n\nUse this when the Spotify playlist has changed.\n\nThis may take a minute.`,
     before: async () => {
       setMatchingBannerVisible(true);
       showToast(`Rebuilding ${name} from scratch...`, "info");
@@ -208,10 +208,10 @@ async function matchAllPlaylists() {
 async function refreshAndMatchAll() {
   const result = await runAction({
     confirmMessage:
-      "Rebuild all playlists from scratch?\n\nThis will:\n• Clear all playlist caches\n• Fetch fresh data from Spotify\n• Re-match all tracks against local library and external providers\n\nThis is the SAME process as the scheduled cron job.\n\nThis may take several minutes.",
+      "Rebuild all playlists from scratch?\n\nThis will:\n• Clear all playlist caches\n• Fetch fresh data from Spotify\n• Re-match all tracks against local library and external providers\n\nThis is a manual bulk rebuild across all playlists.\n\nThis may take several minutes.",
     before: async () => {
       setMatchingBannerVisible(true);
-      showToast("Starting full rebuild (same as cron job)...", "info", 3000);
+      showToast("Starting full rebuild for all playlists...", "info", 3000);
     },
     task: () => API.rebuildAllPlaylists(),
     success: "✓ Full rebuild complete!",

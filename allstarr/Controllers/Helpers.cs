@@ -83,14 +83,14 @@ public partial class JellyfinController
 
                     if (!string.IsNullOrEmpty(playlistId) && _spotifySettings.IsSpotifyPlaylist(playlistId))
                     {
-                        _logger.LogInformation("Found Spotify playlist: {Id}", playlistId);
+                        _logger.LogDebug("Found Spotify playlist: {Id}", playlistId);
 
                         // This is a Spotify playlist - get the actual track count
                         var playlistConfig = _spotifySettings.GetPlaylistByJellyfinId(playlistId);
 
                         if (playlistConfig != null)
                         {
-                            _logger.LogInformation(
+                            _logger.LogDebug(
                                 "Found playlist config for Jellyfin ID {JellyfinId}: {Name} (Spotify ID: {SpotifyId})",
                                 playlistId, playlistConfig.Name, playlistConfig.Id);
                             var playlistName = playlistConfig.Name;
@@ -394,6 +394,48 @@ public partial class JellyfinController
         }
 
         return includeItemTypes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    /// <summary>
+    /// Determines whether Spotify playlist count enrichment should run for a response.
+    /// We only run enrichment for playlist-oriented payloads to avoid mutating unrelated item lists
+    /// (for example, album browse responses requested by clients like Finer).
+    /// </summary>
+    private bool ShouldProcessSpotifyPlaylistCounts(JsonDocument response, string? includeItemTypes)
+    {
+        if (!_spotifySettings.Enabled)
+        {
+            return false;
+        }
+
+        if (response.RootElement.ValueKind != JsonValueKind.Object ||
+            !response.RootElement.TryGetProperty("Items", out var items) ||
+            items.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var requestedTypes = ParseItemTypes(includeItemTypes);
+        if (requestedTypes != null && requestedTypes.Length > 0)
+        {
+            return requestedTypes.Contains("Playlist", StringComparer.OrdinalIgnoreCase);
+        }
+
+        // If the request did not explicitly constrain types, inspect payload types.
+        foreach (var item in items.EnumerateArray())
+        {
+            if (!item.TryGetProperty("Type", out var typeProp))
+            {
+                continue;
+            }
+
+            if (string.Equals(typeProp.GetString(), "Playlist", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

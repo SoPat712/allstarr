@@ -70,6 +70,12 @@ async function loadScrobblingConfig() {
       ? "Enabled"
       : "Disabled";
 
+    document.getElementById(
+      "synthetic-local-played-signal-enabled-value",
+    ).textContent = data.scrobbling.syntheticLocalPlayedSignalEnabled
+      ? "Enabled"
+      : "Disabled";
+
     document.getElementById("lastfm-enabled-value").textContent = data
       .scrobbling.lastFm.enabled
       ? "Enabled"
@@ -206,6 +212,14 @@ async function toggleLocalTracksEnabled() {
   });
 }
 
+async function toggleSyntheticLocalPlayedSignalEnabled() {
+  await toggleScrobblingSetting(
+    "SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED",
+    "Synthetic local played signal",
+    (config) => config?.scrobbling?.syntheticLocalPlayedSignalEnabled,
+  );
+}
+
 async function toggleLastFmEnabled() {
   await toggleScrobblingSetting(
     "SCROBBLING_LASTFM_ENABLED",
@@ -332,6 +346,8 @@ export function initScrobblingAdmin(options) {
   window.loadScrobblingConfig = loadScrobblingConfig;
   window.toggleScrobblingEnabled = toggleScrobblingEnabled;
   window.toggleLocalTracksEnabled = toggleLocalTracksEnabled;
+  window.toggleSyntheticLocalPlayedSignalEnabled =
+    toggleSyntheticLocalPlayedSignalEnabled;
   window.toggleLastFmEnabled = toggleLastFmEnabled;
   window.toggleListenBrainzEnabled = toggleListenBrainzEnabled;
   window.editLastFmUsername = editLastFmUsername;

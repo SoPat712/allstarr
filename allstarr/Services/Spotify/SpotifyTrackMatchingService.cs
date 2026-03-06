@@ -19,7 +19,9 @@ namespace allstarr.Services.Spotify;
 ///
 /// When ISRC is available, exact matching is preferred. Falls back to fuzzy matching.
 ///
-/// CRON SCHEDULING: Each playlist has its own cron schedule. Matching only runs when the schedule triggers.
+/// CRON SCHEDULING: Each playlist has its own cron schedule.
+/// When a playlist schedule is due, we run the same per-playlist rebuild workflow
+/// used by the manual per-playlist "Rebuild" button.
 /// Manual refresh is always allowed. Cache persists until next cron run.
 /// </summary>
 public class SpotifyTrackMatchingService : BackgroundService
@@ -82,7 +84,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         var matchMode = _spotifyApiSettings.Enabled && _spotifyApiSettings.PreferIsrcMatching
             ? "ISRC-preferred" : "fuzzy";
         _logger.LogInformation("Matching mode: {Mode}", matchMode);
-        _logger.LogInformation("Cron-based scheduling: Each playlist has independent schedule");
+        _logger.LogInformation("Cron-based scheduling: each playlist runs independently");
 
         // Log all playlist schedules
         foreach (var playlist in _spotifySettings.Playlists)
@@ -112,8 +114,10 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             try
             {
-                // Calculate next run time for each playlist
+                // Calculate next run time for each playlist.
+                // Use a small grace window so we don't miss exact-minute cron runs when waking slightly late.
                 var now = DateTime.UtcNow;
+                var schedulerReference = now.AddMinutes(-1);
                 var nextRuns = new List<(string PlaylistName, DateTime NextRun, CronExpression Cron)>();
 
                 foreach (var playlist in _spotifySettings.Playlists)
@@ -123,7 +127,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                     try
                     {
                         var cron = CronExpression.Parse(schedule);
-                        var nextRun = cron.GetNextOccurrence(now, TimeZoneInfo.Utc);
+                        var nextRun = cron.GetNextOccurrence(schedulerReference, TimeZoneInfo.Utc);
 
                         if (nextRun.HasValue)
                         {
@@ -149,44 +153,62 @@ public class SpotifyTrackMatchingService : BackgroundService
                     continue;
                 }
 
-                // Find the next playlist that needs to run
-                var nextPlaylist = nextRuns.OrderBy(x => x.NextRun).First();
-                var waitTime = nextPlaylist.NextRun - now;
+                // Run all playlists that are currently due.
+                var duePlaylists = nextRuns
+                    .Where(x => x.NextRun <= now)
+                    .OrderBy(x => x.NextRun)
+                    .ToList();
 
-                if (waitTime.TotalSeconds > 0)
+                if (duePlaylists.Count == 0)
                 {
+                    // No playlist due yet: wait until the next scheduled run (or max 1 hour to re-check schedules)
+                    var nextPlaylist = nextRuns.OrderBy(x => x.NextRun).First();
+                    var waitTime = nextPlaylist.NextRun - now;
+
                     _logger.LogInformation("Next scheduled run: {Playlist} at {Time} UTC (in {Minutes:F1} minutes)",
                         nextPlaylist.PlaylistName, nextPlaylist.NextRun, waitTime.TotalMinutes);
 
-                    // Wait until next run (or max 1 hour to re-check schedules)
                     var maxWait = TimeSpan.FromHours(1);
                     var actualWait = waitTime > maxWait ? maxWait : waitTime;
                     await Task.Delay(actualWait, stoppingToken);
                     continue;
                 }
 
-                // Time to run this playlist
-                _logger.LogInformation("=== CRON TRIGGER: Running scheduled sync for {Playlist} ===", nextPlaylist.PlaylistName);
+                _logger.LogInformation(
+                    "=== CRON TRIGGER: Running scheduled rebuild for {Count} due playlists ===",
+                    duePlaylists.Count);
 
-                // Check cooldown to prevent duplicate runs
-                if (_lastRunTimes.TryGetValue(nextPlaylist.PlaylistName, out var lastRun))
+                var anySkippedForCooldown = false;
+
+                foreach (var due in duePlaylists)
                 {
-                    var timeSinceLastRun = now - lastRun;
-                    if (timeSinceLastRun < _minimumRunInterval)
+                    if (stoppingToken.IsCancellationRequested)
                     {
-                        _logger.LogWarning("Skipping {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)",
-                            nextPlaylist.PlaylistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
-                        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                        break;
+                    }
+
+                    _logger.LogInformation("→ Running scheduled rebuild for {Playlist}", due.PlaylistName);
+
+                    var rebuilt = await TryRunSinglePlaylistRebuildWithCooldownAsync(
+                        due.PlaylistName,
+                        stoppingToken,
+                        trigger: "cron");
+
+                    if (!rebuilt)
+                    {
+                        anySkippedForCooldown = true;
                         continue;
                     }
+
+                    _logger.LogInformation("✓ Finished scheduled rebuild for {Playlist} - Next run at {NextRun} UTC",
+                        due.PlaylistName, due.Cron.GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc));
                 }
 
-                // Run full rebuild for this playlist (same as "Rebuild All Remote" button)
-                await RebuildSinglePlaylistAsync(nextPlaylist.PlaylistName, stoppingToken);
-                _lastRunTimes[nextPlaylist.PlaylistName] = DateTime.UtcNow;
-
-                _logger.LogInformation("=== FINISHED: {Playlist} - Next run at {NextRun} UTC ===",
-                    nextPlaylist.PlaylistName, nextPlaylist.Cron.GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc));
+                // Avoid a tight loop if one or more due playlists were skipped by cooldown.
+                if (anySkippedForCooldown)
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                }
             }
             catch (Exception ex)
             {
@@ -198,7 +220,7 @@ public class SpotifyTrackMatchingService : BackgroundService
 
     /// <summary>
     /// Rebuilds a single playlist from scratch (clears cache, fetches fresh data, re-matches).
-    /// This is the unified method used by both cron scheduler and "Rebuild All Remote" button.
+    /// Used by individual per-playlist rebuild actions.
     /// </summary>
     private async Task RebuildSinglePlaylistAsync(string playlistName, CancellationToken cancellationToken)
     {
@@ -322,36 +344,64 @@ public class SpotifyTrackMatchingService : BackgroundService
 
     /// <summary>
     /// Public method to trigger full rebuild for all playlists (called from "Rebuild All Remote" button).
-    /// This clears caches, fetches fresh data, and re-matches everything - same as cron job.
+    /// This clears caches, fetches fresh data, and re-matches everything immediately.
     /// </summary>
     public async Task TriggerRebuildAllAsync()
     {
-        _logger.LogInformation("Manual full rebuild triggered for all playlists (same as cron job)");
+        _logger.LogInformation("Manual full rebuild triggered for all playlists");
         await RebuildAllPlaylistsAsync(CancellationToken.None);
     }
 
     /// <summary>
     /// Public method to trigger full rebuild for a single playlist (called from individual "Rebuild Remote" button).
-    /// This clears cache, fetches fresh data, and re-matches - same as cron job.
+    /// This clears cache, fetches fresh data, and re-matches - same workflow as scheduled cron rebuilds for a playlist.
     /// </summary>
     public async Task TriggerRebuildForPlaylistAsync(string playlistName)
     {
-        _logger.LogInformation("Manual full rebuild triggered for playlist: {Playlist} (same as cron job)", playlistName);
+        _logger.LogInformation("Manual full rebuild triggered for playlist: {Playlist}", playlistName);
+        var rebuilt = await TryRunSinglePlaylistRebuildWithCooldownAsync(
+            playlistName,
+            CancellationToken.None,
+            trigger: "manual");
 
-        // Check cooldown to prevent abuse
+        if (!rebuilt)
+        {
+            if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
+            {
+                var timeSinceLastRun = DateTime.UtcNow - lastRun;
+                var remaining = _minimumRunInterval - timeSinceLastRun;
+                var remainingSeconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
+                throw new InvalidOperationException(
+                    $"Please wait {remainingSeconds} more seconds before rebuilding again");
+            }
+
+            throw new InvalidOperationException("Playlist rebuild skipped due to cooldown");
+        }
+    }
+
+    private async Task<bool> TryRunSinglePlaylistRebuildWithCooldownAsync(
+        string playlistName,
+        CancellationToken cancellationToken,
+        string trigger)
+    {
         if (_lastRunTimes.TryGetValue(playlistName, out var lastRun))
         {
             var timeSinceLastRun = DateTime.UtcNow - lastRun;
             if (timeSinceLastRun < _minimumRunInterval)
             {
-                _logger.LogWarning("Skipping manual rebuild for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)",
-                    playlistName, (int)timeSinceLastRun.TotalSeconds, (int)_minimumRunInterval.TotalSeconds);
-                throw new InvalidOperationException($"Please wait {(int)(_minimumRunInterval - timeSinceLastRun).TotalSeconds} more seconds before rebuilding again");
+                _logger.LogWarning(
+                    "Skipping {Trigger} rebuild for {Playlist} - last run was {Seconds}s ago (cooldown: {Cooldown}s)",
+                    trigger,
+                    playlistName,
+                    (int)timeSinceLastRun.TotalSeconds,
+                    (int)_minimumRunInterval.TotalSeconds);
+                return false;
             }
         }
 
-        await RebuildSinglePlaylistAsync(playlistName, CancellationToken.None);
+        await RebuildSinglePlaylistAsync(playlistName, cancellationToken);
         _lastRunTimes[playlistName] = DateTime.UtcNow;
+        return true;
     }
 
     /// <summary>

@@ -777,10 +777,11 @@ public class JellyfinProxyService
         string itemId,
         string imageType = "Primary",
         int? maxWidth = null,
-        int? maxHeight = null)
+        int? maxHeight = null,
+        string? imageTag = null)
     {
         // Build cache key
-        var cacheKey = $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}";
+        var cacheKey = $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}:{imageTag}";
 
         // Try cache first
         var cached = await _cache.GetStringAsync(cacheKey);
@@ -805,6 +806,12 @@ public class JellyfinProxyService
         if (maxHeight.HasValue)
         {
             queryParams["maxHeight"] = maxHeight.Value.ToString();
+        }
+
+        // Jellyfin uses `tag` for image cache busting when artwork changes.
+        if (!string.IsNullOrWhiteSpace(imageTag))
+        {
+            queryParams["tag"] = imageTag;
         }
 
         var result = await GetBytesSafeAsync($"Items/{itemId}/Images/{imageType}", queryParams);

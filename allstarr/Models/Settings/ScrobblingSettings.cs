@@ -19,6 +19,12 @@ public class ScrobblingSettings
     public bool LocalTracksEnabled { get; set; }
 
     /// <summary>
+    /// Emits a synthetic local "played" signal from progress events when local scrobbling is disabled.
+    /// Default is false to avoid duplicate local scrobbles with Jellyfin plugins.
+    /// </summary>
+    public bool SyntheticLocalPlayedSignalEnabled { get; set; }
+
+    /// <summary>
     /// Last.fm settings.
     /// </summary>
     public LastFmSettings LastFm { get; set; } = new();

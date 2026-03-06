@@ -731,6 +731,8 @@ builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options 
 
     options.Enabled = builder.Configuration.GetValue<bool>("Scrobbling:Enabled");
     options.LocalTracksEnabled = builder.Configuration.GetValue<bool>("Scrobbling:LocalTracksEnabled");
+    options.SyntheticLocalPlayedSignalEnabled =
+        builder.Configuration.GetValue<bool>("Scrobbling:SyntheticLocalPlayedSignalEnabled");
     options.LastFm.Enabled = lastFmEnabled;
 
     // Only override hardcoded API credentials if explicitly set in config
@@ -755,6 +757,7 @@ builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options 
     Console.WriteLine($"Scrobbling Configuration:");
     Console.WriteLine($"  Enabled: {options.Enabled}");
     Console.WriteLine($"  Local Tracks Enabled: {options.LocalTracksEnabled}");
+    Console.WriteLine($"  Synthetic Local Played Signal Enabled: {options.SyntheticLocalPlayedSignalEnabled}");
     Console.WriteLine($"  Last.fm Enabled: {options.LastFm.Enabled}");
     Console.WriteLine($"  Last.fm Username: {options.LastFm.Username ?? "(not set)"}");
     Console.WriteLine($"  Last.fm Session Key: {(string.IsNullOrEmpty(options.LastFm.SessionKey) ? "(not set)" : "***" + options.LastFm.SessionKey[^8..])}");

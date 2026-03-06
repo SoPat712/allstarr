@@ -134,6 +134,8 @@ services:
 
       # ===== SCROBBLING (LAST.FM, LISTENBRAINZ) =====
       - Scrobbling__Enabled=${SCROBBLING_ENABLED:-false}
+      - Scrobbling__LocalTracksEnabled=${SCROBBLING_LOCAL_TRACKS_ENABLED:-false}
+      - Scrobbling__SyntheticLocalPlayedSignalEnabled=${SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED:-false}
       - Scrobbling__LastFm__Enabled=${SCROBBLING_LASTFM_ENABLED:-false}
       - Scrobbling__LastFm__ApiKey=${SCROBBLING_LASTFM_API_KEY:-}
       - Scrobbling__LastFm__SharedSecret=${SCROBBLING_LASTFM_SHARED_SECRET:-}
@@ -145,6 +147,7 @@ services:
 
       # ===== DEBUG SETTINGS =====
       - Debug__LogAllRequests=${DEBUG_LOG_ALL_REQUESTS:-false}
+      - Debug__RedactSensitiveRequestValues=${DEBUG_REDACT_SENSITIVE_REQUEST_VALUES:-false}
 
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads

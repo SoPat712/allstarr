@@ -48,6 +48,19 @@ public class ScrobblingOrchestrator
     {
         if (!_settings.Enabled)
             return;
+
+        var existingSession = FindSession(deviceId, track.Artist, track.Title);
+        if (existingSession != null)
+        {
+            existingSession.LastActivity = DateTime.UtcNow;
+            _logger.LogDebug(
+                "Ignoring duplicate playback start for active session: {Artist} - {Track} (device: {DeviceId}, session: {SessionId})",
+                track.Artist,
+                track.Title,
+                deviceId,
+                existingSession.SessionId);
+            return;
+        }
         
         var sessionId = $"{deviceId}:{track.Artist}:{track.Title}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
         

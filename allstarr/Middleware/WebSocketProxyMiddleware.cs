@@ -94,10 +94,6 @@ public class WebSocketProxyMiddleware
                 _logger.LogDebug("🔍 WEBSOCKET: Client WebSocket for device {DeviceId}", deviceId);
             }
 
-            // Accept the WebSocket connection from the client
-            clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
-            _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
-
             // Build Jellyfin WebSocket URL
             var jellyfinUrl = _settings.Url?.TrimEnd('/') ?? "";
             var wsScheme = jellyfinUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "wss://" : "ws://";
@@ -146,6 +142,11 @@ public class WebSocketProxyMiddleware
             await serverWebSocket.ConnectAsync(new Uri(jellyfinWsUrl), context.RequestAborted);
             _logger.LogInformation("✓ WEBSOCKET: Connected to Jellyfin WebSocket");
 
+            // Only accept the client socket after upstream auth/handshake succeeds.
+            // This ensures auth failures surface as HTTP status (401/403) instead of misleading 101 upgrades.
+            clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
+            _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
+
             // Start bidirectional proxying
             var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", context.RequestAborted);
             var serverToClient = ProxyMessagesAsync(serverWebSocket, clientWebSocket, "Server→Client", context.RequestAborted);
@@ -157,10 +158,25 @@ public class WebSocketProxyMiddleware
         }
         catch (WebSocketException wsEx)
         {
-            // 403 is expected when tokens expire or session ends - don't spam logs
-            if (wsEx.Message.Contains("403"))
+            var isAuthFailure =
+                wsEx.Message.Contains("403", StringComparison.OrdinalIgnoreCase) ||
+                wsEx.Message.Contains("401", StringComparison.OrdinalIgnoreCase) ||
+                wsEx.Message.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase) ||
+                wsEx.Message.Contains("Forbidden", StringComparison.OrdinalIgnoreCase);
+
+            if (isAuthFailure)
             {
-                _logger.LogWarning("WEBSOCKET: Connection rejected with 403 (token expired or session ended)");
+                _logger.LogWarning("WEBSOCKET: Connection rejected by Jellyfin auth (token expired or session ended)");
+                if (!context.Response.HasStarted)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        type = "https://tools.ietf.org/html/rfc9110#section-15.5.4",
+                        title = "Forbidden",
+                        status = StatusCodes.Status403Forbidden
+                    });
+                }
             }
             else
             {
@@ -201,8 +217,8 @@ public class WebSocketProxyMiddleware
             clientWebSocket?.Dispose();
             serverWebSocket?.Dispose();
 
-            // CRITICAL: Notify session manager that client disconnected
-            if (!string.IsNullOrEmpty(deviceId))
+            // CRITICAL: Notify session manager only when a client socket was accepted.
+            if (clientWebSocket != null && !string.IsNullOrEmpty(deviceId))
             {
                 _logger.LogInformation("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
                 await _sessionManager.RemoveSessionAsync(deviceId);

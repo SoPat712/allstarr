@@ -144,7 +144,11 @@ public class ConfigController : ControllerBase
             redisEnabled = GetEnvBool(envVars, "REDIS_ENABLED", _configuration.GetValue<bool>("Redis:Enabled", false)),
             debug = new
             {
-                logAllRequests = GetEnvBool(envVars, "DEBUG_LOG_ALL_REQUESTS", _configuration.GetValue<bool>("Debug:LogAllRequests", false))
+                logAllRequests = GetEnvBool(envVars, "DEBUG_LOG_ALL_REQUESTS", _configuration.GetValue<bool>("Debug:LogAllRequests", false)),
+                redactSensitiveRequestValues = GetEnvBool(
+                    envVars,
+                    "DEBUG_REDACT_SENSITIVE_REQUEST_VALUES",
+                    _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false))
             },
             admin = new
             {
@@ -216,7 +220,7 @@ public class ConfigController : ControllerBase
             },
             cache = new
             {
-                searchResultsMinutes = GetEnvInt(envVars, "CACHE_SEARCH_RESULTS_MINUTES", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 120)),
+                searchResultsMinutes = GetEnvInt(envVars, "CACHE_SEARCH_RESULTS_MINUTES", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
                 playlistImagesHours = GetEnvInt(envVars, "CACHE_PLAYLIST_IMAGES_HOURS", _configuration.GetValue<int>("Cache:PlaylistImagesHours", 168)),
                 spotifyPlaylistItemsHours = GetEnvInt(envVars, "CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS", _configuration.GetValue<int>("Cache:SpotifyPlaylistItemsHours", 168)),
                 spotifyMatchedTracksDays = GetEnvInt(envVars, "CACHE_SPOTIFY_MATCHED_TRACKS_DAYS", _configuration.GetValue<int>("Cache:SpotifyMatchedTracksDays", 30)),
@@ -335,6 +339,8 @@ public class ConfigController : ControllerBase
                 return new
                 {
                     enabled = _scrobblingSettings.Enabled,
+                    localTracksEnabled = _scrobblingSettings.LocalTracksEnabled,
+                    syntheticLocalPlayedSignalEnabled = _scrobblingSettings.SyntheticLocalPlayedSignalEnabled,
                     lastFm = new
                     {
                         enabled = _scrobblingSettings.LastFm.Enabled,
@@ -372,6 +378,12 @@ public class ConfigController : ControllerBase
                 enabled = envVars.TryGetValue("SCROBBLING_ENABLED", out var scrobblingEnabled)
                     ? scrobblingEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
                     : _scrobblingSettings.Enabled,
+                localTracksEnabled = envVars.TryGetValue("SCROBBLING_LOCAL_TRACKS_ENABLED", out var localTracksEnabled)
+                    ? localTracksEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    : _scrobblingSettings.LocalTracksEnabled,
+                syntheticLocalPlayedSignalEnabled = envVars.TryGetValue("SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED", out var syntheticPlayedSignalEnabled)
+                    ? syntheticPlayedSignalEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    : _scrobblingSettings.SyntheticLocalPlayedSignalEnabled,
                 lastFm = new
                 {
                     enabled = envVars.TryGetValue("SCROBBLING_LASTFM_ENABLED", out var lastFmEnabled)
@@ -411,6 +423,8 @@ public class ConfigController : ControllerBase
             return new
             {
                 enabled = _scrobblingSettings.Enabled,
+                localTracksEnabled = _scrobblingSettings.LocalTracksEnabled,
+                syntheticLocalPlayedSignalEnabled = _scrobblingSettings.SyntheticLocalPlayedSignalEnabled,
                 lastFm = new
                 {
                     enabled = _scrobblingSettings.LastFm.Enabled,

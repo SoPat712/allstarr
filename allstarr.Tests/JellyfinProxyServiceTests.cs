@@ -338,6 +338,30 @@ public class JellyfinProxyServiceTests
         Assert.Contains("maxHeight=300", url);
     }
 
+    [Fact]
+    public async Task GetImageAsync_WithTag_IncludesTagInQuery()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(new byte[] { 1, 2, 3 })
+            });
+
+        // Act
+        await _service.GetImageAsync("item-123", "Primary", imageTag: "playlist-art-v2");
+
+        // Assert
+        Assert.NotNull(captured);
+        var query = System.Web.HttpUtility.ParseQueryString(captured!.RequestUri!.Query);
+        Assert.Equal("playlist-art-v2", query.Get("tag"));
+    }
+
 
 
     [Fact]

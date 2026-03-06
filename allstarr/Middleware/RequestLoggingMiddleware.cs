@@ -24,11 +24,14 @@ public class RequestLoggingMiddleware
 
         // Log initialization status
         var initialValue = _configuration.GetValue<bool>("Debug:LogAllRequests");
+        var initialRedactionValue = _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false);
         _logger.LogWarning("🔍 RequestLoggingMiddleware initialized - LogAllRequests={LogAllRequests}", initialValue);
 
         if (initialValue)
         {
-            _logger.LogWarning("🔍 Request logging ENABLED - all HTTP requests will be logged");
+            _logger.LogWarning(
+                "🔍 Request logging ENABLED - all HTTP requests will be logged (RedactSensitiveRequestValues={Redact})",
+                initialRedactionValue);
         }
         else
         {
@@ -40,6 +43,7 @@ public class RequestLoggingMiddleware
     {
         // Check configuration on every request to allow dynamic toggling
         var logAllRequests = _configuration.GetValue<bool>("Debug:LogAllRequests");
+        var redactSensitiveValues = _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false);
 
         if (!logAllRequests)
         {
@@ -49,11 +53,13 @@ public class RequestLoggingMiddleware
 
         var stopwatch = Stopwatch.StartNew();
         var request = context.Request;
-        var maskedQueryString = BuildMaskedQueryString(request.QueryString.Value);
+        var queryStringForLog = redactSensitiveValues
+            ? BuildMaskedQueryString(request.QueryString.Value)
+            : request.QueryString.Value ?? string.Empty;
 
         // Log request details
         var requestLog = new StringBuilder();
-        requestLog.AppendLine($"📥 HTTP {request.Method} {request.Path}{maskedQueryString}");
+        requestLog.AppendLine($"📥 HTTP {request.Method} {request.Path}{queryStringForLog}");
         requestLog.AppendLine($"   Host: {request.Host}");
         requestLog.AppendLine($"   Content-Type: {request.ContentType ?? "(none)"}");
         requestLog.AppendLine($"   Content-Length: {request.ContentLength?.ToString() ?? "(none)"}");
@@ -65,15 +71,18 @@ public class RequestLoggingMiddleware
         }
         if (request.Headers.ContainsKey("X-Emby-Authorization"))
         {
-            requestLog.AppendLine($"   X-Emby-Authorization: {MaskAuthHeader(request.Headers["X-Emby-Authorization"]!)}");
+            var value = request.Headers["X-Emby-Authorization"].ToString();
+            requestLog.AppendLine($"   X-Emby-Authorization: {(redactSensitiveValues ? MaskAuthHeader(value) : value)}");
         }
         if (request.Headers.ContainsKey("Authorization"))
         {
-            requestLog.AppendLine($"   Authorization: {MaskAuthHeader(request.Headers["Authorization"]!)}");
+            var value = request.Headers["Authorization"].ToString();
+            requestLog.AppendLine($"   Authorization: {(redactSensitiveValues ? MaskAuthHeader(value) : value)}");
         }
         if (request.Headers.ContainsKey("X-Emby-Token"))
         {
-            requestLog.AppendLine($"   X-Emby-Token: ***");
+            var value = request.Headers["X-Emby-Token"].ToString();
+            requestLog.AppendLine($"   X-Emby-Token: {(redactSensitiveValues ? "***" : value)}");
         }
         if (request.Headers.ContainsKey("X-Emby-Device-Id"))
         {

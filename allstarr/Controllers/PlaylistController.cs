@@ -1155,7 +1155,7 @@ public class PlaylistController : ControllerBase
     public async Task<IActionResult> ClearPlaylistCache(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name} (same as cron job)", decodedName);
+        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name}", decodedName);
 
         if (_matchingService == null)
         {
@@ -1164,7 +1164,7 @@ public class PlaylistController : ControllerBase
 
         try
         {
-            // Use the unified rebuild method (same as cron job and "Rebuild All Remote")
+            // Use the unified per-playlist rebuild method (same workflow as per-playlist cron rebuilds)
             await _matchingService.TriggerRebuildForPlaylistAsync(decodedName);
 
             // Invalidate playlist summary cache
@@ -1172,7 +1172,7 @@ public class PlaylistController : ControllerBase
 
             return Ok(new
             {
-                message = $"Rebuilding {decodedName} from scratch (same as cron job)",
+                message = $"Rebuilding {decodedName} from scratch",
                 timestamp = DateTime.UtcNow
             });
         }
@@ -1768,12 +1768,12 @@ public class PlaylistController : ControllerBase
 
     /// <summary>
     /// Rebuild all playlists from scratch (clear cache, fetch fresh data, re-match).
-    /// This is the same process as the scheduled cron job - used by "Rebuild All Remote" button.
+    /// This is a manual bulk action across all playlists - used by "Rebuild All Remote" button.
     /// </summary>
     [HttpPost("playlists/rebuild-all")]
     public async Task<IActionResult> RebuildAllPlaylists()
     {
-        _logger.LogInformation("Manual full rebuild triggered for all playlists (same as cron job)");
+        _logger.LogInformation("Manual full rebuild triggered for all playlists");
 
         if (_matchingService == null)
         {
@@ -1783,7 +1783,7 @@ public class PlaylistController : ControllerBase
         try
         {
             await _matchingService.TriggerRebuildAllAsync();
-            return Ok(new { message = "Full rebuild triggered for all playlists (same as cron job)", timestamp = DateTime.UtcNow });
+            return Ok(new { message = "Full rebuild triggered for all playlists", timestamp = DateTime.UtcNow });
         }
         catch (Exception ex)
         {

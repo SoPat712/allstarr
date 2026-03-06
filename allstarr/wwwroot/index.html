@@ -393,6 +393,11 @@
                         <span class="value" id="local-tracks-enabled-value">-</span>
                         <button onclick="toggleLocalTracksEnabled()">Toggle</button>
                     </div>
+                    <div class="config-item">
+                        <span class="label">Synthetic Local Played Signal</span>
+                        <span class="value" id="synthetic-local-played-signal-enabled-value">-</span>
+                        <button onclick="toggleSyntheticLocalPlayedSignalEnabled()">Toggle</button>
+                    </div>
                 </div>
 
                 <div style="background: rgba(255, 193, 7, 0.15); border: 1px solid #ffc107; border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-primary);">
@@ -400,6 +405,7 @@
                     <br>• <a href="https://github.com/danielfariati/jellyfin-plugin-lastfm" target="_blank" style="color: var(--accent);">Last.fm Plugin</a>
                     <br>• <a href="https://github.com/lyarenei/jellyfin-plugin-listenbrainz" target="_blank" style="color: var(--accent);">ListenBrainz Plugin</a>
                     <br>This ensures Allstarr only scrobbles external tracks (Spotify, Deezer, Qobuz).
+                    <br><strong>Default:</strong> keep Synthetic Local Played Signal disabled to avoid duplicate plugin scrobbles.
                 </div>
             </div>
 

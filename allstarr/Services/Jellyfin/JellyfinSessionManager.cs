@@ -191,6 +191,48 @@ public class JellyfinSessionManager : IDisposable
     }
 
     /// <summary>
+    /// Marks that an explicit playback stop was received for this device+item.
+    /// Used to suppress duplicate inferred stop forwarding from progress transitions.
+    /// </summary>
+    public void MarkExplicitStop(string deviceId, string itemId)
+    {
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            lock (session.SyncRoot)
+            {
+                session.LastExplicitStopItemId = itemId;
+                session.LastExplicitStopAtUtc = DateTime.UtcNow;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns true when an explicit stop for this device+item was recorded within the given time window.
+    /// </summary>
+    public bool WasRecentlyExplicitlyStopped(string deviceId, string itemId, TimeSpan within)
+    {
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            lock (session.SyncRoot)
+            {
+                if (!string.Equals(session.LastExplicitStopItemId, itemId, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (!session.LastExplicitStopAtUtc.HasValue)
+                {
+                    return false;
+                }
+
+                return (DateTime.UtcNow - session.LastExplicitStopAtUtc.Value) <= within;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Returns true if a local played-signal was already sent for this device+item.
     /// </summary>
     public bool HasSentLocalPlayedSignal(string deviceId, string itemId)
@@ -643,6 +685,8 @@ public class JellyfinSessionManager : IDisposable
         public long? LastPlayingPositionTicks { get; set; }
         public string? ClientIp { get; set; }
         public string? LastLocalPlayedSignalItemId { get; set; }
+        public string? LastExplicitStopItemId { get; set; }
+        public DateTime? LastExplicitStopAtUtc { get; set; }
     }
 
     public void Dispose()
