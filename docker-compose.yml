@@ -77,7 +77,7 @@ services:
       - Redis__Enabled=${REDIS_ENABLED:-true}
 
       # ===== CACHE TTL SETTINGS =====
-      - Cache__SearchResultsMinutes=${CACHE_SEARCH_RESULTS_MINUTES:-120}
+      - Cache__SearchResultsMinutes=${CACHE_SEARCH_RESULTS_MINUTES:-1}
       - Cache__PlaylistImagesHours=${CACHE_PLAYLIST_IMAGES_HOURS:-168}
       - Cache__SpotifyPlaylistItemsHours=${CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS:-168}
       - Cache__SpotifyMatchedTracksDays=${CACHE_SPOTIFY_MATCHED_TRACKS_DAYS:-30}

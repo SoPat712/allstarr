@@ -294,7 +294,7 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertSongToJellyfinItem(Song song)
     {
-        // Add " [S]" suffix to external song titles (S = streaming source)
+        // Add external/explicit labels to song titles for external tracks.
         var songTitle = song.Title;
         var artistName = song.Artist;
         var albumName = song.Album;
@@ -302,7 +302,7 @@ public class JellyfinResponseBuilder
 
         if (!song.IsLocal)
         {
-            songTitle = $"{song.Title} [S]";
+            songTitle = BuildExternalSongTitle(song);
 
             // Also add [S] to artist and album names for consistency
             if (!string.IsNullOrEmpty(artistName) && !artistName.EndsWith(" [S]"))
@@ -500,6 +500,18 @@ public class JellyfinResponseBuilder
         }
 
         return item;
+    }
+
+    private static string BuildExternalSongTitle(Song song)
+    {
+        var title = $"{song.Title} [S]";
+
+        if (song.ExplicitContentLyrics == 1)
+        {
+            title = $"{title} [E]";
+        }
+
+        return title;
     }
 
     private static bool ShouldDisableTranscoding(string provider)

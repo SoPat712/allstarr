@@ -911,6 +911,9 @@ catch (Exception ex)
 // This processes X-Forwarded-For, X-Real-IP, etc. from nginx
 app.UseForwardedHeaders();
 
+// Drop high-confidence scanner paths before they hit the proxy or request logging.
+app.UseMiddleware<BotProbeBlockMiddleware>();
+
 // Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
 app.UseMiddleware<RequestLoggingMiddleware>();
 

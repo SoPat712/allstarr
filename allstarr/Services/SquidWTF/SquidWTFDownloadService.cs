@@ -100,8 +100,12 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken);
         
-        Logger.LogInformation("Track download URL obtained from hifi-api: {Url}", downloadInfo.DownloadUrl);
-        Logger.LogInformation("Using format: {Format} (Quality: {Quality})", downloadInfo.MimeType, downloadInfo.AudioQuality);
+        Logger.LogInformation(
+            "Track download info resolved via {Endpoint} (Format: {Format}, Quality: {Quality})",
+            downloadInfo.Endpoint,
+            downloadInfo.MimeType,
+            downloadInfo.AudioQuality);
+        Logger.LogDebug("Resolved SquidWTF CDN download URL: {Url}", downloadInfo.DownloadUrl);
 
         // Determine extension from MIME type
         var extension = downloadInfo.MimeType?.ToLower() switch
@@ -127,65 +131,11 @@ public class SquidWTFDownloadService : BaseDownloadService
         // Resolve unique path if file already exists
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
-        // Use round-robin with fallback for downloads to reduce CPU usage
-        Logger.LogDebug("Using round-robin endpoint selection for download");
-        
-        var response = await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-        {
-            // Map quality settings to Tidal's quality levels per hifi-api spec
-            var quality = _squidwtfSettings.Quality?.ToUpperInvariant() switch
-            {
-                "FLAC" => "LOSSLESS",
-                "HI_RES" => "HI_RES_LOSSLESS",
-                "LOSSLESS" => "LOSSLESS",
-                "HIGH" => "HIGH",
-                "LOW" => "LOW",
-                _ => "LOSSLESS"
-            };
-            
-            var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
-            
-            Logger.LogDebug("Requesting track download info: {Url}", url);
-            
-            // Get download info from this endpoint
-            var infoResponse = await _httpClient.GetAsync(url, cancellationToken);
-            
-            if (!infoResponse.IsSuccessStatusCode)
-            {
-                Logger.LogWarning("Track download request failed: {StatusCode} {Url}", infoResponse.StatusCode, url);
-                infoResponse.EnsureSuccessStatusCode();
-            }
-            
-            var json = await infoResponse.Content.ReadAsStringAsync(cancellationToken);
-            var doc = JsonDocument.Parse(json);
-            
-            if (!doc.RootElement.TryGetProperty("data", out var data))
-            {
-                throw new Exception("Invalid response from API");
-            }
-            
-            var manifestBase64 = data.GetProperty("manifest").GetString()
-                ?? throw new Exception("No manifest in response");
-            
-            // Decode base64 manifest to get actual CDN URL
-            var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
-            var manifest = JsonDocument.Parse(manifestJson);
-            
-            if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
-            {
-                throw new Exception("No download URLs in manifest");
-            }
-            
-            var downloadUrl = urls[0].GetString()
-                ?? throw new Exception("Download URL is null");
-            
-            // Start the actual download from Tidal CDN (no encryption - squid.wtf handles everything)
-            using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
-            request.Headers.Add("User-Agent", "Mozilla/5.0");
-            request.Headers.Add("Accept", "*/*");
-            
-            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        });
+        using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
+        request.Headers.Add("User-Agent", "Mozilla/5.0");
+        request.Headers.Add("Accept", "*/*");
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         response.EnsureSuccessStatusCode();
 		
@@ -235,79 +185,137 @@ public class SquidWTFDownloadService : BaseDownloadService
     /// The manifest is base64-encoded JSON containing: { mimeType, codecs, encryptionType, urls: [downloadUrl] }
     /// Quality options: HI_RES_LOSSLESS (24-bit/192kHz FLAC), LOSSLESS (16-bit/44.1kHz FLAC), HIGH (320kbps AAC), LOW (96kbps AAC)
     /// </summary>
-	private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken)
+    private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken)
     {
         return await QueueRequestAsync(async () =>
         {
-            // Use round-robin with fallback instead of racing to reduce CPU usage
-            return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+            Exception? lastException = null;
+            var qualityOrder = BuildQualityFallbackOrder(_squidwtfSettings.Quality);
+
+            foreach (var quality in qualityOrder)
             {
-                // Map quality settings to Tidal's quality levels per hifi-api spec
-                var quality = _squidwtfSettings.Quality?.ToUpperInvariant() switch
+                try
                 {
-                    "FLAC" => "LOSSLESS",
-                    "HI_RES" => "HI_RES_LOSSLESS",
-                    "LOSSLESS" => "LOSSLESS",
-                    "HIGH" => "HIGH",
-                    "LOW" => "LOW",
-                    _ => "LOSSLESS" // Default to lossless
-                };
-                
-                var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
+                    return await _fallbackHelper.TryWithFallbackAsync(baseUrl =>
+                        FetchTrackDownloadInfoAsync(baseUrl, trackId, quality, cancellationToken));
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
 
-                Logger.LogDebug("Fetching track download info from: {Url}", url);
+                    if (!string.Equals(quality, qualityOrder[^1], StringComparison.Ordinal))
+                    {
+                        Logger.LogWarning(
+                            "Track {TrackId} unavailable at SquidWTF quality {Quality}: {Error}. Trying lower quality",
+                            trackId,
+                            quality,
+                            DescribeException(ex));
+                        Logger.LogDebug(ex,
+                            "Detailed SquidWTF quality failure for track {TrackId} at quality {Quality}",
+                            trackId,
+                            quality);
+                    }
+                }
+            }
 
-                var response = await _httpClient.GetAsync(url, cancellationToken);
-                
-                if (!response.IsSuccessStatusCode)
-                {
-                    Logger.LogWarning("Track download info request failed: {StatusCode} {Url}", response.StatusCode, url);
-                    response.EnsureSuccessStatusCode();
-                }
-                
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var doc = JsonDocument.Parse(json);
-                
-                if (!doc.RootElement.TryGetProperty("data", out var data))
-                {
-                    throw new Exception("Invalid response from API");
-                }
-                
-                // Get the manifest (base64 encoded JSON containing the actual CDN URL)
-                var manifestBase64 = data.GetProperty("manifest").GetString()
-                    ?? throw new Exception("No manifest in response");
-                
-                // Decode the manifest
-                var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
-                var manifest = JsonDocument.Parse(manifestJson);
-                
-                // Extract the download URL from the manifest
-                if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
-                {
-                    throw new Exception("No download URLs in manifest");
-                }
-                
-                var downloadUrl = urls[0].GetString()
-                    ?? throw new Exception("Download URL is null");
-                
-                var mimeType = manifest.RootElement.TryGetProperty("mimeType", out var mimeTypeEl)
-                    ? mimeTypeEl.GetString()
-                    : "audio/flac";
-                
-                var audioQuality = data.TryGetProperty("audioQuality", out var audioQualityEl)
-                    ? audioQualityEl.GetString()
-                    : "LOSSLESS";
-                
-                Logger.LogInformation("Track download URL obtained from hifi-api: {Url}", downloadUrl);
-                
-                return new DownloadResult
-                {
-                    DownloadUrl = downloadUrl,
-                    MimeType = mimeType ?? "audio/flac",
-                    AudioQuality = audioQuality ?? "LOSSLESS"
-                };
-            });
+            throw lastException ?? new Exception($"Unable to fetch SquidWTF download info for track {trackId}");
         });
+    }
+
+    private async Task<DownloadResult> FetchTrackDownloadInfoAsync(
+        string baseUrl,
+        string trackId,
+        string quality,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
+
+        Logger.LogDebug("Fetching track download info from: {Url}", url);
+
+        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        
+        if (!response.IsSuccessStatusCode)
+        {
+            response.EnsureSuccessStatusCode();
+        }
+        
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+        
+        if (!doc.RootElement.TryGetProperty("data", out var data))
+        {
+            throw new Exception("Invalid response from API");
+        }
+        
+        // Get the manifest (base64 encoded JSON containing the actual CDN URL)
+        var manifestBase64 = data.GetProperty("manifest").GetString()
+            ?? throw new Exception("No manifest in response");
+        
+        // Decode the manifest
+        var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
+        using var manifest = JsonDocument.Parse(manifestJson);
+        
+        // Extract the download URL from the manifest
+        if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
+        {
+            throw new Exception("No download URLs in manifest");
+        }
+        
+        var downloadUrl = urls[0].GetString()
+            ?? throw new Exception("Download URL is null");
+        
+        var mimeType = manifest.RootElement.TryGetProperty("mimeType", out var mimeTypeEl)
+            ? mimeTypeEl.GetString()
+            : "audio/flac";
+        
+        var audioQuality = data.TryGetProperty("audioQuality", out var audioQualityEl)
+            ? audioQualityEl.GetString()
+            : quality;
+        
+        return new DownloadResult
+        {
+            Endpoint = baseUrl,
+            DownloadUrl = downloadUrl,
+            MimeType = mimeType ?? "audio/flac",
+            AudioQuality = audioQuality ?? quality
+        };
+    }
+
+    private static IReadOnlyList<string> BuildQualityFallbackOrder(string? configuredQuality)
+    {
+        return NormalizeQuality(configuredQuality) switch
+        {
+            "HI_RES_LOSSLESS" => ["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"],
+            "LOSSLESS" => ["LOSSLESS", "HIGH", "LOW"],
+            "HIGH" => ["HIGH", "LOW"],
+            "LOW" => ["LOW"],
+            _ => ["LOSSLESS", "HIGH", "LOW"]
+        };
+    }
+
+    private static string NormalizeQuality(string? configuredQuality)
+    {
+        return configuredQuality?.ToUpperInvariant() switch
+        {
+            "FLAC" => "LOSSLESS",
+            "HI_RES" => "HI_RES_LOSSLESS",
+            "HI_RES_LOSSLESS" => "HI_RES_LOSSLESS",
+            "LOSSLESS" => "LOSSLESS",
+            "HIGH" => "HIGH",
+            "LOW" => "LOW",
+            _ => "LOSSLESS"
+        };
+    }
+
+    private static string DescribeException(Exception ex)
+    {
+        if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+        {
+            var statusCode = (int)httpRequestException.StatusCode.Value;
+            return $"{statusCode}: {httpRequestException.StatusCode.Value}";
+        }
+
+        return ex.Message;
     }
 
 	
@@ -367,6 +375,7 @@ public class SquidWTFDownloadService : BaseDownloadService
 
     private class DownloadResult
     {
+        public string Endpoint { get; set; } = string.Empty;
         public string DownloadUrl { get; set; } = string.Empty;
         public string MimeType { get; set; } = string.Empty;
         public string AudioQuality { get; set; } = string.Empty;

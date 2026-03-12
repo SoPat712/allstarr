@@ -28,7 +28,18 @@ public static class AuthHeaderHelper
                 return true;
             }
         }
-        
+
+        // Some Jellyfin clients send the raw token separately instead of a MediaBrowser auth header.
+        foreach (var header in sourceHeaders)
+        {
+            if (header.Key.Equals("X-Emby-Token", StringComparison.OrdinalIgnoreCase))
+            {
+                var headerValue = header.Value.ToString();
+                targetRequest.Headers.TryAddWithoutValidation("X-Emby-Token", headerValue);
+                return true;
+            }
+        }
+
         // If no X-Emby-Authorization, check if Authorization header contains MediaBrowser format
         foreach (var header in sourceHeaders)
         {

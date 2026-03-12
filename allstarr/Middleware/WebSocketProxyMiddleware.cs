@@ -120,6 +120,11 @@ public class WebSocketProxyMiddleware
                 serverWebSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuthHeader.ToString());
                 _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Authorization header");
             }
+            else if (context.Request.Headers.TryGetValue("X-Emby-Token", out var tokenHeader))
+            {
+                serverWebSocket.Options.SetRequestHeader("X-Emby-Token", tokenHeader.ToString());
+                _logger.LogDebug("🔑 WEBSOCKET: Forwarded X-Emby-Token header");
+            }
             else if (context.Request.Headers.TryGetValue("Authorization", out var authHeader2))
             {
                 var authValue = authHeader2.ToString();

@@ -75,6 +75,44 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("USRC12345678", providerIds["ISRC"]);
     }
 
+    [Fact]
+    public void ConvertSongToJellyfinItem_ExternalExplicitSong_AppendsStreamingAndExplicitLabels()
+    {
+        var song = new Song
+        {
+            Id = "ext-squidwtf-song-12345",
+            Title = "Sunflower",
+            Artist = "Artist",
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = "12345",
+            ExplicitContentLyrics = 1
+        };
+
+        var result = _builder.ConvertSongToJellyfinItem(song);
+
+        Assert.Equal("Sunflower [S] [E]", result["Name"]);
+    }
+
+    [Fact]
+    public void ConvertSongToJellyfinItem_ExternalCleanSong_AppendsOnlyStreamingLabel()
+    {
+        var song = new Song
+        {
+            Id = "ext-squidwtf-song-12345",
+            Title = "Sunflower",
+            Artist = "Artist",
+            IsLocal = false,
+            ExternalProvider = "squidwtf",
+            ExternalId = "12345",
+            ExplicitContentLyrics = 0
+        };
+
+        var result = _builder.ConvertSongToJellyfinItem(song);
+
+        Assert.Equal("Sunflower [S]", result["Name"]);
+    }
+
     [Theory]
     [InlineData("deezer")]
     [InlineData("qobuz")]

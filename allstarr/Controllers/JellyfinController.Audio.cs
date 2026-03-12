@@ -184,7 +184,19 @@ public partial class JellyfinController
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to stream external song {Provider}:{ExternalId}", provider, externalId);
+            if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+            {
+                _logger.LogError("Failed to stream external song {Provider}:{ExternalId}: {StatusCode}: {ReasonPhrase}",
+                    provider,
+                    externalId,
+                    (int)httpRequestException.StatusCode.Value,
+                    httpRequestException.StatusCode.Value);
+                _logger.LogDebug(ex, "Detailed streaming failure for external song {Provider}:{ExternalId}", provider, externalId);
+            }
+            else
+            {
+                _logger.LogError(ex, "Failed to stream external song {Provider}:{ExternalId}", provider, externalId);
+            }
             return StatusCode(500, new { error = "Streaming failed" });
         }
     }
