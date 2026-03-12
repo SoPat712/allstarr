@@ -152,31 +152,6 @@ This project brings together all the music streaming providers into one unified 
 
 - [Finer Player](https://monk-studio.com/finer) (iOS/iPadOS/macOS/tvOS)
 
-_Working on getting more currently_
-
-### Subsonic/Navidrome
-
-[Navidrome](https://www.navidrome.org/) and other Subsonic-compatible servers are supported via the Subsonic API.
-
-**Compatible Subsonic clients:**
-
-#### PC
-
-- [Aonsoku](https://github.com/victoralvesf/aonsoku)
-- [Feishin](https://github.com/jeffvli/feishin)
-- [Subplayer](https://github.com/peguerosdc/subplayer)
-- [Aurial](https://github.com/shrimpza/aurial)
-
-#### Android
-
-- [Tempus](https://github.com/eddyizm/tempus)
-- [Substreamer](https://substreamerapp.com/)
-
-#### iOS
-
-- [Narjo](https://www.reddit.com/r/NarjoApp/)
-- [Arpeggi](https://www.reddit.com/r/arpeggiApp/)
-
 > **Want to improve client compatibility?** Pull requests are welcome!
 
 ### Incompatible Clients
@@ -199,7 +174,6 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 
 - A running media server:
   - **Jellyfin**: Any recent version with API access enabled
-  - **Subsonic**: Navidrome or other Subsonic-compatible server
 - **Docker and Docker Compose** (recommended) - includes Redis and Spotify Lyrics API sidecars
   - Redis is used for caching (search results, playlists, lyrics, etc.)
   - Spotify Lyrics API provides synchronized lyrics for Spotify tracks
@@ -220,7 +194,7 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
 
 2. **Edit the `.env` file** with your configuration:
 
-   **For Jellyfin backend:**
+   **Server Settings:**
 
    ```bash
    # Backend selection
@@ -238,18 +212,6 @@ Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Add
    # Music library ID (optional, auto-detected if not set)
    JELLYFIN_LIBRARY_ID=
    ```
-
-   **For Subsonic/Navidrome backend:**
-
-   ```bash
-   # Backend selection
-   BACKEND_TYPE=Subsonic
-
-   # Navidrome/Subsonic server URL
-   SUBSONIC_URL=http://localhost:4533
-   ```
-
-   **Common settings (both backends):**
 
    ```bash
    # Path where downloaded songs will be stored
@@ -312,23 +274,6 @@ If you prefer to run Allstarr without Docker:
    }
    ```
 
-   **For Subsonic/Navidrome:**
-
-   ```json
-   {
-     "Backend": {
-       "Type": "Subsonic"
-     },
-     "Subsonic": {
-       "Url": "http://localhost:4533",
-       "MusicService": "SquidWTF"
-     },
-     "Library": {
-       "DownloadPath": "./downloads"
-     }
-   }
-   ```
-
 4. **Run the server**
 
    ```bash
@@ -351,7 +296,6 @@ If you prefer to run Allstarr without Docker:
 
 ## Limitations
 
-- **Playlist Search**: Subsonic clients like Aonsoku filter playlists client-side from a cached `getPlaylists` call. Streaming provider playlists appear in global search (`search3`) but not in the Playlists tab filter.
 - **Region Restrictions**: Some tracks may be unavailable depending on your region and provider.
 - **Token Expiration**: Provider authentication tokens expire and need periodic refresh.
 
@@ -366,7 +310,6 @@ GPL-3.0
 - [Jellyfin Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file) - The plugin that I **strongly** recommend using alongside this repo
 - [Jellyfin](https://jellyfin.org/) - The free and open-source media server
 - [Navidrome](https://www.navidrome.org/) - The excellent self-hosted music server
-- [Subsonic API](http://www.subsonic.org/pages/api.jsp) - The API specification
 - [Hi-Fi API](https://github.com/binimum/hifi-api) - These people do some great work, and you should thank them for this even existing!
 - [Deezer](https://www.deezer.com/) - Music streaming service
 - [Qobuz](https://www.qobuz.com/) - Hi-Res music streaming service
