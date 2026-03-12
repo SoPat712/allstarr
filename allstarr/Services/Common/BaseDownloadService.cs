@@ -467,7 +467,18 @@ public abstract class BaseDownloadService : IDownloadService
                     Logger.LogDebug("Cleaned up failed download tracking for {SongId}", songId);
                 });
             }
-            Logger.LogError(ex, "Download failed for {SongId}", songId);
+            if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+            {
+                Logger.LogError("Download failed for {SongId}: {StatusCode}: {ReasonPhrase}",
+                    songId,
+                    (int)httpRequestException.StatusCode.Value,
+                    httpRequestException.StatusCode.Value);
+                Logger.LogDebug(ex, "Detailed download failure for {SongId}", songId);
+            }
+            else
+            {
+                Logger.LogError(ex, "Download failed for {SongId}", songId);
+            }
             throw;
         }
         finally

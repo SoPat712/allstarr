@@ -298,32 +298,16 @@ public class JellyfinSessionManager : IDisposable
 
     /// <summary>
     /// Marks a session as potentially ended (e.g., after playback stops).
-    /// The session will be cleaned up if no new activity occurs within the timeout.
+    /// Jellyfin should decide when the upstream playback session expires.
     /// </summary>
     public void MarkSessionPotentiallyEnded(string deviceId, TimeSpan timeout)
     {
-        if (_sessions.TryGetValue(deviceId, out var session))
+        if (_sessions.TryGetValue(deviceId, out _))
         {
-            _logger.LogDebug("⏰ SESSION: Marking session {DeviceId} as potentially ended, will cleanup in {Seconds}s if no activity",
-                deviceId, timeout.TotalSeconds);
-
-            _ = Task.Run(async () =>
-            {
-                var markedTime = DateTime.UtcNow;
-                await Task.Delay(timeout);
-
-                // Check if there's been activity since we marked it
-                if (_sessions.TryGetValue(deviceId, out var currentSession) &&
-                    currentSession.LastActivity <= markedTime)
-                {
-                    _logger.LogDebug("🧹 SESSION: Auto-removing inactive session {DeviceId} after playback stop", deviceId);
-                    await RemoveSessionAsync(deviceId);
-                }
-                else
-                {
-                    _logger.LogDebug("✓ SESSION: Session {DeviceId} had activity, keeping alive", deviceId);
-                }
-            });
+            _logger.LogDebug(
+                "⏰ SESSION: Playback stopped for {DeviceId}; leaving upstream session lifetime to Jellyfin (timeout hint {Seconds}s ignored)",
+                deviceId,
+                timeout.TotalSeconds);
         }
     }
 
@@ -398,8 +382,7 @@ public class JellyfinSessionManager : IDisposable
                         deviceId, session.LastPlayingItemId, session.LastPlayingPositionTicks);
                 }
 
-                // Notify Jellyfin that the session is ending
-                await _proxyService.PostJsonAsync("Sessions/Logout", "{}", session.Headers);
+                // Let Jellyfin retire the session naturally; internal cleanup must not revoke the user's token.
             }
             catch (Exception ex)
             {
@@ -450,6 +433,12 @@ public class JellyfinSessionManager : IDisposable
             {
                 webSocket.Options.SetRequestHeader("X-Emby-Authorization", embyAuth.ToString());
                 _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Authorization for {DeviceId}", deviceId);
+                authFound = true;
+            }
+            else if (sessionHeaders.TryGetValue("X-Emby-Token", out var token))
+            {
+                webSocket.Options.SetRequestHeader("X-Emby-Token", token.ToString());
+                _logger.LogDebug("🔑 WEBSOCKET: Using X-Emby-Token for {DeviceId}", deviceId);
                 authFound = true;
             }
             else if (sessionHeaders.TryGetValue("Authorization", out var auth))

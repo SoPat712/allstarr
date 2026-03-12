@@ -145,12 +145,11 @@ public partial class JellyfinController
             return NotFound(new { error = "Song not found" });
         }
 
-        // Strip [S] suffix from title, artist, and album for lyrics search
-        // The [S] tag is added to external tracks but shouldn't be used in lyrics queries
-        var searchTitle = song.Title.Replace(" [S]", "").Trim();
-        var searchArtist = song.Artist?.Replace(" [S]", "").Trim() ?? "";
-        var searchAlbum = song.Album?.Replace(" [S]", "").Trim() ?? "";
-        var searchArtists = song.Artists.Select(a => a.Replace(" [S]", "").Trim()).ToList();
+        // Strip external track labels from lyrics search terms.
+        var searchTitle = StripTrackDecorators(song.Title);
+        var searchArtist = StripTrackDecorators(song.Artist);
+        var searchAlbum = StripTrackDecorators(song.Album);
+        var searchArtists = song.Artists.Select(StripTrackDecorators).ToList();
 
         if (searchArtists.Count == 0 && !string.IsNullOrEmpty(searchArtist))
         {
@@ -379,11 +378,11 @@ public partial class JellyfinController
                 return;
             }
 
-            // Strip [S] suffix for lyrics search
-            var searchTitle = song.Title.Replace(" [S]", "").Trim();
-            var searchArtist = song.Artist?.Replace(" [S]", "").Trim() ?? "";
-            var searchAlbum = song.Album?.Replace(" [S]", "").Trim() ?? "";
-            var searchArtists = song.Artists.Select(a => a.Replace(" [S]", "").Trim()).ToList();
+            // Strip external track labels for lyrics search.
+            var searchTitle = StripTrackDecorators(song.Title);
+            var searchArtist = StripTrackDecorators(song.Artist);
+            var searchAlbum = StripTrackDecorators(song.Album);
+            var searchArtists = song.Artists.Select(StripTrackDecorators).ToList();
 
             if (searchArtists.Count == 0 && !string.IsNullOrEmpty(searchArtist))
             {
@@ -465,6 +464,19 @@ public partial class JellyfinController
         {
             _logger.LogWarning("Failed to prefetch lyrics for track {ItemId}: {Message}", itemId, ex.Message);
         }
+    }
+
+    private static string StripTrackDecorators(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return value
+            .Replace(" [S]", "", StringComparison.Ordinal)
+            .Replace(" [E]", "", StringComparison.Ordinal)
+            .Trim();
     }
 
     #endregion

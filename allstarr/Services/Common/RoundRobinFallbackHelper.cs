@@ -235,8 +235,7 @@ public class RoundRobinFallbackHelper
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "{Service} request failed with endpoint {Endpoint}, trying next...", 
-                    _serviceName, baseUrl);
+                LogEndpointFailure(baseUrl, ex, willRetry: attempt < orderedEndpoints.Count - 1);
                 
                 // Mark as unhealthy in cache
                 lock (_healthCacheLock)
@@ -351,8 +350,7 @@ public class RoundRobinFallbackHelper
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "{Service} request failed with endpoint {Endpoint}, trying next...", 
-                    _serviceName, baseUrl);
+                LogEndpointFailure(baseUrl, ex, willRetry: attempt < orderedEndpoints.Count - 1);
                 
                 // Mark as unhealthy in cache
                 lock (_healthCacheLock)
@@ -372,9 +370,109 @@ public class RoundRobinFallbackHelper
     }
 
     /// <summary>
+    /// Tries endpoints until one both succeeds and returns an acceptable result.
+    /// Unacceptable results continue to the next endpoint without poisoning health state.
+    /// </summary>
+    public async Task<T> TryWithFallbackAsync<T>(
+        Func<string, Task<T>> action,
+        Func<T, bool> isAcceptableResult,
+        T defaultValue)
+    {
+        if (isAcceptableResult == null)
+        {
+            throw new ArgumentNullException(nameof(isAcceptableResult));
+        }
+
+        // Get healthy endpoints first (with caching to avoid excessive checks)
+        var healthyEndpoints = await GetHealthyEndpointsAsync();
+
+        // Try healthy endpoints first, then fall back to all if needed
+        var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count
+            ? healthyEndpoints.Concat(_apiUrls.Except(healthyEndpoints)).ToList()
+            : healthyEndpoints;
+
+        var orderedEndpoints = BuildTryOrder(endpointsToTry);
+
+        for (int attempt = 0; attempt < orderedEndpoints.Count; attempt++)
+        {
+            var baseUrl = orderedEndpoints[attempt];
+
+            try
+            {
+                _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})",
+                    _serviceName, baseUrl, attempt + 1, orderedEndpoints.Count);
+
+                var result = await action(baseUrl);
+                if (isAcceptableResult(result))
+                {
+                    return result;
+                }
+
+                _logger.LogDebug("{Service} endpoint {Endpoint} returned an unacceptable result, trying next...",
+                    _serviceName, baseUrl);
+
+                if (attempt == orderedEndpoints.Count - 1)
+                {
+                    _logger.LogWarning("All {Count} {Service} endpoints returned unacceptable results, returning default value",
+                        orderedEndpoints.Count, _serviceName);
+                    return defaultValue;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEndpointFailure(baseUrl, ex, willRetry: attempt < orderedEndpoints.Count - 1);
+
+                lock (_healthCacheLock)
+                {
+                    _healthCache[baseUrl] = (false, DateTime.UtcNow);
+                }
+
+                if (attempt == orderedEndpoints.Count - 1)
+                {
+                    _logger.LogError("All {Count} {Service} endpoints failed, returning default value",
+                        orderedEndpoints.Count, _serviceName);
+                    return defaultValue;
+                }
+            }
+        }
+
+        return defaultValue;
+    }
+
+    private void LogEndpointFailure(string baseUrl, Exception ex, bool willRetry)
+    {
+        var message = BuildFailureSummary(ex);
+
+        if (willRetry)
+        {
+            _logger.LogWarning("{Service} request failed at {Endpoint}: {Error}. Trying next...",
+                _serviceName, baseUrl, message);
+        }
+        else
+        {
+            _logger.LogError("{Service} request failed at {Endpoint}: {Error}",
+                _serviceName, baseUrl, message);
+        }
+
+        _logger.LogDebug(ex, "{Service} detailed failure for endpoint {Endpoint}",
+            _serviceName, baseUrl);
+    }
+
+    private static string BuildFailureSummary(Exception ex)
+    {
+        if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+        {
+            var statusCode = (int)httpRequestException.StatusCode.Value;
+            return $"{statusCode}: {httpRequestException.StatusCode.Value}";
+        }
+
+        return ex.Message;
+    }
+
+    /// <summary>
     /// Processes multiple items in parallel across all available endpoints.
     /// Each endpoint processes items sequentially. Failed endpoints are blacklisted.
-    /// </summary>
+     /// </summary>
     public async Task<List<TResult>> ProcessInParallelAsync<TItem, TResult>(
         List<TItem> items,
         Func<string, TItem, CancellationToken, Task<TResult>> action,

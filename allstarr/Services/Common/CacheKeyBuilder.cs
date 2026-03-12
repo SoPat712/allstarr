@@ -22,7 +22,8 @@ public static class CacheKeyBuilder
         string? sortBy,
         string? sortOrder,
         bool? recursive,
-        string? userId)
+        string? userId,
+        string? isFavorite = null)
     {
         var normalizedTerm = Normalize(searchTerm);
         var normalizedItemTypes = Normalize(itemTypes);
@@ -30,9 +31,10 @@ public static class CacheKeyBuilder
         var normalizedSortBy = Normalize(sortBy);
         var normalizedSortOrder = Normalize(sortOrder);
         var normalizedUserId = Normalize(userId);
+        var normalizedIsFavorite = Normalize(isFavorite);
         var normalizedRecursive = recursive.HasValue ? (recursive.Value ? "true" : "false") : string.Empty;
 
-        return $"search:{normalizedTerm}:{normalizedItemTypes}:{limit}:{startIndex}:{normalizedParentId}:{normalizedSortBy}:{normalizedSortOrder}:{normalizedRecursive}:{normalizedUserId}";
+        return $"search:{normalizedTerm}:{normalizedItemTypes}:{limit}:{startIndex}:{normalizedParentId}:{normalizedSortBy}:{normalizedSortOrder}:{normalizedRecursive}:{normalizedUserId}:{normalizedIsFavorite}";
     }
 
     private static string Normalize(string? value)

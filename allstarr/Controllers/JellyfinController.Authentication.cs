@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using allstarr.Services.Common;
 
 namespace allstarr.Controllers;
 
@@ -53,8 +54,10 @@ public partial class JellyfinController
                     // Post session capabilities in background if we have a token
                     if (!string.IsNullOrEmpty(accessToken))
                     {
+                        var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
                         // Capture token in closure - don't use Request.Headers (will be disposed)
                         var token = accessToken;
+                        var authHeader = AuthHeaderHelper.CreateAuthHeader(token, client, device, deviceId, version);
                         _ = Task.Run(async () =>
                         {
                             try
@@ -64,6 +67,7 @@ public partial class JellyfinController
                                 // Build auth header with the new token
                                 var authHeaders = new HeaderDictionary
                                 {
+                                    ["X-Emby-Authorization"] = authHeader,
                                     ["X-Emby-Token"] = token
                                 };
 

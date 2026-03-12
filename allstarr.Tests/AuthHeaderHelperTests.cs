@@ -40,6 +40,22 @@ public class AuthHeaderHelperTests
     }
 
     [Fact]
+    public void ForwardAuthHeaders_ShouldForwardXEmbyToken()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Token"] = "abc"
+        };
+
+        using var request = new HttpRequestMessage();
+        var forwarded = AuthHeaderHelper.ForwardAuthHeaders(headers, request);
+
+        Assert.True(forwarded);
+        Assert.True(request.Headers.TryGetValues("X-Emby-Token", out var values));
+        Assert.Contains("abc", values);
+    }
+
+    [Fact]
     public void ForwardAuthHeaders_ShouldForwardStandardAuthorization()
     {
         var headers = new HeaderDictionary

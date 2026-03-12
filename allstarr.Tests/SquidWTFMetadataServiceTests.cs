@@ -7,8 +7,11 @@ using allstarr.Services.Common;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using System.Collections.Generic;
+using System.Net;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace allstarr.Tests;
 
@@ -344,6 +347,168 @@ public class SquidWTFMetadataServiceTests
     }
 
     [Fact]
+    public async Task GetTrackRecommendationsAsync_FallsBackWhenFirstEndpointReturnsEmpty()
+    {
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            var port = request.RequestUri?.Port;
+
+            if (port == 5011)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "version": "2.4",
+                      "data": {
+                        "limit": 20,
+                        "offset": 0,
+                        "totalNumberOfItems": 0,
+                        "items": []
+                      }
+                    }
+                    """)
+                };
+            }
+
+            if (port == 5012)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "version": "2.4",
+                      "data": {
+                        "limit": 20,
+                        "offset": 0,
+                        "totalNumberOfItems": 1,
+                        "items": [
+                          {
+                            "track": {
+                              "id": 371921532,
+                              "title": "Take It Slow",
+                              "duration": 139,
+                              "trackNumber": 1,
+                              "volumeNumber": 1,
+                              "explicit": false,
+                              "artist": { "id": 10330497, "name": "Isaac Dunbar" },
+                              "artists": [
+                                { "id": 10330497, "name": "Isaac Dunbar" }
+                              ],
+                              "album": {
+                                "id": 371921525,
+                                "title": "Take It Slow",
+                                "cover": "aeb70f15-78ef-4230-929d-2d62c70ac00c"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                    """)
+                };
+            }
+
+            throw new InvalidOperationException($"Unexpected request URI: {request.RequestUri}");
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string>
+            {
+                "http://127.0.0.1:5011",
+                "http://127.0.0.1:5012"
+            });
+
+        var result = await service.GetTrackRecommendationsAsync("227242909", 20);
+
+        Assert.Single(result);
+        Assert.Equal("371921532", result[0].ExternalId);
+        Assert.Equal("Take It Slow", result[0].Title);
+    }
+
+    [Fact]
+    public async Task GetSongAsync_FallsBackWhenFirstEndpointReturnsErrorPayload()
+    {
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            var port = request.RequestUri?.Port;
+
+            if (port == 5021)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "detail": "Upstream API error"
+                    }
+                    """)
+                };
+            }
+
+            if (port == 5022)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""
+                    {
+                      "version": "2.4",
+                      "data": {
+                        "id": 227242909,
+                        "title": "Monica Lewinsky",
+                        "duration": 132,
+                        "trackNumber": 1,
+                        "volumeNumber": 1,
+                        "explicit": true,
+                        "artist": { "id": 8420542, "name": "UPSAHL" },
+                        "artists": [
+                          { "id": 8420542, "name": "UPSAHL" }
+                        ],
+                        "album": {
+                          "id": 227242908,
+                          "title": "Monica Lewinsky",
+                          "cover": "32522342-3903-42ab-aaea-a6f4f46ca0cc"
+                        }
+                      }
+                    }
+                    """)
+                };
+            }
+
+            throw new InvalidOperationException($"Unexpected request URI: {request.RequestUri}");
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string>
+            {
+                "http://127.0.0.1:5021",
+                "http://127.0.0.1:5022"
+            });
+
+        var song = await service.GetSongAsync("squidwtf", "227242909");
+
+        Assert.NotNull(song);
+        Assert.Equal("227242909", song!.ExternalId);
+        Assert.Equal("Monica Lewinsky", song.Title);
+        Assert.Equal(1, song.ExplicitContentLyrics);
+    }
+
+    [Fact]
     public void BuildSearchQueryVariants_WithAmpersand_AddsAndVariant()
     {
         var variants = InvokePrivateStaticMethod<IReadOnlyList<string>>(
@@ -560,5 +725,20 @@ public class SquidWTFMetadataServiceTests
         var result = method!.Invoke(null, parameters);
         Assert.NotNull(result);
         return (T)result!;
+    }
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;
+
+        public StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler)
+        {
+            _handler = handler;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_handler(request));
+        }
     }
 }

@@ -20,8 +20,40 @@ public class CacheKeyBuilderTests
             "1635cd7d23144ba08251ebe22a56119e");
 
         Assert.Equal(
-            "search:data:musicalbum:500:0:efa26829c37196b030fa31d127e0715b:datecreated,sortname:descending:true:1635cd7d23144ba08251ebe22a56119e",
+            "search:data:musicalbum:500:0:efa26829c37196b030fa31d127e0715b:datecreated,sortname:descending:true:1635cd7d23144ba08251ebe22a56119e:",
             key);
+    }
+
+    [Fact]
+    public void SearchKey_ShouldDifferentiateFavoriteOnlyQueries()
+    {
+        var normalKey = CacheKeyBuilder.BuildSearchKey(
+            "Sunflower",
+            "Audio",
+            100,
+            0,
+            "parent",
+            "SortName",
+            "Ascending",
+            true,
+            "user-1",
+            "false");
+
+        var favoritesOnlyKey = CacheKeyBuilder.BuildSearchKey(
+            "Sunflower",
+            "Audio",
+            100,
+            0,
+            "parent",
+            "SortName",
+            "Ascending",
+            true,
+            "user-1",
+            "true");
+
+        Assert.NotEqual(normalKey, favoritesOnlyKey);
+        Assert.EndsWith(":false", normalKey);
+        Assert.EndsWith(":true", favoritesOnlyKey);
     }
 
     [Fact]

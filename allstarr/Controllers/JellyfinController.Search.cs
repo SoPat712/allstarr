@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text;
+using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -34,6 +35,7 @@ public partial class JellyfinController
 
         // AlbumArtistIds takes precedence over ArtistIds if both are provided
         var effectiveArtistIds = albumArtistIds ?? artistIds;
+        var favoritesOnlyRequest = IsFavoritesOnlyRequest();
 
         _logger.LogDebug("=== SEARCHITEMS V2 CALLED === searchTerm={SearchTerm}, includeItemTypes={ItemTypes}, parentId={ParentId}, artistIds={ArtistIds}, albumArtistIds={AlbumArtistIds}, albumIds={AlbumIds}, userId={UserId}",
             searchTerm, includeItemTypes, parentId, artistIds, albumArtistIds, albumIds, userId);
@@ -63,6 +65,12 @@ public partial class JellyfinController
 
             if (isExternal)
             {
+                if (favoritesOnlyRequest)
+                {
+                    _logger.LogDebug("Suppressing external artist results for favorites-only request: {ArtistId}", artistId);
+                    return CreateEmptyItemsResponse(startIndex);
+                }
+
                 // Check if this is a curator ID (format: ext-{provider}-curator-{name})
                 if (artistId.Contains("-curator-", StringComparison.OrdinalIgnoreCase))
                 {
@@ -85,6 +93,12 @@ public partial class JellyfinController
 
             if (isExternal)
             {
+                if (favoritesOnlyRequest)
+                {
+                    _logger.LogDebug("Suppressing external album results for favorites-only request: {AlbumId}", albumId);
+                    return CreateEmptyItemsResponse(startIndex);
+                }
+
                 _logger.LogDebug("Fetching songs for external album: {Provider}/{ExternalId}", provider,
                     externalId);
 
@@ -120,6 +134,12 @@ public partial class JellyfinController
 
             if (isExternal)
             {
+                if (favoritesOnlyRequest)
+                {
+                    _logger.LogDebug("Suppressing external parent results for favorites-only request: {ParentId}", parentId);
+                    return CreateEmptyItemsResponse(startIndex);
+                }
+
                 // External parent - get external content
                 _logger.LogDebug("Fetching children for external parent: {Provider}/{Type}/{ExternalId}",
                     provider, type, externalId);
@@ -170,7 +190,8 @@ public partial class JellyfinController
                     sortBy,
                     Request.Query["SortOrder"].ToString(),
                     recursive,
-                    userId);
+                    userId,
+                    Request.Query["IsFavorite"].ToString());
                 var cachedResult = await _cache.GetAsync<object>(cacheKey);
 
                 if (cachedResult != null)
@@ -291,13 +312,15 @@ public partial class JellyfinController
             userId);
 
         // Use parallel metadata service if available (races providers), otherwise use primary
-        var externalTask = _parallelMetadataService != null
-            ? _parallelMetadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted)
-            : _metadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted);
+        var externalTask = favoritesOnlyRequest
+            ? Task.FromResult(new SearchResult())
+            : _parallelMetadataService != null
+                ? _parallelMetadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted)
+                : _metadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted);
 
-        var playlistTask = _settings.EnableExternalPlaylists
-            ? _metadataService.SearchPlaylistsAsync(cleanQuery, limit, HttpContext.RequestAborted)
-            : Task.FromResult(new List<ExternalPlaylist>());
+        var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
+            ? Task.FromResult(new List<ExternalPlaylist>())
+            : _metadataService.SearchPlaylistsAsync(cleanQuery, limit, HttpContext.RequestAborted);
 
         _logger.LogDebug("Playlist search enabled: {Enabled}, searching for: '{Query}'",
             _settings.EnableExternalPlaylists, cleanQuery);
@@ -516,7 +539,7 @@ public partial class JellyfinController
                 StartIndex = startIndex
             };
 
-            // Cache search results in Redis (15 min TTL, no file persistence)
+            // Cache search results in Redis using the configured search TTL.
             if (!string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(effectiveArtistIds))
             {
                 if (externalHasRequestedTypeResults)
@@ -530,7 +553,8 @@ public partial class JellyfinController
                         sortBy,
                         Request.Query["SortOrder"].ToString(),
                         recursive,
-                        userId);
+                        userId,
+                        Request.Query["IsFavorite"].ToString());
                     await _cache.SetAsync(cacheKey, response, CacheExtensions.SearchResultsTTL);
                     _logger.LogDebug("💾 Cached search results for '{SearchTerm}' ({Minutes} min TTL)", searchTerm,
                         CacheExtensions.SearchResultsTTL.TotalMinutes);
@@ -720,6 +744,21 @@ public partial class JellyfinController
             $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value ?? string.Empty)}"));
 
         return MaskSensitiveQueryString(query);
+    }
+
+    private bool IsFavoritesOnlyRequest()
+    {
+        return string.Equals(Request.Query["IsFavorite"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IActionResult CreateEmptyItemsResponse(int startIndex)
+    {
+        return new JsonResult(new
+        {
+            Items = Array.Empty<object>(),
+            TotalRecordCount = 0,
+            StartIndex = startIndex
+        });
     }
 
     private List<Dictionary<string, object?>> ApplyRequestedAlbumOrderingIfApplicable(

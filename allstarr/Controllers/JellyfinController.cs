@@ -201,6 +201,16 @@ public partial class JellyfinController : ControllerBase
     /// </summary>
     private async Task<IActionResult> GetExternalChildItems(string provider, string type, string externalId, string? includeItemTypes, CancellationToken cancellationToken = default)
     {
+        if (IsFavoritesOnlyRequest())
+        {
+            _logger.LogDebug(
+                "Suppressing external child items for favorites-only request: provider={Provider}, type={Type}, externalId={ExternalId}",
+                provider,
+                type,
+                externalId);
+            return CreateEmptyItemsResponse(GetRequestedStartIndex());
+        }
+
         var itemTypes = ParseItemTypes(includeItemTypes);
         var itemTypesUnspecified = itemTypes == null || itemTypes.Length == 0;
 
@@ -278,6 +288,13 @@ public partial class JellyfinController : ControllerBase
         _logger.LogWarning("Unhandled GetExternalChildItems request: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}",
             provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
         return _responseBuilder.CreateItemsResponse(new List<Song>());
+    }
+
+    private int GetRequestedStartIndex()
+    {
+        return int.TryParse(Request.Query["StartIndex"], out var startIndex) && startIndex > 0
+            ? startIndex
+            : 0;
     }
 
     private List<Song> ApplySongSortAndPagingForCurrentRequest(IReadOnlyCollection<Song> songs, out int totalRecordCount, out int startIndex)

@@ -118,6 +118,35 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetJsonAsync_WithXEmbyToken_ForwardsTokenHeader()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}")
+            });
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Token"] = "token-123"
+        };
+
+        // Act
+        await _service.GetJsonAsync("Items", null, headers);
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.True(captured!.Headers.TryGetValues("X-Emby-Token", out var values));
+        Assert.Contains("token-123", values);
+    }
+
+    [Fact]
     public async Task GetBytesAsync_ReturnsBodyAndContentType()
     {
         // Arrange

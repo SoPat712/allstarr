@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -209,14 +210,9 @@ public class JellyfinProxyService
 
         if (!response.IsSuccessStatusCode)
         {
-            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            if (!isBrowserStaticRequest && !isPublicEndpoint)
             {
-                // 401 means token expired or invalid - client needs to re-authenticate
-                _logger.LogDebug("Jellyfin returned 401 Unauthorized for {Url} - client should re-authenticate", url);
-            }
-            else if (!isBrowserStaticRequest && !isPublicEndpoint)
-            {
-                _logger.LogError("Jellyfin request failed: {StatusCode} for {Url}", response.StatusCode, url);
+                LogUpstreamFailure(HttpMethod.Get, response.StatusCode, url);
             }
 
             // Try to parse error response to pass through to client
@@ -310,17 +306,7 @@ public class JellyfinProxyService
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-
-            // 401 is expected when tokens expire - don't spam logs
-            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                _logger.LogDebug("Jellyfin POST returned 401 for {Url} - client should re-authenticate", url);
-            }
-            else
-            {
-                _logger.LogError("Jellyfin POST request failed: {StatusCode} for {Url}. Response: {Response}",
-                    response.StatusCode, url, errorContent.Length > 200 ? errorContent[..200] + "..." : errorContent);
-            }
+            LogUpstreamFailure(HttpMethod.Post, response.StatusCode, url, errorContent);
 
             // Try to parse error response as JSON to pass through to client
             if (!string.IsNullOrWhiteSpace(errorContent))
@@ -455,8 +441,7 @@ public class JellyfinProxyService
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-            _logger.LogError("Jellyfin DELETE request failed: {StatusCode} for {Url}. Response: {Response}",
-                response.StatusCode, url, errorContent);
+            LogUpstreamFailure(HttpMethod.Delete, response.StatusCode, url, errorContent);
             return (null, statusCode);
         }
 
@@ -913,6 +898,62 @@ public class JellyfinProxyService
         }
 
         return url;
+    }
+
+    private void LogUpstreamFailure(HttpMethod method, HttpStatusCode statusCode, string url, string? responseBody = null)
+    {
+        if (statusCode == HttpStatusCode.Unauthorized)
+        {
+            _logger.LogDebug("Jellyfin {Method} returned 401 for {Url} - client should re-authenticate",
+                method.Method, url);
+            return;
+        }
+
+        var isLikelyBotProbe = BotProbeDetector.IsHighConfidenceProbeUrl(url);
+
+        if (statusCode == HttpStatusCode.NotFound)
+        {
+            if (isLikelyBotProbe)
+            {
+                _logger.LogDebug("Likely bot probe returned 404 for {Url}", url);
+            }
+            else
+            {
+                _logger.LogDebug("Jellyfin {Method} returned 404 for {Url}", method.Method, url);
+            }
+
+            return;
+        }
+
+        var responsePreview = string.IsNullOrWhiteSpace(responseBody)
+            ? null
+            : responseBody.Length > 200 ? responseBody[..200] + "..." : responseBody;
+
+        if (isLikelyBotProbe)
+        {
+            if (responsePreview == null)
+            {
+                _logger.LogWarning("Likely bot probe returned {StatusCode} for {Url}", statusCode, url);
+            }
+            else
+            {
+                _logger.LogWarning("Likely bot probe returned {StatusCode} for {Url}. Response: {Response}",
+                    statusCode, url, responsePreview);
+            }
+
+            return;
+        }
+
+        if (responsePreview == null)
+        {
+            _logger.LogError("Jellyfin {Method} request failed: {StatusCode} for {Url}",
+                method.Method, statusCode, url);
+        }
+        else
+        {
+            _logger.LogError("Jellyfin {Method} request failed: {StatusCode} for {Url}. Response: {Response}",
+                method.Method, statusCode, url, responsePreview);
+        }
     }
 
     /// <summary>
