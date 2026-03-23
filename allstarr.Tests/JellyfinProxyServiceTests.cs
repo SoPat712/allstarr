@@ -284,6 +284,34 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetJsonAsync_WithRepeatedFields_PreservesAllFieldParameters()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        // Act
+        await _service.GetJsonAsync(
+            "Playlists/playlist-123/Items?Fields=Genres&Fields=DateCreated&Fields=MediaSources&UserId=user-abc");
+
+        // Assert
+        Assert.NotNull(captured);
+        var query = captured!.RequestUri!.Query;
+        Assert.Contains("Fields=Genres", query);
+        Assert.Contains("Fields=DateCreated", query);
+        Assert.Contains("Fields=MediaSources", query);
+        Assert.Contains("UserId=user-abc", query);
+    }
+
+    [Fact]
     public async Task GetJsonAsync_WithEndpointAndExplicitQuery_MergesWithExplicitPrecedence()
     {
         // Arrange

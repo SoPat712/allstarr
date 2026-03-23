@@ -40,6 +40,11 @@ public interface IMusicMetadataService
     /// Gets details of an external song
     /// </summary>
     Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Attempts to find a song by ISRC using the provider's most exact lookup path.
+    /// </summary>
+    Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default);
     
     /// <summary>
     /// Gets details of an external album with its songs

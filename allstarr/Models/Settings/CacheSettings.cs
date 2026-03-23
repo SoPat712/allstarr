@@ -61,6 +61,14 @@ public class CacheSettings
     /// </summary>
     public int ProxyImagesDays { get; set; } = 14;
 
+    /// <summary>
+    /// Transcoded audio cache duration in minutes.
+    /// Quality-override files (downloaded at lower quality for cellular streaming)
+    /// are cached in {downloads}/transcoded/ and cleaned up after this duration.
+    /// Default: 60 minutes (1 hour)
+    /// </summary>
+    public int TranscodeCacheMinutes { get; set; } = 60;
+
     // Helper methods to get TimeSpan values
     public TimeSpan SearchResultsTTL => TimeSpan.FromMinutes(SearchResultsMinutes);
     public TimeSpan PlaylistImagesTTL => TimeSpan.FromHours(PlaylistImagesHours);
@@ -71,4 +79,5 @@ public class CacheSettings
     public TimeSpan MetadataTTL => TimeSpan.FromDays(MetadataDays);
     public TimeSpan OdesliLookupTTL => TimeSpan.FromDays(OdesliLookupDays);
     public TimeSpan ProxyImagesTTL => TimeSpan.FromDays(ProxyImagesDays);
+    public TimeSpan TranscodeCacheTTL => TimeSpan.FromMinutes(TranscodeCacheMinutes);
 }

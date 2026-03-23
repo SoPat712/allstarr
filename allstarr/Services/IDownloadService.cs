@@ -21,13 +21,17 @@ public interface IDownloadService
     Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
     
     /// <summary>
-    /// Downloads a song and streams the result progressively
+    /// Downloads a song and streams the result progressively.
+    /// When qualityOverride is specified (not null and not Original), downloads at the requested
+    /// quality tier instead of the configured .env quality. Used for client-requested "transcoding".
+    /// The .env quality acts as a ceiling — client requests can only go equal or lower.
     /// </summary>
     /// <param name="externalProvider">The provider (deezer, spotify)</param>
     /// <param name="externalId">The ID on the external provider</param>
+    /// <param name="qualityOverride">Optional quality tier override for streaming (null = use .env quality)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A stream of the audio file</returns>
-    Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
+    Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, Common.StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default);
     
     /// <summary>
     /// Downloads remaining tracks from an album in background (excluding the specified track)
@@ -41,6 +45,11 @@ public interface IDownloadService
     /// Checks if a song is currently being downloaded
     /// </summary>
     DownloadInfo? GetDownloadStatus(string songId);
+    
+    /// <summary>
+    /// Gets a snapshot of all active/recent downloads for the activity feed
+    /// </summary>
+    IReadOnlyList<DownloadInfo> GetActiveDownloads();
     
     /// <summary>
     /// Gets the local path for a song if it has been downloaded already

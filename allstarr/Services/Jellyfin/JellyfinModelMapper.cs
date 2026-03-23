@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Jellyfin;
 
@@ -186,10 +187,13 @@ public class JellyfinModelMapper
 
         // Cover art URL construction
         song.CoverArtUrl = $"/Items/{id}/Images/Primary";
-        
-        // Preserve Jellyfin metadata (MediaSources, etc.) for local tracks
-        // This ensures bitrate and other technical details are maintained
-        song.JellyfinMetadata = new Dictionary<string, object?>();
+
+        // Preserve the full raw item so cached local matches can be replayed without losing fields.
+        JellyfinItemSnapshotHelper.StoreRawItemSnapshot(song, item);
+
+        // Preserve Jellyfin metadata (MediaSources, etc.) for local tracks.
+        // This ensures bitrate and other technical details are maintained.
+        song.JellyfinMetadata ??= new Dictionary<string, object?>();
         if (item.TryGetProperty("MediaSources", out var mediaSources))
         {
             song.JellyfinMetadata["MediaSources"] = JsonSerializer.Deserialize<object>(mediaSources.GetRawText());

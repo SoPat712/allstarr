@@ -14,4 +14,10 @@ public class SquidWTFSettings
     /// If not specified or unavailable, LOSSLESS will be used.
     /// </summary>
     public string? Quality { get; set; }	
+    
+    /// <summary>
+    /// Minimum interval between requests in milliseconds.
+    /// Default: 200ms
+    /// </summary>
+    public int MinRequestIntervalMs { get; set; } = 200;
 }

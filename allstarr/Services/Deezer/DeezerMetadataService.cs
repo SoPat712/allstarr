@@ -62,6 +62,19 @@ public class DeezerMetadataService : TrackParserBase, IMusicMetadataService
         }
     }
 
+    public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(isrc))
+        {
+            return null;
+        }
+
+        var results = await SearchSongsAsync(isrc, limit: 5, cancellationToken);
+        return results.FirstOrDefault(song =>
+            !string.IsNullOrWhiteSpace(song.Isrc) &&
+            song.Isrc.Equals(isrc, StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try

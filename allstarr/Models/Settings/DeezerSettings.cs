@@ -22,4 +22,10 @@ public class DeezerSettings
     /// If not specified or unavailable, the highest available quality will be used.
     /// </summary>
     public string? Quality { get; set; }
+    
+    /// <summary>
+    /// Minimum interval between requests in milliseconds.
+    /// Default: 200ms
+    /// </summary>
+    public int MinRequestIntervalMs { get; set; } = 200;
 }

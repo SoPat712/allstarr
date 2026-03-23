@@ -153,11 +153,20 @@ public static class CacheKeyBuilder
 
     #endregion
 
-    #region Playlist Keys
+    #region Image Keys
 
     public static string BuildPlaylistImageKey(string playlistId)
     {
         return $"playlist:image:{playlistId}";
+    }
+
+    /// <summary>
+    /// Builds a cache key for external album/song/artist cover art images.
+    /// Images are cached as byte[] in Redis with ProxyImagesTTL (default 14 days).
+    /// </summary>
+    public static string BuildExternalImageKey(string provider, string type, string externalId)
+    {
+        return $"image:{provider}:{type}:{externalId}";
     }
 
     #endregion

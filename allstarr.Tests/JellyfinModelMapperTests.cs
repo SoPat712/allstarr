@@ -3,6 +3,7 @@ using Moq;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using System.Text.Json;
 
@@ -218,6 +219,35 @@ public class JellyfinModelMapperTests
         // Assert
         Assert.Equal("art-id-123", song.ArtistId);
         Assert.Equal("Main Artist", song.Artist);
+    }
+
+    [Fact]
+    public void ParseSong_PreservesRawJellyfinItemSnapshot()
+    {
+        var json = @"{
+            ""Id"": ""song-abc"",
+            ""Name"": ""Test Song"",
+            ""Type"": ""Audio"",
+            ""Album"": ""Test Album"",
+            ""AlbumId"": ""album-123"",
+            ""RunTimeTicks"": 2450000000,
+            ""Artists"": [""Test Artist""],
+            ""MediaSources"": [
+                {
+                    ""Id"": ""song-abc"",
+                    ""RunTimeTicks"": 2450000000
+                }
+            ]
+        }";
+        var element = JsonDocument.Parse(json).RootElement;
+
+        var song = _mapper.ParseSong(element);
+
+        Assert.True(JellyfinItemSnapshotHelper.TryGetClonedRawItemSnapshot(song, out var rawItem));
+        Assert.Equal("song-abc", ((JsonElement)rawItem["Id"]!).GetString());
+        Assert.Equal(2450000000L, ((JsonElement)rawItem["RunTimeTicks"]!).GetInt64());
+        Assert.NotNull(song.JellyfinMetadata);
+        Assert.True(song.JellyfinMetadata!.ContainsKey("MediaSources"));
     }
 
     [Fact]

@@ -6,6 +6,7 @@ import { runAction } from "./operations.js";
 
 let playlistAutoRefreshInterval = null;
 let dashboardRefreshInterval = null;
+let downloadActivityEventSource = null;
 
 let isAuthenticated = () => false;
 let isAdminSession = () => false;
@@ -324,6 +325,10 @@ function stopDashboardRefresh() {
     clearInterval(dashboardRefreshInterval);
     dashboardRefreshInterval = null;
   }
+  if (downloadActivityEventSource) {
+    downloadActivityEventSource.close();
+    downloadActivityEventSource = null;
+  }
   stopPlaylistAutoRefresh();
 }
 
@@ -375,6 +380,82 @@ async function loadDashboardData() {
   }
 
   startDashboardRefresh();
+  startDownloadActivityStream();
+}
+
+function startDownloadActivityStream() {
+  if (!isAdminSession()) return;
+  
+  if (downloadActivityEventSource) {
+    downloadActivityEventSource.close();
+  }
+
+  downloadActivityEventSource = new EventSource("/api/admin/downloads/activity");
+  
+  downloadActivityEventSource.onmessage = (event) => {
+    try {
+      const downloads = JSON.parse(event.data);
+      renderDownloadActivity(downloads);
+    } catch (err) {
+      console.error("Failed to parse download activity:", err);
+    }
+  };
+
+  downloadActivityEventSource.onerror = (err) => {
+    console.error("Download activity SSE error:", err);
+    // EventSource will auto-reconnect
+  };
+}
+
+function renderDownloadActivity(downloads) {
+  const container = document.getElementById("download-activity-list");
+  if (!container) return;
+
+  if (!downloads || downloads.length === 0) {
+    container.innerHTML = '<div class="empty-state">No active downloads</div>';
+    return;
+  }
+
+  const statusIcons = {
+    0: '⏳', // NotStarted
+    1: '<span class="spinner" style="border-width:2px; height:12px; width:12px; display:inline-block; margin-right:4px;"></span> Downloading', // InProgress
+    2: '✅ Completed', // Completed
+    3: '❌ Failed' // Failed
+  };
+
+  const html = downloads.map(d => {
+    // Determine elapsed/duration text
+    let timeText = "";
+    if (d.startedAt) {
+      const start = new Date(d.startedAt);
+      const end = d.completedAt ? new Date(d.completedAt) : new Date();
+      const diffSecs = Math.floor((end.getTime() - start.getTime()) / 1000);
+      timeText = diffSecs < 60 ? `${diffSecs}s` : `${Math.floor(diffSecs/60)}m ${diffSecs%60}s`;
+    }
+
+    const title = d.title || 'Unknown Title';
+    const artist = d.artist || 'Unknown Artist';
+    const errorText = d.errorMessage ? `<div style="color:var(--error); font-size:0.8rem; margin-top:4px;">${escapeHtml(d.errorMessage)}</div>` : '';
+
+    return `
+      <div class="download-queue-item">
+        <div class="download-queue-info">
+          <div class="download-queue-title">${escapeHtml(title)}</div>
+          <div class="download-queue-meta">
+            <span class="download-queue-artist">${escapeHtml(artist)}</span>
+            <span class="download-queue-provider">${escapeHtml(d.externalProvider)}</span>
+          </div>
+          ${errorText}
+        </div>
+        <div class="download-queue-status">
+          <span style="font-size:0.85rem;">${statusIcons[d.status] || 'Unknown'}</span>
+          <span class="download-queue-time">${timeText}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = html;
 }
 
 export function initDashboardData(options) {

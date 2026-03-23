@@ -161,8 +161,15 @@ public class SubsonicController : ControllerBase
 
         try
         {
-            var downloadStream = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, HttpContext.RequestAborted);
-            return File(downloadStream, "audio/mpeg", enableRangeProcessing: true);
+            var downloadStream = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, cancellationToken: HttpContext.RequestAborted);
+            
+            var contentType = "audio/mpeg";
+            if (downloadStream is FileStream fs)
+            {
+                contentType = GetContentType(fs.Name);
+            }
+
+            return File(downloadStream, contentType, enableRangeProcessing: true);
         }
         catch (Exception ex)
         {

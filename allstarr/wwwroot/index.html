@@ -65,6 +65,13 @@
 
         <!-- Dashboard Tab -->
         <div class="tab-content active" id="tab-dashboard">
+            <div class="card" id="download-activity-card">
+                <h2>Live Download Queue</h2>
+                <div id="download-activity-list" class="download-queue-list">
+                    <div class="empty-state">No active downloads</div>
+                </div>
+            </div>
+
             <div class="grid">
                 <div class="card">
                     <h2>Spotify API</h2>
@@ -631,6 +638,12 @@
                         <button
                             onclick="openEditSetting('DEEZER_QUALITY', 'Deezer Quality', 'select', '', ['FLAC', 'MP3_320', 'MP3_128'])">Edit</button>
                     </div>
+                    <div class="config-item">
+                        <span class="label">Request Interval</span>
+                        <span class="value" id="config-deezer-ratelimit">200 ms</span>
+                        <button
+                            onclick="openEditSetting('DEEZER_MIN_REQUEST_INTERVAL_MS', 'Deezer Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                    </div>
                 </div>
             </div>
 
@@ -642,6 +655,12 @@
                         <span class="value" id="config-squid-quality">-</span>
                         <button
                             onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', 'HI_RES_LOSSLESS: 24-bit/192kHz FLAC (highest)\\nLOSSLESS: 16-bit/44.1kHz FLAC (default)\\nHIGH: 320kbps AAC\\nLOW: 96kbps AAC', ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Request Interval</span>
+                        <span class="value" id="config-squid-ratelimit">200 ms</span>
+                        <button
+                            onclick="openEditSetting('SQUIDWTF_MIN_REQUEST_INTERVAL_MS', 'SquidWTF Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
                     </div>
                 </div>
             </div>
@@ -680,10 +699,16 @@
                             onclick="openEditSetting('QOBUZ_USER_AUTH_TOKEN', 'Qobuz User Auth Token', 'password', 'Get from browser while logged into Qobuz')">Update</button>
                     </div>
                     <div class="config-item">
-                        <span class="label">Quality</span>
+                        <span class="label">Preferred Quality</span>
                         <span class="value" id="config-qobuz-quality">-</span>
                         <button
-                            onclick="openEditSetting('QOBUZ_QUALITY', 'Qobuz Quality', 'select', '', ['FLAC_24_192', 'FLAC_24_96', 'FLAC_16_44', 'MP3_320'])">Edit</button>
+                            onclick="openEditSetting('QOBUZ_QUALITY', 'Qobuz Quality', 'select', 'Default: FLAC', ['FLAC', 'FLAC_24_HIGH', 'FLAC_24_LOW', 'FLAC_16', 'MP3_320'])">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Request Interval</span>
+                        <span class="value" id="config-qobuz-ratelimit">200 ms</span>
+                        <button
+                            onclick="openEditSetting('QOBUZ_MIN_REQUEST_INTERVAL_MS', 'Qobuz Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
                     </div>
                 </div>
             </div>

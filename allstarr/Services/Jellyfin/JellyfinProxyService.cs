@@ -115,27 +115,37 @@ public class JellyfinProxyService
             var baseEndpoint = parts[0];
             var existingQuery = parts[1];
 
-            // Parse existing query string
-            var mergedParams = new Dictionary<string, string>();
-            foreach (var param in existingQuery.Split('&'))
+            // Fast path: preserve the caller's raw query string exactly as provided.
+            // This is required for endpoints that legitimately repeat keys like Fields=...
+            if (queryParams == null || queryParams.Count == 0)
+            {
+                return await GetJsonAsyncInternal(BuildUrl(endpoint), clientHeaders);
+            }
+
+            var preservedParams = new List<string>();
+
+            foreach (var param in existingQuery.Split('&', StringSplitOptions.RemoveEmptyEntries))
             {
                 var kv = param.Split('=', 2);
-                if (kv.Length == 2)
+                var key = kv.Length > 0 ? Uri.UnescapeDataString(kv[0]) : string.Empty;
+
+                // Explicit query params override every existing value for the same key.
+                if (!string.IsNullOrEmpty(key) && queryParams.ContainsKey(key))
                 {
-                    mergedParams[Uri.UnescapeDataString(kv[0])] = Uri.UnescapeDataString(kv[1]);
+                    continue;
                 }
+
+                preservedParams.Add(param);
             }
 
-            // Merge with provided queryParams (provided params take precedence)
-            if (queryParams != null)
-            {
-                foreach (var kv in queryParams)
-                {
-                    mergedParams[kv.Key] = kv.Value;
-                }
-            }
+            var explicitParams = queryParams.Select(kv =>
+                $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}");
 
-            var url = BuildUrl(baseEndpoint, mergedParams);
+            var mergedQuery = string.Join("&", preservedParams.Concat(explicitParams));
+            var url = string.IsNullOrEmpty(mergedQuery)
+                ? BuildUrl(baseEndpoint)
+                : $"{BuildUrl(baseEndpoint)}?{mergedQuery}";
+
             return await GetJsonAsyncInternal(url, clientHeaders);
         }
 
