@@ -211,11 +211,25 @@ const SETTINGS_REGISTRY = {
       ensureConfigSection(config, "deezer").quality = value;
     },
   ),
+  DEEZER_MIN_REQUEST_INTERVAL_MS: numberBinding(
+    (config) => config?.deezer?.minRequestIntervalMs ?? 200,
+    (config, value) => {
+      ensureConfigSection(config, "deezer").minRequestIntervalMs = value;
+    },
+    200,
+  ),
   SQUIDWTF_QUALITY: textBinding(
     (config) => config?.squidWtf?.quality ?? "LOSSLESS",
     (config, value) => {
       ensureConfigSection(config, "squidWtf").quality = value;
     },
+  ),
+  SQUIDWTF_MIN_REQUEST_INTERVAL_MS: numberBinding(
+    (config) => config?.squidWtf?.minRequestIntervalMs ?? 200,
+    (config, value) => {
+      ensureConfigSection(config, "squidWtf").minRequestIntervalMs = value;
+    },
+    200,
   ),
   MUSICBRAINZ_ENABLED: toggleBinding(
     (config) => config?.musicBrainz?.enabled ?? false,
@@ -246,6 +260,13 @@ const SETTINGS_REGISTRY = {
     (config, value) => {
       ensureConfigSection(config, "qobuz").quality = value;
     },
+  ),
+  QOBUZ_MIN_REQUEST_INTERVAL_MS: numberBinding(
+    (config) => config?.qobuz?.minRequestIntervalMs ?? 200,
+    (config, value) => {
+      ensureConfigSection(config, "qobuz").minRequestIntervalMs = value;
+    },
+    200,
   ),
   JELLYFIN_URL: textBinding(
     (config) => config?.jellyfin?.url ?? "",

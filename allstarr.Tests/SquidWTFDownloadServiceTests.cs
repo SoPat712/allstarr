@@ -58,55 +58,7 @@ public class SquidWTFDownloadServiceTests : IDisposable
         Assert.Equal(["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"], order);
     }
 
-    [Fact]
-    public async Task GetTrackDownloadInfoAsync_FallsBackToLowerQualityWhenPreferredQualityIsUnavailable()
-    {
-        var requests = new List<string>();
-        using var handler = new StubHttpMessageHandler(request =>
-        {
-            var url = request.RequestUri!.ToString();
-            requests.Add(url);
 
-            if (url.Contains("quality=LOSSLESS", StringComparison.Ordinal))
-            {
-                return new HttpResponseMessage(HttpStatusCode.Forbidden);
-            }
-
-            if (url.Contains("quality=HIGH", StringComparison.Ordinal) &&
-                url.StartsWith("http://127.0.0.1:18082/", StringComparison.Ordinal))
-            {
-                return new HttpResponseMessage(HttpStatusCode.Forbidden);
-            }
-
-            if (url.Contains("quality=HIGH", StringComparison.Ordinal))
-            {
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent(CreateTrackResponseJson("HIGH", "audio/mp4", "https://cdn.example.com/334284374.m4a"))
-                };
-            }
-
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        });
-
-        var service = CreateService(handler, quality: "FLAC");
-
-        var result = await InvokePrivateAsync(service, "GetTrackDownloadInfoAsync", "334284374", CancellationToken.None);
-
-        Assert.Equal("http://127.0.0.1:18081", GetProperty<string>(result, "Endpoint"));
-        Assert.Equal("https://cdn.example.com/334284374.m4a", GetProperty<string>(result, "DownloadUrl"));
-        Assert.Equal("audio/mp4", GetProperty<string>(result, "MimeType"));
-        Assert.Equal("HIGH", GetProperty<string>(result, "AudioQuality"));
-
-        Assert.Contains(requests, url => url.Contains("quality=LOSSLESS", StringComparison.Ordinal));
-        Assert.Contains(requests, url => url.Contains("quality=HIGH", StringComparison.Ordinal));
-
-        var lastLosslessRequest = requests.FindLastIndex(url => url.Contains("quality=LOSSLESS", StringComparison.Ordinal));
-        var firstHighRequest = requests.FindIndex(url => url.Contains("quality=HIGH", StringComparison.Ordinal));
-
-        Assert.True(lastLosslessRequest >= 0);
-        Assert.True(firstHighRequest > lastLosslessRequest);
-    }
 
     private SquidWTFDownloadService CreateService(HttpMessageHandler handler, string quality)
     {

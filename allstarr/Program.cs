@@ -509,6 +509,7 @@ else
 // Business services - shared across backends
 builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<RedisCacheService>();
+builder.Services.AddSingleton<FavoritesMigrationService>();
 builder.Services.AddSingleton<OdesliService>();
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
@@ -890,6 +891,13 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Run one-time favorites/deletions migration if using Redis
+using (var scope = app.Services.CreateScope())
+{
+    var migrationService = scope.ServiceProvider.GetRequiredService<FavoritesMigrationService>();
+    await migrationService.MigrateAsync();
+}
 
 // Initialize cache settings for static access
 CacheExtensions.InitializeCacheSettings(app.Services);

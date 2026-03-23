@@ -1,17 +1,86 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: allstarr-redis
+  valkey:
+    image: valkey/valkey:8
+    container_name: allstarr-valkey
     restart: unless-stopped
-    # Redis is only accessible internally - no external port exposure
+    # Valkey is only accessible internally - no external port exposure
     expose:
       - "6379"
-    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes
+    # Use a self-healing entrypoint to automatically handle Redis -> Valkey migration pitfalls (like RDB format 12 errors)
+    # Only delete Valkey/Redis persistence artifacts so misconfigured REDIS_DATA_PATH values do not wipe app cache files.
+    entrypoint:
+      - "sh"
+      - "-ec"
+      - |
+        log_file=/tmp/valkey-startup.log
+        log_pipe=/tmp/valkey-startup.pipe
+        server_pid=
+        tee_pid=
+
+        forward_signal() {
+          if [ -n "$$server_pid" ]; then
+            kill -TERM "$$server_pid" 2>/dev/null || true
+            wait "$$server_pid" 2>/dev/null || true
+          fi
+
+          if [ -n "$$tee_pid" ]; then
+            kill "$$tee_pid" 2>/dev/null || true
+            wait "$$tee_pid" 2>/dev/null || true
+          fi
+
+          rm -f "$$log_pipe"
+          exit 143
+        }
+
+        trap forward_signal TERM INT
+
+        start_valkey() {
+          rm -f "$$log_file" "$$log_pipe"
+          : > "$$log_file"
+          mkfifo "$$log_pipe"
+
+          tee -a "$$log_file" < "$$log_pipe" &
+          tee_pid=$$!
+
+          valkey-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes > "$$log_pipe" 2>&1 &
+          server_pid=$$!
+
+          wait "$$server_pid"
+          status=$$?
+
+          wait "$$tee_pid" 2>/dev/null || true
+          rm -f "$$log_pipe"
+          server_pid=
+          tee_pid=
+
+          return "$$status"
+        }
+
+        is_incompatible_persistence_error() {
+          grep -Eq "Can't handle RDB format version|Error reading the RDB base file|AOF loading aborted" "$$log_file"
+        }
+
+        cleanup_incompatible_persistence() {
+          echo 'Valkey failed to start (likely incompatible Redis persistence files). Removing persisted RDB/AOF artifacts and retrying...'
+          rm -f /data/*.rdb /data/*.aof /data/*.manifest
+          rm -rf /data/appendonlydir /data/appendonlydir-*
+        }
+
+        if ! start_valkey; then
+          if is_incompatible_persistence_error; then
+            cleanup_incompatible_persistence
+            exec valkey-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes
+          fi
+
+          exit 1
+        fi
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Use CMD-SHELL for broader compatibility in some environments
+      test: ["CMD-SHELL", "valkey-cli ping || exit 1"]
       interval: 10s
       timeout: 3s
-      retries: 3
+      retries: 5
+      start_period: 20s
     volumes:
       - ${REDIS_DATA_PATH:-./redis-data}:/data
     networks:
@@ -52,7 +121,7 @@ services:
       # DO NOT expose through reverse proxy - contains sensitive config
       - "5275:5275"
     depends_on:
-      redis:
+      valkey:
         condition: service_healthy
       spotify-lyrics:
         condition: service_started
@@ -72,8 +141,8 @@ services:
       - Admin__BindAnyIp=${ADMIN_BIND_ANY_IP:-false}
       - Admin__TrustedSubnets=${ADMIN_TRUSTED_SUBNETS:-}
 
-      # ===== REDIS CACHE =====
-      - Redis__ConnectionString=redis:6379
+      # ===== REDIS / VALKEY CACHE =====
+      - Redis__ConnectionString=valkey:6379
       - Redis__Enabled=${REDIS_ENABLED:-true}
 
       # ===== CACHE TTL SETTINGS =====
@@ -86,6 +155,7 @@ services:
       - Cache__MetadataDays=${CACHE_METADATA_DAYS:-7}
       - Cache__OdesliLookupDays=${CACHE_ODESLI_LOOKUP_DAYS:-60}
       - Cache__ProxyImagesDays=${CACHE_PROXY_IMAGES_DAYS:-14}
+      - Cache__TranscodeCacheMinutes=${CACHE_TRANSCODE_MINUTES:-60}
 
       # ===== SUBSONIC BACKEND =====
       - Subsonic__Url=${SUBSONIC_URL:-http://localhost:4533}
@@ -152,12 +222,15 @@ services:
       # ===== SHARED =====
       - Library__DownloadPath=/app/downloads
       - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
+      - SquidWTF__MinRequestIntervalMs=${SQUIDWTF_MIN_REQUEST_INTERVAL_MS:-200}
       - Deezer__Arl=${DEEZER_ARL:-}
       - Deezer__ArlFallback=${DEEZER_ARL_FALLBACK:-}
       - Deezer__Quality=${DEEZER_QUALITY:-FLAC}
+      - Deezer__MinRequestIntervalMs=${DEEZER_MIN_REQUEST_INTERVAL_MS:-200}
       - Qobuz__UserAuthToken=${QOBUZ_USER_AUTH_TOKEN:-}
       - Qobuz__UserId=${QOBUZ_USER_ID:-}
       - Qobuz__Quality=${QOBUZ_QUALITY:-FLAC}
+      - Qobuz__MinRequestIntervalMs=${QOBUZ_MIN_REQUEST_INTERVAL_MS:-200}
       - MusicBrainz__Enabled=${MUSICBRAINZ_ENABLED:-true}
       - MusicBrainz__Username=${MUSICBRAINZ_USERNAME:-}
       - MusicBrainz__Password=${MUSICBRAINZ_PASSWORD:-}

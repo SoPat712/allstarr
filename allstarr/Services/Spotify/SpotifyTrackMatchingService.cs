@@ -26,6 +26,9 @@ namespace allstarr.Services.Spotify;
 /// </summary>
 public class SpotifyTrackMatchingService : BackgroundService
 {
+    private const string CachedPlaylistItemFields =
+        "Genres,GenreItems,DateCreated,MediaSources,ParentId,People,Tags,SortName,UserData,ProviderIds";
+
     private readonly SpotifyImportSettings _spotifySettings;
     private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly RedisCacheService _cache;
@@ -594,6 +597,16 @@ public class SpotifyTrackMatchingService : BackgroundService
         // Only re-match if cache is missing OR if we detect manual mappings that need to be applied
         if (existingMatched != null && existingMatched.Count > 0)
         {
+            var hasIncompleteLocalSnapshots = existingMatched.Any(m =>
+                m.MatchedSong?.IsLocal == true && !JellyfinItemSnapshotHelper.HasRawItemSnapshot(m.MatchedSong));
+
+            if (hasIncompleteLocalSnapshots)
+            {
+                _logger.LogInformation(
+                    "Rebuilding matched track cache for {Playlist}: cached local matches are missing full Jellyfin item snapshots",
+                    playlistName);
+            }
+
             // Check if we have NEW manual mappings that aren't in the cache
             var hasNewManualMappings = false;
             foreach (var track in tracksToMatch)
@@ -616,14 +629,16 @@ public class SpotifyTrackMatchingService : BackgroundService
                 }
             }
 
-            if (!hasNewManualMappings)
+            if (!hasNewManualMappings && !hasIncompleteLocalSnapshots)
             {
                 _logger.LogWarning("✓ Playlist {Playlist} already has {Count} matched tracks cached (skipping {ToMatch} new tracks), no re-matching needed",
                     playlistName, existingMatched.Count, tracksToMatch.Count);
                 return;
             }
 
-            _logger.LogInformation("New manual mappings detected for {Playlist}, rebuilding cache to apply them", playlistName);
+            _logger.LogInformation(
+                "Rebuilding matched track cache for {Playlist} to apply updated mappings or snapshot completeness",
+                playlistName);
         }
 
         // PHASE 1: Get ALL Jellyfin tracks from the playlist (already injected by plugin)
@@ -633,6 +648,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             using var scope = _serviceProvider.CreateScope();
             var proxyService = scope.ServiceProvider.GetService<JellyfinProxyService>();
             var jellyfinSettings = scope.ServiceProvider.GetService<IOptions<JellyfinSettings>>()?.Value;
+            var jellyfinModelMapper = scope.ServiceProvider.GetService<JellyfinModelMapper>();
 
             if (proxyService != null && jellyfinSettings != null)
             {
@@ -640,7 +656,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                 {
                     var userId = jellyfinSettings.UserId;
                     var playlistItemsUrl = $"Playlists/{playlistConfig.JellyfinId}/Items";
-                    var queryParams = new Dictionary<string, string> { ["Fields"] = "ProviderIds" };
+                    var queryParams = new Dictionary<string, string> { ["Fields"] = CachedPlaylistItemFields };
                     if (!string.IsNullOrEmpty(userId))
                     {
                         queryParams["UserId"] = userId;
@@ -652,14 +668,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                     {
                         foreach (var item in items.EnumerateArray())
                         {
-                            var song = new Song
-                            {
-                                Id = item.GetProperty("Id").GetString() ?? "",
-                                Title = item.GetProperty("Name").GetString() ?? "",
-                                Artist = item.TryGetProperty("AlbumArtist", out var artist) ? artist.GetString() ?? "" : "",
-                                Album = item.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",
-                                IsLocal = true
-                            };
+                            var song = jellyfinModelMapper?.ParseSong(item) ?? CreateLocalSongSnapshot(item);
                             jellyfinTracks.Add(song);
                         }
                         _logger.LogInformation("📚 Loaded {Count} tracks from Jellyfin playlist {Playlist}",
@@ -1145,19 +1154,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             // Local tracks will be found via fuzzy matching instead
 
             // STEP 2: Search EXTERNAL by ISRC
-            var results = await metadataService.SearchSongsAsync($"isrc:{isrc}", limit: 1);
-            if (results.Count > 0 && results[0].Isrc == isrc)
-            {
-                return results[0];
-            }
-
-            // Some providers may not support isrc: prefix, try without
-            results = await metadataService.SearchSongsAsync(isrc, limit: 5);
-            var exactMatch = results.FirstOrDefault(r =>
-                !string.IsNullOrEmpty(r.Isrc) &&
-                r.Isrc.Equals(isrc, StringComparison.OrdinalIgnoreCase));
-
-            return exactMatch;
+            return await metadataService.FindSongByIsrcAsync(isrc);
         }
         catch
         {
@@ -1399,7 +1396,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             }
 
             // Request all fields that clients typically need (not just MediaSources)
-            var playlistItemsUrl = $"Playlists/{jellyfinPlaylistId}/Items?UserId={userId}&Fields=Genres,DateCreated,MediaSources,ParentId,People,Tags,SortName,ProviderIds";
+            var playlistItemsUrl = $"Playlists/{jellyfinPlaylistId}/Items?UserId={userId}&Fields={CachedPlaylistItemFields}";
             var (existingTracksResponse, statusCode) = await proxyService.GetJsonAsync(playlistItemsUrl, null, headers);
 
             if (statusCode != 200 || existingTracksResponse == null)
@@ -1900,5 +1897,40 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             _logger.LogError(ex, "Failed to save matched tracks to file for {Playlist}", playlistName);
         }
+    }
+
+    private static Song CreateLocalSongSnapshot(JsonElement item)
+    {
+        var runTimeTicks = item.TryGetProperty("RunTimeTicks", out var rtt) ? rtt.GetInt64() : 0;
+        var song = new Song
+        {
+            Id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "",
+            Title = item.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
+            Album = item.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",
+            AlbumId = item.TryGetProperty("AlbumId", out var albumId) ? albumId.GetString() : null,
+            Duration = (int)(runTimeTicks / TimeSpan.TicksPerSecond),
+            Track = item.TryGetProperty("IndexNumber", out var track) ? track.GetInt32() : null,
+            DiscNumber = item.TryGetProperty("ParentIndexNumber", out var disc) ? disc.GetInt32() : null,
+            Year = item.TryGetProperty("ProductionYear", out var year) ? year.GetInt32() : null,
+            IsLocal = true
+        };
+
+        if (item.TryGetProperty("Artists", out var artists) && artists.GetArrayLength() > 0)
+        {
+            song.Artist = artists[0].GetString() ?? "";
+        }
+        else if (item.TryGetProperty("AlbumArtist", out var albumArtist))
+        {
+            song.Artist = albumArtist.GetString() ?? "";
+        }
+
+        JellyfinItemSnapshotHelper.StoreRawItemSnapshot(song, item);
+        song.JellyfinMetadata ??= new Dictionary<string, object?>();
+        if (item.TryGetProperty("MediaSources", out var mediaSources))
+        {
+            song.JellyfinMetadata["MediaSources"] = JsonSerializer.Deserialize<object>(mediaSources.GetRawText());
+        }
+
+        return song;
     }
 }

@@ -509,6 +509,278 @@ public class SquidWTFMetadataServiceTests
     }
 
     [Fact]
+    public async Task FindSongByIsrcAsync_UsesExactIsrcEndpoint()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(CreateTrackSearchResponse(CreateTrackPayload(
+                    144371283,
+                    "Don't Look Back In Anger",
+                    "GBBQY0002027",
+                    artistName: "Oasis",
+                    artistId: 109,
+                    albumTitle: "Familiar To Millions (Live)",
+                    albumId: 144371273)))
+            };
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "http://127.0.0.1:5031" });
+
+        var song = await service.FindSongByIsrcAsync("GBBQY0002027");
+
+        Assert.NotNull(song);
+        Assert.Equal("GBBQY0002027", song!.Isrc);
+        Assert.Equal("144371283", song.ExternalId);
+        Assert.Contains("/search/?i=GBBQY0002027&limit=1&offset=0", requests);
+    }
+
+    [Fact]
+    public async Task FindSongByIsrcAsync_FallsBackToTextSearchWhenExactEndpointPayloadIsUnexpected()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+
+            if (!string.IsNullOrWhiteSpace(GetQueryParameter(request.RequestUri, "i")))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{ "version": "2.6", "unexpected": {} }""")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(CreateTrackSearchResponse(CreateTrackPayload(
+                    427520487,
+                    "Azizam",
+                    "GBAHS2500081",
+                    artistName: "Ed Sheeran",
+                    artistId: 3995478,
+                    albumTitle: "Azizam",
+                    albumId: 427520486)))
+            };
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "http://127.0.0.1:5032" });
+
+        var song = await service.FindSongByIsrcAsync("GBAHS2500081");
+
+        Assert.NotNull(song);
+        Assert.Equal("GBAHS2500081", song!.Isrc);
+        Assert.Contains("/search/?i=GBAHS2500081&limit=1&offset=0", requests);
+        Assert.Contains("/search/?s=isrc%3AGBAHS2500081&limit=1&offset=0", requests);
+    }
+
+    [Fact]
+    public async Task SearchEndpoints_IncludeRequestedRemoteLimitAndOffset()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+            var trackQuery = GetQueryParameter(request.RequestUri, "s");
+            var albumQuery = GetQueryParameter(request.RequestUri, "al");
+            var artistQuery = GetQueryParameter(request.RequestUri, "a");
+            var playlistQuery = GetQueryParameter(request.RequestUri, "p");
+
+            if (!string.IsNullOrWhiteSpace(trackQuery))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreateTrackSearchResponse(CreateTrackPayload(1, "Song", "USRC12345678")))
+                };
+            }
+
+            if (!string.IsNullOrWhiteSpace(albumQuery))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreateAlbumSearchResponse())
+                };
+            }
+
+            if (!string.IsNullOrWhiteSpace(artistQuery))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreateArtistSearchResponse())
+                };
+            }
+
+            if (!string.IsNullOrWhiteSpace(playlistQuery))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreatePlaylistSearchResponse())
+                };
+            }
+
+            throw new InvalidOperationException($"Unexpected request URI: {request.RequestUri}");
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "http://127.0.0.1:5033" });
+
+        await service.SearchSongsAsync("Take Five", 7);
+        await service.SearchAlbumsAsync("Time Out", 8);
+        await service.SearchArtistsAsync("Dave Brubeck", 9);
+        await service.SearchPlaylistsAsync("Jazz Essentials", 10);
+
+        Assert.Contains("/search/?s=Take%20Five&limit=7&offset=0", requests);
+        Assert.Contains("/search/?al=Time%20Out&limit=8&offset=0", requests);
+        Assert.Contains("/search/?a=Dave%20Brubeck&limit=9&offset=0", requests);
+        Assert.Contains("/search/?p=Jazz%20Essentials&limit=10&offset=0", requests);
+    }
+
+    [Fact]
+    public async Task GetArtistAsync_UsesLightweightArtistEndpointAndCoverFallback()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                {
+                  "version": "2.6",
+                  "artist": {
+                    "id": 25022,
+                    "name": "Kanye West",
+                    "picture": null
+                  },
+                  "cover": {
+                    "750": "https://example.com/kanye-750.jpg"
+                  }
+                }
+                """)
+            };
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "http://127.0.0.1:5034" });
+
+        var artist = await service.GetArtistAsync("squidwtf", "25022");
+
+        Assert.Contains("/artist/?id=25022", requests);
+        Assert.NotNull(artist);
+        Assert.Equal("Kanye West", artist!.Name);
+        Assert.Equal("https://example.com/kanye-750.jpg", artist.ImageUrl);
+        Assert.Null(artist.AlbumCount);
+    }
+
+    [Fact]
+    public async Task GetAlbumAsync_PaginatesBeyondFirstPage()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+            var offset = int.Parse(GetQueryParameter(request.RequestUri, "offset") ?? "0");
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(CreateAlbumPageResponse(offset, offset == 0 ? 500 : 1, totalTracks: 501))
+            };
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "http://127.0.0.1:5035" });
+
+        var album = await service.GetAlbumAsync("squidwtf", "58990510");
+
+        Assert.Contains("/album/?id=58990510&limit=500&offset=0", requests);
+        Assert.Contains("/album/?id=58990510&limit=500&offset=500", requests);
+        Assert.NotNull(album);
+        Assert.Equal(501, album!.Songs.Count);
+    }
+
+    [Fact]
+    public async Task GetPlaylistTracksAsync_PaginatesBeyondFirstPage()
+    {
+        var requests = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+            var offset = int.Parse(GetQueryParameter(request.RequestUri, "offset") ?? "0");
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(CreatePlaylistPageResponse(offset, offset == 0 ? 500 : 1, totalTracks: 501))
+            };
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "http://127.0.0.1:5036" });
+
+        var songs = await service.GetPlaylistTracksAsync("squidwtf", "playlist123");
+
+        Assert.Equal(501, songs.Count);
+        Assert.Equal("Big Playlist", songs[0].Album);
+        Assert.Equal("Big Playlist", songs[^1].Album);
+        Assert.Contains("/playlist/?id=playlist123&limit=500&offset=0", requests);
+        Assert.Contains("/playlist/?id=playlist123&limit=500&offset=500", requests);
+    }
+
+    [Fact]
     public void BuildSearchQueryVariants_WithAmpersand_AddsAndVariant()
     {
         var variants = InvokePrivateStaticMethod<IReadOnlyList<string>>(
@@ -725,6 +997,242 @@ public class SquidWTFMetadataServiceTests
         var result = method!.Invoke(null, parameters);
         Assert.NotNull(result);
         return (T)result!;
+    }
+
+    private static string CreateTrackSearchResponse(object trackPayload)
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["version"] = "2.6",
+            ["data"] = new Dictionary<string, object?>
+            {
+                ["limit"] = 25,
+                ["offset"] = 0,
+                ["totalNumberOfItems"] = 1,
+                ["items"] = new[] { trackPayload }
+            }
+        });
+    }
+
+    private static string CreateAlbumSearchResponse()
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["version"] = "2.6",
+            ["data"] = new Dictionary<string, object?>
+            {
+                ["albums"] = new Dictionary<string, object?>
+                {
+                    ["limit"] = 25,
+                    ["offset"] = 0,
+                    ["totalNumberOfItems"] = 1,
+                    ["items"] = new[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["id"] = 58990510,
+                            ["title"] = "OK Computer",
+                            ["numberOfTracks"] = 12,
+                            ["cover"] = "e77e4cc0-6cd0-4522-807d-88aeac488065",
+                            ["artist"] = new Dictionary<string, object?>
+                            {
+                                ["id"] = 64518,
+                                ["name"] = "Radiohead"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private static string CreateArtistSearchResponse()
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["version"] = "2.6",
+            ["data"] = new Dictionary<string, object?>
+            {
+                ["artists"] = new Dictionary<string, object?>
+                {
+                    ["limit"] = 25,
+                    ["offset"] = 0,
+                    ["totalNumberOfItems"] = 1,
+                    ["items"] = new[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["id"] = 8812,
+                            ["name"] = "Coldplay",
+                            ["picture"] = "b4579672-5b91-4679-a27a-288f097a4da5"
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private static string CreatePlaylistSearchResponse()
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["version"] = "2.6",
+            ["data"] = new Dictionary<string, object?>
+            {
+                ["playlists"] = new Dictionary<string, object?>
+                {
+                    ["limit"] = 25,
+                    ["offset"] = 0,
+                    ["totalNumberOfItems"] = 1,
+                    ["items"] = new[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["uuid"] = "playlist123",
+                            ["title"] = "Jazz Essentials",
+                            ["creator"] = new Dictionary<string, object?>
+                            {
+                                ["id"] = 0
+                            },
+                            ["numberOfTracks"] = 1,
+                            ["duration"] = 180,
+                            ["squareImage"] = "b15bb487-dd6e-45ff-9e50-ee5083f20669"
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private static string CreateAlbumPageResponse(int offset, int count, int totalTracks)
+    {
+        var items = Enumerable.Range(offset + 1, count)
+            .Select(index => (object)new Dictionary<string, object?>
+            {
+                ["item"] = CreateTrackPayload(
+                    index,
+                    $"Album Track {index}",
+                    $"USRC{index:00000000}",
+                    albumTitle: "Paginated Album",
+                    albumId: 58990510)
+            })
+            .ToArray();
+
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["version"] = "2.6",
+            ["data"] = new Dictionary<string, object?>
+            {
+                ["id"] = 58990510,
+                ["title"] = "Paginated Album",
+                ["numberOfTracks"] = totalTracks,
+                ["cover"] = "e77e4cc0-6cd0-4522-807d-88aeac488065",
+                ["artist"] = new Dictionary<string, object?>
+                {
+                    ["id"] = 64518,
+                    ["name"] = "Radiohead"
+                },
+                ["items"] = items
+            }
+        });
+    }
+
+    private static string CreatePlaylistPageResponse(int offset, int count, int totalTracks)
+    {
+        var items = Enumerable.Range(offset + 1, count)
+            .Select(index => (object)new Dictionary<string, object?>
+            {
+                ["item"] = CreateTrackPayload(
+                    index,
+                    $"Playlist Track {index}",
+                    $"GBARL{index:0000000}",
+                    artistName: "Mark Ronson",
+                    artistId: 8722,
+                    albumTitle: "Uptown Special",
+                    albumId: 39249709)
+            })
+            .ToArray();
+
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["version"] = "2.6",
+            ["playlist"] = new Dictionary<string, object?>
+            {
+                ["uuid"] = "playlist123",
+                ["title"] = "Big Playlist",
+                ["creator"] = new Dictionary<string, object?>
+                {
+                    ["id"] = 0
+                },
+                ["numberOfTracks"] = totalTracks,
+                ["duration"] = totalTracks * 180,
+                ["squareImage"] = "b15bb487-dd6e-45ff-9e50-ee5083f20669"
+            },
+            ["items"] = items
+        });
+    }
+
+    private static Dictionary<string, object?> CreateTrackPayload(
+        int id,
+        string title,
+        string isrc,
+        string artistName = "Artist",
+        int artistId = 1,
+        string albumTitle = "Album",
+        int albumId = 10)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["id"] = id,
+            ["title"] = title,
+            ["duration"] = 180,
+            ["trackNumber"] = (id % 12) + 1,
+            ["volumeNumber"] = 1,
+            ["explicit"] = false,
+            ["isrc"] = isrc,
+            ["artist"] = new Dictionary<string, object?>
+            {
+                ["id"] = artistId,
+                ["name"] = artistName
+            },
+            ["artists"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["id"] = artistId,
+                    ["name"] = artistName
+                }
+            },
+            ["album"] = new Dictionary<string, object?>
+            {
+                ["id"] = albumId,
+                ["title"] = albumTitle,
+                ["cover"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            }
+        };
+    }
+
+    private static string? GetQueryParameter(Uri uri, string name)
+    {
+        var query = uri.Query.TrimStart('?');
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return null;
+        }
+
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            var key = Uri.UnescapeDataString(parts[0]);
+            if (!key.Equals(name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
+        }
+
+        return null;
     }
 
     private sealed class StubHttpMessageHandler : HttpMessageHandler

@@ -63,10 +63,32 @@ public partial class JellyfinController
         var cachedJellyfinSignature = await _cache.GetAsync<string>(jellyfinSignatureCacheKey);
 
         var jellyfinPlaylistChanged = cachedJellyfinSignature != currentJellyfinSignature;
+        var requestNeedsGenreMetadata = RequestIncludesField("Genres");
 
         // Check Redis cache first for fast serving (only if Jellyfin playlist hasn't changed)
         var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(spotifyPlaylistName);
         var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(cacheKey);
+
+        if (cachedItems != null && cachedItems.Count > 0 &&
+            InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(cachedItems))
+        {
+            _logger.LogWarning(
+                "Ignoring Redis playlist cache for {Playlist}: found synthesized local items that should have remained raw Jellyfin objects",
+                spotifyPlaylistName);
+            await _cache.DeleteAsync(cacheKey);
+            cachedItems = null;
+        }
+
+        if (cachedItems != null && cachedItems.Count > 0 &&
+            requestNeedsGenreMetadata &&
+            InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(cachedItems))
+        {
+            _logger.LogWarning(
+                "Ignoring Redis playlist cache for {Playlist}: local items are missing genre metadata required by this request",
+                spotifyPlaylistName);
+            await _cache.DeleteAsync(cacheKey);
+            cachedItems = null;
+        }
 
         if (cachedItems != null && cachedItems.Count > 0 && !jellyfinPlaylistChanged)
         {
@@ -89,7 +111,26 @@ public partial class JellyfinController
 
         // Check file cache as fallback
         var fileItems = await LoadPlaylistItemsFromFile(spotifyPlaylistName);
-        if (fileItems != null && fileItems.Count > 0)
+        if (fileItems != null && fileItems.Count > 0 &&
+            InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(fileItems))
+        {
+            _logger.LogWarning(
+                "Ignoring file playlist cache for {Playlist}: found synthesized local items that should have remained raw Jellyfin objects",
+                spotifyPlaylistName);
+            fileItems = null;
+        }
+
+        if (fileItems != null && fileItems.Count > 0 &&
+            requestNeedsGenreMetadata &&
+            InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(fileItems))
+        {
+            _logger.LogWarning(
+                "Ignoring file playlist cache for {Playlist}: local items are missing genre metadata required by this request",
+                spotifyPlaylistName);
+            fileItems = null;
+        }
+
+        if (fileItems != null && fileItems.Count > 0 && !jellyfinPlaylistChanged)
         {
             _logger.LogDebug("✅ Loaded {Count} playlist items from file cache for {Playlist}",
                 fileItems.Count, spotifyPlaylistName);
@@ -208,6 +249,7 @@ public partial class JellyfinController
         var usedJellyfinItems = new HashSet<string>();
         var localUsedCount = 0;
         var externalUsedCount = 0;
+        var unresolvedLocalCount = 0;
 
         _logger.LogDebug("🔍 Building playlist in Spotify order with {SpotifyCount} positions...", spotifyTracks.Count);
 
@@ -283,9 +325,26 @@ public partial class JellyfinController
                         }
                         else
                         {
+                            if (JellyfinItemSnapshotHelper.TryGetClonedRawItemSnapshot(
+                                    matched.MatchedSong,
+                                    out var cachedLocalItem))
+                            {
+                                ProviderIdsEnricher.EnsureSpotifyProviderIds(cachedLocalItem, spotifyTrack.SpotifyId,
+                                    spotifyTrack.AlbumId);
+                                ApplySpotifyAddedAtDateCreated(cachedLocalItem, spotifyTrack.AddedAt);
+                                finalItems.Add(cachedLocalItem);
+                                localUsedCount++;
+                                _logger.LogDebug(
+                                    "✅ Position #{Pos}: '{Title}' → LOCAL from cached raw snapshot (ID: {Id})",
+                                    spotifyTrack.Position, spotifyTrack.Title, matched.MatchedSong.Id);
+                                continue;
+                            }
+
                             _logger.LogWarning(
-                                "⚠️ Position #{Pos}: '{Title}' marked as LOCAL but not found in Jellyfin items (ID: {Id})",
+                                "⚠️ Position #{Pos}: '{Title}' marked as LOCAL but not found in Jellyfin items (ID: {Id}); refusing to synthesize a replacement local object",
                                 spotifyTrack.Position, spotifyTrack.Title, matched.MatchedSong.Id);
+                            unresolvedLocalCount++;
+                            continue;
                         }
                     }
 
@@ -316,6 +375,24 @@ public partial class JellyfinController
         _logger.LogDebug("🎵 Final playlist '{Playlist}': {Total} tracks ({Local} LOCAL + {External} EXTERNAL)",
             spotifyPlaylistName, finalItems.Count, localUsedCount, externalUsedCount);
 
+        if (unresolvedLocalCount > 0)
+        {
+            _logger.LogWarning(
+                "Aborting ordered injection for {Playlist}: {Count} local tracks could not be preserved from Jellyfin and would have been rewritten",
+                spotifyPlaylistName, unresolvedLocalCount);
+            await _cache.DeleteAsync(cacheKey);
+            return null;
+        }
+
+        if (InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(finalItems))
+        {
+            _logger.LogWarning(
+                "Aborting ordered injection for {Playlist}: built playlist still contains synthesized local items",
+                spotifyPlaylistName);
+            await _cache.DeleteAsync(cacheKey);
+            return null;
+        }
+
         // Save to file cache for persistence across restarts
         await SavePlaylistItemsToFile(spotifyPlaylistName, finalItems);
 
@@ -345,6 +422,30 @@ public partial class JellyfinController
         }
 
         item["DateCreated"] = addedAt.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+    }
+
+    private bool RequestIncludesField(string fieldName)
+    {
+        if (!Request.Query.TryGetValue("Fields", out var rawValues) || rawValues.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var rawValue in rawValues)
+        {
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                continue;
+            }
+
+            var fields = rawValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (fields.Any(field => string.Equals(field, fieldName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -623,8 +724,18 @@ public partial class JellyfinController
     }
 
     #region Persistent Favorites Tracking
-
-    private readonly string _favoritesFilePath = "/app/cache/favorites.json";
+    
+    /// <summary>
+    /// Information about a favorited track for persistent storage.
+    /// </summary>
+    private class FavoriteTrackInfo
+    {
+        public string ItemId { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Artist { get; set; } = "";
+        public string Album { get; set; } = "";
+        public DateTime FavoritedAt { get; set; }
+    }
 
     /// <summary>
     /// Checks if a track is already favorited (persistent across restarts).
@@ -633,13 +744,7 @@ public partial class JellyfinController
     {
         try
         {
-            if (!System.IO.File.Exists(_favoritesFilePath))
-                return false;
-
-            var json = await System.IO.File.ReadAllTextAsync(_favoritesFilePath);
-            var favorites = JsonSerializer.Deserialize<Dictionary<string, FavoriteTrackInfo>>(json) ?? new();
-
-            return favorites.ContainsKey(itemId);
+            return await _cache.ExistsAsync($"favorites:{itemId}");
         }
         catch (Exception ex)
         {
@@ -655,29 +760,16 @@ public partial class JellyfinController
     {
         try
         {
-            var favorites = new Dictionary<string, FavoriteTrackInfo>();
-
-            if (System.IO.File.Exists(_favoritesFilePath))
-            {
-                var json = await System.IO.File.ReadAllTextAsync(_favoritesFilePath);
-                favorites = JsonSerializer.Deserialize<Dictionary<string, FavoriteTrackInfo>>(json) ?? new();
-            }
-
-            favorites[itemId] = new FavoriteTrackInfo
+            var info = new FavoriteTrackInfo
             {
                 ItemId = itemId,
-                Title = song.Title,
-                Artist = song.Artist,
-                Album = song.Album,
+                Title = song.Title ?? "Unknown Title",
+                Artist = song.Artist ?? "Unknown Artist",
+                Album = song.Album ?? "Unknown Album",
                 FavoritedAt = DateTime.UtcNow
             };
-
-            // Ensure cache directory exists
-            Directory.CreateDirectory(Path.GetDirectoryName(_favoritesFilePath)!);
-
-            var updatedJson = JsonSerializer.Serialize(favorites, new JsonSerializerOptions { WriteIndented = true });
-            await System.IO.File.WriteAllTextAsync(_favoritesFilePath, updatedJson);
-
+            
+            await _cache.SetAsync($"favorites:{itemId}", info);
             _logger.LogDebug("Marked track as favorited: {ItemId}", itemId);
         }
         catch (Exception ex)
@@ -693,17 +785,9 @@ public partial class JellyfinController
     {
         try
         {
-            if (!System.IO.File.Exists(_favoritesFilePath))
-                return;
-
-            var json = await System.IO.File.ReadAllTextAsync(_favoritesFilePath);
-            var favorites = JsonSerializer.Deserialize<Dictionary<string, FavoriteTrackInfo>>(json) ?? new();
-
-            if (favorites.Remove(itemId))
+            if (await _cache.ExistsAsync($"favorites:{itemId}"))
             {
-                var updatedJson =
-                    JsonSerializer.Serialize(favorites, new JsonSerializerOptions { WriteIndented = true });
-                await System.IO.File.WriteAllTextAsync(_favoritesFilePath, updatedJson);
+                await _cache.DeleteAsync($"favorites:{itemId}");
                 _logger.LogDebug("Removed track from favorites: {ItemId}", itemId);
             }
         }
@@ -720,24 +804,8 @@ public partial class JellyfinController
     {
         try
         {
-            var deletionFilePath = "/app/cache/pending_deletions.json";
-            var pendingDeletions = new Dictionary<string, DateTime>();
-
-            if (System.IO.File.Exists(deletionFilePath))
-            {
-                var json = await System.IO.File.ReadAllTextAsync(deletionFilePath);
-                pendingDeletions = JsonSerializer.Deserialize<Dictionary<string, DateTime>>(json) ?? new();
-            }
-
-            // Mark for deletion 24 hours from now
-            pendingDeletions[itemId] = DateTime.UtcNow.AddHours(24);
-
-            // Ensure cache directory exists
-            Directory.CreateDirectory(Path.GetDirectoryName(deletionFilePath)!);
-
-            var updatedJson =
-                JsonSerializer.Serialize(pendingDeletions, new JsonSerializerOptions { WriteIndented = true });
-            await System.IO.File.WriteAllTextAsync(deletionFilePath, updatedJson);
+            var deletionTime = DateTime.UtcNow.AddHours(24);
+            await _cache.SetStringAsync($"pending_deletion:{itemId}", deletionTime.ToString("O"));
 
             // Also remove from favorites immediately
             await UnmarkTrackAsFavoritedAsync(itemId);
@@ -751,49 +819,35 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// Information about a favorited track for persistent storage.
-    /// </summary>
-    private class FavoriteTrackInfo
-    {
-        public string ItemId { get; set; } = "";
-        public string Title { get; set; } = "";
-        public string Artist { get; set; } = "";
-        public string Album { get; set; } = "";
-        public DateTime FavoritedAt { get; set; }
-    }
-
-    /// <summary>
     /// Processes pending deletions (called by cleanup service).
     /// </summary>
     public async Task ProcessPendingDeletionsAsync()
     {
         try
         {
-            var deletionFilePath = "/app/cache/pending_deletions.json";
-            if (!System.IO.File.Exists(deletionFilePath))
-                return;
-
-            var json = await System.IO.File.ReadAllTextAsync(deletionFilePath);
-            var pendingDeletions = JsonSerializer.Deserialize<Dictionary<string, DateTime>>(json) ?? new();
+            var deletionKeys = _cache.GetKeysByPattern("pending_deletion:*").ToList();
+            if (deletionKeys.Count == 0) return;
 
             var now = DateTime.UtcNow;
-            var toDelete = pendingDeletions.Where(kvp => kvp.Value <= now).ToList();
-            var remaining = pendingDeletions.Where(kvp => kvp.Value > now)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            int deletedCount = 0;
 
-            foreach (var (itemId, _) in toDelete)
+            foreach (var key in deletionKeys)
             {
-                await ActuallyDeleteTrackAsync(itemId);
+                var timeStr = await _cache.GetStringAsync(key);
+                if (string.IsNullOrEmpty(timeStr)) continue;
+
+                if (DateTime.TryParse(timeStr, out var scheduleTime) && scheduleTime <= now)
+                {
+                    var itemId = key.Substring("pending_deletion:".Length);
+                    await ActuallyDeleteTrackAsync(itemId);
+                    await _cache.DeleteAsync(key);
+                    deletedCount++;
+                }
             }
 
-            if (toDelete.Count > 0)
+            if (deletedCount > 0)
             {
-                // Update pending deletions file
-                var updatedJson =
-                    JsonSerializer.Serialize(remaining, new JsonSerializerOptions { WriteIndented = true });
-                await System.IO.File.WriteAllTextAsync(deletionFilePath, updatedJson);
-
-                _logger.LogDebug("Processed {Count} pending deletions", toDelete.Count);
+                _logger.LogDebug("Processed {Count} pending deletions", deletedCount);
             }
         }
         catch (Exception ex)

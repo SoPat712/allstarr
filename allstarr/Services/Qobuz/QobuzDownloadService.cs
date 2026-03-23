@@ -55,6 +55,7 @@ public class QobuzDownloadService : BaseDownloadService
         _userAuthToken = qobuzConfig.UserAuthToken;
         _userId = qobuzConfig.UserId;
         _preferredQuality = qobuzConfig.Quality;
+        _minRequestIntervalMs = qobuzConfig.MinRequestIntervalMs;
     }
 
     #region BaseDownloadService Implementation
@@ -113,8 +114,12 @@ public class QobuzDownloadService : BaseDownloadService
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
         // Download the file (Qobuz files are NOT encrypted like Deezer)
-        var response = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        {
+            var res = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            res.EnsureSuccessStatusCode();
+            return res;
+        }, Logger);
 
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
@@ -126,6 +131,143 @@ public class QobuzDownloadService : BaseDownloadService
         await WriteMetadataAsync(outputPath, song, cancellationToken);
 
         return outputPath;
+    }
+
+    #endregion
+
+    #region Quality Override Support
+    
+    /// <summary>
+    /// Downloads a track at a specific quality tier, capped at the .env quality ceiling.
+    /// Note: Qobuz's lowest available quality is MP3 320kbps, so both High and Low map to FormatMp3320.
+    /// 
+    /// Quality hierarchy: FormatFlac24High > FormatFlac24Low > FormatFlac16 > FormatMp3320
+    /// </summary>
+    protected override async Task<string> DownloadTrackWithQualityAsync(
+        string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        if (quality == StreamQuality.Original)
+        {
+            return await DownloadTrackAsync(trackId, song, cancellationToken);
+        }
+
+        // Map StreamQuality to Qobuz format ID, capped at .env ceiling
+        // Both High and Low map to MP3_320 since Qobuz has no lower quality
+        var envFormatId = GetFormatId(_preferredQuality);
+        var formatId = MapStreamQualityToQobuz(quality, envFormatId);
+
+        Logger.LogInformation(
+            "Quality override: StreamQuality.{Quality} → Qobuz formatId {FormatId} (env ceiling: {EnvFormatId}) for track {TrackId}",
+            quality, formatId, envFormatId, trackId);
+
+        // Get download URL at the overridden quality — try all secrets
+        var secrets = await _bundleService.GetSecretsAsync();
+
+        if (secrets.Count == 0)
+        {
+            throw new Exception("No secrets available for signing");
+        }
+
+        QobuzDownloadResult? downloadInfo = null;
+        Exception? lastException = null;
+
+        foreach (var secret in secrets)
+        {
+            try
+            {
+                downloadInfo = await TryGetTrackDownloadUrlAsync(trackId, formatId, secret, cancellationToken);
+                break;
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                Logger.LogDebug("Failed with secret for quality override: {Error}", ex.Message);
+            }
+        }
+
+        if (downloadInfo == null)
+        {
+            throw new Exception("Failed to get download URL for quality override", lastException);
+        }
+
+        // Check if it's a demo/sample
+        if (downloadInfo.IsSample)
+        {
+            throw new Exception("Track is only available as a demo/sample");
+        }
+
+        // Determine extension based on MIME type
+        var extension = downloadInfo.MimeType?.Contains("flac") == true ? ".flac" : ".mp3";
+
+        // Write to transcoded cache directory: {downloads}/transcoded/Artist/Album/song.ext
+        // These files are cleaned up by CacheCleanupService based on CACHE_TRANSCODE_MINUTES TTL
+        var artistForPath = song.AlbumArtist ?? song.Artist;
+        var basePath = Path.Combine("downloads", "transcoded");
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "qobuz", trackId);
+        
+        // Create directories if they don't exist
+        var albumFolder = Path.GetDirectoryName(outputPath)!;
+        EnsureDirectoryExists(albumFolder);
+        
+        // If the file already exists in transcoded cache, return it directly
+        if (IOFile.Exists(outputPath))
+        {
+            // Touch the file to extend its cache lifetime
+            IOFile.SetLastWriteTime(outputPath, DateTime.UtcNow);
+            Logger.LogInformation("Quality override cache hit: {Path}", outputPath);
+            return outputPath;
+        }
+
+        // Download the file (Qobuz files are NOT encrypted like Deezer)
+        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        {
+            var res = await _httpClient.GetAsync(downloadInfo.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            res.EnsureSuccessStatusCode();
+            return res;
+        }, Logger);
+
+        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var outputFile = IOFile.Create(outputPath);
+        await responseStream.CopyToAsync(outputFile, cancellationToken);
+        
+        // Close file before writing metadata
+        await outputFile.DisposeAsync();
+
+        // Write metadata and cover art
+        await WriteMetadataAsync(outputPath, song, cancellationToken);
+
+        return outputPath;
+    }
+
+    /// <summary>
+    /// Maps a StreamQuality tier to a Qobuz format ID, capped at the .env ceiling.
+    /// Since Qobuz's lowest quality is MP3 320, both High and Low map to FormatMp3320.
+    /// </summary>
+    private int MapStreamQualityToQobuz(StreamQuality streamQuality, int envFormatId)
+    {
+        // Format ranking from highest to lowest quality
+        var ranking = new[] { FormatFlac24High, FormatFlac24Low, FormatFlac16, FormatMp3320 };
+        var envIndex = Array.IndexOf(ranking, envFormatId);
+        if (envIndex < 0) envIndex = 0; // Default to highest if unknown
+
+        var idealFormatId = streamQuality switch
+        {
+            StreamQuality.Original => envFormatId,
+            StreamQuality.High => FormatMp3320,    // Both High and Low map to MP3 320 (Qobuz's lowest)
+            StreamQuality.Low => FormatMp3320,
+            _ => envFormatId
+        };
+
+        // Cap at env ceiling (lower index = higher quality)
+        var idealIndex = Array.IndexOf(ranking, idealFormatId);
+        if (idealIndex < 0) idealIndex = envIndex;
+        
+        if (idealIndex < envIndex)
+        {
+            return envFormatId;
+        }
+
+        return idealFormatId;
     }
 
     #endregion

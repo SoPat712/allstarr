@@ -49,4 +49,5 @@ public static class CacheExtensions
     public static TimeSpan MetadataTTL => GetCacheSettings().MetadataTTL;
     public static TimeSpan OdesliLookupTTL => GetCacheSettings().OdesliLookupTTL;
     public static TimeSpan ProxyImagesTTL => GetCacheSettings().ProxyImagesTTL;
+    public static TimeSpan TranscodeCacheTTL => GetCacheSettings().TranscodeCacheTTL;
 }

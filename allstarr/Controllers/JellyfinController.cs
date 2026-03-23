@@ -683,6 +683,15 @@ public partial class JellyfinController : ControllerBase
             return File(imageBytes, contentType);
         }
 
+        // Check Redis cache for previously fetched external image
+        var imageCacheKey = CacheKeyBuilder.BuildExternalImageKey(provider!, type!, externalId!);
+        var cachedImageBytes = await _cache.GetAsync<byte[]>(imageCacheKey);
+        if (cachedImageBytes != null)
+        {
+            _logger.LogDebug("Cache hit for external {Type} image: {Provider}/{ExternalId}", type, provider, externalId);
+            return File(cachedImageBytes, "image/jpeg");
+        }
+
         // Get external cover art URL
         string? coverUrl = type switch
         {
@@ -746,7 +755,10 @@ public partial class JellyfinController : ControllerBase
                 return await GetPlaceholderImageAsync();
             }
 
-            _logger.LogDebug("Successfully fetched external image from host {Host}, size: {Size} bytes",
+            // Cache the fetched image bytes in Redis for future requests
+            await _cache.SetAsync(imageCacheKey, imageBytes, CacheExtensions.ProxyImagesTTL);
+
+            _logger.LogDebug("Successfully fetched and cached external image from host {Host}, size: {Size} bytes",
                 safeCoverUri.Host, imageBytes.Length);
             return File(imageBytes, "image/jpeg");
         }

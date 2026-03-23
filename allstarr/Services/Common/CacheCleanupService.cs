@@ -45,6 +45,7 @@ public class CacheCleanupService : BackgroundService
             try
             {
                 await CleanupOldCachedFilesAsync(stoppingToken);
+                await CleanupTranscodedCacheAsync(stoppingToken);
                 await ProcessPendingDeletionsAsync(stoppingToken);
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }
@@ -131,6 +132,71 @@ public class CacheCleanupService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during cache cleanup");
+        }
+    }
+
+    /// <summary>
+    /// Cleans up transcoded quality-override files based on CACHE_TRANSCODE_MINUTES TTL.
+    /// This always runs regardless of StorageMode, since transcoded files are a separate concern.
+    /// </summary>
+    private async Task CleanupTranscodedCacheAsync(CancellationToken cancellationToken)
+    {
+        var downloadPath = _configuration["Library:DownloadPath"] ?? "downloads";
+        var transcodedPath = Path.Combine(downloadPath, "transcoded");
+
+        if (!Directory.Exists(transcodedPath))
+        {
+            return;
+        }
+
+        var ttl = CacheExtensions.TranscodeCacheTTL;
+        var cutoffTime = DateTime.UtcNow - ttl;
+        var deletedCount = 0;
+        var totalSize = 0L;
+
+        try
+        {
+            var files = Directory.GetFiles(transcodedPath, "*.*", SearchOption.AllDirectories);
+
+            foreach (var filePath in files)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+
+                try
+                {
+                    var fileInfo = new FileInfo(filePath);
+
+                    // Use last write time (updated on cache hit) to determine if file should be deleted
+                    if (fileInfo.LastWriteTimeUtc < cutoffTime)
+                    {
+                        var size = fileInfo.Length;
+                        File.Delete(filePath);
+                        deletedCount++;
+                        totalSize += size;
+                        _logger.LogDebug("Deleted transcoded cache file: {Path} (age: {Age:F1} minutes)",
+                            filePath, (DateTime.UtcNow - fileInfo.LastWriteTimeUtc).TotalMinutes);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to delete transcoded cache file: {Path}", filePath);
+                }
+            }
+
+            // Clean up empty directories in the transcoded folder
+            await CleanupEmptyDirectoriesAsync(transcodedPath, cancellationToken);
+
+            if (deletedCount > 0)
+            {
+                var sizeMB = totalSize / (1024.0 * 1024.0);
+                _logger.LogInformation("Transcoded cache cleanup: deleted {Count} files, freed {Size:F2} MB (TTL: {TTL} minutes)",
+                    deletedCount, sizeMB, ttl.TotalMinutes);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during transcoded cache cleanup");
         }
     }
 

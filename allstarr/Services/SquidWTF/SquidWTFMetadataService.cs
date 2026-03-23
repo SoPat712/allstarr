@@ -7,7 +7,6 @@ using allstarr.Services.Common;
 using System.Text.Json;
 using System.Text;
 using Microsoft.Extensions.Options;
-using System.Text.Json.Nodes;
 
 namespace allstarr.Services.SquidWTF;
 
@@ -17,17 +16,19 @@ namespace allstarr.Services.SquidWTF;
 /// SquidWTF is a proxy to Tidal's API that provides free access to Tidal's music catalog.
 /// This implementation follows the hifi-api specification documented at the forked repository.
 ///
-/// API Endpoints (per hifi-api spec):
-/// - GET /search/?s={query}     - Search tracks (returns data.items array)
-/// - GET /search/?a={query}     - Search artists (returns data.artists.items array)
-/// - GET /search/?al={query}    - Search albums (returns data.albums.items array, undocumented)
-/// - GET /search/?p={query}     - Search playlists (returns data.playlists.items array, undocumented)
-/// - GET /info/?id={trackId}    - Get track metadata (returns data object with full track info)
-/// - GET /track/?id={trackId}&quality={quality} - Get track download info (returns manifest)
-/// - GET /recommendations/?id={trackId} - Get recommended next/similar tracks
-/// - GET /album/?id={albumId}   - Get album with tracks (undocumented, returns data.items array)
-/// - GET /artist/?f={artistId}  - Get artist with albums (undocumented, returns albums.items array)
-/// - GET /playlist/?id={playlistId} - Get playlist with tracks (undocumented)
+/// API Endpoints (per hifi-api README):
+/// - GET /search/?s={query}&limit={limit}&offset={offset}  - Search tracks (returns data.items array)
+/// - GET /search/?i={isrc}&limit=1&offset=0                - Exact track lookup by ISRC (returns data.items array)
+/// - GET /search/?a={query}&limit={limit}&offset={offset}  - Search artists (returns data.artists.items array)
+/// - GET /search/?al={query}&limit={limit}&offset={offset} - Search albums (returns data.albums.items array)
+/// - GET /search/?p={query}&limit={limit}&offset={offset}  - Search playlists (returns data.playlists.items array)
+/// - GET /info/?id={trackId}                               - Get track metadata (returns data object with full track info)
+/// - GET /track/?id={trackId}&quality={quality}            - Get track download info (returns manifest)
+/// - GET /recommendations/?id={trackId}                    - Get recommended next/similar tracks
+/// - GET /album/?id={albumId}&limit={limit}&offset={offset}      - Get album with paginated tracks
+/// - GET /artist/?id={artistId}                            - Get lightweight artist metadata + cover
+/// - GET /artist/?f={artistId}                             - Get artist releases and aggregate tracks
+/// - GET /playlist/?id={playlistId}&limit={limit}&offset={offset} - Get playlist with paginated tracks
 ///
 /// Quality Options:
 /// - HI_RES_LOSSLESS: 24-bit/192kHz FLAC
@@ -36,7 +37,8 @@ namespace allstarr.Services.SquidWTF;
 /// - LOW: 96kbps AAC
 ///
 /// Response Structure:
-/// All responses follow: { "version": "2.0", "data": { ... } }
+/// Responses follow the documented hifi-api 2.x envelopes.
+/// Track search and ISRC search return: { "version": "2.x", "data": { "items": [ ... ] } }
 /// Track objects include: id, title, duration, trackNumber, volumeNumber, explicit, bpm, isrc,
 ///   artist (singular), artists (array), album (object with id, title, cover UUID)
 /// Cover art URLs: https://resources.tidal.com/images/{uuid-with-slashes}/{size}.jpg
@@ -52,6 +54,12 @@ namespace allstarr.Services.SquidWTF;
 
 public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 {
+    private const int RemoteSearchMinLimit = 1;
+    private const int RemoteSearchMaxLimit = 500;
+    private const int DefaultSearchOffset = 0;
+    private const int IsrcLookupLimit = 1;
+    private const int IsrcFallbackLimit = 5;
+    private const int MetadataPageSize = 500;
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
     private readonly ILogger<SquidWTFMetadataService> _logger;
@@ -87,12 +95,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         var allSongs = new List<Song>();
         var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var queryVariant in BuildSearchQueryVariants(query))
         {
-            var songs = await SearchSongsSingleQueryAsync(queryVariant, limit, cancellationToken);
+            var songs = await SearchSongsSingleQueryAsync(queryVariant, normalizedLimit, cancellationToken);
             foreach (var song in songs)
             {
                 var key = !string.IsNullOrWhiteSpace(song.ExternalId) ? song.ExternalId : song.Id;
@@ -102,13 +111,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 }
 
                 allSongs.Add(song);
-                if (allSongs.Count >= limit)
+                if (allSongs.Count >= normalizedLimit)
                 {
                     break;
                 }
             }
 
-            if (allSongs.Count >= limit)
+            if (allSongs.Count >= normalizedLimit)
             {
                 break;
             }
@@ -120,12 +129,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         var allAlbums = new List<Album>();
         var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var queryVariant in BuildSearchQueryVariants(query))
         {
-            var albums = await SearchAlbumsSingleQueryAsync(queryVariant, limit, cancellationToken);
+            var albums = await SearchAlbumsSingleQueryAsync(queryVariant, normalizedLimit, cancellationToken);
             foreach (var album in albums)
             {
                 var key = !string.IsNullOrWhiteSpace(album.ExternalId) ? album.ExternalId : album.Id;
@@ -135,13 +145,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 }
 
                 allAlbums.Add(album);
-                if (allAlbums.Count >= limit)
+                if (allAlbums.Count >= normalizedLimit)
                 {
                     break;
                 }
             }
 
-            if (allAlbums.Count >= limit)
+            if (allAlbums.Count >= normalizedLimit)
             {
                 break;
             }
@@ -153,12 +163,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         var allArtists = new List<Artist>();
         var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var queryVariant in BuildSearchQueryVariants(query))
         {
-            var artists = await SearchArtistsSingleQueryAsync(queryVariant, limit, cancellationToken);
+            var artists = await SearchArtistsSingleQueryAsync(queryVariant, normalizedLimit, cancellationToken);
             foreach (var artist in artists)
             {
                 var key = !string.IsNullOrWhiteSpace(artist.ExternalId) ? artist.ExternalId : artist.Id;
@@ -168,13 +179,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 }
 
                 allArtists.Add(artist);
-                if (allArtists.Count >= limit)
+                if (allArtists.Count >= normalizedLimit)
                 {
                     break;
                 }
             }
 
-            if (allArtists.Count >= limit)
+            if (allArtists.Count >= normalizedLimit)
             {
                 break;
             }
@@ -186,11 +197,12 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     private async Task<List<Song>> SearchSongsSingleQueryAsync(string query, int limit, CancellationToken cancellationToken)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         // Use benchmark-ordered fallback (no endpoint racing).
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Use 's' parameter for track search as per hifi-api spec
-            var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
+            var url = BuildSearchUrl(baseUrl, "s", query, normalizedLimit);
             var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
@@ -216,7 +228,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 int count = 0;
                 foreach (var track in items.EnumerateArray())
                 {
-                    if (count >= limit) break;
+                    if (count >= normalizedLimit) break;
 
                     var song = ParseTidalTrack(track);
                     if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
@@ -236,12 +248,13 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     private async Task<List<Album>> SearchAlbumsSingleQueryAsync(string query, int limit, CancellationToken cancellationToken)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         // Use benchmark-ordered fallback (no endpoint racing).
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Use 'al' parameter for album search
             // a= is for artists, al= is for albums, p= is for playlists
-            var url = $"{baseUrl}/search/?al={Uri.EscapeDataString(query)}";
+            var url = BuildSearchUrl(baseUrl, "al", query, normalizedLimit);
             var response = await _httpClient.GetAsync(url, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
@@ -261,7 +274,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 int count = 0;
                 foreach (var album in items.EnumerateArray())
                 {
-                    if (count >= limit) break;
+                    if (count >= normalizedLimit) break;
 
                     albums.Add(ParseTidalAlbum(album));
                     count++;
@@ -278,11 +291,12 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     private async Task<List<Artist>> SearchArtistsSingleQueryAsync(string query, int limit, CancellationToken cancellationToken)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         // Use benchmark-ordered fallback (no endpoint racing).
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
             // Per hifi-api spec: use 'a' parameter for artist search
-            var url = $"{baseUrl}/search/?a={Uri.EscapeDataString(query)}";
+            var url = BuildSearchUrl(baseUrl, "a", query, normalizedLimit);
             _logger.LogDebug("🔍 SQUIDWTF: Searching artists with URL: {Url}", url);
 
             var response = await _httpClient.GetAsync(url, cancellationToken);
@@ -311,7 +325,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 int count = 0;
                 foreach (var artist in items.EnumerateArray())
                 {
-                    if (count >= limit) break;
+                    if (count >= normalizedLimit) break;
 
                     var parsedArtist = ParseTidalArtist(artist);
                     artists.Add(parsedArtist);
@@ -356,12 +370,86 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
         }
     }
 
+    private static int NormalizeRemoteLimit(int limit)
+    {
+        return Math.Clamp(limit, RemoteSearchMinLimit, RemoteSearchMaxLimit);
+    }
+
+    private static string BuildSearchUrl(string baseUrl, string field, string query, int limit, int offset = DefaultSearchOffset)
+    {
+        return $"{baseUrl}/search/?{field}={Uri.EscapeDataString(query)}&limit={NormalizeRemoteLimit(limit)}&offset={Math.Max(DefaultSearchOffset, offset)}";
+    }
+
+    private static string BuildPagedEndpointUrl(string baseUrl, string endpoint, string idParameterName, string externalId, int limit, int offset = DefaultSearchOffset)
+    {
+        return $"{baseUrl}/{endpoint}/?{idParameterName}={Uri.EscapeDataString(externalId)}&limit={NormalizeRemoteLimit(limit)}&offset={Math.Max(DefaultSearchOffset, offset)}";
+    }
+
+    private static string? GetArtistCoverFallbackUrl(JsonElement rootElement)
+    {
+        if (!rootElement.TryGetProperty("cover", out var cover) || cover.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (var propertyName in new[] { "750", "640", "320", "1280" })
+        {
+            if (cover.TryGetProperty(propertyName, out var value) &&
+                value.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(value.GetString()))
+            {
+                return value.GetString();
+            }
+        }
+
+        foreach (var property in cover.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(property.Value.GetString()))
+            {
+                return property.Value.GetString();
+            }
+        }
+
+        return null;
+    }
+
+    private static TimeSpan GetMetadataCacheTtl()
+    {
+        try
+        {
+            return CacheExtensions.MetadataTTL;
+        }
+        catch (InvalidOperationException)
+        {
+            return new CacheSettings().MetadataTTL;
+        }
+    }
+
+    private async Task<Song?> FindSongByIsrcViaTextSearchAsync(string isrc, CancellationToken cancellationToken)
+    {
+        var prefixedResults = await SearchSongsAsync($"isrc:{isrc}", limit: IsrcLookupLimit, cancellationToken);
+        var prefixedMatch = prefixedResults.FirstOrDefault(song =>
+            !string.IsNullOrWhiteSpace(song.Isrc) &&
+            song.Isrc.Equals(isrc, StringComparison.OrdinalIgnoreCase));
+        if (prefixedMatch != null)
+        {
+            return prefixedMatch;
+        }
+
+        var rawResults = await SearchSongsAsync(isrc, limit: IsrcFallbackLimit, cancellationToken);
+        return rawResults.FirstOrDefault(song =>
+            !string.IsNullOrWhiteSpace(song.Isrc) &&
+            song.Isrc.Equals(isrc, StringComparison.OrdinalIgnoreCase));
+    }
+
 	public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
 	{
+        var normalizedLimit = NormalizeRemoteLimit(limit);
 		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
 		{
             // Per hifi-api spec: use 'p' parameter for playlist search
-			var url = $"{baseUrl}/search/?p={Uri.EscapeDataString(query)}";
+			var url = BuildSearchUrl(baseUrl, "p", query, normalizedLimit);
             var response = await _httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
@@ -386,7 +474,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
                 int count = 0;
 				foreach(var playlist in items.EnumerateArray())
 				{
-                    if (count >= limit) break;
+                    if (count >= normalizedLimit) break;
 
 					try
 					{
@@ -425,6 +513,65 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
         };
 
 		return temp;
+    }
+
+    public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(isrc))
+        {
+            return null;
+        }
+
+        var normalizedIsrc = isrc.Trim();
+
+        var exactMatch = await _fallbackHelper.TryWithFallbackAsync(
+            async (baseUrl) =>
+            {
+                var url = BuildSearchUrl(baseUrl, "i", normalizedIsrc, IsrcLookupLimit);
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"HTTP {response.StatusCode}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                var result = JsonDocument.Parse(json);
+
+                if (result.RootElement.TryGetProperty("detail", out _) ||
+                    result.RootElement.TryGetProperty("error", out _))
+                {
+                    throw new HttpRequestException("API returned error response");
+                }
+
+                if (!result.RootElement.TryGetProperty("data", out var data) ||
+                    !data.TryGetProperty("items", out var items) ||
+                    items.ValueKind != JsonValueKind.Array)
+                {
+                    throw new InvalidOperationException("SquidWTF ISRC search response did not contain data.items");
+                }
+
+                foreach (var track in items.EnumerateArray())
+                {
+                    var song = ParseTidalTrack(track);
+                    if (!ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
+                    {
+                        continue;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(song.Isrc) &&
+                        song.Isrc.Equals(normalizedIsrc, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return song;
+                    }
+                }
+
+                return null;
+            },
+            song => song != null,
+            (Song?)null);
+
+        return exactMatch ?? await FindSongByIsrcViaTextSearchAsync(normalizedIsrc, cancellationToken);
     }
 
     public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
@@ -584,48 +731,71 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
-            // Note: hifi-api doesn't document album endpoint, but /album/?id={albumId} is commonly used
-            var url = $"{baseUrl}/album/?id={externalId}";
+            Album? album = null;
+            var offset = DefaultSearchOffset;
+            var rawItemCount = 0;
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            while (true)
             {
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
+                var url = BuildPagedEndpointUrl(baseUrl, "album", "id", externalId, MetadataPageSize, offset);
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"HTTP {response.StatusCode}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var result = JsonDocument.Parse(json);
+
+                if (!result.RootElement.TryGetProperty("data", out var albumElement))
+                {
+                    throw new InvalidOperationException($"SquidWTF /album response for album {externalId} did not contain data");
+                }
+
+                album ??= ParseTidalAlbum(albumElement);
+
+                if (!albumElement.TryGetProperty("items", out var tracks) || tracks.ValueKind != JsonValueKind.Array)
+                {
+                    throw new InvalidOperationException($"SquidWTF /album response for album {externalId} did not contain data.items");
+                }
+
+                var pageCount = 0;
+                foreach (var trackWrapper in tracks.EnumerateArray())
+                {
+                    pageCount++;
+
+                    if (!trackWrapper.TryGetProperty("item", out var track))
+                    {
+                        continue;
+                    }
+
+                    var song = ParseTidalTrack(track);
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
+                    {
+                        album.Songs.Add(song);
+                    }
+                }
+
+                rawItemCount += pageCount;
+                if (pageCount == 0 ||
+                    pageCount < MetadataPageSize ||
+                    (album.SongCount.HasValue && rawItemCount >= album.SongCount.Value))
+                {
+                    break;
+                }
+
+                offset += pageCount;
             }
 
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+            if (album == null)
+            {
+                throw new InvalidOperationException($"SquidWTF /album response for album {externalId} did not contain album data");
+            }
 
-			// Response structure: { "data": { album object with "items" array of tracks } }
-			if (!result.RootElement.TryGetProperty("data", out var albumElement))
-			{
-				throw new InvalidOperationException($"SquidWTF /album response for album {externalId} did not contain data");
-			}
+            await _cache.SetAsync(cacheKey, album, GetMetadataCacheTtl());
 
-			var album = ParseTidalAlbum(albumElement);
-
-			// Get album tracks from items array
-			if (albumElement.TryGetProperty("items", out var tracks))
-			{
-				foreach (var trackWrapper in tracks.EnumerateArray())
-				{
-                    // Each item is wrapped: { "item": { track object } }
-					if (trackWrapper.TryGetProperty("item", out var track))
-					{
-						var song = ParseTidalTrack(track);
-						if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
-						{
-							album.Songs.Add(song);
-						}
-					}
-				}
-			}
-
-			// Cache for configurable duration
-			await _cache.SetAsync(cacheKey, album, CacheExtensions.MetadataTTL);
-
-			return album;
-		}, (Album?)null);
+            return album;
+        }, (Album?)null);
     }
 
     public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
@@ -645,8 +815,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
         return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
         {
-            // Note: hifi-api doesn't document artist endpoint, but /artist/?f={artistId} is commonly used
-            var url = $"{baseUrl}/artist/?f={externalId}";
+            var url = $"{baseUrl}/artist/?id={Uri.EscapeDataString(externalId)}";
             _logger.LogDebug("Fetching artist from {Url}", url);
 
             var response = await _httpClient.GetAsync(url, cancellationToken);
@@ -654,73 +823,44 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
-
+            
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("SquidWTF artist response: {Json}", json.Length > 500 ? json.Substring(0, 500) + "..." : json);
-            var result = JsonDocument.Parse(json);
+            using var result = JsonDocument.Parse(json);
 
-			JsonElement? artistSource = null;
-			int albumCount = 0;
-
-			// Response structure: { "albums": { "items": [ album objects ] }, "tracks": [ track objects ] }
-            // Extract artist info from albums.items[0].artist (most reliable source)
-            if (result.RootElement.TryGetProperty("albums", out var albums) &&
-				albums.TryGetProperty("items", out var albumItems) &&
-				albumItems.GetArrayLength() > 0)
-			{
-				albumCount = albumItems.GetArrayLength();
-				if (albumItems[0].TryGetProperty("artist", out var artistEl))
-				{
-					artistSource = artistEl;
-					_logger.LogDebug("Found artist from albums, albumCount={AlbumCount}", albumCount);
-				}
-            }
-
-			// Fallback: try to get artist from tracks[0].artists[0]
-			if (artistSource == null &&
-			    result.RootElement.TryGetProperty("tracks", out var tracks) &&
-				tracks.GetArrayLength() > 0 &&
-				tracks[0].TryGetProperty("artists", out var artists) &&
-				artists.GetArrayLength() > 0)
-			{
-				artistSource = artists[0];
-                _logger.LogInformation("Found artist from tracks");
-			}
-
-			if (artistSource == null)
+            if (!result.RootElement.TryGetProperty("artist", out var artistElement))
             {
                 var keys = string.Join(", ", result.RootElement.EnumerateObject().Select(p => p.Name));
                 throw new InvalidOperationException(
                     $"SquidWTF artist response for {externalId} did not contain artist data. Keys: {keys}");
             }
 
-			var artistElement = artistSource.Value;
+            var artistName = artistElement.GetProperty("name").GetString() ?? string.Empty;
+            var pictureUuid = artistElement.TryGetProperty("picture", out var pictureEl) &&
+                pictureEl.ValueKind == JsonValueKind.String
+                    ? pictureEl.GetString()
+                    : null;
+            var coverUrl = GetArtistCoverFallbackUrl(result.RootElement);
+            var imageUrl = !string.IsNullOrWhiteSpace(pictureUuid)
+                ? BuildTidalImageUrl(pictureUuid, "320x320")
+                : coverUrl;
 
-            // Extract picture UUID (may be null)
-            string? pictureUuid = null;
-            if (artistElement.TryGetProperty("picture", out var pictureEl) && pictureEl.ValueKind != JsonValueKind.Null)
+            var artist = new Artist
             {
-                pictureUuid = pictureEl.GetString();
-            }
+                Id = BuildExternalArtistId("squidwtf", externalId),
+                Name = artistName,
+                ImageUrl = imageUrl,
+                AlbumCount = null,
+                IsLocal = false,
+                ExternalProvider = "squidwtf",
+                ExternalId = externalId
+            };
 
-            // Normalize artist data to include album count
-			var normalizedArtist = new JsonObject
-			{
-				["id"] = artistElement.GetProperty("id").GetInt64(),
-				["name"] = artistElement.GetProperty("name").GetString(),
-				["albums_count"] = albumCount,
-				["picture"] = pictureUuid
-			};
+            _logger.LogDebug("Successfully parsed artist {ArtistName} via /artist/?id=", artist.Name);
 
-			using var doc = JsonDocument.Parse(normalizedArtist.ToJsonString());
-			var artist = ParseTidalArtist(doc.RootElement);
+            await _cache.SetAsync(cacheKey, artist, GetMetadataCacheTtl());
 
-            _logger.LogDebug("Successfully parsed artist {ArtistName} with {AlbumCount} albums", artist.Name, albumCount);
-
-			// Cache for configurable duration
-			await _cache.SetAsync(cacheKey, artist, CacheExtensions.MetadataTTL);
-
-			return artist;
+            return artist;
         }, (Artist?)null);
     }
 
@@ -732,7 +872,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 		{
             _logger.LogDebug("GetArtistAlbumsAsync called for SquidWTF artist {ExternalId}", externalId);
 
-            // Note: hifi-api doesn't document artist endpoint, but /artist/?f={artistId} is commonly used
+            // Per hifi-api README: /artist/?f={artistId} returns aggregated releases and tracks
 			var url = $"{baseUrl}/artist/?f={externalId}";
 			_logger.LogDebug("Fetching artist albums from URL: {Url}", url);
 			var response = await _httpClient.GetAsync(url, cancellationToken);
@@ -779,7 +919,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 		{
             _logger.LogDebug("GetArtistTracksAsync called for SquidWTF artist {ExternalId}", externalId);
 
-            // Same endpoint as albums - /artist/?f={artistId} returns both albums and tracks
+            // Per hifi-api README: /artist/?f={artistId} returns both albums and tracks
 			var url = $"{baseUrl}/artist/?f={externalId}";
 			_logger.LogDebug("Fetching artist tracks from URL: {Url}", url);
 			var response = await _httpClient.GetAsync(url, cancellationToken);
@@ -821,8 +961,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
     		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
     		{
-                // Note: hifi-api doesn't document playlist endpoint, but /playlist/?id={playlistId} is commonly used
-    			var url = $"{baseUrl}/playlist/?id={externalId}";
+    			var url = BuildPagedEndpointUrl(baseUrl, "playlist", "id", externalId, RemoteSearchMinLimit);
     			var response = await _httpClient.GetAsync(url, cancellationToken);
     			if (!response.IsSuccessStatusCode)
     			{
@@ -830,7 +969,8 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
     			}
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var rootElement = JsonDocument.Parse(json).RootElement;
+                using var result = JsonDocument.Parse(json);
+                var rootElement = result.RootElement;
 
                 // Check for error response
                 if (rootElement.TryGetProperty("error", out _))
@@ -855,76 +995,85 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
 		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
 		{
-            // Note: hifi-api doesn't document playlist endpoint, but /playlist/?id={playlistId} is commonly used
-			var url = $"{baseUrl}/playlist/?id={externalId}";
-			var response = await _httpClient.GetAsync(url, cancellationToken);
-			if (!response.IsSuccessStatusCode)
-			{
-				throw new HttpRequestException($"HTTP {response.StatusCode}");
-			}
+			var songs = new List<Song>();
+            var offset = DefaultSearchOffset;
+            var rawTrackCount = 0;
+            var trackIndex = 1;
+            string playlistName = "Unknown Playlist";
+            int? expectedTrackCount = null;
 
-			var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var playlistElement = JsonDocument.Parse(json).RootElement;
-
-            // Check for error response
-			if (playlistElement.TryGetProperty("error", out _))
-			{
-				throw new InvalidOperationException($"SquidWTF playlist tracks response for {externalId} contained an error payload");
-			}
-
-			JsonElement? playlist = null;
-			JsonElement? tracks = null;
-
-            // Response structure: { "playlist": { playlist object }, "items": [ track wrappers ] }
-			if (playlistElement.TryGetProperty("playlist", out var playlistEl))
-			{
-				playlist = playlistEl;
-			}
-
-			if (playlistElement.TryGetProperty("items", out var tracksEl))
-			{
-				tracks = tracksEl;
-			}
-
-            if (!tracks.HasValue)
+            while (true)
             {
-                throw new InvalidOperationException(
-                    $"SquidWTF playlist tracks response for {externalId} did not contain items");
+                var url = BuildPagedEndpointUrl(baseUrl, "playlist", "id", externalId, MetadataPageSize, offset);
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"HTTP {response.StatusCode}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var result = JsonDocument.Parse(json);
+                var playlistElement = result.RootElement;
+
+                if (playlistElement.TryGetProperty("error", out _))
+                {
+                    throw new InvalidOperationException($"SquidWTF playlist tracks response for {externalId} contained an error payload");
+                }
+
+                if (playlistElement.TryGetProperty("playlist", out var playlistEl))
+                {
+                    if (playlistEl.TryGetProperty("title", out var titleEl))
+                    {
+                        playlistName = titleEl.GetString() ?? playlistName;
+                    }
+
+                    if (!expectedTrackCount.HasValue &&
+                        playlistEl.TryGetProperty("numberOfTracks", out var trackCountEl) &&
+                        trackCountEl.ValueKind == JsonValueKind.Number)
+                    {
+                        expectedTrackCount = trackCountEl.GetInt32();
+                    }
+                }
+
+                if (!playlistElement.TryGetProperty("items", out var tracks) || tracks.ValueKind != JsonValueKind.Array)
+                {
+                    throw new InvalidOperationException(
+                        $"SquidWTF playlist tracks response for {externalId} did not contain items");
+                }
+
+                var pageCount = 0;
+                foreach (var entry in tracks.EnumerateArray())
+                {
+                    pageCount++;
+
+                    if (!entry.TryGetProperty("item", out var track))
+                    {
+                        continue;
+                    }
+
+                    var song = ParseTidalTrack(track, trackIndex);
+                    song.Album = playlistName;
+                    song.DiscNumber = null;
+
+                    if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
+                    {
+                        songs.Add(song);
+                    }
+
+                    trackIndex++;
+                }
+
+                rawTrackCount += pageCount;
+                if (pageCount == 0 ||
+                    pageCount < MetadataPageSize ||
+                    (expectedTrackCount.HasValue && rawTrackCount >= expectedTrackCount.Value))
+                {
+                    break;
+                }
+
+                offset += pageCount;
             }
 
-			var songs = new List<Song>();
-
-			// Get playlist name for album field
-			var playlistName = playlist?.TryGetProperty("title", out var titleEl) == true
-				? titleEl.GetString() ?? "Unknown Playlist"
-				: "Unknown Playlist";
-
-			if (tracks.HasValue)
-			{
-				int trackIndex = 1;
-				foreach (var entry in tracks.Value.EnumerateArray())
-				{
-                    // Each item is wrapped: { "item": { track object } }
-					if (!entry.TryGetProperty("item", out var track))
-						continue;
-
-					// For playlists, use the track's own artist (not a single album artist)
-					var song = ParseTidalTrack(track, trackIndex);
-
-					// Override album name to be the playlist name
-					song.Album = playlistName;
-
-					// Playlists should not have disc numbers - always set to null
-					// This prevents Jellyfin from splitting the playlist into multiple "discs"
-					song.DiscNumber = null;
-
-					if (ExplicitContentFilter.ShouldIncludeSong(song, _settings.ExplicitFilter))
-					{
-						songs.Add(song);
-					}
-					trackIndex++;
-				}
-			}
 			return songs;
 		}, new List<Song>());
 	}
@@ -1251,9 +1400,17 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
         var externalId = artist.GetProperty("id").GetInt64().ToString();
         var artistName = artist.GetProperty("name").GetString() ?? "";
 
-        var imageUrl = artist.TryGetProperty("picture", out var picture)
+        var imageUrl = artist.TryGetProperty("picture", out var picture) &&
+                       picture.ValueKind == JsonValueKind.String
             ? BuildTidalImageUrl(picture.GetString(), "320x320")
             : null;
+
+        if (string.IsNullOrWhiteSpace(imageUrl) &&
+            artist.TryGetProperty("imageUrl", out var imageUrlElement) &&
+            imageUrlElement.ValueKind == JsonValueKind.String)
+        {
+            imageUrl = imageUrlElement.GetString();
+        }
 
         if (!string.IsNullOrWhiteSpace(imageUrl))
         {
@@ -1276,8 +1433,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
 	/// <summary>
     /// Parses a Tidal playlist from hifi-api /playlist/ endpoint response.
-    /// Per hifi-api spec (undocumented), response structure is:
-    /// { "playlist": { uuid, title, description, creator, created, numberOfTracks, duration, squareImage },
+    /// Response structure: { "playlist": { uuid, title, description, creator, created, numberOfTracks, duration, squareImage },
     ///   "items": [ { "item": { track object } } ] }
     /// </summary>
     /// <param name="playlistElement">Root JSON element containing playlist and items</param>
@@ -1427,13 +1583,14 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
     /// </summary>
     public async Task<List<Song?>> SearchSongsInParallelAsync(List<string> queries, int limit = 10, CancellationToken cancellationToken = default)
     {
+        var normalizedLimit = NormalizeRemoteLimit(limit);
         return await _fallbackHelper.ProcessInParallelAsync(
             queries,
             async (baseUrl, query, ct) =>
             {
                 try
                 {
-                    var url = $"{baseUrl}/search/?s={Uri.EscapeDataString(query)}";
+                    var url = BuildSearchUrl(baseUrl, "s", query, normalizedLimit);
                     var response = await _httpClient.GetAsync(url, ct);
 
                     if (!response.IsSuccessStatusCode)

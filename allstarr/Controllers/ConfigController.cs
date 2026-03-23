@@ -198,17 +198,20 @@ public class ConfigController : ControllerBase
             {
                 arl = AdminHelperService.MaskValue(GetEnvString(envVars, "DEEZER_ARL", _deezerSettings.Arl ?? string.Empty), showLast: 8),
                 arlFallback = AdminHelperService.MaskValue(GetEnvString(envVars, "DEEZER_ARL_FALLBACK", _deezerSettings.ArlFallback ?? string.Empty), showLast: 8),
-                quality = GetEnvString(envVars, "DEEZER_QUALITY", _deezerSettings.Quality ?? "FLAC")
+                quality = GetEnvString(envVars, "DEEZER_QUALITY", _deezerSettings.Quality ?? "FLAC"),
+                minRequestIntervalMs = GetEnvInt(envVars, "DEEZER_MIN_REQUEST_INTERVAL_MS", _deezerSettings.MinRequestIntervalMs)
             },
             qobuz = new
             {
                 userAuthToken = AdminHelperService.MaskValue(GetEnvString(envVars, "QOBUZ_USER_AUTH_TOKEN", _qobuzSettings.UserAuthToken ?? string.Empty), showLast: 8),
                 userId = GetEnvString(envVars, "QOBUZ_USER_ID", _qobuzSettings.UserId ?? string.Empty),
-                quality = GetEnvString(envVars, "QOBUZ_QUALITY", _qobuzSettings.Quality ?? "FLAC")
+                quality = GetEnvString(envVars, "QOBUZ_QUALITY", _qobuzSettings.Quality ?? "FLAC"),
+                minRequestIntervalMs = GetEnvInt(envVars, "QOBUZ_MIN_REQUEST_INTERVAL_MS", _qobuzSettings.MinRequestIntervalMs)
             },
             squidWtf = new
             {
-                quality = GetEnvString(envVars, "SQUIDWTF_QUALITY", _squidWtfSettings.Quality ?? "LOSSLESS")
+                quality = GetEnvString(envVars, "SQUIDWTF_QUALITY", _squidWtfSettings.Quality ?? "LOSSLESS"),
+                minRequestIntervalMs = GetEnvInt(envVars, "SQUIDWTF_MIN_REQUEST_INTERVAL_MS", _squidWtfSettings.MinRequestIntervalMs)
             },
             musicBrainz = new
             {
@@ -228,7 +231,8 @@ public class ConfigController : ControllerBase
                 genreDays = GetEnvInt(envVars, "CACHE_GENRE_DAYS", _configuration.GetValue<int>("Cache:GenreDays", 30)),
                 metadataDays = GetEnvInt(envVars, "CACHE_METADATA_DAYS", _configuration.GetValue<int>("Cache:MetadataDays", 7)),
                 odesliLookupDays = GetEnvInt(envVars, "CACHE_ODESLI_LOOKUP_DAYS", _configuration.GetValue<int>("Cache:OdesliLookupDays", 60)),
-                proxyImagesDays = GetEnvInt(envVars, "CACHE_PROXY_IMAGES_DAYS", _configuration.GetValue<int>("Cache:ProxyImagesDays", 14))
+                proxyImagesDays = GetEnvInt(envVars, "CACHE_PROXY_IMAGES_DAYS", _configuration.GetValue<int>("Cache:ProxyImagesDays", 14)),
+                transcodeCacheMinutes = GetEnvInt(envVars, "CACHE_TRANSCODE_MINUTES", _configuration.GetValue<int>("Cache:TranscodeCacheMinutes", 60))
             },
             scrobbling = await GetScrobblingSettingsFromEnvAsync()
         });

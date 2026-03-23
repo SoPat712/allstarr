@@ -29,12 +29,15 @@ public abstract class BaseDownloadService : IDownloadService
     protected readonly string CachePath;
     
     protected readonly ConcurrentDictionary<string, DownloadInfo> ActiveDownloads = new();
-    protected readonly SemaphoreSlim DownloadLock = new(1, 1);
+    
+    // Concurrency and state locking
+    protected readonly SemaphoreSlim _stateSemaphore = new(1, 1);
+    protected readonly SemaphoreSlim _concurrencySemaphore;
     
     // Rate limiting fields
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private DateTime _lastRequestTime = DateTime.MinValue;
-    private readonly int _minRequestIntervalMs = 200;
+    protected int _minRequestIntervalMs = 200;
     
     /// <summary>
     /// Lazy-loaded PlaylistSyncService to avoid circular dependency
@@ -84,6 +87,13 @@ public abstract class BaseDownloadService : IDownloadService
         {
             Directory.CreateDirectory(CachePath);
         }
+
+        var maxDownloadsStr = configuration["MAX_CONCURRENT_DOWNLOADS"];
+        if (!int.TryParse(maxDownloadsStr, out var maxDownloads) || maxDownloads <= 0)
+        {
+            maxDownloads = 3;
+        }
+        _concurrencySemaphore = new SemaphoreSlim(maxDownloads, maxDownloads);
     }
     
     #region IDownloadService Implementation
@@ -99,8 +109,16 @@ public abstract class BaseDownloadService : IDownloadService
     }
 
     
-    public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
         {
+            // If a quality override is requested (not Original), use the quality override path
+            // This downloads to a temp file at the requested quality and streams it without caching
+            if (qualityOverride.HasValue && qualityOverride.Value != StreamQuality.Original)
+            {
+                return await DownloadAndStreamWithQualityOverrideAsync(externalProvider, externalId, qualityOverride.Value, cancellationToken);
+            }
+
+            // Standard path: use .env quality, cache the result
             var startTime = DateTime.UtcNow;
 
             // Check if already downloaded locally
@@ -157,6 +175,65 @@ public abstract class BaseDownloadService : IDownloadService
             }
         }
 
+    /// <summary>
+    /// Downloads and streams with a quality override.
+    /// When the client requests lower quality (e.g., cellular mode), this downloads to a temp file
+    /// at the requested quality tier and streams it. The temp file is auto-deleted after streaming.
+    /// This does NOT pollute the cache — the cached file at .env quality remains the canonical copy.
+    /// </summary>
+    private async Task<Stream> DownloadAndStreamWithQualityOverrideAsync(
+        string externalProvider, string externalId, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        var startTime = DateTime.UtcNow;
+
+        Logger.LogInformation(
+            "Streaming with quality override {Quality} for {Provider}:{ExternalId}",
+            quality, externalProvider, externalId);
+
+        try
+        {
+            // Get metadata for the track
+            var song = await MetadataService.GetSongAsync(externalProvider, externalId);
+            if (song == null)
+            {
+                throw new Exception("Song not found");
+            }
+
+            // Download to a temp file at the overridden quality
+            // IMPORTANT: Use CancellationToken.None to ensure download completes server-side
+            var tempPath = await DownloadTrackWithQualityAsync(externalId, song, quality, CancellationToken.None);
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogInformation(
+                "Quality-override download completed ({Quality}, {ElapsedMs}ms): {Path}",
+                quality, elapsed, tempPath);
+            // Touch the file to extend its cache lifetime for TTL-based cleanup
+            IOFile.SetLastWriteTime(tempPath, DateTime.UtcNow);
+
+            // Start background Odesli conversion for lyrics (doesn't block streaming)
+            StartBackgroundOdesliConversion(externalProvider, externalId);
+
+            // Return a regular stream — the file stays in the transcoded cache
+            // and is cleaned up by CacheCleanupService based on CACHE_TRANSCODE_MINUTES TTL
+            return IOFile.OpenRead(tempPath);
+        }
+        catch (OperationCanceledException)
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogWarning(
+                "Quality-override download cancelled after {ElapsedMs}ms for {Provider}:{ExternalId}",
+                elapsed, externalProvider, externalId);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogError(ex,
+                "Quality-override download failed after {ElapsedMs}ms for {Provider}:{ExternalId}",
+                elapsed, externalProvider, externalId);
+            throw;
+        }
+    }
+
     
     /// <summary>
     /// Starts background Odesli conversion for lyrics support.
@@ -193,6 +270,11 @@ public abstract class BaseDownloadService : IDownloadService
     {
         ActiveDownloads.TryGetValue(songId, out var info);
         return info;
+    }
+
+    public IReadOnlyList<DownloadInfo> GetActiveDownloads()
+    {
+        return ActiveDownloads.Values.ToList().AsReadOnly();
     }
     
     public async Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId)
@@ -250,6 +332,23 @@ public abstract class BaseDownloadService : IDownloadService
     protected abstract Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken);
     
     /// <summary>
+    /// Downloads a track at a specific quality tier to a temp file.
+    /// Subclasses override this to map StreamQuality to provider-specific quality settings.
+    /// The .env quality is used as a ceiling — the override can only go equal or lower.
+    /// Default implementation falls back to DownloadTrackAsync (uses .env quality).
+    /// </summary>
+    /// <param name="trackId">External track ID</param>
+    /// <param name="song">Song metadata</param>
+    /// <param name="quality">Requested quality tier</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Local temp file path where the track was saved</returns>
+    protected virtual Task<string> DownloadTrackWithQualityAsync(string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        // Default: ignore quality override and use configured quality
+        return DownloadTrackAsync(trackId, song, cancellationToken);
+    }
+    
+    /// <summary>
     /// Extracts the external album ID from the internal album ID format.
     /// Example: "ext-deezer-album-123456" -> "123456"
     /// Default implementation handles standard format: "ext-{provider}-album-{id}"
@@ -282,10 +381,10 @@ public abstract class BaseDownloadService : IDownloadService
         var songId = $"ext-{externalProvider}-{externalId}";
         var isCache = SubsonicSettings.StorageMode == StorageMode.Cache;
         
-        // Acquire lock BEFORE checking existence to prevent race conditions with concurrent requests
-        await DownloadLock.WaitAsync(cancellationToken);
-        var lockHeld = true;
+        bool isInitiator = false;
         
+        // 1. Synchronous state check to prevent race conditions on checking existence or ActiveDownloads
+        await _stateSemaphore.WaitAsync(cancellationToken);
         try
         {
             // Check if already downloaded (works for both cache and permanent modes)
@@ -307,34 +406,60 @@ public abstract class BaseDownloadService : IDownloadService
             if (ActiveDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
             {
                 Logger.LogDebug("Download already in progress for {SongId}, waiting for completion...", songId);
-                // Release lock while waiting
-                DownloadLock.Release();
-                lockHeld = false;
-                
-                // Wait for download to complete, checking every 100ms
-                // Note: We check cancellation but don't cancel the actual download
-                // The download continues server-side even if this client gives up waiting
-                while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
-                {
-                    // If client cancels, throw but let the download continue in background
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        Logger.LogInformation("Client cancelled while waiting for download {SongId}, but download continues server-side", songId);
-                        throw new OperationCanceledException("Client cancelled request, but download continues server-side");
-                    }
-                    await Task.Delay(100, CancellationToken.None);
-                }
-                
-                if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
-                {
-                    Logger.LogDebug("Download completed while waiting, returning path: {Path}", activeDownload.LocalPath);
-                    return activeDownload.LocalPath;
-                }
-                
-                // Download failed or was cancelled
-                throw new Exception(activeDownload?.ErrorMessage ?? "Download failed while waiting");
+                // We are not the initiator; we will wait outside the lock.
             }
+            else
+            {
+                // We must initiate the download
+                isInitiator = true;
+                ActiveDownloads[songId] = new DownloadInfo
+                {
+                    SongId = songId,
+                    ExternalId = externalId,
+                    ExternalProvider = externalProvider,
+                    Title = "Unknown Title", // Will be updated after fetching
+                    Artist = "Unknown Artist",
+                    Status = DownloadStatus.InProgress,
+                    StartedAt = DateTime.UtcNow
+                };
+            }
+        }
+        finally
+        {
+            _stateSemaphore.Release();
+        }
 
+        // If another thread is already downloading this track, wait for it.
+        if (!isInitiator)
+        {
+            DownloadInfo? activeDownload;
+            while (ActiveDownloads.TryGetValue(songId, out activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
+            {
+                // If client cancels, throw but let the download continue in background
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    Logger.LogInformation("Client cancelled while waiting for download {SongId}, but download continues server-side", songId);
+                    throw new OperationCanceledException("Client cancelled request, but download continues server-side");
+                }
+                await Task.Delay(100, CancellationToken.None);
+            }
+            
+            if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
+            {
+                Logger.LogDebug("Download completed while waiting, returning path: {Path}", activeDownload.LocalPath);
+                return activeDownload.LocalPath;
+            }
+            
+            // Download failed or was cancelled
+            throw new Exception(activeDownload?.ErrorMessage ?? "Download failed while waiting");
+        }
+
+        // --- Execute the Download (we are the initiator) ---
+
+        // Wait for a concurrency permit before doing the heavy lifting
+        await _concurrencySemaphore.WaitAsync(cancellationToken);
+        try
+        {
             // Get metadata
             // In Album mode, fetch the full album first to ensure AlbumArtist is correctly set
             Song? song = null;
@@ -370,21 +495,21 @@ public abstract class BaseDownloadService : IDownloadService
                 throw new Exception("Song not found");
             }
 
-            var downloadInfo = new DownloadInfo
+            // Update ActiveDownloads with the real title/artist information
+            if (ActiveDownloads.TryGetValue(songId, out var info))
             {
-                SongId = songId,
-                ExternalId = externalId,
-                ExternalProvider = externalProvider,
-                Status = DownloadStatus.InProgress,
-                StartedAt = DateTime.UtcNow
-            };
-            ActiveDownloads[songId] = downloadInfo;
+                info.Title = song.Title ?? "Unknown Title";
+                info.Artist = song.Artist ?? "Unknown Artist";
+            }
 
             var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
             
-            downloadInfo.Status = DownloadStatus.Completed;
-            downloadInfo.LocalPath = localPath;
-            downloadInfo.CompletedAt = DateTime.UtcNow;
+            if (ActiveDownloads.TryGetValue(songId, out var successInfo))
+            {
+                successInfo.Status = DownloadStatus.Completed;
+                successInfo.LocalPath = localPath;
+                successInfo.CompletedAt = DateTime.UtcNow;
+            }
             
             song.LocalPath = localPath;
             
@@ -467,12 +592,11 @@ public abstract class BaseDownloadService : IDownloadService
                     Logger.LogDebug("Cleaned up failed download tracking for {SongId}", songId);
                 });
             }
+            
             if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
             {
                 Logger.LogError("Download failed for {SongId}: {StatusCode}: {ReasonPhrase}",
-                    songId,
-                    (int)httpRequestException.StatusCode.Value,
-                    httpRequestException.StatusCode.Value);
+                    songId, (int)httpRequestException.StatusCode.Value, httpRequestException.StatusCode.Value);
                 Logger.LogDebug(ex, "Detailed download failure for {SongId}", songId);
             }
             else
@@ -483,10 +607,7 @@ public abstract class BaseDownloadService : IDownloadService
         }
         finally
         {
-            if (lockHeld)
-            {
-                DownloadLock.Release();
-            }
+            _concurrencySemaphore.Release();
         }
     }
     

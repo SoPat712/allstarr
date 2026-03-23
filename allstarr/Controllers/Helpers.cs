@@ -129,35 +129,46 @@ public partial class JellyfinController
                                 }
                             }
 
-                            // Try loading from file cache if Redis is empty
-                            if (matchedTracks == null || matchedTracks.Count == 0)
+                            // Prefer the currently served playlist items cache when available.
+                            // This most closely matches what the injected playlist endpoint will return.
+                            var exactServedCount = 0;
+                            var playlistItemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
+                            var cachedPlaylistItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(playlistItemsKey);
+                            var exactServedRunTimeTicks = 0L;
+                            if (cachedPlaylistItems != null &&
+                                cachedPlaylistItems.Count > 0 &&
+                                !InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(cachedPlaylistItems))
                             {
-                                var fileItems = await LoadPlaylistItemsFromFile(playlistName);
-                                if (fileItems != null && fileItems.Count > 0)
-                                {
-                                    _logger.LogDebug(
-                                        "💿 Loaded {Count} playlist items from file cache for count update",
-                                        fileItems.Count);
-                                    // Use file cache count directly
-                                    itemDict["ChildCount"] = fileItems.Count;
-                                    modified = true;
-                                }
+                                exactServedCount = cachedPlaylistItems.Count;
+                                exactServedRunTimeTicks =
+                                    SpotifyPlaylistCountHelper.SumCachedPlaylistRunTimeTicks(cachedPlaylistItems);
+                                _logger.LogDebug(
+                                    "Using Redis playlist items cache metrics for {Playlist}: count={Count}, runtimeTicks={RunTimeTicks}",
+                                    playlistName, exactServedCount, exactServedRunTimeTicks);
                             }
 
-                            // Only fetch from Jellyfin if we didn't get count from file cache
-                            if (!itemDict.ContainsKey("ChildCount") ||
-                                (itemDict["ChildCount"] is JsonElement childCountElement &&
-                                 childCountElement.GetInt32() == 0) ||
-                                (itemDict["ChildCount"] is int childCountInt && childCountInt == 0))
+                            if (exactServedCount > 0)
                             {
-                                // Get local tracks count from Jellyfin
+                                itemDict["ChildCount"] = exactServedCount;
+                                itemDict["RunTimeTicks"] = exactServedRunTimeTicks;
+                                modified = true;
+                            }
+                            else
+                            {
+                                // Recompute ChildCount for injected playlists instead of trusting
+                                // Jellyfin/plugin values, which only reflect local tracks.
                                 var localTracksCount = 0;
+                                var localRunTimeTicks = 0L;
                                 try
                                 {
-                                    // Include UserId parameter to avoid 401 Unauthorized
                                     var userId = _settings.UserId;
                                     var playlistItemsUrl = $"Playlists/{playlistId}/Items";
-                                    var queryParams = new Dictionary<string, string>();
+                                    var queryParams = new Dictionary<string, string>
+                                    {
+                                        ["Fields"] = "Id,RunTimeTicks",
+                                        ["Limit"] = "10000"
+                                    };
+
                                     if (!string.IsNullOrEmpty(userId))
                                     {
                                         queryParams["UserId"] = userId;
@@ -170,8 +181,16 @@ public partial class JellyfinController
                                     if (localTracksResponse != null &&
                                         localTracksResponse.RootElement.TryGetProperty("Items", out var localItems))
                                     {
-                                        localTracksCount = localItems.GetArrayLength();
-                                        _logger.LogDebug("Found {Count} total items in Jellyfin playlist {Name}",
+                                        foreach (var localItem in localItems.EnumerateArray())
+                                        {
+                                            localTracksCount++;
+                                            localRunTimeTicks += SpotifyPlaylistCountHelper.ExtractRunTimeTicks(
+                                                localItem.TryGetProperty("RunTimeTicks", out var runTimeTicks)
+                                                    ? runTimeTicks
+                                                    : null);
+                                        }
+
+                                        _logger.LogDebug("Found {Count} local Jellyfin items in playlist {Name}",
                                             localTracksCount, playlistName);
                                     }
                                 }
@@ -180,33 +199,25 @@ public partial class JellyfinController
                                     _logger.LogError(ex, "Failed to get local tracks count for {Name}", playlistName);
                                 }
 
-                                // Count external matched tracks (not local)
-                                var externalMatchedCount = 0;
-                                if (matchedTracks != null)
-                                {
-                                    externalMatchedCount = matchedTracks.Count(t =>
-                                        t.MatchedSong != null && !t.MatchedSong.IsLocal);
-                                }
+                                var totalAvailableCount = SpotifyPlaylistCountHelper.ComputeServedItemCount(
+                                    exactServedCount > 0 ? exactServedCount : null,
+                                    localTracksCount,
+                                    matchedTracks);
+                                var totalRunTimeTicks = SpotifyPlaylistCountHelper.ComputeServedRunTimeTicks(
+                                    exactServedCount > 0 ? exactServedRunTimeTicks : null,
+                                    localRunTimeTicks,
+                                    matchedTracks);
 
-                                // Total available tracks = local tracks in Jellyfin + external matched tracks
-                                // This represents what users will actually hear when playing the playlist
-                                var totalAvailableCount = localTracksCount + externalMatchedCount;
-
-                                if (totalAvailableCount > 0)
-                                {
-                                    // Update ChildCount to show actual available tracks
-                                    itemDict["ChildCount"] = totalAvailableCount;
-                                    modified = true;
-                                    _logger.LogDebug(
-                                        "✓ Updated ChildCount for Spotify playlist {Name} to {Total} ({Local} local + {External} external)",
-                                        playlistName, totalAvailableCount, localTracksCount, externalMatchedCount);
-                                }
-                                else
-                                {
-                                    _logger.LogWarning(
-                                        "No tracks found for {Name} ({Local} local + {External} external = {Total} total)",
-                                        playlistName, localTracksCount, externalMatchedCount, totalAvailableCount);
-                                }
+                                itemDict["ChildCount"] = totalAvailableCount;
+                                itemDict["RunTimeTicks"] = totalRunTimeTicks;
+                                modified = true;
+                                _logger.LogDebug(
+                                    "✓ Updated Spotify playlist metrics for {Name}: count={Total} ({Local} local + {External} external), runtimeTicks={RunTimeTicks}",
+                                    playlistName,
+                                    totalAvailableCount,
+                                    localTracksCount,
+                                    SpotifyPlaylistCountHelper.CountExternalMatchedTracks(matchedTracks),
+                                    totalRunTimeTicks);
                             }
                         }
                         else

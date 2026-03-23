@@ -980,3 +980,71 @@ input::placeholder {
         transform: rotate(360deg);
     }
 }
+
+/* Download Activity Queue */
+.download-queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.download-queue-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    animation: slideIn 0.3s ease;
+}
+
+.download-queue-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.download-queue-title {
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+
+.download-queue-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.download-queue-artist {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.download-queue-provider {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--accent);
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+
+.download-queue-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.download-queue-time {
+    font-family: monospace;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.empty-state {
+    color: var(--text-secondary);
+    font-style: italic;
+    padding: 12px;
+    text-align: center;
+}

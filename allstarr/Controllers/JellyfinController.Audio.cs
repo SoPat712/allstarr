@@ -69,8 +69,9 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        // Handle external content
-        return await StreamExternalContent(provider!, externalId!);
+        // Handle external content with quality override from client transcoding params
+        var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
+        return await StreamExternalContent(provider!, externalId!, quality);
     }
 
     /// <summary>
@@ -150,8 +151,9 @@ public partial class JellyfinController
 
     /// <summary>
     /// Streams external content, using cache if available or downloading on-demand.
+    /// Supports quality override for client-requested "transcoding" of external tracks.
     /// </summary>
-    private async Task<IActionResult> StreamExternalContent(string provider, string externalId)
+    private async Task<IActionResult> StreamExternalContent(string provider, string externalId, StreamQuality quality = StreamQuality.Original)
     {
         // Check for locally cached file
         var localPath = await _localLibraryService.GetLocalPathForExternalSongAsync(provider, externalId);
@@ -178,9 +180,16 @@ public partial class JellyfinController
             var downloadStream = await _downloadService.DownloadAndStreamAsync(
                 provider,
                 externalId,
+                quality != StreamQuality.Original ? quality : null,
                 HttpContext.RequestAborted);
 
-            return File(downloadStream, "audio/mpeg", enableRangeProcessing: true);
+            var contentType = "audio/mpeg";
+            if (downloadStream is FileStream fs)
+            {
+                contentType = GetContentType(fs.Name);
+            }
+
+            return File(downloadStream, contentType, enableRangeProcessing: true);
         }
         catch (Exception ex)
         {
@@ -228,8 +237,9 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        // For external content, use simple streaming (no transcoding support yet)
-        return await StreamExternalContent(provider!, externalId!);
+        // For external content, parse quality override from client transcoding params
+        var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
+        return await StreamExternalContent(provider!, externalId!, quality);
     }
 
     #endregion

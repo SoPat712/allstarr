@@ -8,6 +8,8 @@ public class DownloadInfo
     public string SongId { get; set; } = string.Empty;
     public string ExternalId { get; set; } = string.Empty;
     public string ExternalProvider { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Artist { get; set; } = string.Empty;
     public DownloadStatus Status { get; set; }
     public double Progress { get; set; } // 0.0 to 1.0
     public string? LocalPath { get; set; }

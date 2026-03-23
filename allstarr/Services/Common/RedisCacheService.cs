@@ -249,6 +249,25 @@ public class RedisCacheService
     }
 
     /// <summary>
+    /// Gets all keys matching a pattern.
+    /// </summary>
+    public IEnumerable<string> GetKeysByPattern(string pattern)
+    {
+        if (!IsEnabled) return Array.Empty<string>();
+
+        try
+        {
+            var server = _redis!.GetServer(_redis.GetEndPoints().First());
+            return server.Keys(pattern: pattern).Select(k => (string)k!);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Redis GET KEYS BY PATTERN failed for pattern: {Pattern}", pattern);
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
     /// Deletes all keys matching a pattern (e.g., "search:*").
     /// WARNING: Use with caution as this scans all keys.
     /// </summary>

@@ -81,6 +81,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         
         // Increase timeout for large downloads and slow endpoints
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
+        _minRequestIntervalMs = _squidwtfSettings.MinRequestIntervalMs;
     }
     
 	
@@ -96,131 +97,193 @@ public class SquidWTFDownloadService : BaseDownloadService
 	}
 
 
-    protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
+    private async Task<string> RunDownloadWithFallbackAsync(string trackId, Song song, string quality, string basePath, CancellationToken cancellationToken)
     {
-        var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken);
-        
-        Logger.LogInformation(
-            "Track download info resolved via {Endpoint} (Format: {Format}, Quality: {Quality})",
-            downloadInfo.Endpoint,
-            downloadInfo.MimeType,
-            downloadInfo.AudioQuality);
-        Logger.LogDebug("Resolved SquidWTF CDN download URL: {Url}", downloadInfo.DownloadUrl);
-
-        // Determine extension from MIME type
-        var extension = downloadInfo.MimeType?.ToLower() switch
+        return await _fallbackHelper.TryWithFallbackAsync(async baseUrl =>
         {
-            "audio/flac" => ".flac",
-            "audio/mpeg" => ".mp3",
-            "audio/mp4" => ".m4a",
-            _ => ".flac" // Default to FLAC
-        };
-		
-        // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
-        var artistForPath = song.AlbumArtist ?? song.Artist;
-        // Cache mode uses downloads/cache/ folder, Permanent mode uses downloads/permanent/
-        var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
-            ? Path.Combine("downloads", "cache")
-            : Path.Combine("downloads", "permanent");
-        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "squidwtf", trackId);
-        
-        // Create directories if they don't exist
-        var albumFolder = Path.GetDirectoryName(outputPath)!;
-        EnsureDirectoryExists(albumFolder);
-        
-        // Resolve unique path if file already exists
-        outputPath = PathHelper.ResolveUniquePath(outputPath);
+            var downloadInfo = await FetchTrackDownloadInfoAsync(baseUrl, trackId, quality, cancellationToken);
+            
+            Logger.LogInformation(
+                "Track download info resolved via {Endpoint} (Format: {Format}, Quality: {Quality})",
+                downloadInfo.Endpoint, downloadInfo.MimeType, downloadInfo.AudioQuality);
+            Logger.LogDebug("Resolved SquidWTF CDN download URL: {Url}", downloadInfo.DownloadUrl);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
-        request.Headers.Add("User-Agent", "Mozilla/5.0");
-        request.Headers.Add("Accept", "*/*");
+            var extension = downloadInfo.MimeType?.ToLower() switch
+            {
+                "audio/flac" => ".flac", "audio/mpeg" => ".mp3", "audio/mp4" => ".m4a", _ => ".flac"
+            };
 
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var artistForPath = song.AlbumArtist ?? song.Artist;
+            var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "squidwtf", trackId);
+            
+            var albumFolder = Path.GetDirectoryName(outputPath)!;
+            EnsureDirectoryExists(albumFolder);
+            
+            if (basePath.EndsWith("transcoded") && IOFile.Exists(outputPath))
+            {
+                IOFile.SetLastWriteTime(outputPath, DateTime.UtcNow);
+                Logger.LogInformation("Quality override cache hit: {Path}", outputPath);
+                return outputPath;
+            }
+            
+            outputPath = PathHelper.ResolveUniquePath(outputPath);
 
-        response.EnsureSuccessStatusCode();
-		
-        // Download directly (no decryption needed - squid.wtf handles everything)
-        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var outputFile = IOFile.Create(outputPath);
-        
-		await responseStream.CopyToAsync(outputFile, cancellationToken);
-        
-        // Close file before writing metadata
-        await outputFile.DisposeAsync();
-        
-		// Start Spotify ID conversion in background (for lyrics support)
-		// This doesn't block streaming - lyrics endpoint will fetch it on-demand if needed
-		_ = Task.Run(async () =>
-		{
-			try
-			{
-				var spotifyId = await _odesliService.ConvertTidalToSpotifyIdAsync(trackId, CancellationToken.None);
-				if (!string.IsNullOrEmpty(spotifyId))
-				{
-					Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", trackId, spotifyId);
-					// Spotify ID is cached by Odesli service for future lyrics requests
-				}
-			}
-			catch (Exception ex)
-			{
-				Logger.LogDebug(ex, "Background Spotify ID conversion failed for Tidal/{TrackId}", trackId);
-			}
-		});
+            using var req = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
+            req.Headers.Add("User-Agent", "Mozilla/5.0");
+            req.Headers.Add("Accept", "*/*");
+            var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            res.EnsureSuccessStatusCode();
 
-        // Write metadata and cover art (without Spotify ID - it's only needed for lyrics)
-        await WriteMetadataAsync(outputPath, song, cancellationToken);
+            await using var responseStream = await res.Content.ReadAsStreamAsync(cancellationToken);
+            await using var outputFile = IOFile.Create(outputPath);
+            await responseStream.CopyToAsync(outputFile, cancellationToken);
+            await outputFile.DisposeAsync();
 
-        return outputPath;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var spotifyId = await _odesliService.ConvertTidalToSpotifyIdAsync(trackId, CancellationToken.None);
+                    if (!string.IsNullOrEmpty(spotifyId))
+                    {
+                        Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", trackId, spotifyId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogDebug(ex, "Background Spotify ID conversion failed for Tidal/{TrackId}", trackId);
+                }
+            });
+
+            await WriteMetadataAsync(outputPath, song, cancellationToken);
+            return outputPath;
+        });
     }
 
-    #endregion	
-	
-	#region SquidWTF API Methods
-	
-    /// <summary>
-    /// Gets track download information from hifi-api /track/ endpoint.
-    /// Per hifi-api spec: GET /track/?id={trackId}&quality={quality}
-    /// Returns: { "version": "2.0", "data": { trackId, assetPresentation, audioMode, audioQuality,
-    ///   manifestMimeType, manifestHash, manifest (base64), albumReplayGain, trackReplayGain, bitDepth, sampleRate } }
-    /// The manifest is base64-encoded JSON containing: { mimeType, codecs, encryptionType, urls: [downloadUrl] }
-    /// Quality options: HI_RES_LOSSLESS (24-bit/192kHz FLAC), LOSSLESS (16-bit/44.1kHz FLAC), HIGH (320kbps AAC), LOW (96kbps AAC)
-    /// </summary>
-    private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken)
+    protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
         return await QueueRequestAsync(async () =>
         {
             Exception? lastException = null;
             var qualityOrder = BuildQualityFallbackOrder(_squidwtfSettings.Quality);
+            var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
+                ? Path.Combine("downloads", "cache") : Path.Combine("downloads", "permanent");
 
             foreach (var quality in qualityOrder)
             {
                 try
                 {
-                    return await _fallbackHelper.TryWithFallbackAsync(baseUrl =>
-                        FetchTrackDownloadInfoAsync(baseUrl, trackId, quality, cancellationToken));
+                    return await RunDownloadWithFallbackAsync(trackId, song, quality, basePath, cancellationToken);
                 }
                 catch (Exception ex)
                 {
                     lastException = ex;
-
                     if (!string.Equals(quality, qualityOrder[^1], StringComparison.Ordinal))
                     {
-                        Logger.LogWarning(
-                            "Track {TrackId} unavailable at SquidWTF quality {Quality}: {Error}. Trying lower quality",
-                            trackId,
-                            quality,
-                            DescribeException(ex));
-                        Logger.LogDebug(ex,
-                            "Detailed SquidWTF quality failure for track {TrackId} at quality {Quality}",
-                            trackId,
-                            quality);
+                        Logger.LogWarning("Track {TrackId} unavailable at SquidWTF quality {Quality}: {Error}. Trying lower quality", trackId, quality, DescribeException(ex));
                     }
                 }
             }
-
-            throw lastException ?? new Exception($"Unable to fetch SquidWTF download info for track {trackId}");
+            throw lastException ?? new Exception($"Unable to download track {trackId}");
         });
     }
+
+    #endregion	
+	
+    #region Quality Override Support
+    
+    /// <summary>
+    /// Downloads a track at a specific quality tier, capped at the .env quality ceiling.
+    /// The .env quality is the maximum — client requests can only go equal or lower.
+    /// 
+    /// Quality hierarchy (highest to lowest): HI_RES_LOSSLESS > LOSSLESS > HIGH > LOW
+    /// 
+    /// Examples:
+    ///   env=HI_RES_LOSSLESS: Original→HI_RES_LOSSLESS, High→HIGH, Low→LOW
+    ///   env=LOSSLESS:        Original→LOSSLESS,         High→HIGH, Low→LOW
+    ///   env=HIGH:            Original→HIGH,             High→HIGH, Low→LOW
+    ///   env=LOW:             Original→LOW,              High→LOW,  Low→LOW
+    /// </summary>
+    protected override async Task<string> DownloadTrackWithQualityAsync(
+        string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        if (quality == StreamQuality.Original)
+        {
+            return await DownloadTrackAsync(trackId, song, cancellationToken);
+        }
+
+        // Map StreamQuality to SquidWTF quality string, capped at .env ceiling
+        var envQuality = NormalizeSquidWTFQuality(_squidwtfSettings.Quality);
+        var squidQuality = MapStreamQualityToSquidWTF(quality, envQuality);
+
+        Logger.LogInformation(
+            "Quality override: StreamQuality.{Quality} → SquidWTF quality '{SquidQuality}' (env ceiling: {EnvQuality}) for track {TrackId}",
+            quality, squidQuality, envQuality, trackId);
+
+        var basePath = Path.Combine("downloads", "transcoded");
+
+        return await QueueRequestAsync(async () =>
+        {
+            return await RunDownloadWithFallbackAsync(trackId, song, squidQuality, basePath, cancellationToken);
+        });
+    }
+
+    /// <summary>
+    /// Normalizes the .env quality string to a standard SquidWTF quality level.
+    /// Maps various aliases (HI_RES, FLAC, etc.) to canonical names.
+    /// </summary>
+    private static string NormalizeSquidWTFQuality(string? quality)
+    {
+        if (string.IsNullOrEmpty(quality)) return "LOSSLESS";
+        
+        return quality.ToUpperInvariant() switch
+        {
+            "HI_RES" or "HI_RES_LOSSLESS" => "HI_RES_LOSSLESS",
+            "FLAC" or "LOSSLESS" => "LOSSLESS",
+            "HIGH" => "HIGH",
+            "LOW" => "LOW",
+            _ => "LOSSLESS"
+        };
+    }
+
+    /// <summary>
+    /// Maps a StreamQuality tier to a SquidWTF quality string, capped at the .env ceiling.
+    /// The .env quality is the maximum — client requests can only go equal or lower.
+    /// </summary>
+    private static string MapStreamQualityToSquidWTF(StreamQuality streamQuality, string envQuality)
+    {
+        // Quality ranking from highest to lowest
+        var ranking = new[] { "HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW" };
+        var envIndex = Array.IndexOf(ranking, envQuality);
+        if (envIndex < 0) envIndex = 1; // Default to LOSSLESS if unknown
+
+        // Map StreamQuality to the "ideal" SquidWTF quality
+        var idealQuality = streamQuality switch
+        {
+            StreamQuality.Original => envQuality,  // Lossless client selection → use .env setting
+            StreamQuality.High => "HIGH",           // 320/256/192K → HIGH (320kbps AAC)
+            StreamQuality.Low => "LOW",             // 128/64K → LOW (96kbps AAC)
+            _ => envQuality
+        };
+
+        // Cap: if the ideal quality is higher than env, clamp down to env
+        // Lower array index = higher quality
+        var idealIndex = Array.IndexOf(ranking, idealQuality);
+        if (idealIndex < 0) idealIndex = envIndex;
+        
+        if (idealIndex < envIndex)
+        {
+            return envQuality;
+        }
+
+        return idealQuality;
+    }
+    
+    #endregion
+	
+	#region SquidWTF API Methods
+	
+    // Removed GetTrackDownloadInfoAsync as it's now integrated inside RunDownloadWithFallbackAsync
 
     private async Task<DownloadResult> FetchTrackDownloadInfoAsync(
         string baseUrl,

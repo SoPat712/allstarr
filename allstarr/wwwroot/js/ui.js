@@ -536,8 +536,12 @@ export function updateConfigUI(data) {
     data.deezer.arl || "(not set)";
   document.getElementById("config-deezer-quality").textContent =
     data.deezer.quality;
+  document.getElementById("config-deezer-ratelimit").textContent =
+    (data.deezer.minRequestIntervalMs || 200) + " ms";
   document.getElementById("config-squid-quality").textContent =
     data.squidWtf.quality;
+  document.getElementById("config-squid-ratelimit").textContent =
+    (data.squidWtf.minRequestIntervalMs || 200) + " ms";
   document.getElementById("config-musicbrainz-enabled").textContent = data
     .musicBrainz.enabled
     ? "Yes"
@@ -546,6 +550,8 @@ export function updateConfigUI(data) {
     data.qobuz.userAuthToken || "(not set)";
   document.getElementById("config-qobuz-quality").textContent =
     data.qobuz.quality || "FLAC";
+  document.getElementById("config-qobuz-ratelimit").textContent =
+    (data.qobuz.minRequestIntervalMs || 200) + " ms";
   document.getElementById("config-jellyfin-url").textContent =
     data.jellyfin.url || "-";
   document.getElementById("config-jellyfin-api-key").textContent =

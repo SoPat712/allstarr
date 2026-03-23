@@ -57,6 +57,7 @@ public class DeezerDownloadService : BaseDownloadService
         _arl = deezer.Arl;
         _arlFallback = deezer.ArlFallback;
         _preferredQuality = deezer.Quality;
+        _minRequestIntervalMs = deezer.MinRequestIntervalMs;
     }
 
     #region BaseDownloadService Implementation
@@ -118,10 +119,10 @@ public class DeezerDownloadService : BaseDownloadService
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
             
-            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var res = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            res.EnsureSuccessStatusCode();
+            return res;
         }, Logger);
-
-        response.EnsureSuccessStatusCode();
 
         // Download and decrypt
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -136,6 +137,140 @@ public class DeezerDownloadService : BaseDownloadService
         await WriteMetadataAsync(outputPath, song, cancellationToken);
 
         return outputPath;
+    }
+
+    #endregion
+
+    #region Quality Override Support
+    
+    /// <summary>
+    /// Downloads a track at a specific quality tier, capped at the .env quality ceiling.
+    /// Deezer quality hierarchy: FLAC > MP3_320 > MP3_128
+    /// 
+    /// Examples:
+    ///   env=FLAC:    Original→FLAC,    High→MP3_320, Low→MP3_128
+    ///   env=MP3_320: Original→MP3_320, High→MP3_320, Low→MP3_128
+    ///   env=MP3_128: Original→MP3_128, High→MP3_128, Low→MP3_128
+    /// </summary>
+    protected override async Task<string> DownloadTrackWithQualityAsync(
+        string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        if (quality == StreamQuality.Original)
+        {
+            return await DownloadTrackAsync(trackId, song, cancellationToken);
+        }
+
+        // Map StreamQuality to Deezer quality, capped at .env ceiling
+        var envQuality = NormalizeDeezerQuality(_preferredQuality);
+        var deezerQuality = MapStreamQualityToDeezer(quality, envQuality);
+
+        Logger.LogInformation(
+            "Quality override: StreamQuality.{Quality} → Deezer quality '{DeezerQuality}' (env ceiling: {EnvQuality}) for track {TrackId}",
+            quality, deezerQuality, envQuality, trackId);
+
+        // Use the existing download logic with the overridden quality
+        var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken, deezerQuality);
+
+        Logger.LogInformation(
+            "Quality override download info resolved (Format: {Format})",
+            downloadInfo.Format);
+
+        // Determine extension based on format
+        var extension = downloadInfo.Format?.ToUpper() switch
+        {
+            "FLAC" => ".flac",
+            _ => ".mp3"
+        };
+
+        // Write to transcoded cache directory: {downloads}/transcoded/Artist/Album/song.ext
+        // These files are cleaned up by CacheCleanupService based on CACHE_TRANSCODE_MINUTES TTL
+        var artistForPath = song.AlbumArtist ?? song.Artist;
+        var basePath = Path.Combine("downloads", "transcoded");
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "deezer", trackId);
+        
+        // Create directories if they don't exist
+        var albumFolder = Path.GetDirectoryName(outputPath)!;
+        EnsureDirectoryExists(albumFolder);
+        
+        // If the file already exists in transcoded cache, return it directly
+        if (IOFile.Exists(outputPath))
+        {
+            // Touch the file to extend its cache lifetime
+            IOFile.SetLastWriteTime(outputPath, DateTime.UtcNow);
+            Logger.LogInformation("Quality override cache hit: {Path}", outputPath);
+            return outputPath;
+        }
+
+        // Download the encrypted file
+        var response = await RetryHelper.RetryWithBackoffAsync(async () =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
+            request.Headers.Add("User-Agent", "Mozilla/5.0");
+            request.Headers.Add("Accept", "*/*");
+            
+            var res = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            res.EnsureSuccessStatusCode();
+            return res;
+        }, Logger);
+
+        // Download and decrypt (Deezer uses Blowfish CBC encryption)
+        await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var outputFile = IOFile.Create(outputPath);
+        await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
+        
+        // Close file before writing metadata
+        await outputFile.DisposeAsync();
+
+        // Write metadata and cover art
+        await WriteMetadataAsync(outputPath, song, cancellationToken);
+
+        return outputPath;
+    }
+
+    /// <summary>
+    /// Normalizes the .env quality string to a standard Deezer quality level.
+    /// </summary>
+    private static string NormalizeDeezerQuality(string? quality)
+    {
+        if (string.IsNullOrEmpty(quality)) return "FLAC";
+        
+        return quality.ToUpperInvariant() switch
+        {
+            "FLAC" => "FLAC",
+            "MP3_320" or "320" => "MP3_320",
+            "MP3_128" or "128" => "MP3_128",
+            _ => "FLAC"
+        };
+    }
+
+    /// <summary>
+    /// Maps a StreamQuality tier to a Deezer quality string, capped at the .env ceiling.
+    /// </summary>
+    private static string MapStreamQualityToDeezer(StreamQuality streamQuality, string envQuality)
+    {
+        // Quality ranking from highest to lowest
+        var ranking = new[] { "FLAC", "MP3_320", "MP3_128" };
+        var envIndex = Array.IndexOf(ranking, envQuality);
+        if (envIndex < 0) envIndex = 0; // Default to FLAC if unknown
+
+        var idealQuality = streamQuality switch
+        {
+            StreamQuality.Original => envQuality,
+            StreamQuality.High => "MP3_320",
+            StreamQuality.Low => "MP3_128",
+            _ => envQuality
+        };
+
+        // Cap at env ceiling (lower index = higher quality)
+        var idealIndex = Array.IndexOf(ranking, idealQuality);
+        if (idealIndex < 0) idealIndex = envIndex;
+        
+        if (idealIndex < envIndex)
+        {
+            return envQuality;
+        }
+
+        return idealQuality;
     }
 
     #endregion
@@ -185,7 +320,7 @@ public class DeezerDownloadService : BaseDownloadService
         }, Logger);
     }
 
-    private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken)
+    private async Task<DownloadResult> GetTrackDownloadInfoAsync(string trackId, CancellationToken cancellationToken, string? qualityOverride = null)
     {
         var tryDownload = async (string arl) =>
         {
@@ -213,8 +348,8 @@ public class DeezerDownloadService : BaseDownloadService
                     : "";
 
                 // Get download URL via media API
-                // Build format list based on preferred quality
-                var formatsList = BuildFormatsList(_preferredQuality);
+                // Build format list based on preferred quality (or overridden quality for transcoding)
+                var formatsList = BuildFormatsList(qualityOverride ?? _preferredQuality);
                 
                 var mediaRequest = new
                 {

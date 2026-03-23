@@ -112,8 +112,8 @@ public class Song
     public int? ExplicitContentLyrics { get; set; }
     
     /// <summary>
-    /// Raw Jellyfin metadata (MediaSources, etc.) for local tracks
-    /// Preserved to maintain bitrate and other technical details
+    /// Raw Jellyfin metadata for local tracks, including MediaSources and cached item snapshots
+    /// Preserved to maintain full Jellyfin object fidelity across cache round-trips
     /// </summary>
     public Dictionary<string, object?>? JellyfinMetadata { get; set; }
 }
