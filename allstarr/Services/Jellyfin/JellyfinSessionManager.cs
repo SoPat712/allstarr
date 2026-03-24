@@ -297,6 +297,25 @@ public class JellyfinSessionManager : IDisposable
     }
 
     /// <summary>
+    /// Returns current active playback states for tracked sessions.
+    /// </summary>
+    public IReadOnlyList<ActivePlaybackState> GetActivePlaybackStates(TimeSpan maxAge)
+    {
+        var cutoff = DateTime.UtcNow - maxAge;
+
+        return _sessions.Values
+            .Where(session =>
+                !string.IsNullOrWhiteSpace(session.LastPlayingItemId) &&
+                session.LastActivity >= cutoff)
+            .Select(session => new ActivePlaybackState(
+                session.DeviceId,
+                session.LastPlayingItemId!,
+                session.LastPlayingPositionTicks ?? 0,
+                session.LastActivity))
+            .ToList();
+    }
+
+    /// <summary>
     /// Marks a session as potentially ended (e.g., after playback stops).
     /// Jellyfin should decide when the upstream playback session expires.
     /// </summary>
@@ -677,6 +696,12 @@ public class JellyfinSessionManager : IDisposable
         public string? LastExplicitStopItemId { get; set; }
         public DateTime? LastExplicitStopAtUtc { get; set; }
     }
+
+    public sealed record ActivePlaybackState(
+        string DeviceId,
+        string ItemId,
+        long PositionTicks,
+        DateTime LastActivity);
 
     public void Dispose()
     {

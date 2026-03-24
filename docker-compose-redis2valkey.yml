@@ -6,7 +6,74 @@ services:
     # Valkey is only accessible internally - no external port exposure
     expose:
       - "6379"
-    command: valkey-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes
+    # Use a self-healing entrypoint to automatically handle Redis -> Valkey migration pitfalls (like RDB format 12 errors)
+    # Only delete Valkey/Redis persistence artifacts so misconfigured REDIS_DATA_PATH values do not wipe app cache files.
+    entrypoint:
+      - "sh"
+      - "-ec"
+      - |
+        log_file=/tmp/valkey-startup.log
+        log_pipe=/tmp/valkey-startup.pipe
+        server_pid=
+        tee_pid=
+
+        forward_signal() {
+          if [ -n "$$server_pid" ]; then
+            kill -TERM "$$server_pid" 2>/dev/null || true
+            wait "$$server_pid" 2>/dev/null || true
+          fi
+
+          if [ -n "$$tee_pid" ]; then
+            kill "$$tee_pid" 2>/dev/null || true
+            wait "$$tee_pid" 2>/dev/null || true
+          fi
+
+          rm -f "$$log_pipe"
+          exit 143
+        }
+
+        trap forward_signal TERM INT
+
+        start_valkey() {
+          rm -f "$$log_file" "$$log_pipe"
+          : > "$$log_file"
+          mkfifo "$$log_pipe"
+
+          tee -a "$$log_file" < "$$log_pipe" &
+          tee_pid=$$!
+
+          valkey-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes > "$$log_pipe" 2>&1 &
+          server_pid=$$!
+
+          wait "$$server_pid"
+          status=$$?
+
+          wait "$$tee_pid" 2>/dev/null || true
+          rm -f "$$log_pipe"
+          server_pid=
+          tee_pid=
+
+          return "$$status"
+        }
+
+        is_incompatible_persistence_error() {
+          grep -Eq "Can't handle RDB format version|Error reading the RDB base file|AOF loading aborted" "$$log_file"
+        }
+
+        cleanup_incompatible_persistence() {
+          echo 'Valkey failed to start (likely incompatible Redis persistence files). Removing persisted RDB/AOF artifacts and retrying...'
+          rm -f /data/*.rdb /data/*.aof /data/*.manifest
+          rm -rf /data/appendonlydir /data/appendonlydir-*
+        }
+
+        if ! start_valkey; then
+          if is_incompatible_persistence_error; then
+            cleanup_incompatible_persistence
+            exec valkey-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes
+          fi
+
+          exit 1
+        fi
     healthcheck:
       # Use CMD-SHELL for broader compatibility in some environments
       test: ["CMD-SHELL", "valkey-cli ping || exit 1"]
