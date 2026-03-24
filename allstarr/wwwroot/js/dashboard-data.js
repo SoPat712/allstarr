@@ -424,6 +424,9 @@ function renderDownloadActivity(downloads) {
   };
 
   const html = downloads.map(d => {
+    const downloadProgress = clampProgress(d.progress);
+    const playbackProgress = clampProgress(d.playbackProgress);
+
     // Determine elapsed/duration text
     let timeText = "";
     if (d.startedAt) {
@@ -433,9 +436,37 @@ function renderDownloadActivity(downloads) {
       timeText = diffSecs < 60 ? `${diffSecs}s` : `${Math.floor(diffSecs/60)}m ${diffSecs%60}s`;
     }
 
+    const progressMeta = [];
+    if (typeof d.durationSeconds === "number" && typeof d.playbackPositionSeconds === "number") {
+      progressMeta.push(`${formatSeconds(d.playbackPositionSeconds)} / ${formatSeconds(d.durationSeconds)}`);
+    } else if (typeof d.durationSeconds === "number") {
+      progressMeta.push(formatSeconds(d.durationSeconds));
+    }
+    if (d.requestedForStreaming) {
+      progressMeta.push("stream");
+    }
+
+    const progressMetaText = progressMeta.length > 0
+      ? `<div class="download-progress-meta">${progressMeta.map(escapeHtml).join(" • ")}</div>`
+      : "";
+
+    const progressBar = `
+      <div class="download-progress-bar" aria-hidden="true">
+        <div class="download-progress-buffer" style="width:${downloadProgress * 100}%"></div>
+        <div class="download-progress-playback" style="width:${playbackProgress * 100}%"></div>
+      </div>
+      ${progressMetaText}
+    `;
+
     const title = d.title || 'Unknown Title';
     const artist = d.artist || 'Unknown Artist';
     const errorText = d.errorMessage ? `<div style="color:var(--error); font-size:0.8rem; margin-top:4px;">${escapeHtml(d.errorMessage)}</div>` : '';
+    const streamBadge = d.requestedForStreaming
+      ? '<span class="download-queue-badge">Stream</span>'
+      : '';
+    const playingBadge = d.isPlaying
+      ? '<span class="download-queue-badge is-playing">Playing</span>'
+      : '';
 
     return `
       <div class="download-queue-item">
@@ -444,7 +475,10 @@ function renderDownloadActivity(downloads) {
           <div class="download-queue-meta">
             <span class="download-queue-artist">${escapeHtml(artist)}</span>
             <span class="download-queue-provider">${escapeHtml(d.externalProvider)}</span>
+            ${streamBadge}
+            ${playingBadge}
           </div>
+          ${progressBar}
           ${errorText}
         </div>
         <div class="download-queue-status">
@@ -456,6 +490,24 @@ function renderDownloadActivity(downloads) {
   }).join('');
 
   container.innerHTML = html;
+}
+
+function clampProgress(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function formatSeconds(totalSeconds) {
+  if (typeof totalSeconds !== "number" || Number.isNaN(totalSeconds) || totalSeconds < 0) {
+    return "0:00";
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function initDashboardData(options) {

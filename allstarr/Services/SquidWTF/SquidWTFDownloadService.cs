@@ -101,6 +101,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         return await _fallbackHelper.TryWithFallbackAsync(async baseUrl =>
         {
+            var songId = BuildTrackedSongId(trackId);
             var downloadInfo = await FetchTrackDownloadInfoAsync(baseUrl, trackId, quality, cancellationToken);
             
             Logger.LogInformation(
@@ -136,8 +137,29 @@ public class SquidWTFDownloadService : BaseDownloadService
 
             await using var responseStream = await res.Content.ReadAsStreamAsync(cancellationToken);
             await using var outputFile = IOFile.Create(outputPath);
-            await responseStream.CopyToAsync(outputFile, cancellationToken);
+            var totalBytes = res.Content.Headers.ContentLength;
+            var buffer = new byte[81920];
+            long totalBytesRead = 0;
+
+            while (true)
+            {
+                var bytesRead = await responseStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                if (bytesRead <= 0)
+                {
+                    break;
+                }
+
+                await outputFile.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                totalBytesRead += bytesRead;
+
+                if (totalBytes.HasValue && totalBytes.Value > 0)
+                {
+                    SetDownloadProgress(songId, (double)totalBytesRead / totalBytes.Value);
+                }
+            }
+
             await outputFile.DisposeAsync();
+            SetDownloadProgress(songId, 1.0);
 
             _ = Task.Run(async () =>
             {
@@ -166,8 +188,8 @@ public class SquidWTFDownloadService : BaseDownloadService
         {
             Exception? lastException = null;
             var qualityOrder = BuildQualityFallbackOrder(_squidwtfSettings.Quality);
-            var basePath = SubsonicSettings.StorageMode == StorageMode.Cache 
-                ? Path.Combine("downloads", "cache") : Path.Combine("downloads", "permanent");
+            var basePath = CurrentStorageMode == StorageMode.Cache 
+                ? Path.Combine(DownloadPath, "cache") : Path.Combine(DownloadPath, "permanent");
 
             foreach (var quality in qualityOrder)
             {

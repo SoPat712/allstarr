@@ -91,6 +91,47 @@ public class JellyfinSessionManagerTests
         Assert.DoesNotContain("/Sessions/Logout", requestedPaths);
     }
 
+    [Fact]
+    public async Task GetActivePlaybackStates_ReturnsTrackedPlayingItems()
+    {
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+
+        var settings = new JellyfinSettings
+        {
+            Url = "http://127.0.0.1:1",
+            ApiKey = "server-api-key",
+            ClientName = "Allstarr",
+            DeviceName = "Allstarr",
+            DeviceId = "allstarr",
+            ClientVersion = "1.0"
+        };
+
+        var proxyService = CreateProxyService(handler, settings);
+        using var manager = new JellyfinSessionManager(
+            proxyService,
+            Options.Create(settings),
+            NullLogger<JellyfinSessionManager>.Instance);
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] =
+                "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
+        };
+
+        var ensured = await manager.EnsureSessionAsync("dev-123", "Feishin", "Desktop", "1.0", headers);
+        Assert.True(ensured);
+
+        manager.UpdatePlayingItem("dev-123", "ext-squidwtf-song-35734823", 45 * TimeSpan.TicksPerSecond);
+
+        var states = manager.GetActivePlaybackStates(TimeSpan.FromMinutes(1));
+
+        var state = Assert.Single(states);
+        Assert.Equal("dev-123", state.DeviceId);
+        Assert.Equal("ext-squidwtf-song-35734823", state.ItemId);
+        Assert.Equal(45 * TimeSpan.TicksPerSecond, state.PositionTicks);
+    }
+
     private static JellyfinProxyService CreateProxyService(HttpMessageHandler handler, JellyfinSettings settings)
     {
         var httpClientFactory = new TestHttpClientFactory(handler);

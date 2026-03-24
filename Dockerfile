@@ -13,6 +13,7 @@ COPY allstarr/ allstarr/
 COPY allstarr.Tests/ allstarr.Tests/
 
 RUN dotnet publish allstarr/allstarr.csproj -c Release -o /app/publish
+COPY .env.example /app/publish/
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0

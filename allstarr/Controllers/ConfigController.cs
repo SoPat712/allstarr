@@ -474,70 +474,101 @@ public class ConfigController : ControllerBase
                 _logger.LogWarning(".env file not found at {Path}, creating new file", _helperService.GetEnvFilePath());
             }
 
-            // Read current .env file or create new one
-            var envContent = new Dictionary<string, string>();
+            var envFilePath = _helperService.GetEnvFilePath();
+            var envLines = new List<string>();
 
-            if (System.IO.File.Exists(_helperService.GetEnvFilePath()))
+            if (System.IO.File.Exists(envFilePath))
             {
-                var lines = await System.IO.File.ReadAllLinesAsync(_helperService.GetEnvFilePath());
-                foreach (var line in lines)
+                envLines = (await System.IO.File.ReadAllLinesAsync(envFilePath)).ToList();
+            }
+            else
+            {
+                // Fallback to reading .env.example if .env doesn't exist to preserve structure
+                var examplePath = Path.Combine(Directory.GetCurrentDirectory(), ".env.example");
+                if (!System.IO.File.Exists(examplePath))
                 {
-                    if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith('#'))
-                        continue;
-
-                    var eqIndex = line.IndexOf('=');
-                    if (eqIndex > 0)
-                    {
-                        var key = line[..eqIndex].Trim();
-                        var value = line[(eqIndex + 1)..].Trim();
-
-                        // Remove surrounding quotes if present (for proper re-quoting)
-                        if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2)
-                        {
-                            value = value[1..^1];
-                        }
-
-                        envContent[key] = value;
-                    }
+                    examplePath = Path.Combine(Directory.GetParent(Directory.GetCurrentDirectory())?.FullName ?? "", ".env.example");
                 }
-                _logger.LogDebug("Loaded {Count} existing env vars from {Path}", envContent.Count, _helperService.GetEnvFilePath());
+                
+                if (System.IO.File.Exists(examplePath))
+                {
+                    _logger.LogInformation("Creating new .env from .env.example to preserve formatting");
+                    envLines = (await System.IO.File.ReadAllLinesAsync(examplePath)).ToList();
+                }
             }
 
             // Apply updates with validation
             var appliedUpdates = new List<string>();
-            foreach (var (key, value) in request.Updates)
+            var updatesToProcess = new Dictionary<string, string>(request.Updates);
+
+            // Auto-set cookie date when Spotify session cookie is updated
+            if (updatesToProcess.TryGetValue("SPOTIFY_API_SESSION_COOKIE", out var cookieVal) && !string.IsNullOrEmpty(cookieVal))
             {
-                // Validate key format
+                updatesToProcess["SPOTIFY_API_SESSION_COOKIE_SET_DATE"] = DateTime.UtcNow.ToString("o");
+                _logger.LogInformation("Auto-setting SPOTIFY_API_SESSION_COOKIE_SET_DATE");
+            }
+
+            foreach (var (key, value) in updatesToProcess)
+            {
                 if (!AdminHelperService.IsValidEnvKey(key))
                 {
                     _logger.LogWarning("Invalid env key rejected: {Key}", key);
                     return BadRequest(new { error = $"Invalid environment variable key: {key}" });
                 }
 
-                // IMPORTANT: Docker Compose does NOT need quotes in .env files
-                // It handles special characters correctly without them
-                // When quotes are used, they become part of the value itself
-                envContent[key] = value;
                 appliedUpdates.Add(key);
-                _logger.LogInformation("  Setting {Key} = {Value}", key,
-                    key.Contains("COOKIE") || key.Contains("TOKEN") || key.Contains("KEY") || key.Contains("ARL") || key.Contains("PASSWORD")
-                        ? "***" + (value.Length > 8 ? value[^8..] : "")
-                        : value);
+                
+                var maskedValue = key.Contains("COOKIE") || key.Contains("TOKEN") || key.Contains("KEY") || key.Contains("ARL") || key.Contains("PASSWORD")
+                    ? "***" + (value.Length > 8 ? value[^8..] : "")
+                    : value;
+                _logger.LogInformation("  Setting {Key} = {Value}", key, maskedValue);
 
-                // Auto-set cookie date when Spotify session cookie is updated
-                if (key == "SPOTIFY_API_SESSION_COOKIE" && !string.IsNullOrEmpty(value))
+                var keyPrefix = $"{key}=";
+                var found = false;
+
+                // 1. Look for active exact key
+                for (int i = 0; i < envLines.Count; i++)
                 {
-                    var dateKey = "SPOTIFY_API_SESSION_COOKIE_SET_DATE";
-                    var dateValue = DateTime.UtcNow.ToString("o"); // ISO 8601 format
-                    envContent[dateKey] = dateValue;
-                    appliedUpdates.Add(dateKey);
-                    _logger.LogInformation("  Auto-setting {Key} to {Value}", dateKey, dateValue);
+                    var trimmedLine = envLines[i].TrimStart();
+                    if (trimmedLine.StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        envLines[i] = $"{key}={value}";
+                        found = true;
+                        break;
+                    }
+                }
+
+                // 2. Look for commented out key
+                if (!found)
+                {
+                    var commentedPrefix1 = $"# {key}=";
+                    var commentedPrefix2 = $"#{key}=";
+                    
+                    for (int i = 0; i < envLines.Count; i++)
+                    {
+                        var trimmedLine = envLines[i].TrimStart();
+                        if (trimmedLine.StartsWith(commentedPrefix1, StringComparison.OrdinalIgnoreCase) || 
+                            trimmedLine.StartsWith(commentedPrefix2, StringComparison.OrdinalIgnoreCase))
+                        {
+                            envLines[i] = $"{key}={value}";
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                // 3. Append to end of file if entirely missing
+                if (!found)
+                {
+                    if (envLines.Count > 0 && !string.IsNullOrWhiteSpace(envLines.Last()))
+                    {
+                        envLines.Add("");
+                    }
+                    envLines.Add($"{key}={value}");
                 }
             }
 
-            // Write back to .env file (no quoting needed - Docker Compose handles special chars)
-            var newContent = string.Join("\n", envContent.Select(kv => $"{kv.Key}={kv.Value}"));
-            await System.IO.File.WriteAllTextAsync(_helperService.GetEnvFilePath(), newContent + "\n");
+            await System.IO.File.WriteAllLinesAsync(envFilePath, envLines);
 
             _logger.LogDebug("Config file updated successfully at {Path}", _helperService.GetEnvFilePath());
 

@@ -39,6 +39,30 @@ public abstract class BaseDownloadService : IDownloadService
     private DateTime _lastRequestTime = DateTime.MinValue;
     protected int _minRequestIntervalMs = 200;
     
+    protected StorageMode CurrentStorageMode
+    {
+        get
+        {
+            var backendType = Configuration["Backend:Type"] ?? "Subsonic";
+            var modeStr = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase)
+                ? Configuration["Jellyfin:StorageMode"] ?? Configuration["Subsonic:StorageMode"] ?? "Permanent"
+                : Configuration["Subsonic:StorageMode"] ?? "Permanent";
+            return Enum.TryParse<StorageMode>(modeStr, true, out var result) ? result : StorageMode.Permanent;
+        }
+    }
+
+    protected DownloadMode CurrentDownloadMode
+    {
+        get
+        {
+            var backendType = Configuration["Backend:Type"] ?? "Subsonic";
+            var modeStr = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase)
+                ? Configuration["Jellyfin:DownloadMode"] ?? Configuration["Subsonic:DownloadMode"] ?? "Track"
+                : Configuration["Subsonic:DownloadMode"] ?? "Track";
+            return Enum.TryParse<DownloadMode>(modeStr, true, out var result) ? result : DownloadMode.Track;
+        }
+    }
+
     /// <summary>
     /// Lazy-loaded PlaylistSyncService to avoid circular dependency
     /// </summary>
@@ -105,7 +129,12 @@ public abstract class BaseDownloadService : IDownloadService
     /// </summary>
     public async Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        return await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, cancellationToken);
+        return await DownloadSongInternalAsync(
+            externalProvider,
+            externalId,
+            triggerAlbumDownload: true,
+            requestedForStreaming: false,
+            cancellationToken);
     }
 
     
@@ -129,7 +158,7 @@ public abstract class BaseDownloadService : IDownloadService
                 Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
 
                 // Update write time for cache cleanup (extends cache lifetime)
-                if (SubsonicSettings.StorageMode == StorageMode.Cache)
+                if (CurrentStorageMode == StorageMode.Cache)
                 {
                     IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
                 }
@@ -152,7 +181,12 @@ public abstract class BaseDownloadService : IDownloadService
                 // IMPORTANT: Use CancellationToken.None for the actual download
                 // This ensures downloads complete server-side even if the client cancels the request
                 // The client can request the file again later once it's ready
-                localPath = await DownloadSongInternalAsync(externalProvider, externalId, triggerAlbumDownload: true, CancellationToken.None);
+                localPath = await DownloadSongInternalAsync(
+                    externalProvider,
+                    externalId,
+                    triggerAlbumDownload: true,
+                    requestedForStreaming: true,
+                    CancellationToken.None);
                 var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
                 Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
 
@@ -295,6 +329,24 @@ public abstract class BaseDownloadService : IDownloadService
     }
     
     public abstract Task<bool> IsAvailableAsync();
+
+    protected string BuildTrackedSongId(string externalId)
+    {
+        return BuildTrackedSongId(ProviderName, externalId);
+    }
+
+    protected static string BuildTrackedSongId(string externalProvider, string externalId)
+    {
+        return $"ext-{externalProvider}-song-{externalId}";
+    }
+
+    protected void SetDownloadProgress(string songId, double progress)
+    {
+        if (ActiveDownloads.TryGetValue(songId, out var info))
+        {
+            info.Progress = Math.Clamp(progress, 0d, 1d);
+        }
+    }
     
     public void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId)
     {
@@ -371,15 +423,20 @@ public abstract class BaseDownloadService : IDownloadService
     /// <summary>
     /// Internal method for downloading a song with control over album download triggering
     /// </summary>
-    protected async Task<string> DownloadSongInternalAsync(string externalProvider, string externalId, bool triggerAlbumDownload, CancellationToken cancellationToken = default)
+    protected async Task<string> DownloadSongInternalAsync(
+        string externalProvider,
+        string externalId,
+        bool triggerAlbumDownload,
+        bool requestedForStreaming = false,
+        CancellationToken cancellationToken = default)
     {
         if (externalProvider != ProviderName)
         {
             throw new NotSupportedException($"Provider '{externalProvider}' is not supported");
         }
 
-        var songId = $"ext-{externalProvider}-{externalId}";
-        var isCache = SubsonicSettings.StorageMode == StorageMode.Cache;
+        var songId = BuildTrackedSongId(externalProvider, externalId);
+        var isCache = CurrentStorageMode == StorageMode.Cache;
         
         bool isInitiator = false;
         
@@ -405,6 +462,11 @@ public abstract class BaseDownloadService : IDownloadService
             // Check if download in progress
             if (ActiveDownloads.TryGetValue(songId, out var activeDownload) && activeDownload.Status == DownloadStatus.InProgress)
             {
+                if (requestedForStreaming)
+                {
+                    activeDownload.RequestedForStreaming = true;
+                }
+
                 Logger.LogDebug("Download already in progress for {SongId}, waiting for completion...", songId);
                 // We are not the initiator; we will wait outside the lock.
             }
@@ -420,6 +482,8 @@ public abstract class BaseDownloadService : IDownloadService
                     Title = "Unknown Title", // Will be updated after fetching
                     Artist = "Unknown Artist",
                     Status = DownloadStatus.InProgress,
+                    Progress = 0,
+                    RequestedForStreaming = requestedForStreaming,
                     StartedAt = DateTime.UtcNow
                 };
             }
@@ -464,7 +528,7 @@ public abstract class BaseDownloadService : IDownloadService
             // In Album mode, fetch the full album first to ensure AlbumArtist is correctly set
             Song? song = null;
             
-            if (SubsonicSettings.DownloadMode == DownloadMode.Album)
+            if (CurrentDownloadMode == DownloadMode.Album)
             {
                 // First try to get the song to extract album ID
                 var tempSong = await MetadataService.GetSongAsync(externalProvider, externalId);
@@ -500,6 +564,7 @@ public abstract class BaseDownloadService : IDownloadService
             {
                 info.Title = song.Title ?? "Unknown Title";
                 info.Artist = song.Artist ?? "Unknown Artist";
+                info.DurationSeconds = song.Duration;
             }
 
             var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
@@ -507,6 +572,7 @@ public abstract class BaseDownloadService : IDownloadService
             if (ActiveDownloads.TryGetValue(songId, out var successInfo))
             {
                 successInfo.Status = DownloadStatus.Completed;
+                successInfo.Progress = 1.0;
                 successInfo.LocalPath = localPath;
                 successInfo.CompletedAt = DateTime.UtcNow;
             }
@@ -559,7 +625,7 @@ public abstract class BaseDownloadService : IDownloadService
                 });
                 
                 // If download mode is Album and triggering is enabled, start background download of remaining tracks
-                if (triggerAlbumDownload && SubsonicSettings.DownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
+                if (triggerAlbumDownload && CurrentDownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
                 {
                     var albumExternalId = ExtractExternalIdFromAlbumId(song.AlbumId);
                     if (!string.IsNullOrEmpty(albumExternalId))
@@ -642,7 +708,7 @@ public abstract class BaseDownloadService : IDownloadService
                 }
 
                 // Check if download is already in progress or recently completed
-                var songId = $"ext-{ProviderName}-{track.ExternalId}";
+                var songId = BuildTrackedSongId(track.ExternalId!);
                 if (ActiveDownloads.TryGetValue(songId, out var activeDownload))
                 {
                     if (activeDownload.Status == DownloadStatus.InProgress)
@@ -659,7 +725,12 @@ public abstract class BaseDownloadService : IDownloadService
                 }
 
                 Logger.LogInformation("Downloading track '{Title}' from album '{Album}'", track.Title, album.Title);
-                await DownloadSongInternalAsync(ProviderName, track.ExternalId!, triggerAlbumDownload: false, CancellationToken.None);
+                await DownloadSongInternalAsync(
+                    ProviderName,
+                    track.ExternalId!,
+                    triggerAlbumDownload: false,
+                    requestedForStreaming: false,
+                    CancellationToken.None);
             }
             catch (Exception ex)
             {
