@@ -274,7 +274,7 @@ export async function restartContainer() {
   return requestJson(
     "/api/admin/restart",
     { method: "POST" },
-    "Failed to restart container",
+    "Failed to restart Allstarr",
   );
 }
 

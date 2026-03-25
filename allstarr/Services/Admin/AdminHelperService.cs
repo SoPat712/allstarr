@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using allstarr.Models.Spotify;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Admin;
 
@@ -20,9 +21,7 @@ public class AdminHelperService
     {
         _logger = logger;
         _jellyfinSettings = jellyfinSettings.Value;
-        _envFilePath = environment.IsDevelopment()
-            ? Path.Combine(environment.ContentRootPath, "..", ".env")
-            : "/app/.env";
+        _envFilePath = RuntimeEnvConfiguration.ResolveEnvFilePath(environment);
     }
 
     public string GetJellyfinAuthHeader()

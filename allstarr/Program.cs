@@ -16,6 +16,7 @@ using Microsoft.Extensions.Http;
 using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
+RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment, Console.Out);
 
 // Discover SquidWTF API and streaming endpoints from uptime feeds.
 var squidWtfEndpointCatalog = await SquidWtfEndpointDiscovery.DiscoverAsync();

@@ -65,13 +65,13 @@ Allstarr includes a web UI for easy configuration and playlist management, acces
      - `37i9dQZF1DXcBWIGoYBM5M` (just the ID)
      - `spotify:playlist:37i9dQZF1DXcBWIGoYBM5M` (Spotify URI)
      - `https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M` (full URL)
-4. **Restart** to apply changes (should be a banner)
+4. **Restart Allstarr** to apply changes (should be a banner)
 
 Then, proceeed to **Active Playlists**, which shows you which Spotify playlists are currently being monitored and filled with tracks, and lets you do a bunch of useful operations on them.
 
 ### Configuration Persistence
 
-The web UI updates your `.env` file directly. Changes persist across container restarts, but require a restart to take effect. In development mode, the `.env` file is in your project root. In Docker, it's at `/app/.env`.
+The web UI updates your `.env` file directly. Allstarr reloads that file on startup, so a normal container restart is enough for UI changes to take effect. In development mode, the `.env` file is in your project root. In Docker, it's at `/app/.env`.
 
 There's an environment variable to modify this.
 

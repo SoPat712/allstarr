@@ -580,7 +580,7 @@ public class ConfigController : ControllerBase
 
             return Ok(new
             {
-                message = "Configuration updated. Restart container to apply changes.",
+                message = "Configuration updated. Restart Allstarr to apply changes.",
                 updatedKeys = appliedUpdates,
                 requiresRestart = true,
                 envFilePath = _helperService.GetEnvFilePath()
@@ -696,7 +696,7 @@ public class ConfigController : ControllerBase
                 _logger.LogWarning("Docker socket not available at {Path}", socketPath);
                 return StatusCode(503, new {
                     error = "Docker socket not available",
-                    message = "Please restart manually: docker-compose restart allstarr"
+                    message = "Please restart manually: docker restart allstarr"
                 });
             }
 
@@ -749,7 +749,7 @@ public class ConfigController : ControllerBase
                 _logger.LogError("Failed to restart container: {StatusCode} - {Body}", response.StatusCode, errorBody);
                 return StatusCode((int)response.StatusCode, new {
                     error = "Failed to restart container",
-                    message = "Please restart manually: docker-compose restart allstarr"
+                    message = "Please restart manually: docker restart allstarr"
                 });
             }
         }
@@ -758,7 +758,7 @@ public class ConfigController : ControllerBase
             _logger.LogError(ex, "Error restarting container");
             return StatusCode(500, new {
                 error = "Failed to restart container",
-                message = "Please restart manually: docker-compose restart allstarr"
+                message = "Please restart manually: docker restart allstarr"
             });
         }
     }
@@ -890,7 +890,7 @@ public class ConfigController : ControllerBase
             return Ok(new
             {
                 success = true,
-                message = ".env file imported successfully. Restart the application for changes to take effect."
+                message = ".env file imported successfully. Restart Allstarr for changes to take effect."
             });
         }
         catch (Exception ex)
