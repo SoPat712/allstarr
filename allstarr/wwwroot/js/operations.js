@@ -270,7 +270,7 @@ async function importEnv(event) {
 
   const result = await runAction({
     confirmMessage:
-      "Import this .env file? This will replace your current configuration.\n\nA backup will be created automatically.\n\nYou will need to restart the container for changes to take effect.",
+      "Import this .env file? This will replace your current configuration.\n\nA backup will be created automatically.\n\nYou will need to restart Allstarr for changes to take effect.",
     task: () => API.importEnv(file),
     success: (data) => data.message,
     error: (err) => err.message || "Failed to import .env file",
@@ -283,7 +283,7 @@ async function importEnv(event) {
 async function restartContainer() {
   if (
     !confirm(
-      "Restart the container to apply configuration changes?\n\nThe dashboard will be temporarily unavailable.",
+      "Restart Allstarr to reload /app/.env and apply configuration changes?\n\nThe dashboard will be temporarily unavailable.",
     )
   ) {
     return;
@@ -291,7 +291,7 @@ async function restartContainer() {
 
   const result = await runAction({
     task: () => API.restartContainer(),
-    error: "Failed to restart container",
+    error: "Failed to restart Allstarr",
   });
 
   if (!result) {
@@ -301,7 +301,7 @@ async function restartContainer() {
   document.getElementById("restart-overlay")?.classList.add("active");
   const statusEl = document.getElementById("restart-status");
   if (statusEl) {
-    statusEl.textContent = "Stopping container...";
+    statusEl.textContent = "Restarting Allstarr...";
   }
 
   setTimeout(() => {
