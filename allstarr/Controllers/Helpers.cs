@@ -67,10 +67,12 @@ public partial class JellyfinController
     {
         try
         {
+            // Match the previous proxy semantics for client compatibility.
+            // Some Jellyfin clients/proxies cancel the ASP.NET request token aggressively
+            // even though the upstream request would still complete successfully.
             var upstreamResponse = await _proxyService.GetPassthroughResponseAsync(
                 endpoint,
-                Request.Headers,
-                HttpContext.RequestAborted);
+                Request.Headers);
 
             HttpContext.Response.RegisterForDispose(upstreamResponse);
             Response.StatusCode = (int)upstreamResponse.StatusCode;
@@ -83,7 +85,7 @@ public partial class JellyfinController
             }
 
             var contentType = upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/json";
-            var stream = await upstreamResponse.Content.ReadAsStreamAsync(HttpContext.RequestAborted);
+            var stream = await upstreamResponse.Content.ReadAsStreamAsync();
 
             return new FileStreamResult(stream, contentType);
         }
