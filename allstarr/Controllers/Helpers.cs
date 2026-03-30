@@ -5,6 +5,7 @@ using allstarr.Models.Domain;
 using allstarr.Models.Spotify;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace allstarr.Controllers;
 
@@ -75,7 +76,9 @@ public partial class JellyfinController
                 Request.Headers);
 
             HttpContext.Response.RegisterForDispose(upstreamResponse);
+            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
             Response.StatusCode = (int)upstreamResponse.StatusCode;
+            Response.Headers["X-Accel-Buffering"] = "no";
 
             CopyPassthroughResponseHeaders(upstreamResponse);
 
@@ -490,6 +493,29 @@ public partial class JellyfinController
         }
 
         return parts[1];
+    }
+
+    private static string? ExtractImageTag(JsonElement item, string imageType)
+    {
+        if (item.TryGetProperty("ImageTags", out var imageTags) &&
+            imageTags.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var imageTag in imageTags.EnumerateObject())
+            {
+                if (string.Equals(imageTag.Name, imageType, StringComparison.OrdinalIgnoreCase))
+                {
+                    return imageTag.Value.GetString();
+                }
+            }
+        }
+
+        if (string.Equals(imageType, "Primary", StringComparison.OrdinalIgnoreCase) &&
+            item.TryGetProperty("PrimaryImageTag", out var primaryImageTag))
+        {
+            return primaryImageTag.GetString();
+        }
+
+        return null;
     }
 
     /// <summary>

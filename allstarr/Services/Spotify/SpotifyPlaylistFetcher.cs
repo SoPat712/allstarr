@@ -247,6 +247,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
 
         // Re-fetch
         await GetPlaylistTracksAsync(playlistName);
+        await ClearPlaylistImageCacheAsync(playlistName);
     }
 
     /// <summary>
@@ -260,6 +261,20 @@ public class SpotifyPlaylistFetcher : BackgroundService
         {
             await RefreshPlaylistAsync(config.Name);
         }
+    }
+
+    private async Task ClearPlaylistImageCacheAsync(string playlistName)
+    {
+        var playlistConfig = _spotifyImportSettings.GetPlaylistByName(playlistName);
+        if (playlistConfig == null || string.IsNullOrWhiteSpace(playlistConfig.JellyfinId))
+        {
+            return;
+        }
+
+        var deletedCount = await _cache.DeleteByPatternAsync($"image:{playlistConfig.JellyfinId}:*");
+        _logger.LogDebug("Cleared {Count} cached local image entries for playlist {Playlist}",
+            deletedCount,
+            playlistName);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
