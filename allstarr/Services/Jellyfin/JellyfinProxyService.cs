@@ -164,6 +164,7 @@ public class JellyfinProxyService
     {
         var url = BuildUrl(endpoint);
         using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
+        ForwardPassthroughRequestHeaders(clientHeaders, request);
 
         var response = await _httpClient.SendAsync(
             request,
@@ -278,6 +279,34 @@ public class JellyfinProxyService
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         return request;
+    }
+
+    private static void ForwardPassthroughRequestHeaders(
+        IHeaderDictionary? clientHeaders,
+        HttpRequestMessage request)
+    {
+        if (clientHeaders == null || clientHeaders.Count == 0)
+        {
+            return;
+        }
+
+        if (clientHeaders.TryGetValue("Accept-Encoding", out var acceptEncoding) &&
+            acceptEncoding.Count > 0)
+        {
+            request.Headers.TryAddWithoutValidation("Accept-Encoding", acceptEncoding.ToArray());
+        }
+
+        if (clientHeaders.TryGetValue("User-Agent", out var userAgent) &&
+            userAgent.Count > 0)
+        {
+            request.Headers.TryAddWithoutValidation("User-Agent", userAgent.ToArray());
+        }
+
+        if (clientHeaders.TryGetValue("Accept-Language", out var acceptLanguage) &&
+            acceptLanguage.Count > 0)
+        {
+            request.Headers.TryAddWithoutValidation("Accept-Language", acceptLanguage.ToArray());
+        }
     }
 
     /// <summary>

@@ -373,6 +373,45 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetPassthroughResponseAsync_WithAcceptEncoding_ForwardsCompressionHeaders()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        var headers = new HeaderDictionary
+        {
+            ["Accept-Encoding"] = "gzip, br",
+            ["User-Agent"] = "Finamp/1.0",
+            ["Accept-Language"] = "en-US"
+        };
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=Genres",
+            headers);
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.True(captured!.Headers.TryGetValues("Accept-Encoding", out var encodings));
+        Assert.Contains("gzip", encodings);
+        Assert.Contains("br", encodings);
+        Assert.True(captured.Headers.TryGetValues("User-Agent", out var userAgents));
+        Assert.Contains("Finamp/1.0", userAgents);
+        Assert.True(captured.Headers.TryGetValues("Accept-Language", out var languages));
+        Assert.Contains("en-US", languages);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GetJsonAsync_WithEndpointAndExplicitQuery_MergesWithExplicitPrecedence()
     {
         // Arrange
