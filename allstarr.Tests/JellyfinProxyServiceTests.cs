@@ -312,6 +312,67 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetPassthroughResponseAsync_WithRepeatedFields_PreservesAllFieldParameters()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=Genres&Fields=DateCreated&Fields=MediaSources&UserId=user-abc");
+
+        // Assert
+        Assert.NotNull(captured);
+        var query = captured!.RequestUri!.Query;
+        Assert.Contains("Fields=Genres", query);
+        Assert.Contains("Fields=DateCreated", query);
+        Assert.Contains("Fields=MediaSources", query);
+        Assert.Contains("UserId=user-abc", query);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPassthroughResponseAsync_WithClientAuth_ForwardsAuthHeader()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
+        };
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=Genres",
+            headers);
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.True(captured!.Headers.TryGetValues("X-Emby-Authorization", out var values));
+        Assert.Contains("MediaBrowser Token=\"abc\"", values);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GetJsonAsync_WithEndpointAndExplicitQuery_MergesWithExplicitPrecedence()
     {
         // Arrange

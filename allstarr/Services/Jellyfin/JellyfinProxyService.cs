@@ -153,62 +153,34 @@ public class JellyfinProxyService
         return await GetJsonAsyncInternal(finalUrl, clientHeaders);
     }
 
+    /// <summary>
+    /// Sends a proxied GET request to Jellyfin and returns the raw upstream response without buffering the body.
+    /// Intended for transparent passthrough of large JSON payloads that Allstarr does not modify.
+    /// </summary>
+    public async Task<HttpResponseMessage> GetPassthroughResponseAsync(
+        string endpoint,
+        IHeaderDictionary? clientHeaders = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = BuildUrl(endpoint);
+        using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
+
+        var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode && !isBrowserStaticRequest && !isPublicEndpoint)
+        {
+            LogUpstreamFailure(HttpMethod.Get, response.StatusCode, url);
+        }
+
+        return response;
+    }
+
     private async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string url, IHeaderDictionary? clientHeaders)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-        // Forward client IP address to Jellyfin so it can identify the real client
-        if (_httpContextAccessor.HttpContext != null)
-        {
-            var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
-            if (!string.IsNullOrEmpty(clientIp))
-            {
-                request.Headers.TryAddWithoutValidation("X-Forwarded-For", clientIp);
-                request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
-            }
-        }
-
-        bool authHeaderAdded = false;
-
-        // Check if this is a browser request for static assets (favicon, etc.)
-        bool isBrowserStaticRequest = url.Contains("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
-                                      url.Contains("/web/", StringComparison.OrdinalIgnoreCase) ||
-                                      (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) &&
-                                                              h.Value.ToString().Contains("Mozilla", StringComparison.OrdinalIgnoreCase)) == true &&
-                                       clientHeaders?.Any(h => h.Key.Equals("sec-fetch-dest", StringComparison.OrdinalIgnoreCase) &&
-                                                              (h.Value.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) ||
-                                                               h.Value.ToString().Contains("document", StringComparison.OrdinalIgnoreCase))) == true);
-
-        // Check if this is a public endpoint that doesn't require authentication
-        bool isPublicEndpoint = url.Contains("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
-                               url.Contains("/Branding/", StringComparison.OrdinalIgnoreCase) ||
-                               url.Contains("/Startup/", StringComparison.OrdinalIgnoreCase);
-
-        // Forward authentication headers from client if provided
-        if (clientHeaders != null && clientHeaders.Count > 0)
-        {
-            authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
-
-            if (authHeaderAdded)
-            {
-                _logger.LogTrace("Forwarded authentication headers");
-            }
-
-            // Check for api_key query parameter (some clients use this)
-            if (!authHeaderAdded && url.Contains("api_key=", StringComparison.OrdinalIgnoreCase))
-            {
-                authHeaderAdded = true; // It's in the URL, no need to add header
-                _logger.LogTrace("Using api_key from query string");
-            }
-        }
-
-        // Only log warnings for non-public, non-browser requests without auth
-        if (!authHeaderAdded && !isBrowserStaticRequest && !isPublicEndpoint)
-        {
-            _logger.LogDebug("No client auth provided for {Url} - Jellyfin will handle authentication", url);
-        }
-
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
 
         var response = await _httpClient.SendAsync(request);
 
@@ -243,6 +215,69 @@ public class JellyfinProxyService
         }
 
         return (JsonDocument.Parse(content), statusCode);
+    }
+
+    private HttpRequestMessage CreateClientGetRequest(
+        string url,
+        IHeaderDictionary? clientHeaders,
+        out bool isBrowserStaticRequest,
+        out bool isPublicEndpoint)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+
+        // Forward client IP address to Jellyfin so it can identify the real client
+        if (_httpContextAccessor.HttpContext != null)
+        {
+            var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
+            if (!string.IsNullOrEmpty(clientIp))
+            {
+                request.Headers.TryAddWithoutValidation("X-Forwarded-For", clientIp);
+                request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
+            }
+        }
+
+        // Check if this is a browser request for static assets (favicon, etc.)
+        isBrowserStaticRequest = url.Contains("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
+                                 url.Contains("/web/", StringComparison.OrdinalIgnoreCase) ||
+                                 (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) &&
+                                                         h.Value.ToString().Contains("Mozilla", StringComparison.OrdinalIgnoreCase)) == true &&
+                                  clientHeaders?.Any(h => h.Key.Equals("sec-fetch-dest", StringComparison.OrdinalIgnoreCase) &&
+                                                         (h.Value.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) ||
+                                                          h.Value.ToString().Contains("document", StringComparison.OrdinalIgnoreCase))) == true);
+
+        // Check if this is a public endpoint that doesn't require authentication
+        isPublicEndpoint = url.Contains("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/Branding/", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/Startup/", StringComparison.OrdinalIgnoreCase);
+
+        var authHeaderAdded = false;
+
+        // Forward authentication headers from client if provided
+        if (clientHeaders != null && clientHeaders.Count > 0)
+        {
+            authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
+
+            if (authHeaderAdded)
+            {
+                _logger.LogTrace("Forwarded authentication headers");
+            }
+
+            // Check for api_key query parameter (some clients use this)
+            if (!authHeaderAdded && url.Contains("api_key=", StringComparison.OrdinalIgnoreCase))
+            {
+                authHeaderAdded = true; // It's in the URL, no need to add header
+                _logger.LogTrace("Using api_key from query string");
+            }
+        }
+
+        // Only log warnings for non-public, non-browser requests without auth
+        if (!authHeaderAdded && !isBrowserStaticRequest && !isPublicEndpoint)
+        {
+            _logger.LogDebug("No client auth provided for {Url} - Jellyfin will handle authentication", url);
+        }
+
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return request;
     }
 
     /// <summary>

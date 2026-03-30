@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text;
+using System.Net.Http;
 using allstarr.Models.Domain;
 using allstarr.Models.Spotify;
 using allstarr.Services.Common;
@@ -10,6 +11,20 @@ namespace allstarr.Controllers;
 public partial class JellyfinController
 {
     #region Helpers
+
+    private static readonly HashSet<string> PassthroughResponseHeadersToSkip = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Connection",
+        "Keep-Alive",
+        "Proxy-Authenticate",
+        "Proxy-Authorization",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade",
+        "Content-Type",
+        "Content-Length"
+    };
 
     /// <summary>
     /// Helper to handle proxy responses with proper status code handling.
@@ -46,6 +61,56 @@ public partial class JellyfinController
         }
 
         return NoContent();
+    }
+
+    private async Task<IActionResult> ProxyJsonPassthroughAsync(string endpoint)
+    {
+        try
+        {
+            var upstreamResponse = await _proxyService.GetPassthroughResponseAsync(
+                endpoint,
+                Request.Headers,
+                HttpContext.RequestAborted);
+
+            HttpContext.Response.RegisterForDispose(upstreamResponse);
+            Response.StatusCode = (int)upstreamResponse.StatusCode;
+
+            CopyPassthroughResponseHeaders(upstreamResponse);
+
+            if (upstreamResponse.Content.Headers.ContentLength.HasValue)
+            {
+                Response.ContentLength = upstreamResponse.Content.Headers.ContentLength.Value;
+            }
+
+            var contentType = upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/json";
+            var stream = await upstreamResponse.Content.ReadAsStreamAsync(HttpContext.RequestAborted);
+
+            return new FileStreamResult(stream, contentType);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to transparently proxy Jellyfin request for {Endpoint}", endpoint);
+            return StatusCode(502, new { error = "Failed to connect to Jellyfin server" });
+        }
+    }
+
+    private void CopyPassthroughResponseHeaders(HttpResponseMessage upstreamResponse)
+    {
+        foreach (var header in upstreamResponse.Headers)
+        {
+            if (!PassthroughResponseHeadersToSkip.Contains(header.Key))
+            {
+                Response.Headers[header.Key] = header.Value.ToArray();
+            }
+        }
+
+        foreach (var header in upstreamResponse.Content.Headers)
+        {
+            if (!PassthroughResponseHeadersToSkip.Contains(header.Key))
+            {
+                Response.Headers[header.Key] = header.Value.ToArray();
+            }
+        }
     }
 
     /// <summary>
@@ -405,6 +470,24 @@ public partial class JellyfinController
         }
 
         return includeItemTypes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static string? GetExactPlaylistItemsRequestId(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 ||
+            !parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase) ||
+            !parts[2].Equals("items", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return parts[1];
     }
 
     /// <summary>
