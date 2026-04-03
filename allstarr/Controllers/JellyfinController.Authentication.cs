@@ -39,69 +39,9 @@ public partial class JellyfinController
             {
                 var responseJson = result.RootElement.GetRawText();
 
-                // On successful auth, extract access token and post session capabilities in background
                 if (statusCode == 200)
                 {
                     _logger.LogInformation("Authentication successful");
-
-                    // Extract access token from response for session capabilities
-                    string? accessToken = null;
-                    if (result.RootElement.TryGetProperty("AccessToken", out var tokenEl))
-                    {
-                        accessToken = tokenEl.GetString();
-                    }
-
-                    // Post session capabilities in background if we have a token
-                    if (!string.IsNullOrEmpty(accessToken))
-                    {
-                        var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
-                        // Capture token in closure - don't use Request.Headers (will be disposed)
-                        var token = accessToken;
-                        var authHeader = AuthHeaderHelper.CreateAuthHeader(token, client, device, deviceId, version);
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                _logger.LogDebug("🔧 Posting session capabilities after authentication");
-
-                                // Build auth header with the new token
-                                var authHeaders = new HeaderDictionary
-                                {
-                                    ["X-Emby-Authorization"] = authHeader,
-                                    ["X-Emby-Token"] = token
-                                };
-
-                                var capabilities = new
-                                {
-                                    PlayableMediaTypes = new[] { "Audio" },
-                                    SupportedCommands = Array.Empty<string>(),
-                                    SupportsMediaControl = false,
-                                    SupportsPersistentIdentifier = true,
-                                    SupportsSync = false
-                                };
-
-                                var capabilitiesJson = JsonSerializer.Serialize(capabilities);
-                                var (capResult, capStatus) =
-                                    await _proxyService.PostJsonAsync("Sessions/Capabilities/Full", capabilitiesJson,
-                                        authHeaders);
-
-                                if (capStatus == 204 || capStatus == 200)
-                                {
-                                    _logger.LogDebug("✓ Session capabilities posted after auth ({StatusCode})",
-                                        capStatus);
-                                }
-                                else
-                                {
-                                    _logger.LogDebug("⚠ Session capabilities returned {StatusCode} after auth",
-                                        capStatus);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Failed to post session capabilities after auth");
-                            }
-                        });
-                    }
                 }
                 else
                 {

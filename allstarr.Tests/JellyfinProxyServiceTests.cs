@@ -373,6 +373,69 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task SendAsync_WithNoBody_PreservesEmptyRequestBody()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
+        };
+
+        // Act
+        var (_, statusCode) = await _service.SendAsync(
+            HttpMethod.Post,
+            "Sessions/session-123/Playing/Pause?controllingUserId=user-123",
+            null,
+            headers);
+
+        // Assert
+        Assert.Equal(204, statusCode);
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Null(captured.Content);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithCustomContentType_PreservesOriginalType()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
+        };
+
+        // Act
+        await _service.SendAsync(
+            HttpMethod.Put,
+            "Sessions/session-123/Command/DisplayMessage",
+            "{\"Text\":\"hello\"}",
+            headers,
+            "application/json; charset=utf-8");
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Put, captured!.Method);
+        Assert.NotNull(captured.Content);
+        Assert.Equal("application/json; charset=utf-8", captured.Content!.Headers.ContentType!.ToString());
+    }
+
+    [Fact]
     public async Task GetPassthroughResponseAsync_WithAcceptEncoding_ForwardsCompressionHeaders()
     {
         // Arrange

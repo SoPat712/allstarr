@@ -132,6 +132,46 @@ public class JellyfinSessionManagerTests
         Assert.Equal(45 * TimeSpan.TicksPerSecond, state.PositionTicks);
     }
 
+    [Fact]
+    public async Task EnsureSessionAsync_WithProxiedWebSocket_DoesNotPostSyntheticCapabilities()
+    {
+        var requestedPaths = new ConcurrentBag<string>();
+        var handler = new DelegateHttpMessageHandler((request, _) =>
+        {
+            requestedPaths.Add(request.RequestUri?.AbsolutePath ?? string.Empty);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        });
+
+        var settings = new JellyfinSettings
+        {
+            Url = "http://127.0.0.1:1",
+            ApiKey = "server-api-key",
+            ClientName = "Allstarr",
+            DeviceName = "Allstarr",
+            DeviceId = "allstarr",
+            ClientVersion = "1.0"
+        };
+
+        var proxyService = CreateProxyService(handler, settings);
+        using var manager = new JellyfinSessionManager(
+            proxyService,
+            Options.Create(settings),
+            NullLogger<JellyfinSessionManager>.Instance);
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] =
+                "MediaBrowser Client=\"Finamp\", Device=\"Android Auto\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
+        };
+
+        await manager.RegisterProxiedWebSocketAsync("dev-123");
+
+        var ensured = await manager.EnsureSessionAsync("dev-123", "Finamp", "Android Auto", "1.0", headers);
+
+        Assert.True(ensured);
+        Assert.DoesNotContain("/Sessions/Capabilities/Full", requestedPaths);
+    }
+
     private static JellyfinProxyService CreateProxyService(HttpMessageHandler handler, JellyfinSettings settings)
     {
         var httpClientFactory = new TestHttpClientFactory(handler);
