@@ -32,6 +32,7 @@ public partial class JellyfinController
     {
         var boundSearchTerm = searchTerm;
         searchTerm = GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value);
+        string? searchCacheKey = null;
 
         // AlbumArtistIds takes precedence over ArtistIds if both are provided
         var effectiveArtistIds = albumArtistIds ?? artistIds;
@@ -181,7 +182,7 @@ public partial class JellyfinController
             // Check cache for search results (only cache pure searches, not filtered searches)
             if (string.IsNullOrWhiteSpace(effectiveArtistIds) && string.IsNullOrWhiteSpace(albumIds))
             {
-                var cacheKey = CacheKeyBuilder.BuildSearchKey(
+                searchCacheKey = CacheKeyBuilder.BuildSearchKey(
                     searchTerm,
                     includeItemTypes,
                     limit,
@@ -192,12 +193,12 @@ public partial class JellyfinController
                     recursive,
                     userId,
                     Request.Query["IsFavorite"].ToString());
-                var cachedResult = await _cache.GetAsync<object>(cacheKey);
+                var cachedResult = await _cache.GetStringAsync(searchCacheKey);
 
-                if (cachedResult != null)
+                if (!string.IsNullOrWhiteSpace(cachedResult))
                 {
-                    _logger.LogInformation("SEARCH TRACE: cache hit for key '{CacheKey}'", cacheKey);
-                    return new JsonResult(cachedResult);
+                    _logger.LogInformation("SEARCH TRACE: cache hit for key '{CacheKey}'", searchCacheKey);
+                    return Content(cachedResult, "application/json");
                 }
             }
 
@@ -538,24 +539,16 @@ public partial class JellyfinController
                 TotalRecordCount = items.Count,
                 StartIndex = startIndex
             };
+            var json = SerializeSearchResponseJson(response);
 
             // Cache search results in Redis using the configured search TTL.
-            if (!string.IsNullOrWhiteSpace(searchTerm) && string.IsNullOrWhiteSpace(effectiveArtistIds))
+            if (!string.IsNullOrWhiteSpace(searchTerm) &&
+                string.IsNullOrWhiteSpace(effectiveArtistIds) &&
+                !string.IsNullOrWhiteSpace(searchCacheKey))
             {
                 if (externalHasRequestedTypeResults)
                 {
-                    var cacheKey = CacheKeyBuilder.BuildSearchKey(
-                        searchTerm,
-                        includeItemTypes,
-                        limit,
-                        startIndex,
-                        parentId,
-                        sortBy,
-                        Request.Query["SortOrder"].ToString(),
-                        recursive,
-                        userId,
-                        Request.Query["IsFavorite"].ToString());
-                    await _cache.SetAsync(cacheKey, response, CacheExtensions.SearchResultsTTL);
+                    await _cache.SetStringAsync(searchCacheKey, json, CacheExtensions.SearchResultsTTL);
                     _logger.LogDebug("💾 Cached search results for '{SearchTerm}' ({Minutes} min TTL)", searchTerm,
                         CacheExtensions.SearchResultsTTL.TotalMinutes);
                 }
@@ -570,12 +563,6 @@ public partial class JellyfinController
 
             _logger.LogDebug("About to serialize response...");
 
-            var json = System.Text.Json.JsonSerializer.Serialize(response, new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNamingPolicy = null,
-                DictionaryKeyPolicy = null
-            });
-
             if (_logger.IsEnabled(LogLevel.Debug))
             {
                 var preview = json.Length > 200 ? json[..200] : json;
@@ -589,6 +576,15 @@ public partial class JellyfinController
             _logger.LogError(ex, "Error serializing search response");
             throw;
         }
+    }
+
+    private static string SerializeSearchResponseJson<T>(T response) where T : class
+    {
+        return JsonSerializer.Serialize(response, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = null,
+            DictionaryKeyPolicy = null
+        });
     }
 
     /// <summary>
