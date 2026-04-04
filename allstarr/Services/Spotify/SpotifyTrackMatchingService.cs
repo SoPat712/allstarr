@@ -295,6 +295,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             throw;
         }
 
+        await ClearPlaylistImageCacheAsync(playlist);
         _logger.LogInformation("✓ Rebuild complete for {Playlist}", playlistName);
     }
 
@@ -337,12 +338,27 @@ public class SpotifyTrackMatchingService : BackgroundService
                 await MatchPlaylistTracksLegacyAsync(
                     playlist.Name, metadataService, cancellationToken);
             }
+
+            await ClearPlaylistImageCacheAsync(playlist);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error matching tracks for playlist {Playlist}", playlist.Name);
             throw;
         }
+    }
+
+    private async Task ClearPlaylistImageCacheAsync(SpotifyPlaylistConfig playlist)
+    {
+        if (string.IsNullOrWhiteSpace(playlist.JellyfinId))
+        {
+            return;
+        }
+
+        var deletedCount = await _cache.DeleteByPatternAsync($"image:{playlist.JellyfinId}:*");
+        _logger.LogDebug("Cleared {Count} cached local image entries for playlist {Playlist}",
+            deletedCount,
+            playlist.Name);
     }
 
     /// <summary>

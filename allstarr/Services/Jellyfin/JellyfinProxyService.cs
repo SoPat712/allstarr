@@ -153,62 +153,35 @@ public class JellyfinProxyService
         return await GetJsonAsyncInternal(finalUrl, clientHeaders);
     }
 
+    /// <summary>
+    /// Sends a proxied GET request to Jellyfin and returns the raw upstream response without buffering the body.
+    /// Intended for transparent passthrough of large JSON payloads that Allstarr does not modify.
+    /// </summary>
+    public async Task<HttpResponseMessage> GetPassthroughResponseAsync(
+        string endpoint,
+        IHeaderDictionary? clientHeaders = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = BuildUrl(endpoint);
+        using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
+        ForwardPassthroughRequestHeaders(clientHeaders, request);
+
+        var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode && !isBrowserStaticRequest && !isPublicEndpoint)
+        {
+            LogUpstreamFailure(HttpMethod.Get, response.StatusCode, url);
+        }
+
+        return response;
+    }
+
     private async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string url, IHeaderDictionary? clientHeaders)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-        // Forward client IP address to Jellyfin so it can identify the real client
-        if (_httpContextAccessor.HttpContext != null)
-        {
-            var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
-            if (!string.IsNullOrEmpty(clientIp))
-            {
-                request.Headers.TryAddWithoutValidation("X-Forwarded-For", clientIp);
-                request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
-            }
-        }
-
-        bool authHeaderAdded = false;
-
-        // Check if this is a browser request for static assets (favicon, etc.)
-        bool isBrowserStaticRequest = url.Contains("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
-                                      url.Contains("/web/", StringComparison.OrdinalIgnoreCase) ||
-                                      (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) &&
-                                                              h.Value.ToString().Contains("Mozilla", StringComparison.OrdinalIgnoreCase)) == true &&
-                                       clientHeaders?.Any(h => h.Key.Equals("sec-fetch-dest", StringComparison.OrdinalIgnoreCase) &&
-                                                              (h.Value.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) ||
-                                                               h.Value.ToString().Contains("document", StringComparison.OrdinalIgnoreCase))) == true);
-
-        // Check if this is a public endpoint that doesn't require authentication
-        bool isPublicEndpoint = url.Contains("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
-                               url.Contains("/Branding/", StringComparison.OrdinalIgnoreCase) ||
-                               url.Contains("/Startup/", StringComparison.OrdinalIgnoreCase);
-
-        // Forward authentication headers from client if provided
-        if (clientHeaders != null && clientHeaders.Count > 0)
-        {
-            authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
-
-            if (authHeaderAdded)
-            {
-                _logger.LogTrace("Forwarded authentication headers");
-            }
-
-            // Check for api_key query parameter (some clients use this)
-            if (!authHeaderAdded && url.Contains("api_key=", StringComparison.OrdinalIgnoreCase))
-            {
-                authHeaderAdded = true; // It's in the URL, no need to add header
-                _logger.LogTrace("Using api_key from query string");
-            }
-        }
-
-        // Only log warnings for non-public, non-browser requests without auth
-        if (!authHeaderAdded && !isBrowserStaticRequest && !isPublicEndpoint)
-        {
-            _logger.LogDebug("No client auth provided for {Url} - Jellyfin will handle authentication", url);
-        }
-
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
 
         var response = await _httpClient.SendAsync(request);
 
@@ -245,16 +218,13 @@ public class JellyfinProxyService
         return (JsonDocument.Parse(content), statusCode);
     }
 
-    /// <summary>
-    /// Sends a POST request to the Jellyfin server with JSON body.
-    /// Forwards client headers for authentication passthrough.
-    /// Returns the response body and HTTP status code.
-    /// </summary>
-    public async Task<(JsonDocument? Body, int StatusCode)> PostJsonAsync(string endpoint, string body, IHeaderDictionary clientHeaders)
+    private HttpRequestMessage CreateClientGetRequest(
+        string url,
+        IHeaderDictionary? clientHeaders,
+        out bool isBrowserStaticRequest,
+        out bool isPublicEndpoint)
     {
-        var url = BuildUrl(endpoint, null);
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
 
         // Forward client IP address to Jellyfin so it can identify the real client
         if (_httpContextAccessor.HttpContext != null)
@@ -267,58 +237,177 @@ public class JellyfinProxyService
             }
         }
 
-        // Handle special case for playback endpoints
-        // NOTE: Jellyfin API expects PlaybackStartInfo/PlaybackProgressInfo/PlaybackStopInfo
-        // DIRECTLY as the body, NOT wrapped in a field. Do NOT wrap the body.
-        var bodyToSend = body;
-        if (string.IsNullOrWhiteSpace(body))
+        // Check if this is a browser request for static assets (favicon, etc.)
+        isBrowserStaticRequest = url.Contains("/favicon.ico", StringComparison.OrdinalIgnoreCase) ||
+                                 url.Contains("/web/", StringComparison.OrdinalIgnoreCase) ||
+                                 (clientHeaders?.Any(h => h.Key.Equals("User-Agent", StringComparison.OrdinalIgnoreCase) &&
+                                                         h.Value.ToString().Contains("Mozilla", StringComparison.OrdinalIgnoreCase)) == true &&
+                                  clientHeaders?.Any(h => h.Key.Equals("sec-fetch-dest", StringComparison.OrdinalIgnoreCase) &&
+                                                         (h.Value.ToString().Contains("image", StringComparison.OrdinalIgnoreCase) ||
+                                                          h.Value.ToString().Contains("document", StringComparison.OrdinalIgnoreCase))) == true);
+
+        // Check if this is a public endpoint that doesn't require authentication
+        isPublicEndpoint = url.Contains("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/Branding/", StringComparison.OrdinalIgnoreCase) ||
+                           url.Contains("/Startup/", StringComparison.OrdinalIgnoreCase);
+
+        var authHeaderAdded = false;
+
+        // Forward authentication headers from client if provided
+        if (clientHeaders != null && clientHeaders.Count > 0)
         {
-            bodyToSend = "{}";
-            _logger.LogWarning("POST body was empty for {Url}, sending empty JSON object", url);
+            authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
+
+            if (authHeaderAdded)
+            {
+                _logger.LogTrace("Forwarded authentication headers");
+            }
+
+            // Check for api_key query parameter (some clients use this)
+            if (!authHeaderAdded && url.Contains("api_key=", StringComparison.OrdinalIgnoreCase))
+            {
+                authHeaderAdded = true; // It's in the URL, no need to add header
+                _logger.LogTrace("Using api_key from query string");
+            }
         }
 
-        request.Content = new StringContent(bodyToSend, System.Text.Encoding.UTF8, "application/json");
+        // Only log warnings for non-public, non-browser requests without auth
+        if (!authHeaderAdded && !isBrowserStaticRequest && !isPublicEndpoint)
+        {
+            _logger.LogDebug("No client auth provided for {Url} - Jellyfin will handle authentication", url);
+        }
 
-        bool authHeaderAdded = false;
-        bool isAuthEndpoint = endpoint.Contains("Authenticate", StringComparison.OrdinalIgnoreCase);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return request;
+    }
 
-        // Forward authentication headers from client
-        authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
+    private static void ForwardPassthroughRequestHeaders(
+        IHeaderDictionary? clientHeaders,
+        HttpRequestMessage request)
+    {
+        if (clientHeaders == null || clientHeaders.Count == 0)
+        {
+            return;
+        }
+
+        if (clientHeaders.TryGetValue("Accept-Encoding", out var acceptEncoding) &&
+            acceptEncoding.Count > 0)
+        {
+            request.Headers.TryAddWithoutValidation("Accept-Encoding", acceptEncoding.ToArray());
+        }
+
+        if (clientHeaders.TryGetValue("User-Agent", out var userAgent) &&
+            userAgent.Count > 0)
+        {
+            request.Headers.TryAddWithoutValidation("User-Agent", userAgent.ToArray());
+        }
+
+        if (clientHeaders.TryGetValue("Accept-Language", out var acceptLanguage) &&
+            acceptLanguage.Count > 0)
+        {
+            request.Headers.TryAddWithoutValidation("Accept-Language", acceptLanguage.ToArray());
+        }
+    }
+
+    /// <summary>
+    /// Sends a POST request to the Jellyfin server with JSON body.
+    /// Forwards client headers for authentication passthrough.
+    /// Returns the response body and HTTP status code.
+    /// </summary>
+    public async Task<(JsonDocument? Body, int StatusCode)> PostJsonAsync(string endpoint, string body, IHeaderDictionary clientHeaders)
+    {
+        var bodyToSend = body;
+        if (string.IsNullOrWhiteSpace(bodyToSend))
+        {
+            bodyToSend = "{}";
+            _logger.LogWarning("POST body was empty for {Endpoint}, sending empty JSON object", endpoint);
+        }
+
+        return await SendAsync(HttpMethod.Post, endpoint, bodyToSend, clientHeaders, "application/json");
+    }
+
+    /// <summary>
+    /// Sends an arbitrary HTTP request to Jellyfin while preserving the caller's method and body semantics.
+    /// Intended for transparent proxy scenarios such as session control routes.
+    /// </summary>
+    public async Task<(JsonDocument? Body, int StatusCode)> SendAsync(
+        HttpMethod method,
+        string endpoint,
+        string? body,
+        IHeaderDictionary clientHeaders,
+        string? contentType = null)
+    {
+        var url = BuildUrl(endpoint, null);
+
+        using var request = new HttpRequestMessage(method, url);
+
+        // Forward client IP address to Jellyfin so it can identify the real client
+        if (_httpContextAccessor.HttpContext != null)
+        {
+            var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
+            if (!string.IsNullOrEmpty(clientIp))
+            {
+                request.Headers.TryAddWithoutValidation("X-Forwarded-For", clientIp);
+                request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
+            }
+        }
+
+        if (body != null)
+        {
+            var requestContent = new StringContent(body, System.Text.Encoding.UTF8);
+            try
+            {
+                requestContent.Headers.ContentType = !string.IsNullOrWhiteSpace(contentType)
+                    ? MediaTypeHeaderValue.Parse(contentType)
+                    : new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            }
+            catch (FormatException)
+            {
+                _logger.LogWarning("Invalid content type '{ContentType}' for {Method} {Endpoint}; falling back to application/json",
+                    contentType,
+                    method,
+                    endpoint);
+                requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            }
+
+            request.Content = requestContent;
+        }
+
+        var authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
+        var isAuthEndpoint = endpoint.Contains("Authenticate", StringComparison.OrdinalIgnoreCase);
 
         if (authHeaderAdded)
         {
             _logger.LogTrace("Forwarded authentication headers");
         }
-
-        // For authentication endpoints, credentials are in the body, not headers
-        // For other endpoints without auth, let Jellyfin reject the request
-        if (!authHeaderAdded && !isAuthEndpoint)
+        else if (!isAuthEndpoint)
         {
-            _logger.LogDebug("No client auth provided for POST {Url} - Jellyfin will handle authentication", url);
+            _logger.LogDebug("No client auth provided for {Method} {Url} - Jellyfin will handle authentication", method, url);
         }
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        // DO NOT log the body for auth endpoints - it contains passwords!
         if (isAuthEndpoint)
         {
-            _logger.LogDebug("POST to Jellyfin: {Url} (auth request - body not logged)", url);
+            _logger.LogDebug("{Method} to Jellyfin: {Url} (auth request - body not logged)", method, url);
+        }
+        else if (body == null)
+        {
+            _logger.LogTrace("{Method} to Jellyfin: {Url} (no request body)", method, url);
         }
         else
         {
-            _logger.LogTrace("POST to Jellyfin: {Url}, body length: {Length} bytes", url, bodyToSend.Length);
+            _logger.LogTrace("{Method} to Jellyfin: {Url}, body length: {Length} bytes", method, url, body.Length);
         }
 
         var response = await _httpClient.SendAsync(request);
-
         var statusCode = (int)response.StatusCode;
 
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-            LogUpstreamFailure(HttpMethod.Post, response.StatusCode, url, errorContent);
+            LogUpstreamFailure(method, response.StatusCode, url, errorContent);
 
-            // Try to parse error response as JSON to pass through to client
             if (!string.IsNullOrWhiteSpace(errorContent))
             {
                 try
@@ -335,21 +424,17 @@ public class JellyfinProxyService
             return (null, statusCode);
         }
 
-        // Log successful session-related responses
         if (endpoint.Contains("Sessions", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogTrace("Jellyfin responded {StatusCode} for {Endpoint}", statusCode, endpoint);
+            _logger.LogTrace("Jellyfin responded {StatusCode} for {Method} {Endpoint}", statusCode, method, endpoint);
         }
 
-        // Handle 204 No Content responses (e.g., /sessions/playing, /sessions/playing/progress)
-        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+        if (response.StatusCode == HttpStatusCode.NoContent)
         {
             return (null, statusCode);
         }
 
         var responseContent = await response.Content.ReadAsStringAsync();
-
-        // Handle empty responses
         if (string.IsNullOrWhiteSpace(responseContent))
         {
             return (null, statusCode);
@@ -411,65 +496,7 @@ public class JellyfinProxyService
     /// </summary>
     public async Task<(JsonDocument? Body, int StatusCode)> DeleteAsync(string endpoint, IHeaderDictionary clientHeaders)
     {
-        var url = BuildUrl(endpoint, null);
-
-        using var request = new HttpRequestMessage(HttpMethod.Delete, url);
-
-        // Forward client IP address to Jellyfin so it can identify the real client
-        if (_httpContextAccessor.HttpContext != null)
-        {
-            var clientIp = _httpContextAccessor.HttpContext.Connection.RemoteIpAddress?.ToString();
-            if (!string.IsNullOrEmpty(clientIp))
-            {
-                request.Headers.TryAddWithoutValidation("X-Forwarded-For", clientIp);
-                request.Headers.TryAddWithoutValidation("X-Real-IP", clientIp);
-            }
-        }
-
-        bool authHeaderAdded = false;
-
-        // Forward authentication headers from client
-        authHeaderAdded = AuthHeaderHelper.ForwardAuthHeaders(clientHeaders, request);
-
-        if (!authHeaderAdded)
-        {
-            _logger.LogDebug("No client auth provided for DELETE {Url} - forwarding without auth", url);
-        }
-        else
-        {
-            _logger.LogTrace("Forwarded authentication headers");
-        }
-
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-        _logger.LogDebug("DELETE to Jellyfin: {Url}", url);
-
-        var response = await _httpClient.SendAsync(request);
-
-        var statusCode = (int)response.StatusCode;
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorContent = await response.Content.ReadAsStringAsync();
-            LogUpstreamFailure(HttpMethod.Delete, response.StatusCode, url, errorContent);
-            return (null, statusCode);
-        }
-
-        // Handle 204 No Content responses
-        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
-        {
-            return (null, statusCode);
-        }
-
-        var responseContent = await response.Content.ReadAsStringAsync();
-
-        // Handle empty responses
-        if (string.IsNullOrWhiteSpace(responseContent))
-        {
-            return (null, statusCode);
-        }
-
-        return (JsonDocument.Parse(responseContent), statusCode);
+        return await SendAsync(HttpMethod.Delete, endpoint, null, clientHeaders);
     }
 
     /// <summary>

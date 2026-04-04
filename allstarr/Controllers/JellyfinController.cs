@@ -628,13 +628,20 @@ public partial class JellyfinController : ControllerBase
 
         if (!isExternal)
         {
+            var effectiveImageTag = tag;
+            if (string.IsNullOrWhiteSpace(effectiveImageTag) &&
+                _spotifySettings.IsSpotifyPlaylist(itemId))
+            {
+                effectiveImageTag = await ResolveCurrentSpotifyPlaylistImageTagAsync(itemId, imageType);
+            }
+
             // Proxy image from Jellyfin for local content
             var (imageBytes, contentType) = await _proxyService.GetImageAsync(
                 itemId,
                 imageType,
                 maxWidth,
                 maxHeight,
-                tag);
+                effectiveImageTag);
 
             if (imageBytes == null || contentType == null)
             {
@@ -791,6 +798,40 @@ public partial class JellyfinController : ControllerBase
         );
 
         return File(transparentPng, "image/png");
+    }
+
+    private async Task<string?> ResolveCurrentSpotifyPlaylistImageTagAsync(string itemId, string imageType)
+    {
+        try
+        {
+            var (itemResult, statusCode) = await _proxyService.GetJsonAsyncInternal($"Items/{itemId}");
+            if (itemResult == null || statusCode != 200)
+            {
+                return null;
+            }
+
+            using var itemDocument = itemResult;
+            var imageTag = ExtractImageTag(itemDocument.RootElement, imageType);
+
+            if (!string.IsNullOrWhiteSpace(imageTag))
+            {
+                _logger.LogDebug(
+                    "Resolved current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}: {ImageTag}",
+                    imageType,
+                    itemId,
+                    imageTag);
+            }
+
+            return imageTag;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Failed to resolve current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}",
+                imageType,
+                itemId);
+            return null;
+        }
     }
 
     #endregion
@@ -1292,33 +1333,37 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
-        // Intercept Spotify playlist requests by ID
-        if (_spotifySettings.Enabled &&
-            path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) &&
-            path.Contains("/items", StringComparison.OrdinalIgnoreCase))
+        var playlistItemsRequestId = GetExactPlaylistItemsRequestId(path);
+        if (!string.IsNullOrEmpty(playlistItemsRequestId))
         {
-            // Extract playlist ID from path: playlists/{id}/items
-            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase))
+            if (_spotifySettings.Enabled)
             {
-                var playlistId = parts[1];
-
                 _logger.LogDebug("=== PLAYLIST REQUEST ===");
-                _logger.LogInformation("Playlist ID: {PlaylistId}", playlistId);
+                _logger.LogInformation("Playlist ID: {PlaylistId}", playlistItemsRequestId);
                 _logger.LogInformation("Spotify Enabled: {Enabled}", _spotifySettings.Enabled);
                 _logger.LogInformation("Configured Playlists: {Playlists}", string.Join(", ", _spotifySettings.Playlists.Select(p => $"{p.Name}:{p.Id}")));
-                _logger.LogInformation("Is configured: {IsConfigured}", _spotifySettings.IsSpotifyPlaylist(playlistId));
+                _logger.LogInformation("Is configured: {IsConfigured}", _spotifySettings.IsSpotifyPlaylist(playlistItemsRequestId));
 
                 // Check if this playlist ID is configured for Spotify injection
-                if (_spotifySettings.IsSpotifyPlaylist(playlistId))
+                if (_spotifySettings.IsSpotifyPlaylist(playlistItemsRequestId))
                 {
                     _logger.LogInformation("========================================");
                     _logger.LogInformation("=== INTERCEPTING SPOTIFY PLAYLIST ===");
-                    _logger.LogInformation("Playlist ID: {PlaylistId}", playlistId);
+                    _logger.LogInformation("Playlist ID: {PlaylistId}", playlistItemsRequestId);
                     _logger.LogInformation("========================================");
-                    return await GetPlaylistTracks(playlistId);
+                    return await GetPlaylistTracks(playlistItemsRequestId);
                 }
             }
+
+            var playlistItemsPath = path;
+            if (Request.QueryString.HasValue)
+            {
+                playlistItemsPath = $"{playlistItemsPath}{Request.QueryString.Value}";
+            }
+
+            _logger.LogDebug("Using transparent Jellyfin passthrough for non-injected playlist {PlaylistId}",
+                playlistItemsRequestId);
+            return await ProxyJsonPassthroughAsync(playlistItemsPath);
         }
 
         // Handle non-JSON responses (images, robots.txt, etc.)

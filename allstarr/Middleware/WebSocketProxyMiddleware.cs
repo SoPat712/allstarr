@@ -152,6 +152,11 @@ public class WebSocketProxyMiddleware
             clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
             _logger.LogDebug("✓ WEBSOCKET: Client WebSocket accepted");
 
+            if (!string.IsNullOrEmpty(deviceId))
+            {
+                await _sessionManager.RegisterProxiedWebSocketAsync(deviceId);
+            }
+
             // Start bidirectional proxying
             var clientToServer = ProxyMessagesAsync(clientWebSocket, serverWebSocket, "Client→Server", context.RequestAborted);
             var serverToClient = ProxyMessagesAsync(serverWebSocket, clientWebSocket, "Server→Client", context.RequestAborted);
@@ -194,6 +199,11 @@ public class WebSocketProxyMiddleware
         }
         finally
         {
+            if (!string.IsNullOrEmpty(deviceId))
+            {
+                _sessionManager.UnregisterProxiedWebSocket(deviceId);
+            }
+
             // Clean up connections
             if (clientWebSocket?.State == WebSocketState.Open)
             {
