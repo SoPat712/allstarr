@@ -387,9 +387,9 @@ public partial class JellyfinController
 
         // Score-sort each source, then interleave by highest remaining score.
         // Keep only a small source preference for already-relevant primary results.
-        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 1.5, boostMinScore: 72);
-        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 1.5, boostMinScore: 78);
-        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 1.5, boostMinScore: 75);
+        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 5.0);
+        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 5.0);
+        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 5.0);
 
         // Log top results for debugging
         if (_logger.IsEnabled(LogLevel.Debug))
@@ -439,7 +439,7 @@ public partial class JellyfinController
         }
 
         // Merge albums and playlists using score-based interleaving (albums keep a light priority over playlists).
-        var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 2.0, boostMinScore: 70);
+        var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 2.0);
         mergedAlbumsAndPlaylists = ApplyRequestedAlbumOrderingIfApplicable(
             mergedAlbumsAndPlaylists,
             itemTypes,
@@ -904,49 +904,37 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// Score-sorts each source and then interleaves by highest remaining score.
-    /// This avoids weak head results in one source blocking stronger results later in that same source.
+    /// Interleaves two sources while preserving each source's original order.
+    /// The only decision made at each step is which current head item to take next.
     /// </summary>
     private List<Dictionary<string, object?>> InterleaveByScore(
         List<Dictionary<string, object?>> primaryItems,
         List<Dictionary<string, object?>> secondaryItems,
         string query,
-        double primaryBoost,
-        double boostMinScore = 70)
+        double primaryBoost)
     {
-        var primaryScored = primaryItems.Select((item, index) =>
+        var primaryScored = primaryItems.Select(item =>
         {
             var baseScore = CalculateItemRelevanceScore(query, item);
-            var finalScore = baseScore >= boostMinScore
-                ? Math.Min(100.0, baseScore + primaryBoost)
-                : baseScore;
             return new
             {
                 Item = item,
                 BaseScore = baseScore,
-                Score = finalScore,
-                SourceIndex = index
+                Score = Math.Min(100.0, baseScore + primaryBoost)
             };
         })
-        .OrderByDescending(x => x.Score)
-        .ThenByDescending(x => x.BaseScore)
-        .ThenBy(x => x.SourceIndex)
         .ToList();
 
-        var secondaryScored = secondaryItems.Select((item, index) =>
+        var secondaryScored = secondaryItems.Select(item =>
         {
             var baseScore = CalculateItemRelevanceScore(query, item);
             return new
             {
                 Item = item,
                 BaseScore = baseScore,
-                Score = baseScore,
-                SourceIndex = index
+                Score = baseScore
             };
         })
-        .OrderByDescending(x => x.Score)
-        .ThenByDescending(x => x.BaseScore)
-        .ThenBy(x => x.SourceIndex)
         .ToList();
 
         var result = new List<Dictionary<string, object?>>(primaryScored.Count + secondaryScored.Count);
@@ -977,13 +965,9 @@ public partial class JellyfinController
             {
                 result.Add(secondaryScored[secondaryIdx++].Item);
             }
-            else if (primaryCandidate.BaseScore >= secondaryCandidate.BaseScore)
-            {
-                result.Add(primaryScored[primaryIdx++].Item);
-            }
             else
             {
-                result.Add(secondaryScored[secondaryIdx++].Item);
+                result.Add(primaryScored[primaryIdx++].Item);
             }
         }
 
