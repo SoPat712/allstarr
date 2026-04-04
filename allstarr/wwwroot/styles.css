@@ -69,10 +69,47 @@ body {
     font-size: 0.85rem;
 }
 
+.support-badge {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: min(360px, calc(100vw - 32px));
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(22, 27, 34, 0.94);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    z-index: 10;
+}
+
+.support-badge a,
+.support-footer a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.support-badge a:hover,
+.support-footer a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
+}
+
+.support-footer {
+    margin-top: 8px;
+    padding: 20px 0 8px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+    text-align: center;
 }
 
 header {
@@ -857,6 +894,21 @@ input::placeholder {
 .tab.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
+}
+
+@media (max-width: 768px) {
+    .support-badge {
+        right: 12px;
+        bottom: 12px;
+        width: min(340px, calc(100vw - 24px));
+        padding: 10px 12px;
+        font-size: 0.78rem;
+    }
+
+    .support-footer {
+        padding-top: 16px;
+        font-size: 0.88rem;
+    }
 }
 
 .tab-content {
