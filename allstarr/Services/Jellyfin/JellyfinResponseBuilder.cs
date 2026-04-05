@@ -355,6 +355,7 @@ public class JellyfinResponseBuilder
             ["Tags"] = new string[0],
             ["People"] = new object[0],
             ["SortName"] = songTitle,
+            ["AudioInfo"] = new Dictionary<string, object?>(),
             ["ParentLogoItemId"] = song.AlbumId,
             ["ParentBackdropItemId"] = song.AlbumId,
             ["ParentBackdropImageTags"] = new string[0],
@@ -405,6 +406,7 @@ public class JellyfinResponseBuilder
             ["MediaType"] = "Audio",
             ["NormalizationGain"] = 0.0,
             ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
+            ["CanDelete"] = false,
             ["CanDownload"] = true,
             ["SupportsSync"] = true
         };
@@ -539,6 +541,7 @@ public class JellyfinResponseBuilder
             ["ServerId"] = "allstarr",
             ["Id"] = album.Id,
             ["PremiereDate"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : null,
+            ["DateCreated"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : "1970-01-01T00:00:00.0000000Z",
             ["ChannelId"] = (object?)null,
             ["Genres"] = !string.IsNullOrEmpty(album.Genre)
                 ? new[] { album.Genre }
@@ -547,6 +550,8 @@ public class JellyfinResponseBuilder
             ["ProductionYear"] = album.Year,
             ["IsFolder"] = true,
             ["Type"] = "MusicAlbum",
+            ["SortName"] = albumName,
+            ["BasicSyncInfo"] = new Dictionary<string, object?>(),
             ["GenreItems"] = !string.IsNullOrEmpty(album.Genre)
                 ? new[]
                 {
@@ -633,6 +638,9 @@ public class JellyfinResponseBuilder
             ["RunTimeTicks"] = 0,
             ["IsFolder"] = true,
             ["Type"] = "MusicArtist",
+            ["SortName"] = artistName,
+            ["PrimaryImageAspectRatio"] = 1.0,
+            ["BasicSyncInfo"] = new Dictionary<string, object?>(),
             ["GenreItems"] = new Dictionary<string, object?>[0],
             ["UserData"] = new Dictionary<string, object>
             {
@@ -755,6 +763,11 @@ public class JellyfinResponseBuilder
             ["RunTimeTicks"] = playlist.Duration * TimeSpan.TicksPerSecond,
             ["IsFolder"] = true,
             ["Type"] = "MusicAlbum",
+            ["SortName"] = $"{playlist.Name} [S/P]",
+            ["DateCreated"] = playlist.CreatedDate.HasValue
+                ? playlist.CreatedDate.Value.ToString("o")
+                : "1970-01-01T00:00:00.0000000Z",
+            ["BasicSyncInfo"] = new Dictionary<string, object?>(),
             ["GenreItems"] = new Dictionary<string, object?>[0],
             ["UserData"] = new Dictionary<string, object>
             {
