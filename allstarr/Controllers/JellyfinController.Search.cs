@@ -753,8 +753,8 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// Interleaves two sources while preserving each source's original order.
-    /// Scores only decide which source leads each round; they do not re-rank either source.
+    /// Merges two source queues without reordering either queue.
+    /// At each step, compare only the current head from each source and dequeue the winner.
     /// </summary>
     private List<Dictionary<string, object?>> InterleaveByScore(
         List<Dictionary<string, object?>> primaryItems,
@@ -764,24 +764,20 @@ public partial class JellyfinController
     {
         var primaryScored = primaryItems.Select(item =>
         {
-            var baseScore = CalculateItemRelevanceScore(query, item);
             return new
             {
                 Item = item,
-                BaseScore = baseScore,
-                Score = Math.Min(100.0, baseScore + primaryBoost)
+                Score = Math.Min(100.0, CalculateItemRelevanceScore(query, item) + primaryBoost)
             };
         })
         .ToList();
 
         var secondaryScored = secondaryItems.Select(item =>
         {
-            var baseScore = CalculateItemRelevanceScore(query, item);
             return new
             {
                 Item = item,
-                BaseScore = baseScore,
-                Score = baseScore
+                Score = CalculateItemRelevanceScore(query, item)
             };
         })
         .ToList();
@@ -794,19 +790,13 @@ public partial class JellyfinController
             var primaryCandidate = primaryScored[primaryIdx];
             var secondaryCandidate = secondaryScored[secondaryIdx];
 
-            var primaryLeadsRound = primaryCandidate.Score > secondaryCandidate.Score ||
-                (primaryCandidate.Score == secondaryCandidate.Score &&
-                 primaryCandidate.BaseScore >= secondaryCandidate.BaseScore);
-
-            if (primaryLeadsRound)
+            if (primaryCandidate.Score >= secondaryCandidate.Score)
             {
                 result.Add(primaryScored[primaryIdx++].Item);
-                result.Add(secondaryScored[secondaryIdx++].Item);
             }
             else
             {
                 result.Add(secondaryScored[secondaryIdx++].Item);
-                result.Add(primaryScored[primaryIdx++].Item);
             }
         }
 
@@ -824,142 +814,17 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// Calculates query relevance for a search item.
-    /// Title is primary; metadata context is secondary and down-weighted.
+    /// Calculates query relevance using the product's per-type rules.
     /// </summary>
     private double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item)
     {
-        var title = GetItemName(item);
-        if (string.IsNullOrWhiteSpace(title))
+        return GetItemType(item) switch
         {
-            return 0;
-        }
-
-        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(query, title);
-        var searchText = BuildItemSearchText(item, title);
-
-        if (string.Equals(searchText, title, StringComparison.OrdinalIgnoreCase))
-        {
-            return titleScore;
-        }
-
-        var metadataScore = FuzzyMatcher.CalculateSimilarityAggressive(query, searchText);
-        var weightedMetadataScore = metadataScore * 0.85;
-
-        var baseScore = Math.Max(titleScore, weightedMetadataScore);
-        return ApplyQueryCoverageAdjustment(query, title, searchText, baseScore);
-    }
-
-    private static double ApplyQueryCoverageAdjustment(string query, string title, string searchText, double baseScore)
-    {
-        var queryTokens = TokenizeForCoverage(query);
-        if (queryTokens.Count < 2)
-        {
-            return baseScore;
-        }
-
-        var titleCoverage = CalculateTokenCoverage(queryTokens, title);
-        var searchCoverage = string.Equals(searchText, title, StringComparison.OrdinalIgnoreCase)
-            ? titleCoverage
-            : CalculateTokenCoverage(queryTokens, searchText);
-
-        var coverage = Math.Max(titleCoverage, searchCoverage);
-
-        if (coverage >= 0.999)
-        {
-            return Math.Min(100.0, baseScore + 3.0);
-        }
-
-        if (coverage >= 0.8)
-        {
-            return baseScore * 0.9;
-        }
-
-        if (coverage >= 0.6)
-        {
-            return baseScore * 0.72;
-        }
-
-        return baseScore * 0.5;
-    }
-
-    private static double CalculateTokenCoverage(IReadOnlyList<string> queryTokens, string target)
-    {
-        var targetTokens = TokenizeForCoverage(target);
-        if (queryTokens.Count == 0 || targetTokens.Count == 0)
-        {
-            return 0;
-        }
-
-        var matched = 0;
-        foreach (var queryToken in queryTokens)
-        {
-            if (targetTokens.Any(targetToken => IsTokenMatch(queryToken, targetToken)))
-            {
-                matched++;
-            }
-        }
-
-        return (double)matched / queryTokens.Count;
-    }
-
-    private static bool IsTokenMatch(string queryToken, string targetToken)
-    {
-        return queryToken.Equals(targetToken, StringComparison.Ordinal) ||
-               queryToken.StartsWith(targetToken, StringComparison.Ordinal) ||
-               targetToken.StartsWith(queryToken, StringComparison.Ordinal);
-    }
-
-    private static IReadOnlyList<string> TokenizeForCoverage(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return Array.Empty<string>();
-        }
-
-        var normalized = NormalizeForCoverage(text);
-        var allTokens = normalized
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        if (allTokens.Count == 0)
-        {
-            return Array.Empty<string>();
-        }
-
-        var significant = allTokens
-            .Where(token => token.Length >= 2 && !SearchStopWords.Contains(token))
-            .ToList();
-
-        return significant.Count > 0
-            ? significant
-            : allTokens.Where(token => token.Length >= 2).ToList();
-    }
-
-    private static string NormalizeForCoverage(string text)
-    {
-        var normalized = RemoveDiacritics(text).ToLowerInvariant();
-        normalized = normalized.Replace('&', ' ');
-        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"[^\w\s]", " ");
-        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ").Trim();
-        return normalized;
-    }
-
-    private static string RemoveDiacritics(string text)
-    {
-        var normalized = text.Normalize(NormalizationForm.FormD);
-        var chars = new List<char>(normalized.Length);
-
-        foreach (var c in normalized)
-        {
-            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark)
-            {
-                chars.Add(c);
-            }
-        }
-
-        return new string(chars.ToArray()).Normalize(NormalizationForm.FormC);
+            "Audio" => CalculateSongRelevanceScore(query, item),
+            "MusicAlbum" => CalculateAlbumRelevanceScore(query, item),
+            "MusicArtist" => CalculateArtistRelevanceScore(query, item),
+            _ => CalculateArtistRelevanceScore(query, item)
+        };
     }
 
     /// <summary>
@@ -970,52 +835,90 @@ public partial class JellyfinController
         return GetItemStringValue(item, "Name");
     }
 
-    private string BuildItemSearchText(Dictionary<string, object?> item, string title)
+    private double CalculateSongRelevanceScore(string query, Dictionary<string, object?> item)
     {
-        var parts = new List<string>();
-
-        AddDistinct(parts, title);
-        AddDistinct(parts, GetItemStringValue(item, "SortName"));
-        AddDistinct(parts, GetItemStringValue(item, "AlbumArtist"));
-        AddDistinct(parts, GetItemStringValue(item, "Artist"));
-        AddDistinct(parts, GetItemStringValue(item, "Album"));
-
-        foreach (var artist in GetItemStringList(item, "Artists").Take(3))
-        {
-            AddDistinct(parts, artist);
-        }
-
-        return string.Join(" ", parts);
+        var title = GetItemName(item);
+        var artistText = GetSongArtistText(item);
+        return CalculateBestFuzzyScore(query, title, CombineSearchFields(title, artistText));
     }
 
-    private static readonly HashSet<string> SearchStopWords = new(StringComparer.Ordinal)
+    private double CalculateAlbumRelevanceScore(string query, Dictionary<string, object?> item)
     {
-        "a",
-        "an",
-        "and",
-        "at",
-        "for",
-        "in",
-        "of",
-        "on",
-        "the",
-        "to",
-        "with",
-        "feat",
-        "ft"
-    };
+        var albumName = GetItemName(item);
+        var artistText = GetAlbumArtistText(item);
+        return CalculateBestFuzzyScore(query, albumName, CombineSearchFields(albumName, artistText));
+    }
 
-    private static void AddDistinct(List<string> values, string? value)
+    private double CalculateArtistRelevanceScore(string query, Dictionary<string, object?> item)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        var artistName = GetItemName(item);
+        if (string.IsNullOrWhiteSpace(artistName))
         {
-            return;
+            return 0;
         }
 
-        if (!values.Contains(value, StringComparer.OrdinalIgnoreCase))
+        return FuzzyMatcher.CalculateSimilarityAggressive(query, artistName);
+    }
+
+    private double CalculateBestFuzzyScore(string query, params string?[] candidates)
+    {
+        var best = 0;
+
+        foreach (var candidate in candidates)
         {
-            values.Add(value);
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            best = Math.Max(best, FuzzyMatcher.CalculateSimilarityAggressive(query, candidate));
         }
+
+        return best;
+    }
+
+    private static string CombineSearchFields(params string?[] fields)
+    {
+        return string.Join(" ", fields.Where(field => !string.IsNullOrWhiteSpace(field)));
+    }
+
+    private string GetItemType(Dictionary<string, object?> item)
+    {
+        return GetItemStringValue(item, "Type");
+    }
+
+    private string GetSongArtistText(Dictionary<string, object?> item)
+    {
+        var artists = GetItemStringList(item, "Artists").Take(3).ToList();
+        if (artists.Count > 0)
+        {
+            return string.Join(" ", artists);
+        }
+
+        var albumArtist = GetItemStringValue(item, "AlbumArtist");
+        if (!string.IsNullOrWhiteSpace(albumArtist))
+        {
+            return albumArtist;
+        }
+
+        return GetItemStringValue(item, "Artist");
+    }
+
+    private string GetAlbumArtistText(Dictionary<string, object?> item)
+    {
+        var albumArtist = GetItemStringValue(item, "AlbumArtist");
+        if (!string.IsNullOrWhiteSpace(albumArtist))
+        {
+            return albumArtist;
+        }
+
+        var artists = GetItemStringList(item, "Artists").Take(3).ToList();
+        if (artists.Count > 0)
+        {
+            return string.Join(" ", artists);
+        }
+
+        return GetItemStringValue(item, "Artist");
     }
 
     private string GetItemStringValue(Dictionary<string, object?> item, string key)

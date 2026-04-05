@@ -57,7 +57,7 @@ public class JellyfinSearchInterleaveTests
     }
 
     [Fact]
-    public void InterleaveByScore_TiedRounds_AlternatesSourcesInsteadOfDrainingPrimary()
+    public void InterleaveByScore_TiedScores_PreferPrimaryQueueHead()
     {
         var controller = CreateController();
         var primary = new List<Dictionary<string, object?>>
@@ -73,11 +73,11 @@ public class JellyfinSearchInterleaveTests
 
         var result = InvokeInterleaveByScore(controller, primary, secondary, "bts", 0.0);
 
-        Assert.Equal(["p1", "s1", "p2", "s2"], result.Select(GetId));
+        Assert.Equal(["p1", "p2", "s1", "s2"], result.Select(GetId));
     }
 
     [Fact]
-    public void InterleaveByScore_StrongerLaterPrimaryHead_CanLeadSubsequentRoundWithoutReordering()
+    public void InterleaveByScore_StrongerLaterPrimaryHead_DoesNotBypassCurrentQueueHead()
     {
         var controller = CreateController();
         var primary = new List<Dictionary<string, object?>>
@@ -93,7 +93,70 @@ public class JellyfinSearchInterleaveTests
 
         var result = InvokeInterleaveByScore(controller, primary, secondary, "bts", 0.0);
 
-        Assert.Equal(["s1", "p1", "p2", "s2"], result.Select(GetId));
+        Assert.Equal(["s1", "s2", "p1", "p2"], result.Select(GetId));
+    }
+
+    [Fact]
+    public void InterleaveByScore_JellyfinBoost_CanWinCloseHeadToHead()
+    {
+        var controller = CreateController();
+        var primary = new List<Dictionary<string, object?>>
+        {
+            CreateItem("luther remastered", "p1")
+        };
+        var secondary = new List<Dictionary<string, object?>>
+        {
+            CreateItem("luther", "s1")
+        };
+
+        var result = InvokeInterleaveByScore(controller, primary, secondary, "luther", 5.0);
+
+        Assert.Equal(["p1", "s1"], result.Select(GetId));
+    }
+
+    [Fact]
+    public void CalculateItemRelevanceScore_SongUsesArtistContext()
+    {
+        var controller = CreateController();
+        var withArtist = CreateTypedItem("Audio", "cardigan", "song-with-artist");
+        withArtist["Artists"] = new[] { "Taylor Swift" };
+
+        var withoutArtist = CreateTypedItem("Audio", "cardigan", "song-without-artist");
+
+        var withArtistScore = InvokeCalculateItemRelevanceScore(controller, "taylor swift", withArtist);
+        var withoutArtistScore = InvokeCalculateItemRelevanceScore(controller, "taylor swift", withoutArtist);
+
+        Assert.True(withArtistScore > withoutArtistScore);
+    }
+
+    [Fact]
+    public void CalculateItemRelevanceScore_AlbumUsesArtistContext()
+    {
+        var controller = CreateController();
+        var withArtist = CreateTypedItem("MusicAlbum", "folklore", "album-with-artist");
+        withArtist["AlbumArtist"] = "Taylor Swift";
+
+        var withoutArtist = CreateTypedItem("MusicAlbum", "folklore", "album-without-artist");
+
+        var withArtistScore = InvokeCalculateItemRelevanceScore(controller, "taylor swift", withArtist);
+        var withoutArtistScore = InvokeCalculateItemRelevanceScore(controller, "taylor swift", withoutArtist);
+
+        Assert.True(withArtistScore > withoutArtistScore);
+    }
+
+    [Fact]
+    public void CalculateItemRelevanceScore_ArtistIgnoresNonNameMetadata()
+    {
+        var controller = CreateController();
+        var plainArtist = CreateTypedItem("MusicArtist", "Taylor Swift", "artist-plain");
+        var noisyArtist = CreateTypedItem("MusicArtist", "Taylor Swift", "artist-noisy");
+        noisyArtist["AlbumArtist"] = "Completely Different";
+        noisyArtist["Artists"] = new[] { "Someone Else" };
+
+        var plainScore = InvokeCalculateItemRelevanceScore(controller, "taylor swift", plainArtist);
+        var noisyScore = InvokeCalculateItemRelevanceScore(controller, "taylor swift", noisyArtist);
+
+        Assert.Equal(plainScore, noisyScore);
     }
 
     private static JellyfinController CreateController()
@@ -119,6 +182,20 @@ public class JellyfinSearchInterleaveTests
             [primary, secondary, query, primaryBoost])!;
     }
 
+    private static double InvokeCalculateItemRelevanceScore(
+        JellyfinController controller,
+        string query,
+        Dictionary<string, object?> item)
+    {
+        var method = typeof(JellyfinController).GetMethod(
+            "CalculateItemRelevanceScore",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+
+        return (double)method!.Invoke(controller, [query, item])!;
+    }
+
     private static Dictionary<string, object?> CreateItem(string name, string? id = null)
     {
         return new Dictionary<string, object?>
@@ -126,6 +203,13 @@ public class JellyfinSearchInterleaveTests
             ["Name"] = name,
             ["Id"] = id ?? name
         };
+    }
+
+    private static Dictionary<string, object?> CreateTypedItem(string type, string name, string id)
+    {
+        var item = CreateItem(name, id);
+        item["Type"] = type;
+        return item;
     }
 
     private static string GetName(Dictionary<string, object?> item)
