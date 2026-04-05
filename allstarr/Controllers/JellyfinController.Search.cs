@@ -387,9 +387,9 @@ public partial class JellyfinController
 
         // Keep Jellyfin/provider ordering intact.
         // Scores only decide which source leads each interleaving round.
-        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 0.0);
-        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 0.0);
-        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 0.0);
+        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 5.0);
+        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 5.0);
+        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 5.0);
 
         // Log top results for debugging
         if (_logger.IsEnabled(LogLevel.Debug))
