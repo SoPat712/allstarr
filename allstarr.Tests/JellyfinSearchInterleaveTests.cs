@@ -37,7 +37,7 @@ public class JellyfinSearchInterleaveTests
     }
 
     [Fact]
-    public void InterleaveByScore_LocalBoost_CanWinCloseHeadToHeadWithoutReorderingSource()
+    public void InterleaveByScore_StrongerHeadMatch_LeadsWithoutReorderingSource()
     {
         var controller = CreateController();
         var primary = new List<Dictionary<string, object?>>
@@ -51,9 +51,49 @@ public class JellyfinSearchInterleaveTests
             CreateItem("yyy filler")
         };
 
-        var result = InvokeInterleaveByScore(controller, primary, secondary, "luther", 5.0);
+        var result = InvokeInterleaveByScore(controller, primary, secondary, "luther", 0.0);
 
-        Assert.Equal(["luther remastered", "luther", "zzz filler", "yyy filler"], result.Select(GetName));
+        Assert.Equal(["luther", "luther remastered", "zzz filler", "yyy filler"], result.Select(GetName));
+    }
+
+    [Fact]
+    public void InterleaveByScore_TiedRounds_AlternatesSourcesInsteadOfDrainingPrimary()
+    {
+        var controller = CreateController();
+        var primary = new List<Dictionary<string, object?>>
+        {
+            CreateItem("bts", "p1"),
+            CreateItem("bts", "p2")
+        };
+        var secondary = new List<Dictionary<string, object?>>
+        {
+            CreateItem("bts", "s1"),
+            CreateItem("bts", "s2")
+        };
+
+        var result = InvokeInterleaveByScore(controller, primary, secondary, "bts", 0.0);
+
+        Assert.Equal(["p1", "s1", "p2", "s2"], result.Select(GetId));
+    }
+
+    [Fact]
+    public void InterleaveByScore_StrongerLaterPrimaryHead_CanLeadSubsequentRoundWithoutReordering()
+    {
+        var controller = CreateController();
+        var primary = new List<Dictionary<string, object?>>
+        {
+            CreateItem("zzz filler", "p1"),
+            CreateItem("bts local later", "p2")
+        };
+        var secondary = new List<Dictionary<string, object?>>
+        {
+            CreateItem("bts", "s1"),
+            CreateItem("bts live", "s2")
+        };
+
+        var result = InvokeInterleaveByScore(controller, primary, secondary, "bts", 0.0);
+
+        Assert.Equal(["s1", "p1", "p2", "s2"], result.Select(GetId));
     }
 
     private static JellyfinController CreateController()
@@ -79,16 +119,22 @@ public class JellyfinSearchInterleaveTests
             [primary, secondary, query, primaryBoost])!;
     }
 
-    private static Dictionary<string, object?> CreateItem(string name)
+    private static Dictionary<string, object?> CreateItem(string name, string? id = null)
     {
         return new Dictionary<string, object?>
         {
-            ["Name"] = name
+            ["Name"] = name,
+            ["Id"] = id ?? name
         };
     }
 
     private static string GetName(Dictionary<string, object?> item)
     {
         return item["Name"]?.ToString() ?? string.Empty;
+    }
+
+    private static string GetId(Dictionary<string, object?> item)
+    {
+        return item["Id"]?.ToString() ?? string.Empty;
     }
 }

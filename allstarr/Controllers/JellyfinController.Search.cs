@@ -385,11 +385,11 @@ public partial class JellyfinController
         var externalAlbumItems = externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a)).ToList();
         var externalArtistItems = externalResult.Artists.Select(a => _responseBuilder.ConvertArtistToJellyfinItem(a)).ToList();
 
-        // Score-sort each source, then interleave by highest remaining score.
-        // Keep only a small source preference for already-relevant primary results.
-        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 5.0);
-        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 5.0);
-        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 5.0);
+        // Keep Jellyfin/provider ordering intact.
+        // Scores only decide which source leads each interleaving round.
+        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 0.0);
+        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 0.0);
+        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 0.0);
 
         // Log top results for debugging
         if (_logger.IsEnabled(LogLevel.Debug))
@@ -438,13 +438,8 @@ public partial class JellyfinController
             _logger.LogDebug("No playlists found to merge with albums");
         }
 
-        // Merge albums and playlists using score-based interleaving (albums keep a light priority over playlists).
-        var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 2.0);
-        mergedAlbumsAndPlaylists = ApplyRequestedAlbumOrderingIfApplicable(
-            mergedAlbumsAndPlaylists,
-            itemTypes,
-            Request.Query["SortBy"].ToString(),
-            Request.Query["SortOrder"].ToString());
+        // Keep album/playlist source ordering intact and only let scores decide who leads each round.
+        var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 0.0);
 
         _logger.LogDebug(
             "Merged results: Songs={Songs}, Albums+Playlists={AlbumsPlaylists}, Artists={Artists}",
@@ -757,155 +752,9 @@ public partial class JellyfinController
         });
     }
 
-    private List<Dictionary<string, object?>> ApplyRequestedAlbumOrderingIfApplicable(
-        List<Dictionary<string, object?>> items,
-        string[]? requestedTypes,
-        string? sortBy,
-        string? sortOrder)
-    {
-        if (items.Count <= 1 || string.IsNullOrWhiteSpace(sortBy))
-        {
-            return items;
-        }
-
-        if (requestedTypes == null || requestedTypes.Length == 0)
-        {
-            return items;
-        }
-
-        var isAlbumOnlyRequest = requestedTypes.All(type =>
-            string.Equals(type, "MusicAlbum", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(type, "Playlist", StringComparison.OrdinalIgnoreCase));
-
-        if (!isAlbumOnlyRequest)
-        {
-            return items;
-        }
-
-        var sortFields = sortBy
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(field => !string.IsNullOrWhiteSpace(field))
-            .ToList();
-
-        if (sortFields.Count == 0)
-        {
-            return items;
-        }
-
-        var descending = string.Equals(sortOrder, "Descending", StringComparison.OrdinalIgnoreCase);
-        var sorted = items.ToList();
-        sorted.Sort((left, right) => CompareAlbumItemsByRequestedSort(left, right, sortFields, descending));
-        return sorted;
-    }
-
-    private int CompareAlbumItemsByRequestedSort(
-        Dictionary<string, object?> left,
-        Dictionary<string, object?> right,
-        IReadOnlyList<string> sortFields,
-        bool descending)
-    {
-        foreach (var field in sortFields)
-        {
-            var comparison = CompareAlbumItemsByField(left, right, field);
-            if (comparison == 0)
-            {
-                continue;
-            }
-
-            return descending ? -comparison : comparison;
-        }
-
-        return string.Compare(GetItemStringValue(left, "Name"), GetItemStringValue(right, "Name"), StringComparison.OrdinalIgnoreCase);
-    }
-
-    private int CompareAlbumItemsByField(Dictionary<string, object?> left, Dictionary<string, object?> right, string field)
-    {
-        return field.ToLowerInvariant() switch
-        {
-            "sortname" => string.Compare(GetItemStringValue(left, "SortName"), GetItemStringValue(right, "SortName"), StringComparison.OrdinalIgnoreCase),
-            "name" => string.Compare(GetItemStringValue(left, "Name"), GetItemStringValue(right, "Name"), StringComparison.OrdinalIgnoreCase),
-            "datecreated" => DateTime.Compare(GetItemDateValue(left, "DateCreated"), GetItemDateValue(right, "DateCreated")),
-            "premieredate" => DateTime.Compare(GetItemDateValue(left, "PremiereDate"), GetItemDateValue(right, "PremiereDate")),
-            "productionyear" => CompareIntValues(GetItemIntValue(left, "ProductionYear"), GetItemIntValue(right, "ProductionYear")),
-            _ => 0
-        };
-    }
-
-    private static int CompareIntValues(int? left, int? right)
-    {
-        if (left.HasValue && right.HasValue)
-        {
-            return left.Value.CompareTo(right.Value);
-        }
-
-        if (left.HasValue)
-        {
-            return 1;
-        }
-
-        if (right.HasValue)
-        {
-            return -1;
-        }
-
-        return 0;
-    }
-
-    private static DateTime GetItemDateValue(Dictionary<string, object?> item, string key)
-    {
-        if (!item.TryGetValue(key, out var value) || value == null)
-        {
-            return DateTime.MinValue;
-        }
-
-        if (value is JsonElement jsonElement)
-        {
-            if (jsonElement.ValueKind == JsonValueKind.String &&
-                DateTime.TryParse(jsonElement.GetString(), out var parsedDate))
-            {
-                return parsedDate;
-            }
-
-            return DateTime.MinValue;
-        }
-
-        if (DateTime.TryParse(value.ToString(), out var parsed))
-        {
-            return parsed;
-        }
-
-        return DateTime.MinValue;
-    }
-
-    private static int? GetItemIntValue(Dictionary<string, object?> item, string key)
-    {
-        if (!item.TryGetValue(key, out var value) || value == null)
-        {
-            return null;
-        }
-
-        if (value is JsonElement jsonElement)
-        {
-            if (jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var intValue))
-            {
-                return intValue;
-            }
-
-            if (jsonElement.ValueKind == JsonValueKind.String &&
-                int.TryParse(jsonElement.GetString(), out var parsedInt))
-            {
-                return parsedInt;
-            }
-
-            return null;
-        }
-
-        return int.TryParse(value.ToString(), out var parsed) ? parsed : null;
-    }
-
     /// <summary>
     /// Interleaves two sources while preserving each source's original order.
-    /// The only decision made at each step is which current head item to take next.
+    /// Scores only decide which source leads each round; they do not re-rank either source.
     /// </summary>
     private List<Dictionary<string, object?>> InterleaveByScore(
         List<Dictionary<string, object?>> primaryItems,
@@ -940,35 +789,35 @@ public partial class JellyfinController
         var result = new List<Dictionary<string, object?>>(primaryScored.Count + secondaryScored.Count);
         int primaryIdx = 0, secondaryIdx = 0;
 
-        while (primaryIdx < primaryScored.Count || secondaryIdx < secondaryScored.Count)
+        while (primaryIdx < primaryScored.Count && secondaryIdx < secondaryScored.Count)
         {
-            if (primaryIdx >= primaryScored.Count)
-            {
-                result.Add(secondaryScored[secondaryIdx++].Item);
-                continue;
-            }
-
-            if (secondaryIdx >= secondaryScored.Count)
-            {
-                result.Add(primaryScored[primaryIdx++].Item);
-                continue;
-            }
-
             var primaryCandidate = primaryScored[primaryIdx];
             var secondaryCandidate = secondaryScored[secondaryIdx];
 
-            if (primaryCandidate.Score > secondaryCandidate.Score)
+            var primaryLeadsRound = primaryCandidate.Score > secondaryCandidate.Score ||
+                (primaryCandidate.Score == secondaryCandidate.Score &&
+                 primaryCandidate.BaseScore >= secondaryCandidate.BaseScore);
+
+            if (primaryLeadsRound)
             {
                 result.Add(primaryScored[primaryIdx++].Item);
-            }
-            else if (secondaryCandidate.Score > primaryCandidate.Score)
-            {
                 result.Add(secondaryScored[secondaryIdx++].Item);
             }
             else
             {
+                result.Add(secondaryScored[secondaryIdx++].Item);
                 result.Add(primaryScored[primaryIdx++].Item);
             }
+        }
+
+        while (primaryIdx < primaryScored.Count)
+        {
+            result.Add(primaryScored[primaryIdx++].Item);
+        }
+
+        while (secondaryIdx < secondaryScored.Count)
+        {
+            result.Add(secondaryScored[secondaryIdx++].Item);
         }
 
         return result;
