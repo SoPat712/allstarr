@@ -176,6 +176,25 @@ builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
     // but we want to reduce noise in production logs
     options.SuppressHandlerScope = true;
 });
+
+// Register a dedicated named HttpClient for Jellyfin backend with connection pooling.
+// SocketsHttpHandler reuses TCP connections across the scoped JellyfinProxyService
+// instances, eliminating per-request TCP/TLS handshake overhead.
+builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // Keep up to 20 idle connections to Jellyfin alive at any time
+        MaxConnectionsPerServer = 20,
+        // Recycle pooled connections every 5 minutes to pick up DNS changes
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        // Close idle connections after 90 seconds to avoid stale sockets
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(90),
+        // Allow HTTP/2 multiplexing when Jellyfin supports it
+        EnableMultipleHttp2Connections = true,
+        // Follow redirects within Jellyfin
+        AllowAutoRedirect = true,
+        MaxAutomaticRedirections = 5
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
