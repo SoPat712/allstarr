@@ -100,14 +100,14 @@ export async function viewTracks(name) {
         const durationSeconds = Math.floor((t.durationMs || 0) / 1000);
         const externalSearchLink =
           t.isLocal === false && t.searchQuery && t.externalProvider
-            ? `<br><small style="color:var(--accent)"><a href="#" onclick="searchProvider('${escapeJs(t.searchQuery)}', '${escapeJs(t.externalProvider)}'); return false;" style="color:var(--accent);text-decoration:underline;">🔍 Search: ${escapeHtml(searchLinkText)}</a></small>`
+            ? `<br><small style="color:var(--accent)"><a href="#" data-action="searchProvider" data-arg-query="${escapeHtml(escapeJs(t.searchQuery))}" data-arg-provider="${escapeHtml(escapeJs(t.externalProvider))}" style="color:var(--accent);text-decoration:underline;">🔍 Search: ${escapeHtml(searchLinkText)}</a></small>`
             : "";
         const missingSearchLink =
           t.isLocal === null && t.searchQuery
-            ? `<br><small style="color:var(--text-secondary)"><a href="#" onclick="searchProvider('${escapeJs(t.searchQuery)}', 'squidwtf'); return false;" style="color:var(--text-secondary);text-decoration:underline;">🔍 Search: ${escapeHtml(searchLinkText)}</a></small>`
+            ? `<br><small style="color:var(--text-secondary)"><a href="#" data-action="searchProvider" data-arg-query="${escapeHtml(escapeJs(t.searchQuery))}" data-arg-provider="squidwtf" style="color:var(--text-secondary);text-decoration:underline;">🔍 Search: ${escapeHtml(searchLinkText)}</a></small>`
             : "";
 
-        const lyricsMapButton = `<button class="small" onclick="openLyricsMap('${escapeJs(firstArtist)}', '${escapeJs(t.title)}', '${escapeJs(t.album || "")}', ${durationSeconds})" style="margin-left:4px;font-size:0.75rem;padding:4px 8px;background:#3b82f6;border-color:#3b82f6;color:white;">Map Lyrics ID</button>`;
+        const lyricsMapButton = `<button class="small" data-action="openLyricsMap" data-arg-artist="${escapeHtml(escapeJs(firstArtist))}" data-arg-title="${escapeHtml(escapeJs(t.title))}" data-arg-album="${escapeHtml(escapeJs(t.album || ""))}" data-arg-duration-seconds="${durationSeconds}" style="margin-left:4px;font-size:0.75rem;padding:4px 8px;background:#3b82f6;border-color:#3b82f6;color:white;">Map Lyrics ID</button>`;
 
         return `
                 <div class="track-item" data-position="${t.position}">
@@ -246,7 +246,7 @@ export async function searchJellyfinTracks() {
         const artist = track.artist || "";
         const album = track.album || "";
         return `
-                <div class="jellyfin-result" data-jellyfin-id="${escapeHtml(id)}" onclick="selectJellyfinTrack('${escapeJs(id)}')">
+                <div class="jellyfin-result" data-jellyfin-id="${escapeHtml(id)}" data-action="selectJellyfinTrack" data-arg-jellyfin-id="${escapeHtml(escapeJs(id))}">
                     <div>
                         <strong>${escapeHtml(title)}</strong>
                         <br>
@@ -344,7 +344,15 @@ export async function searchExternalTracks() {
         const externalUrl = track.url || "";
 
         return `
-                <div class="external-result" data-result-index="${index}" data-external-id="${escapeHtml(id)}" onclick="selectExternalTrack(${index}, '${escapeJs(id)}', '${escapeJs(title)}', '${escapeJs(artist)}', '${escapeJs(providerName)}', '${escapeJs(externalUrl)}')">
+                <div class="external-result" data-result-index="${index}" data-external-id="${escapeHtml(id)}"
+                  data-action="selectExternalTrack"
+                  data-arg-result-index="${index}"
+                  data-arg-external-id="${escapeHtml(escapeJs(id))}"
+                  data-arg-title="${escapeHtml(escapeJs(title))}"
+                  data-arg-artist="${escapeHtml(escapeJs(artist))}"
+                  data-arg-provider="${escapeHtml(escapeJs(providerName))}"
+                  data-arg-external-url="${escapeHtml(escapeJs(externalUrl))}"
+                >
                     <div>
                         <strong>${escapeHtml(title)}</strong>
                         <br>

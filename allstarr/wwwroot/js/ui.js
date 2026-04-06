@@ -3,6 +3,7 @@
 import { escapeHtml, escapeJs, capitalizeProvider } from "./utils.js";
 
 let rowMenuHandlersBound = false;
+let tableRowHandlersBound = false;
 
 function bindRowMenuHandlers() {
   if (rowMenuHandlersBound) {
@@ -14,6 +15,41 @@ function bindRowMenuHandlers() {
   });
 
   rowMenuHandlersBound = true;
+}
+
+function bindTableRowHandlers() {
+  if (tableRowHandlersBound) {
+    return;
+  }
+
+  document.addEventListener("click", (event) => {
+    const detailsTrigger = event.target.closest?.(
+      "button.details-trigger[data-details-target]",
+    );
+    if (detailsTrigger) {
+      const target = detailsTrigger.getAttribute("data-details-target");
+      if (target) {
+        toggleDetailsRow(event, target);
+      }
+      return;
+    }
+
+    const row = event.target.closest?.("tr.compact-row[data-details-row]");
+    if (!row) {
+      return;
+    }
+
+    if (event.target.closest("button, a, .row-actions-menu")) {
+      return;
+    }
+
+    const detailsRowId = row.getAttribute("data-details-row");
+    if (detailsRowId) {
+      toggleDetailsRow(null, detailsRowId);
+    }
+  });
+
+  tableRowHandlersBound = true;
 }
 
 function closeAllRowMenus(exceptId = null) {
@@ -183,10 +219,14 @@ if (typeof window !== "undefined") {
 }
 
 bindRowMenuHandlers();
+bindTableRowHandlers();
 
 export function updateStatusUI(data) {
   const versionEl = document.getElementById("version");
   if (versionEl) versionEl.textContent = "v" + data.version;
+
+  const sidebarVersionEl = document.getElementById("sidebar-version");
+  if (sidebarVersionEl) sidebarVersionEl.textContent = "v" + data.version;
 
   const backendTypeEl = document.getElementById("backend-type");
   if (backendTypeEl) backendTypeEl.textContent = data.backendType;
@@ -330,8 +370,8 @@ export function updatePlaylistsUI(data) {
       const detailsRowId = `playlist-details-${index}`;
       const menuId = `playlist-menu-${index}`;
       const syncSchedule = playlist.syncSchedule || "0 8 * * *";
-      const escapedPlaylistName = escapeJs(playlist.name);
-      const escapedSyncSchedule = escapeJs(syncSchedule);
+      const escapedPlaylistName = escapeHtml(playlist.name);
+      const escapedSyncSchedule = escapeHtml(syncSchedule);
 
       const breakdownBadges = [
         `<span class="status-pill neutral">${summary.localCount} Local</span>`,
@@ -345,7 +385,7 @@ export function updatePlaylistsUI(data) {
       }
 
       return `
-                <tr class="compact-row" data-details-row="${detailsRowId}" onclick="onCompactRowClick(event, '${detailsRowId}')">
+                <tr class="compact-row" data-details-row="${detailsRowId}">
                     <td>
                         <div class="name-cell">
                             <strong>${escapeHtml(playlist.name)}</strong>
@@ -358,19 +398,18 @@ export function updatePlaylistsUI(data) {
                     </td>
                     <td><span class="status-pill ${summary.statusClass}">${summary.statusLabel}</span></td>
                     <td class="row-controls">
-                        <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="false"
-                            onclick="toggleDetailsRow(event, '${detailsRowId}')">Details</button>
+                        <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="false">Details</button>
                         <div class="row-actions-wrap">
                             <button class="icon-btn menu-trigger" aria-haspopup="true" aria-expanded="false"
-                                onclick="toggleRowMenu(event, '${menuId}')">...</button>
+                                data-action="toggleRowMenu" data-arg-menu-id="${menuId}">...</button>
                             <div class="row-actions-menu" id="${menuId}" role="menu">
-                                <button onclick="closeRowMenu(event, '${menuId}'); viewTracks('${escapedPlaylistName}')">View Tracks</button>
-                                <button onclick="closeRowMenu(event, '${menuId}'); refreshPlaylist('${escapedPlaylistName}')">Refresh</button>
-                                <button onclick="closeRowMenu(event, '${menuId}'); matchPlaylistTracks('${escapedPlaylistName}')">Rematch</button>
-                                <button onclick="closeRowMenu(event, '${menuId}'); clearPlaylistCache('${escapedPlaylistName}')">Rebuild</button>
-                                <button onclick="closeRowMenu(event, '${menuId}'); editPlaylistSchedule('${escapedPlaylistName}', '${escapedSyncSchedule}')">Edit Schedule</button>
+                                <button data-action="viewTracks" data-arg-playlist-name="${escapedPlaylistName}">View Tracks</button>
+                                <button data-action="refreshPlaylist" data-arg-playlist-name="${escapedPlaylistName}">Refresh</button>
+                                <button data-action="matchPlaylistTracks" data-arg-playlist-name="${escapedPlaylistName}">Rematch</button>
+                                <button data-action="clearPlaylistCache" data-arg-playlist-name="${escapedPlaylistName}">Rebuild</button>
+                                <button data-action="editPlaylistSchedule" data-arg-playlist-name="${escapedPlaylistName}" data-arg-sync-schedule="${escapedSyncSchedule}">Edit Schedule</button>
                                 <hr>
-                                <button class="danger-item" onclick="closeRowMenu(event, '${menuId}'); removePlaylist('${escapedPlaylistName}')">Remove Playlist</button>
+                                <button class="danger-item" data-action="removePlaylist" data-arg-playlist-name="${escapedPlaylistName}">Remove Playlist</button>
                             </div>
                         </div>
                     </td>
@@ -383,7 +422,7 @@ export function updatePlaylistsUI(data) {
                                     <span class="detail-label">Sync Schedule</span>
                                     <span class="detail-value mono">
                                         ${escapeHtml(syncSchedule)}
-                                        <button class="inline-action-link" onclick="editPlaylistSchedule('${escapedPlaylistName}', '${escapedSyncSchedule}')">Edit</button>
+                                        <button class="inline-action-link" data-action="editPlaylistSchedule" data-arg-playlist-name="${escapedPlaylistName}" data-arg-sync-schedule="${escapedSyncSchedule}">Edit</button>
                                     </span>
                                 </div>
                                 <div class="detail-item">
@@ -478,9 +517,9 @@ export function updateDownloadsUI(data) {
                 <td style="font-family:monospace;font-size:0.85rem;">${escapeHtml(f.fileName)}</td>
                 <td style="color:var(--text-secondary);">${f.sizeFormatted}</td>
                 <td>
-                    <button onclick="downloadFile('${escapeJs(f.path)}')"
+                    <button data-action="downloadFile" data-arg-path="${escapeHtml(escapeJs(f.path))}"
                         style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:var(--accent);border-color:var(--accent);">Download</button>
-                    <button onclick="deleteDownload('${escapeJs(f.path)}')"
+                    <button data-action="deleteDownload" data-arg-path="${escapeHtml(escapeJs(f.path))}"
                         class="danger" style="font-size:0.75rem;padding:4px 8px;">Delete</button>
                 </td>
             </tr>
@@ -637,23 +676,23 @@ export function updateJellyfinPlaylistsUI(data) {
       const localCount = playlist.localTracks || 0;
       const externalCount = playlist.externalTracks || 0;
       const externalAvailable = playlist.externalAvailable || 0;
-      const escapedId = escapeJs(playlist.id);
-      const escapedName = escapeJs(playlist.name);
+      const escapedId = escapeHtml(playlist.id);
+      const escapedName = escapeHtml(playlist.name);
       const statusClass = playlist.isConfigured ? "success" : "info";
       const statusLabel = playlist.isConfigured ? "Linked" : "Not Linked";
 
       const actionButtons = playlist.isConfigured
         ? `
-            <button onclick="closeRowMenu(event, '${menuId}'); fetchJellyfinPlaylists()">Refresh Row Data</button>
-            <button class="danger-item" onclick="closeRowMenu(event, '${menuId}'); unlinkPlaylist('${escapedId}', '${escapedName}')">Unlink from Spotify</button>
+            <button data-action="fetchJellyfinPlaylists">Refresh Row Data</button>
+            <button class="danger-item" data-action="unlinkPlaylist" data-arg-jellyfin-id="${escapedId}" data-arg-jellyfin-name="${escapedName}">Unlink from Spotify</button>
         `
         : `
-            <button onclick="closeRowMenu(event, '${menuId}'); openLinkPlaylist('${escapedId}', '${escapedName}')">Link to Spotify</button>
-            <button onclick="closeRowMenu(event, '${menuId}'); fetchJellyfinPlaylists()">Refresh Row Data</button>
+            <button data-action="openLinkPlaylist" data-arg-jellyfin-id="${escapedId}" data-arg-jellyfin-name="${escapedName}">Link to Spotify</button>
+            <button data-action="fetchJellyfinPlaylists">Refresh Row Data</button>
         `;
 
       return `
-            <tr class="compact-row" data-details-row="${detailsRowId}" onclick="onCompactRowClick(event, '${detailsRowId}')">
+            <tr class="compact-row" data-details-row="${detailsRowId}">
                 <td>
                     <div class="name-cell">
                         <strong>${escapeHtml(playlist.name)}</strong>
@@ -666,11 +705,10 @@ export function updateJellyfinPlaylistsUI(data) {
                 </td>
                 <td><span class="status-pill ${statusClass}">${statusLabel}</span></td>
                 <td class="row-controls">
-                    <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="false"
-                        onclick="toggleDetailsRow(event, '${detailsRowId}')">Details</button>
+                    <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="false">Details</button>
                     <div class="row-actions-wrap">
                         <button class="icon-btn menu-trigger" aria-haspopup="true" aria-expanded="false"
-                            onclick="toggleRowMenu(event, '${menuId}')">...</button>
+                            data-action="toggleRowMenu" data-arg-menu-id="${menuId}">...</button>
                         <div class="row-actions-menu" id="${menuId}" role="menu">
                             ${actionButtons}
                         </div>

@@ -213,9 +213,9 @@ async function fetchDownloads() {
                     <td style="font-family:monospace;font-size:0.85rem;">${escapeHtml(f.fileName)}</td>
                     <td style="color:var(--text-secondary);">${f.sizeFormatted}</td>
                     <td>
-                        <button onclick="downloadFile('${escapeJs(f.path)}')"
+                        <button data-action="downloadFile" data-arg-path="${escapeHtml(escapeJs(f.path))}"
                             style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:var(--accent);border-color:var(--accent);">Download</button>
-                        <button onclick="deleteDownload('${escapeJs(f.path)}')"
+                        <button data-action="deleteDownload" data-arg-path="${escapeHtml(escapeJs(f.path))}"
                             class="danger" style="font-size:0.75rem;padding:4px 8px;">Delete</button>
                     </td>
                 </tr>
