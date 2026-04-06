@@ -193,8 +193,9 @@ body {
     margin-bottom: 18px;
 }
 
-.top-tabs {
-    display: none;
+.top-tabs,
+.tabs.top-tabs {
+    display: none !important;
 }
 
 .support-footer {
