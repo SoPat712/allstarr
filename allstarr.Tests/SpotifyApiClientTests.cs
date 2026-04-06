@@ -157,6 +157,31 @@ public class SpotifyApiClientTests
         Assert.Equal(new DateTime(2026, 2, 16, 5, 0, 0, DateTimeKind.Utc), track.AddedAt);
     }
 
+    [Fact]
+    public void TryGetSpotifyPlaylistItemCount_ParsesAttributesArrayEntries()
+    {
+        // Arrange
+        using var doc = JsonDocument.Parse("""
+        {
+          "attributes": [
+            { "key": "core:item_count", "value": "42" }
+          ]
+        }
+        """);
+
+        var method = typeof(SpotifyApiClient).GetMethod(
+            "TryGetSpotifyPlaylistItemCount",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+
+        // Act
+        var result = (int)method!.Invoke(null, new object?[] { doc.RootElement })!;
+
+        // Assert
+        Assert.Equal(42, result);
+    }
+
     private static T InvokePrivateMethod<T>(object instance, string methodName, params object?[] args)
     {
         var method = instance.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
