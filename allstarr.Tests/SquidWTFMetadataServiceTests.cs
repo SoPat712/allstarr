@@ -300,6 +300,65 @@ public class SquidWTFMetadataServiceTests
     }
 
     [Fact]
+    public async Task SearchAllAsync_WithZeroLimits_SkipsUnusedBuckets()
+    {
+        var requestKinds = new List<string>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            var trackQuery = GetQueryParameter(request.RequestUri!, "s");
+            var albumQuery = GetQueryParameter(request.RequestUri!, "al");
+            var artistQuery = GetQueryParameter(request.RequestUri!, "a");
+
+            if (!string.IsNullOrWhiteSpace(trackQuery))
+            {
+                requestKinds.Add("song");
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreateTrackSearchResponse(CreateTrackPayload(1, "Song", "USRC12345678")))
+                };
+            }
+
+            if (!string.IsNullOrWhiteSpace(albumQuery))
+            {
+                requestKinds.Add("album");
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreateAlbumSearchResponse())
+                };
+            }
+
+            if (!string.IsNullOrWhiteSpace(artistQuery))
+            {
+                requestKinds.Add("artist");
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(CreateArtistSearchResponse())
+                };
+            }
+
+            throw new InvalidOperationException($"Unexpected request URI: {request.RequestUri}");
+        });
+
+        var httpClient = new HttpClient(handler);
+        _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
+
+        var service = new SquidWTFMetadataService(
+            _mockHttpClientFactory.Object,
+            _subsonicSettings,
+            _squidwtfSettings,
+            _mockLogger.Object,
+            _mockCache.Object,
+            new List<string> { "https://test1.example.com" });
+
+        var result = await service.SearchAllAsync("OK Computer", 0, 5, 0);
+
+        Assert.Empty(result.Songs);
+        Assert.Single(result.Albums);
+        Assert.Empty(result.Artists);
+        Assert.Equal(new[] { "album" }, requestKinds);
+    }
+
+    [Fact]
     public void ExplicitFilter_RespectsSettings()
     {
         // Arrange - Test with CleanOnly filter

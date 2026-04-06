@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text;
+using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
@@ -304,6 +305,7 @@ public partial class JellyfinController
 
         // Run local and external searches in parallel
         var itemTypes = ParseItemTypes(includeItemTypes);
+        var externalSearchLimits = GetExternalSearchLimits(itemTypes, limit, includePlaylistsAsAlbums: true);
         var jellyfinTask = GetLocalSearchResultForCurrentRequest(
             cleanQuery,
             includeItemTypes,
@@ -312,12 +314,29 @@ public partial class JellyfinController
             recursive,
             userId);
 
+        _logger.LogInformation(
+            "SEARCH TRACE: external limits for query '{Query}' => songs={SongLimit}, albums={AlbumLimit}, artists={ArtistLimit}",
+            cleanQuery,
+            externalSearchLimits.SongLimit,
+            externalSearchLimits.AlbumLimit,
+            externalSearchLimits.ArtistLimit);
+
         // Use parallel metadata service if available (races providers), otherwise use primary
         var externalTask = favoritesOnlyRequest
             ? Task.FromResult(new SearchResult())
             : _parallelMetadataService != null
-                ? _parallelMetadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted)
-                : _metadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted);
+                ? _parallelMetadataService.SearchAllAsync(
+                    cleanQuery,
+                    externalSearchLimits.SongLimit,
+                    externalSearchLimits.AlbumLimit,
+                    externalSearchLimits.ArtistLimit,
+                    HttpContext.RequestAborted)
+                : _metadataService.SearchAllAsync(
+                    cleanQuery,
+                    externalSearchLimits.SongLimit,
+                    externalSearchLimits.AlbumLimit,
+                    externalSearchLimits.ArtistLimit,
+                    HttpContext.RequestAborted);
 
         var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
             ? Task.FromResult(new List<ExternalPlaylist>())
@@ -672,11 +691,36 @@ public partial class JellyfinController
         }
 
         var cleanQuery = searchTerm.Trim().Trim('"');
+        var requestedTypes = ParseItemTypes(includeItemTypes);
+        var externalSearchLimits = GetExternalSearchLimits(requestedTypes, limit, includePlaylistsAsAlbums: false);
+        var includesSongs = requestedTypes == null || requestedTypes.Length == 0 ||
+                            requestedTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase);
+        var includesAlbums = requestedTypes == null || requestedTypes.Length == 0 ||
+                             requestedTypes.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);
+        var includesArtists = requestedTypes == null || requestedTypes.Length == 0 ||
+                              requestedTypes.Contains("MusicArtist", StringComparer.OrdinalIgnoreCase);
+
+        _logger.LogInformation(
+            "SEARCH TRACE: hint limits for query '{Query}' => songs={SongLimit}, albums={AlbumLimit}, artists={ArtistLimit}",
+            cleanQuery,
+            externalSearchLimits.SongLimit,
+            externalSearchLimits.AlbumLimit,
+            externalSearchLimits.ArtistLimit);
 
         // Use parallel metadata service if available (races providers), otherwise use primary
         var externalTask = _parallelMetadataService != null
-            ? _parallelMetadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted)
-            : _metadataService.SearchAllAsync(cleanQuery, limit, limit, limit, HttpContext.RequestAborted);
+            ? _parallelMetadataService.SearchAllAsync(
+                cleanQuery,
+                externalSearchLimits.SongLimit,
+                externalSearchLimits.AlbumLimit,
+                externalSearchLimits.ArtistLimit,
+                HttpContext.RequestAborted)
+            : _metadataService.SearchAllAsync(
+                cleanQuery,
+                externalSearchLimits.SongLimit,
+                externalSearchLimits.AlbumLimit,
+                externalSearchLimits.ArtistLimit,
+                HttpContext.RequestAborted);
 
         // Run searches in parallel (local Jellyfin hints + external providers)
         var jellyfinTask = GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId);
@@ -689,9 +733,15 @@ public partial class JellyfinController
         var (localSongs, localAlbums, localArtists) = _modelMapper.ParseSearchHintsResponse(jellyfinResult);
 
         // NO deduplication - merge all results and take top matches
-        var allSongs = localSongs.Concat(externalResult.Songs).Take(limit).ToList();
-        var allAlbums = localAlbums.Concat(externalResult.Albums).Take(limit).ToList();
-        var allArtists = localArtists.Concat(externalResult.Artists).Take(limit).ToList();
+        var allSongs = includesSongs
+            ? localSongs.Concat(externalResult.Songs).Take(limit).ToList()
+            : new List<Song>();
+        var allAlbums = includesAlbums
+            ? localAlbums.Concat(externalResult.Albums).Take(limit).ToList()
+            : new List<Album>();
+        var allArtists = includesArtists
+            ? localArtists.Concat(externalResult.Artists).Take(limit).ToList()
+            : new List<Artist>();
 
         return _responseBuilder.CreateSearchHintsResponse(
             allSongs.Take(limit).ToList(),
@@ -740,6 +790,33 @@ public partial class JellyfinController
     private bool IsFavoritesOnlyRequest()
     {
         return string.Equals(Request.Query["IsFavorite"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static (int SongLimit, int AlbumLimit, int ArtistLimit) GetExternalSearchLimits(
+        string[]? requestedTypes,
+        int limit,
+        bool includePlaylistsAsAlbums)
+    {
+        if (limit <= 0)
+        {
+            return (0, 0, 0);
+        }
+
+        if (requestedTypes == null || requestedTypes.Length == 0)
+        {
+            return (limit, limit, limit);
+        }
+
+        var includeSongs = requestedTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase);
+        var includeAlbums = requestedTypes.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase) ||
+                            (includePlaylistsAsAlbums &&
+                             requestedTypes.Contains("Playlist", StringComparer.OrdinalIgnoreCase));
+        var includeArtists = requestedTypes.Contains("MusicArtist", StringComparer.OrdinalIgnoreCase);
+
+        return (
+            includeSongs ? limit : 0,
+            includeAlbums ? limit : 0,
+            includeArtists ? limit : 0);
     }
 
     private static IActionResult CreateEmptyItemsResponse(int startIndex)

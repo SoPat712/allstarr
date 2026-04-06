@@ -135,10 +135,15 @@ public class DeezerMetadataService : TrackParserBase, IMusicMetadataService
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
-        // Execute searches in parallel
-        var songsTask = SearchSongsAsync(query, songLimit, cancellationToken);
-        var albumsTask = SearchAlbumsAsync(query, albumLimit, cancellationToken);
-        var artistsTask = SearchArtistsAsync(query, artistLimit, cancellationToken);
+        var songsTask = songLimit > 0
+            ? SearchSongsAsync(query, songLimit, cancellationToken)
+            : Task.FromResult(new List<Song>());
+        var albumsTask = albumLimit > 0
+            ? SearchAlbumsAsync(query, albumLimit, cancellationToken)
+            : Task.FromResult(new List<Album>());
+        var artistsTask = artistLimit > 0
+            ? SearchArtistsAsync(query, artistLimit, cancellationToken)
+            : Task.FromResult(new List<Artist>());
 
         await Task.WhenAll(songsTask, albumsTask, artistsTask);
 
