@@ -1,4 +1,4 @@
-import { escapeHtml, showToast, formatCookieAge } from "./utils.js";
+import { escapeHtml, escapeJs, showToast, formatCookieAge } from "./utils.js";
 import * as API from "./api.js";
 import * as UI from "./ui.js";
 import { renderCookieAge } from "./settings-editor.js";
