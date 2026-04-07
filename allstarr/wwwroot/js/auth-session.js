@@ -122,6 +122,7 @@ function patchFetchForAuthRecovery() {
     if (
       response.status === 401 &&
       url.includes("/api/admin") &&
+      !url.includes("/api/admin/downloads") &&
       !url.includes("/api/admin/auth/") &&
       !authRecoveryInProgress
     ) {
