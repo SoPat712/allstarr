@@ -676,7 +676,7 @@ export async function searchProvider(query, provider) {
     if (normalizedProvider === "squidwtf" || normalizedProvider === "tidal") {
       const data = await API.getSquidWTFBaseUrl();
       const baseUrl = data.baseUrl;
-      searchUrl = `${baseUrl}/music/search?q=${encodeURIComponent(query)}`;
+      searchUrl = `${baseUrl}/search/?s=${encodeURIComponent(query)}`;
     } else if (normalizedProvider === "deezer") {
       searchUrl = `https://www.deezer.com/search/${encodeURIComponent(query)}`;
     } else if (normalizedProvider === "qobuz") {
@@ -684,7 +684,7 @@ export async function searchProvider(query, provider) {
     } else {
       const data = await API.getSquidWTFBaseUrl();
       const baseUrl = data.baseUrl;
-      searchUrl = `${baseUrl}/music/search?q=${encodeURIComponent(query)}`;
+      searchUrl = `${baseUrl}/search/?s=${encodeURIComponent(query)}`;
     }
 
     window.open(searchUrl, "_blank");
