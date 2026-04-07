@@ -7,6 +7,7 @@ import { runAction } from "./operations.js";
 let playlistAutoRefreshInterval = null;
 let dashboardRefreshInterval = null;
 let downloadActivityEventSource = null;
+let downloadsAuthRetryTimeout = null;
 
 let isAuthenticated = () => false;
 let isAdminSession = () => false;
@@ -231,6 +232,28 @@ async function fetchDownloads() {
       .join("");
   } catch (error) {
     console.error("Failed to fetch downloads:", error);
+
+    const message = String(error?.message || "").toLowerCase();
+    const isAuthError =
+      message.includes("auth") ||
+      message.includes("unauthorized") ||
+      message.includes("401");
+
+    // During login/session transitions, the first request can race before cookie state settles.
+    // Avoid noisy toast spam and retry once shortly after.
+    if (isAuthError && isAuthenticated() && isAdminSession()) {
+      if (downloadsAuthRetryTimeout) {
+        clearTimeout(downloadsAuthRetryTimeout);
+      }
+      downloadsAuthRetryTimeout = setTimeout(() => {
+        const keptTab = document.getElementById("tab-kept");
+        if (keptTab?.classList.contains("active")) {
+          fetchDownloads();
+        }
+      }, 600);
+      return;
+    }
+
     showToast("Failed to fetch downloads", "error");
   }
 }
@@ -392,7 +415,6 @@ async function loadDashboardData() {
       fetchPlaylists(),
       fetchTrackMappings(),
       fetchMissingTracks(),
-      fetchDownloads(),
       fetchConfig(),
       fetchEndpointUsage(),
     ]);
