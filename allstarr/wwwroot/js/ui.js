@@ -4,6 +4,7 @@ import { escapeHtml, escapeJs, capitalizeProvider } from "./utils.js";
 
 let rowMenuHandlersBound = false;
 let tableRowHandlersBound = false;
+const expandedInjectedPlaylistDetails = new Set();
 
 function bindRowMenuHandlers() {
   if (rowMenuHandlersBound) {
@@ -118,6 +119,18 @@ function toggleDetailsRow(event, detailsRowId) {
   );
   if (parentRow) {
     parentRow.classList.toggle("expanded", isExpanded);
+
+    // Persist Injected Playlists details expansion across auto-refreshes.
+    if (parentRow.closest("#playlist-table-body")) {
+      const detailsKey = parentRow.getAttribute("data-details-key");
+      if (detailsKey) {
+        if (isExpanded) {
+          expandedInjectedPlaylistDetails.add(detailsKey);
+        } else {
+          expandedInjectedPlaylistDetails.delete(detailsKey);
+        }
+      }
+    }
   }
 }
 
@@ -311,6 +324,7 @@ export function updatePlaylistsUI(data) {
   const playlists = data.playlists || [];
 
   if (playlists.length === 0) {
+    expandedInjectedPlaylistDetails.clear();
     tbody.innerHTML =
       '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:40px;">No playlists configured. Link playlists from the Link Playlists tab.</td></tr>';
     renderGuidance("playlists-guidance", [
@@ -369,9 +383,12 @@ export function updatePlaylistsUI(data) {
       const summary = getPlaylistStatusSummary(playlist);
       const detailsRowId = `playlist-details-${index}`;
       const menuId = `playlist-menu-${index}`;
+      const detailsKey = `${playlist.id || playlist.name || index}`;
+      const isExpanded = expandedInjectedPlaylistDetails.has(detailsKey);
       const syncSchedule = playlist.syncSchedule || "0 8 * * *";
       const escapedPlaylistName = escapeHtml(playlist.name);
       const escapedSyncSchedule = escapeHtml(syncSchedule);
+      const escapedDetailsKey = escapeHtml(detailsKey);
 
       const breakdownBadges = [
         `<span class="status-pill neutral">${summary.localCount} Local</span>`,
@@ -385,7 +402,7 @@ export function updatePlaylistsUI(data) {
       }
 
       return `
-                <tr class="compact-row" data-details-row="${detailsRowId}">
+                <tr class="compact-row ${isExpanded ? "expanded" : ""}" data-details-row="${detailsRowId}" data-details-key="${escapedDetailsKey}">
                     <td>
                         <div class="name-cell">
                             <strong>${escapeHtml(playlist.name)}</strong>
@@ -398,7 +415,7 @@ export function updatePlaylistsUI(data) {
                     </td>
                     <td><span class="status-pill ${summary.statusClass}">${summary.statusLabel}</span></td>
                     <td class="row-controls">
-                        <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="false">Details</button>
+                        <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Hide" : "Details"}</button>
                         <div class="row-actions-wrap">
                             <button class="icon-btn menu-trigger" aria-haspopup="true" aria-expanded="false"
                                 data-action="toggleRowMenu" data-arg-menu-id="${menuId}">...</button>
@@ -414,7 +431,7 @@ export function updatePlaylistsUI(data) {
                         </div>
                     </td>
                 </tr>
-                <tr id="${detailsRowId}" class="details-row" hidden>
+                <tr id="${detailsRowId}" class="details-row" ${isExpanded ? "" : "hidden"}>
                     <td colspan="4">
                         <div class="details-panel">
                             <div class="details-grid">
@@ -673,6 +690,7 @@ export function updateJellyfinPlaylistsUI(data) {
     .map((playlist, index) => {
       const detailsRowId = `jellyfin-details-${index}`;
       const menuId = `jellyfin-menu-${index}`;
+      const statsPending = Boolean(playlist.statsPending);
       const localCount = playlist.localTracks || 0;
       const externalCount = playlist.externalTracks || 0;
       const externalAvailable = playlist.externalAvailable || 0;
@@ -700,8 +718,8 @@ export function updateJellyfinPlaylistsUI(data) {
                     </div>
                 </td>
                 <td>
-                    <span class="track-count">${localCount + externalAvailable}</span>
-                    <div class="meta-text">L ${localCount} • E ${externalAvailable}/${externalCount}</div>
+                    <span class="track-count">${statsPending ? "..." : localCount + externalAvailable}</span>
+                    <div class="meta-text">${statsPending ? "Loading track stats..." : `L ${localCount} • E ${externalAvailable}/${externalCount}`}</div>
                 </td>
                 <td><span class="status-pill ${statusClass}">${statusLabel}</span></td>
                 <td class="row-controls">
@@ -721,11 +739,11 @@ export function updateJellyfinPlaylistsUI(data) {
                         <div class="details-grid">
                             <div class="detail-item">
                                 <span class="detail-label">Local Tracks</span>
-                                <span class="detail-value">${localCount}</span>
+                                <span class="detail-value">${statsPending ? "..." : localCount}</span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label">External Tracks</span>
-                                <span class="detail-value">${externalAvailable}/${externalCount}</span>
+                                <span class="detail-value">${statsPending ? "Loading..." : `${externalAvailable}/${externalCount}`}</span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label">Linked Spotify ID</span>

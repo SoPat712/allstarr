@@ -140,6 +140,56 @@ public class DownloadsController : ControllerBase
     }
 
     /// <summary>
+    /// DELETE /api/admin/downloads/all
+    /// Deletes all kept audio files and removes empty folders
+    /// </summary>
+    [HttpDelete("downloads/all")]
+    public IActionResult DeleteAllDownloads()
+    {
+        try
+        {
+            var keptPath = Path.GetFullPath(Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept"));
+            if (!Directory.Exists(keptPath))
+            {
+                return Ok(new { success = true, deletedCount = 0, message = "No kept downloads found" });
+            }
+
+            var audioExtensions = new[] { ".flac", ".mp3", ".m4a", ".opus" };
+            var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
+                .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .ToList();
+
+            foreach (var filePath in allFiles)
+            {
+                System.IO.File.Delete(filePath);
+            }
+
+            // Clean up empty directories under kept root (deepest first)
+            var allDirectories = Directory.GetDirectories(keptPath, "*", SearchOption.AllDirectories)
+                .OrderByDescending(d => d.Length);
+            foreach (var directory in allDirectories)
+            {
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    Directory.Delete(directory);
+                }
+            }
+
+            return Ok(new
+            {
+                success = true,
+                deletedCount = allFiles.Count,
+                message = $"Deleted {allFiles.Count} kept download(s)"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete all kept downloads");
+            return StatusCode(500, new { error = "Failed to delete all kept downloads" });
+        }
+    }
+
+    /// <summary>
     /// GET /api/admin/downloads/file
     /// Downloads a specific file from the kept folder
     /// </summary>

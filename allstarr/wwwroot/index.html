@@ -93,13 +93,6 @@
 
         <!-- Dashboard Tab -->
         <div class="tab-content active" id="tab-dashboard">
-            <div class="card" id="download-activity-card">
-                <h2>Live Download Queue</h2>
-                <div id="download-activity-list" class="download-queue-list">
-                    <div class="empty-state">No active downloads</div>
-                </div>
-            </div>
-
             <div class="grid">
                 <div class="card">
                     <h2>Spotify API</h2>
@@ -366,6 +359,7 @@
                     Kept Downloads
                     <div class="actions">
                         <button onclick="downloadAllKept()" class="primary">Download All</button>
+                        <button onclick="deleteAllKept()" class="danger">Delete All</button>
                         <button onclick="fetchDownloads()">Refresh</button>
                     </div>
                 </h2>

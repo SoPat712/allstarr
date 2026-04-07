@@ -77,6 +77,20 @@ function downloadAllKept() {
   }
 }
 
+async function deleteAllKept() {
+  const result = await runAction({
+    confirmMessage:
+      "Delete ALL kept downloads?\n\nThis will permanently remove all kept audio files.",
+    task: () => API.deleteAllDownloads(),
+    success: (data) => data.message || "All kept downloads deleted",
+    error: (err) => err.message || "Failed to delete all kept downloads",
+  });
+
+  if (result) {
+    await fetchDownloads();
+  }
+}
+
 async function deleteDownload(path) {
   const result = await runAction({
     confirmMessage: `Delete this file?\n\n${path}\n\nThis action cannot be undone.`,
@@ -364,6 +378,7 @@ export function initOperations(options) {
   window.deleteTrackMapping = deleteTrackMapping;
   window.downloadFile = downloadFile;
   window.downloadAllKept = downloadAllKept;
+  window.deleteAllKept = deleteAllKept;
   window.deleteDownload = deleteDownload;
   window.refreshPlaylists = refreshPlaylists;
   window.refreshPlaylist = refreshPlaylist;

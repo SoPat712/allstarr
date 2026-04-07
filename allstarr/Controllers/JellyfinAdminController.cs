@@ -245,7 +245,9 @@ public class JellyfinAdminController : ControllerBase
     /// Get all playlists from the user's Spotify account
     /// </summary>
     [HttpGet("jellyfin/playlists")]
-    public async Task<IActionResult> GetJellyfinPlaylists([FromQuery] string? userId = null)
+    public async Task<IActionResult> GetJellyfinPlaylists(
+        [FromQuery] string? userId = null,
+        [FromQuery] bool includeStats = true)
     {
         if (string.IsNullOrEmpty(_jellyfinSettings.Url) || string.IsNullOrEmpty(_jellyfinSettings.ApiKey))
         {
@@ -330,13 +332,13 @@ public class JellyfinAdminController : ControllerBase
 
                     var statsUserId = requestedUserId;
                     var trackStats = (LocalTracks: 0, ExternalTracks: 0, ExternalAvailable: 0);
-                    if (isConfigured)
+                    if (isConfigured && includeStats)
                     {
                         trackStats = await GetPlaylistTrackStats(id!, session, statsUserId);
                     }
 
                     var actualTrackCount = isConfigured
-                        ? trackStats.LocalTracks + trackStats.ExternalTracks
+                        ? (includeStats ? trackStats.LocalTracks + trackStats.ExternalTracks : childCount)
                         : childCount;
 
                     playlists.Add(new
@@ -349,6 +351,7 @@ public class JellyfinAdminController : ControllerBase
                         isLinkedByAnotherUser,
                         linkedOwnerUserId = scopedLinkedPlaylist?.UserId ??
                                             allLinkedForPlaylist.FirstOrDefault()?.UserId,
+                        statsPending = isConfigured && !includeStats,
                         localTracks = trackStats.LocalTracks,
                         externalTracks = trackStats.ExternalTracks,
                         externalAvailable = trackStats.ExternalAvailable

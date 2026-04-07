@@ -670,13 +670,26 @@ export async function saveLyricsMapping() {
 // Search provider (open in new tab)
 export async function searchProvider(query, provider) {
   try {
-    const data = await API.getSquidWTFBaseUrl();
-    const baseUrl = data.baseUrl; // Use the actual property name from API
-    const searchUrl = `${baseUrl}/music/search?q=${encodeURIComponent(query)}`;
+    const normalizedProvider = (provider || "squidwtf").toLowerCase();
+    let searchUrl = "";
+
+    if (normalizedProvider === "squidwtf" || normalizedProvider === "tidal") {
+      const data = await API.getSquidWTFBaseUrl();
+      const baseUrl = data.baseUrl;
+      searchUrl = `${baseUrl}/music/search?q=${encodeURIComponent(query)}`;
+    } else if (normalizedProvider === "deezer") {
+      searchUrl = `https://www.deezer.com/search/${encodeURIComponent(query)}`;
+    } else if (normalizedProvider === "qobuz") {
+      searchUrl = `https://www.qobuz.com/search?query=${encodeURIComponent(query)}`;
+    } else {
+      const data = await API.getSquidWTFBaseUrl();
+      const baseUrl = data.baseUrl;
+      searchUrl = `${baseUrl}/music/search?q=${encodeURIComponent(query)}`;
+    }
+
     window.open(searchUrl, "_blank");
   } catch (error) {
-    console.error("Failed to get SquidWTF base URL:", error);
-    // Fallback to first encoded URL (triton)
-    showToast("Failed to get SquidWTF URL, using fallback", "warning");
+    console.error("Failed to open provider search:", error);
+    showToast("Failed to open provider search link", "warning");
   }
 }

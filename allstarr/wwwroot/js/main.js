@@ -74,6 +74,10 @@ window.switchTab = function (tabName) {
     }
     content.classList.add("active");
     window.location.hash = tabName;
+
+    if (tabName === "kept" && typeof window.fetchDownloads === "function") {
+      window.fetchDownloads();
+    }
   }
 };
 
@@ -147,6 +151,8 @@ window.openManualMap = openManualMap;
 window.openExternalMap = openExternalMap;
 window.openMapToLocal = openManualMap;
 window.openMapToExternal = openExternalMap;
+window.openModal = openModal;
+window.closeModal = closeModal;
 window.searchJellyfinTracks = searchJellyfinTracks;
 window.saveLocalMapping = saveLocalMapping;
 window.saveManualMapping = saveManualMapping;

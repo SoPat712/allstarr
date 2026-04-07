@@ -124,6 +124,14 @@ export async function deleteDownload(path) {
   );
 }
 
+export async function deleteAllDownloads() {
+  return requestJson(
+    "/api/admin/downloads/all",
+    { method: "DELETE" },
+    "Failed to delete all downloads",
+  );
+}
+
 export async function fetchConfig() {
   return requestJson(
     "/api/admin/config",
@@ -144,10 +152,15 @@ export async function fetchJellyfinUsers() {
   return requestOptionalJson("/api/admin/jellyfin/users");
 }
 
-export async function fetchJellyfinPlaylists(userId = null) {
+export async function fetchJellyfinPlaylists(userId = null, includeStats = true) {
   let url = "/api/admin/jellyfin/playlists";
+  const params = [];
   if (userId) {
-    url += "?userId=" + encodeURIComponent(userId);
+    params.push("userId=" + encodeURIComponent(userId));
+  }
+  params.push("includeStats=" + String(Boolean(includeStats)));
+  if (params.length > 0) {
+    url += "?" + params.join("&");
   }
 
   return requestJson(url, {}, "Failed to fetch Jellyfin playlists");
