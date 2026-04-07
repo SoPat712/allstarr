@@ -847,40 +847,6 @@ public partial class JellyfinController : ControllerBase
         }
     }
 
-    private async Task<string?> ResolveCurrentSpotifyPlaylistImageTagAsync(string itemId, string imageType)
-    {
-        try
-        {
-            var (itemResult, statusCode) = await _proxyService.GetJsonAsyncInternal($"Items/{itemId}");
-            if (itemResult == null || statusCode != 200)
-            {
-                return null;
-            }
-
-            using var itemDocument = itemResult;
-            var imageTag = ExtractImageTag(itemDocument.RootElement, imageType);
-
-            if (!string.IsNullOrWhiteSpace(imageTag))
-            {
-                _logger.LogDebug(
-                    "Resolved current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}: {ImageTag}",
-                    imageType,
-                    itemId,
-                    imageTag);
-            }
-
-            return imageTag;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex,
-                "Failed to resolve current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}",
-                imageType,
-                itemId);
-            return null;
-        }
-    }
-
     #endregion
 
     #region Favorites
