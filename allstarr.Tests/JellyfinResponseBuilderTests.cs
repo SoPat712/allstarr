@@ -47,6 +47,8 @@ public class JellyfinResponseBuilderTests
         Assert.Equal(1, result["ParentIndexNumber"]);
         Assert.Equal(2023, result["ProductionYear"]);
         Assert.Equal(245 * TimeSpan.TicksPerSecond, result["RunTimeTicks"]);
+        Assert.NotNull(result["AudioInfo"]);
+        Assert.Equal(false, result["CanDelete"]);
     }
 
     [Fact]
@@ -192,6 +194,9 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("Famous Band", result["AlbumArtist"]);
         Assert.Equal(2020, result["ProductionYear"]);
         Assert.Equal(12, result["ChildCount"]);
+        Assert.Equal("Greatest Hits", result["SortName"]);
+        Assert.NotNull(result["DateCreated"]);
+        Assert.NotNull(result["BasicSyncInfo"]);
     }
 
     [Fact]
@@ -215,6 +220,9 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("MusicArtist", result["Type"]);
         Assert.Equal(true, result["IsFolder"]);
         Assert.Equal(5, result["AlbumCount"]);
+        Assert.Equal("The Rockers", result["SortName"]);
+        Assert.Equal(1.0, result["PrimaryImageAspectRatio"]);
+        Assert.NotNull(result["BasicSyncInfo"]);
     }
 
     [Fact]
@@ -243,6 +251,9 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("DJ Cool", result["AlbumArtist"]);
         Assert.Equal(50, result["ChildCount"]);
         Assert.Equal(2023, result["ProductionYear"]);
+        Assert.Equal("Summer Vibes [S/P]", result["SortName"]);
+        Assert.NotNull(result["DateCreated"]);
+        Assert.NotNull(result["BasicSyncInfo"]);
     }
 
     [Fact]

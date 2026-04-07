@@ -10,9 +10,17 @@ namespace allstarr.Services.Jellyfin;
 
 /// <summary>
 /// Handles proxying requests to the Jellyfin server and authentication.
+/// Uses a named HttpClient ("JellyfinBackend") with SocketsHttpHandler for
+/// TCP connection pooling across scoped instances.
 /// </summary>
 public class JellyfinProxyService
 {
+    /// <summary>
+    /// The IHttpClientFactory registration name for the Jellyfin backend client.
+    /// Configured with SocketsHttpHandler for connection pooling in Program.cs.
+    /// </summary>
+    public const string HttpClientName = "JellyfinBackend";
+
     private readonly HttpClient _httpClient;
     private readonly JellyfinSettings _settings;
     private readonly IHttpContextAccessor _httpContextAccessor;
@@ -31,7 +39,7 @@ public class JellyfinProxyService
         ILogger<JellyfinProxyService> logger,
         RedisCacheService cache)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient(HttpClientName);
         _settings = settings.Value;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;

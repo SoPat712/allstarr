@@ -12,8 +12,8 @@
     <!-- Restart Required Banner -->
     <div class="restart-banner" id="restart-banner">
         ⚠️ Configuration changed. Restart required to apply changes.
-        <button onclick="restartContainer()">Restart Allstarr</button>
-        <button onclick="dismissRestartBanner()"
+        <button data-action="restartContainer">Restart Allstarr</button>
+        <button data-action="dismissRestartBanner"
             style="background: transparent; border: 1px solid var(--bg-primary);">Dismiss</button>
     </div>
 
@@ -42,44 +42,57 @@
         </div>
     </div>
 
-    <div class="container" id="main-container" style="display:none;">
-        <header>
-            <h1>
-                Allstarr <span class="version" id="version">Loading...</span>
-            </h1>
-            <div class="header-actions">
-                <div class="auth-user" id="auth-user-display" style="display:none;">
-                    Signed in as <strong id="auth-user-name">-</strong>
+    <div class="container hidden" id="main-container">
+        <div class="app-shell">
+            <aside class="sidebar" aria-label="Admin navigation">
+                <div class="sidebar-brand">
+                    <div class="sidebar-title">Allstarr</div>
+                    <div class="sidebar-subtitle" id="sidebar-version">Loading...</div>
                 </div>
-                <button id="auth-logout-btn" onclick="logoutAdminSession()" style="display:none;">Logout</button>
-                <div id="status-indicator">
-                    <span class="status-badge" id="spotify-status">
-                        <span class="status-dot"></span>
-                        <span>Loading...</span>
-                    </span>
+                <nav class="sidebar-nav">
+                    <button class="sidebar-link active" type="button" data-tab="dashboard">Dashboard</button>
+                    <button class="sidebar-link" type="button" data-tab="jellyfin-playlists">Link Playlists</button>
+                    <button class="sidebar-link" type="button" data-tab="playlists">Injected Playlists</button>
+                    <button class="sidebar-link" type="button" data-tab="kept">Kept Downloads</button>
+                    <button class="sidebar-link" type="button" data-tab="scrobbling">Scrobbling</button>
+                    <button class="sidebar-link" type="button" data-tab="config">Configuration</button>
+                    <button class="sidebar-link" type="button" data-tab="endpoints">API Analytics</button>
+                </nav>
+                <div class="sidebar-footer">
+                    <div class="auth-user hidden" id="auth-user-display">
+                        Signed in as <strong id="auth-user-name">-</strong>
+                    </div>
+                    <button id="auth-logout-btn" data-action="logoutAdminSession" class="hidden">Logout</button>
                 </div>
-            </div>
-        </header>
+            </aside>
 
-        <div class="tabs">
-            <div class="tab active" data-tab="dashboard">Dashboard</div>
-            <div class="tab" data-tab="jellyfin-playlists">Link Playlists</div>
-            <div class="tab" data-tab="playlists">Injected Playlists</div>
-            <div class="tab" data-tab="kept">Kept Downloads</div>
-            <div class="tab" data-tab="scrobbling">Scrobbling</div>
-            <div class="tab" data-tab="config">Configuration</div>
-            <div class="tab" data-tab="endpoints">API Analytics</div>
-        </div>
+            <main class="app-main">
+                <header class="app-header">
+                    <h1>
+                        Allstarr <span class="version" id="version">Loading...</span>
+                    </h1>
+                    <div class="header-actions">
+                        <div id="status-indicator">
+                            <span class="status-badge" id="spotify-status">
+                                <span class="status-dot"></span>
+                                <span>Loading...</span>
+                            </span>
+                        </div>
+                    </div>
+                </header>
+
+                <div class="tabs top-tabs" aria-hidden="true">
+                    <div class="tab active" data-tab="dashboard">Dashboard</div>
+                    <div class="tab" data-tab="jellyfin-playlists">Link Playlists</div>
+                    <div class="tab" data-tab="playlists">Injected Playlists</div>
+                    <div class="tab" data-tab="kept">Kept Downloads</div>
+                    <div class="tab" data-tab="scrobbling">Scrobbling</div>
+                    <div class="tab" data-tab="config">Configuration</div>
+                    <div class="tab" data-tab="endpoints">API Analytics</div>
+                </div>
 
         <!-- Dashboard Tab -->
         <div class="tab-content active" id="tab-dashboard">
-            <div class="card" id="download-activity-card">
-                <h2>Live Download Queue</h2>
-                <div id="download-activity-list" class="download-queue-list">
-                    <div class="empty-state">No active downloads</div>
-                </div>
-            </div>
-
             <div class="grid">
                 <div class="card">
                     <h2>Spotify API</h2>
@@ -128,9 +141,9 @@
                 </h2>
                 <div id="dashboard-guidance" class="guidance-stack"></div>
                 <div class="card-actions-row">
-                    <button class="primary" onclick="refreshPlaylists()">Refresh All Playlists</button>
-                    <button onclick="clearCache()">Clear Cache</button>
-                    <button onclick="openAddPlaylist()">Add Playlist</button>
+                    <button class="primary" data-action="refreshPlaylists">Refresh All Playlists</button>
+                    <button data-action="clearCache">Clear Cache</button>
+                    <button data-action="openAddPlaylist">Add Playlist</button>
                     <button onclick="window.location.href='/spotify-mappings.html'">View Spotify Mappings</button>
                 </div>
             </div>
@@ -145,7 +158,7 @@
                         <button onclick="fetchJellyfinPlaylists()">Refresh</button>
                     </div>
                 </h2>
-                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                <p class="text-secondary mb-16">
                     Connect your Jellyfin playlists to Spotify playlists. Allstarr will automatically fill in missing
                     tracks from Spotify using your preferred music service (SquidWTF/Deezer/Qobuz).
                     <br><strong>Tip:</strong> Use the sp_dc cookie method for best results - it's simpler and more
@@ -153,10 +166,9 @@
                 </p>
                 <div id="jellyfin-guidance" class="guidance-stack"></div>
 
-                <div id="jellyfin-user-filter" style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
-                    <div class="form-group" style="margin: 0; flex: 1; min-width: 200px;">
-                        <label
-                            style="display: block; margin-bottom: 4px; color: var(--text-secondary); font-size: 0.85rem;">User</label>
+                <div id="jellyfin-user-filter" class="flex-row-wrap mb-16">
+                    <div class="form-group jellyfin-user-form-group">
+                        <label class="text-secondary">User</label>
                         <select id="jellyfin-user-select" onchange="fetchJellyfinPlaylists()"
                             style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);">
                             <option value="">All Users</option>
@@ -232,7 +244,7 @@
                     </div>
                 </details>
 
-                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                <p class="text-secondary mb-12">
                     These are the Spotify playlists currently being injected into Jellyfin with tracks from your music
                     service.
                 </p>
@@ -268,15 +280,14 @@
                     Manual mappings override automatic matching for external providers (SquidWTF, Deezer, Qobuz). For
                     local Jellyfin tracks, use the Spotify Import plugin instead.
                 </p>
-                <div id="mappings-summary"
-                    style="display: flex; gap: 20px; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 6px;">
+                <div id="mappings-summary" class="summary-box">
                     <div>
-                        <span style="color: var(--text-secondary);">Total:</span>
-                        <span style="font-weight: 600; margin-left: 8px;" id="mappings-total">0</span>
+                        <span class="summary-label">Total:</span>
+                        <span class="summary-value" id="mappings-total">0</span>
                     </div>
                     <div>
-                        <span style="color: var(--text-secondary);">External:</span>
-                        <span style="font-weight: 600; margin-left: 8px; color: var(--success);"
+                        <span class="summary-label">External:</span>
+                        <span class="summary-value success"
                             id="mappings-external">0</span>
                     </div>
                 </div>
@@ -309,15 +320,14 @@
                         <button onclick="fetchMissingTracks()">Refresh</button>
                     </div>
                 </h2>
-                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                <p class="text-secondary mb-12">
                     Tracks that couldn't be matched locally or externally. Map them manually to add them to your
                     playlists.
                 </p>
-                <div id="missing-summary"
-                    style="display: flex; gap: 20px; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 6px;">
+                <div id="missing-summary" class="summary-box">
                     <div>
-                        <span style="color: var(--text-secondary);">Total Missing:</span>
-                        <span style="font-weight: 600; margin-left: 8px; color: var(--warning);"
+                        <span class="summary-label">Total Missing:</span>
+                        <span class="summary-value warning"
                             id="missing-total">0</span>
                     </div>
                 </div>
@@ -348,23 +358,23 @@
                 <h2>
                     Kept Downloads
                     <div class="actions">
-                        <button onclick="downloadAllKept()" style="background:var(--accent);border-color:var(--accent);">Download All</button>
+                        <button onclick="downloadAllKept()" class="primary">Download All</button>
+                        <button onclick="deleteAllKept()" class="danger">Delete All</button>
                         <button onclick="fetchDownloads()">Refresh</button>
                     </div>
                 </h2>
-                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                <p class="text-secondary mb-12">
                     Downloaded files stored permanently. Download individual tracks or download all as a zip archive.
                 </p>
-                <div id="downloads-summary"
-                    style="display: flex; gap: 20px; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 6px;">
+                <div id="downloads-summary" class="summary-box">
                     <div>
-                        <span style="color: var(--text-secondary);">Total Files:</span>
-                        <span style="font-weight: 600; margin-left: 8px; color: var(--accent);"
+                        <span class="summary-label">Total Files:</span>
+                        <span class="summary-value accent"
                             id="downloads-count">0</span>
                     </div>
                     <div>
-                        <span style="color: var(--text-secondary);">Total Size:</span>
-                        <span style="font-weight: 600; margin-left: 8px; color: var(--accent);" id="downloads-size">0
+                        <span class="summary-label">Total Size:</span>
+                        <span class="summary-value accent" id="downloads-size">0
                             B</span>
                     </div>
                 </div>
@@ -972,6 +982,8 @@
                 <a href="https://ko-fi.com/joshpatra" target="_blank" rel="noopener noreferrer">Ko-Fi</a>.
             </p>
         </footer>
+            </main>
+        </div>
     </div>
 
     <!-- Add Playlist Modal -->

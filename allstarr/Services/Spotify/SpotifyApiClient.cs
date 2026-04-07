@@ -1026,26 +1026,7 @@ public class SpotifyApiClient : IDisposable
                         continue;
                     }
 
-                    // Get track count if available - try multiple possible paths
-                    var trackCount = 0;
-                    if (playlist.TryGetProperty("content", out var content))
-                    {
-                        if (content.TryGetProperty("totalCount", out var totalTrackCount))
-                        {
-                            trackCount = totalTrackCount.GetInt32();
-                        }
-                    }
-                    // Fallback: try attributes.itemCount
-                    else if (playlist.TryGetProperty("attributes", out var attributes) &&
-                             attributes.TryGetProperty("itemCount", out var itemCountProp))
-                    {
-                        trackCount = itemCountProp.GetInt32();
-                    }
-                    // Fallback: try totalCount directly
-                    else if (playlist.TryGetProperty("totalCount", out var directTotalCount))
-                    {
-                        trackCount = directTotalCount.GetInt32();
-                    }
+                    var trackCount = TryGetSpotifyPlaylistItemCount(playlist);
 
                     // Log if we couldn't find track count for debugging
                     if (trackCount == 0)
@@ -1057,7 +1038,9 @@ public class SpotifyApiClient : IDisposable
                     // Get owner name
                     string? ownerName = null;
                     if (playlist.TryGetProperty("ownerV2", out var ownerV2) &&
+                        ownerV2.ValueKind == JsonValueKind.Object &&
                         ownerV2.TryGetProperty("data", out var ownerData) &&
+                        ownerData.ValueKind == JsonValueKind.Object &&
                         ownerData.TryGetProperty("username", out var ownerNameProp))
                     {
                         ownerName = ownerNameProp.GetString();
@@ -1066,11 +1049,14 @@ public class SpotifyApiClient : IDisposable
                     // Get image URL
                     string? imageUrl = null;
                     if (playlist.TryGetProperty("images", out var images) &&
+                        images.ValueKind == JsonValueKind.Object &&
                         images.TryGetProperty("items", out var imageItems) &&
+                        imageItems.ValueKind == JsonValueKind.Array &&
                         imageItems.GetArrayLength() > 0)
                     {
                         var firstImage = imageItems[0];
                         if (firstImage.TryGetProperty("sources", out var sources) &&
+                            sources.ValueKind == JsonValueKind.Array &&
                             sources.GetArrayLength() > 0)
                         {
                             var firstSource = sources[0];
@@ -1165,6 +1151,68 @@ public class SpotifyApiClient : IDisposable
         return null;
     }
 
+    private static int TryGetSpotifyPlaylistItemCount(JsonElement playlistElement)
+    {
+        if (playlistElement.TryGetProperty("content", out var content) &&
+            content.ValueKind == JsonValueKind.Object &&
+            content.TryGetProperty("totalCount", out var totalTrackCount) &&
+            TryParseSpotifyIntegerElement(totalTrackCount, out var contentCount))
+        {
+            return contentCount;
+        }
+
+        if (playlistElement.TryGetProperty("attributes", out var attributes))
+        {
+            if (attributes.ValueKind == JsonValueKind.Object &&
+                attributes.TryGetProperty("itemCount", out var itemCountProp) &&
+                TryParseSpotifyIntegerElement(itemCountProp, out var directAttributeCount))
+            {
+                return directAttributeCount;
+            }
+
+            if (attributes.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var attribute in attributes.EnumerateArray())
+                {
+                    if (attribute.ValueKind != JsonValueKind.Object ||
+                        !attribute.TryGetProperty("key", out var keyProp) ||
+                        keyProp.ValueKind != JsonValueKind.String ||
+                        !attribute.TryGetProperty("value", out var valueProp))
+                    {
+                        continue;
+                    }
+
+                    var key = keyProp.GetString();
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        continue;
+                    }
+
+                    var normalizedKey = key.Replace("_", "", StringComparison.OrdinalIgnoreCase)
+                        .Replace(":", "", StringComparison.OrdinalIgnoreCase);
+                    if (!normalizedKey.Contains("itemcount", StringComparison.OrdinalIgnoreCase) &&
+                        !normalizedKey.Contains("trackcount", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (TryParseSpotifyIntegerElement(valueProp, out var attributeCount))
+                    {
+                        return attributeCount;
+                    }
+                }
+            }
+        }
+
+        if (playlistElement.TryGetProperty("totalCount", out var directTotalCount) &&
+            TryParseSpotifyIntegerElement(directTotalCount, out var totalCount))
+        {
+            return totalCount;
+        }
+
+        return 0;
+    }
+
     private static DateTime? ParseSpotifyDateElement(JsonElement value)
     {
         switch (value.ValueKind)
@@ -1236,6 +1284,40 @@ public class SpotifyApiClient : IDisposable
         }
 
         return null;
+    }
+
+    private static bool TryParseSpotifyIntegerElement(JsonElement value, out int parsed)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Number:
+                return value.TryGetInt32(out parsed);
+            case JsonValueKind.String:
+                return int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed);
+            case JsonValueKind.Object:
+                if (value.TryGetProperty("value", out var nestedValue) &&
+                    TryParseSpotifyIntegerElement(nestedValue, out parsed))
+                {
+                    return true;
+                }
+
+                if (value.TryGetProperty("itemCount", out var itemCount) &&
+                    TryParseSpotifyIntegerElement(itemCount, out parsed))
+                {
+                    return true;
+                }
+
+                if (value.TryGetProperty("totalCount", out var totalCount) &&
+                    TryParseSpotifyIntegerElement(totalCount, out parsed))
+                {
+                    return true;
+                }
+
+                break;
+        }
+
+        parsed = 0;
+        return false;
     }
 
     private static DateTime? ParseSpotifyUnixTimestamp(long value)

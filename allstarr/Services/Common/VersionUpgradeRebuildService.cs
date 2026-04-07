@@ -14,6 +14,8 @@ public class VersionUpgradeRebuildService : IHostedService
     private readonly SpotifyTrackMatchingService _matchingService;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly ILogger<VersionUpgradeRebuildService> _logger;
+    private CancellationTokenSource? _backgroundRebuildCts;
+    private Task? _backgroundRebuildTask;
 
     public VersionUpgradeRebuildService(
         SpotifyTrackMatchingService matchingService,
@@ -53,15 +55,12 @@ public class VersionUpgradeRebuildService : IHostedService
             }
             else
             {
-                _logger.LogInformation("Triggering full rebuild for all playlists after version upgrade");
-                try
-                {
-                    await _matchingService.TriggerRebuildAllAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to trigger auto rebuild after version upgrade");
-                }
+                _logger.LogInformation(
+                    "Scheduling full rebuild for all playlists in background after version upgrade");
+
+                _backgroundRebuildCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _backgroundRebuildTask = RunBackgroundRebuildAsync(currentVersion, _backgroundRebuildCts.Token);
+                return;
             }
         }
         else
@@ -76,7 +75,51 @@ public class VersionUpgradeRebuildService : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        return Task.CompletedTask;
+        return StopBackgroundRebuildAsync(cancellationToken);
+    }
+
+    private async Task RunBackgroundRebuildAsync(string currentVersion, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Starting background full rebuild for all playlists after version upgrade");
+            await _matchingService.TriggerRebuildAllAsync(cancellationToken);
+            _logger.LogInformation("Background full rebuild after version upgrade completed");
+            await WriteCurrentVersionAsync(currentVersion, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Background full rebuild after version upgrade was cancelled before completion");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to trigger auto rebuild after version upgrade");
+            await WriteCurrentVersionAsync(currentVersion, CancellationToken.None);
+        }
+    }
+
+    private async Task StopBackgroundRebuildAsync(CancellationToken cancellationToken)
+    {
+        if (_backgroundRebuildTask == null)
+        {
+            return;
+        }
+
+        try
+        {
+            _backgroundRebuildCts?.Cancel();
+            await _backgroundRebuildTask.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Host shutdown is in progress or the background task observed cancellation.
+        }
+        finally
+        {
+            _backgroundRebuildCts?.Dispose();
+            _backgroundRebuildCts = null;
+            _backgroundRebuildTask = null;
+        }
     }
 
     private async Task<string?> ReadPreviousVersionAsync(CancellationToken cancellationToken)

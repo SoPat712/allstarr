@@ -70,7 +70,12 @@ async function openLinkPlaylist(jellyfinId, name) {
     }
 
     try {
-      spotifyUserPlaylists = await API.fetchSpotifyUserPlaylists(selectedUserId);
+      const response = await API.fetchSpotifyUserPlaylists(selectedUserId);
+      spotifyUserPlaylists = Array.isArray(response?.playlists)
+        ? response.playlists
+        : Array.isArray(response)
+          ? response
+          : [];
       spotifyUserPlaylistsScopeUserId = selectedUserId;
       const availablePlaylists = spotifyUserPlaylists.filter((p) => !p.isLinked);
 

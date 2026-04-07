@@ -678,7 +678,7 @@ public partial class JellyfinController : ControllerBase
 
                         if (fallbackBytes != null && fallbackContentType != null)
                         {
-                            return File(fallbackBytes, fallbackContentType);
+                            return CreateConditionalImageResponse(fallbackBytes, fallbackContentType);
                         }
                     }
                 }
@@ -687,7 +687,7 @@ public partial class JellyfinController : ControllerBase
                 return await GetPlaceholderImageAsync();
             }
 
-            return File(imageBytes, contentType);
+            return CreateConditionalImageResponse(imageBytes, contentType);
         }
 
         // Check Redis cache for previously fetched external image
@@ -696,7 +696,7 @@ public partial class JellyfinController : ControllerBase
         if (cachedImageBytes != null)
         {
             _logger.LogDebug("Cache hit for external {Type} image: {Provider}/{ExternalId}", type, provider, externalId);
-            return File(cachedImageBytes, "image/jpeg");
+            return CreateConditionalImageResponse(cachedImageBytes, "image/jpeg");
         }
 
         // Get external cover art URL
@@ -767,7 +767,7 @@ public partial class JellyfinController : ControllerBase
 
             _logger.LogDebug("Successfully fetched and cached external image from host {Host}, size: {Size} bytes",
                 safeCoverUri.Host, imageBytes.Length);
-            return File(imageBytes, "image/jpeg");
+            return CreateConditionalImageResponse(imageBytes, "image/jpeg");
         }
         catch (Exception ex)
         {
@@ -789,7 +789,7 @@ public partial class JellyfinController : ControllerBase
         if (System.IO.File.Exists(placeholderPath))
         {
             var imageBytes = await System.IO.File.ReadAllBytesAsync(placeholderPath);
-            return File(imageBytes, "image/png");
+            return CreateConditionalImageResponse(imageBytes, "image/png");
         }
 
         // Fallback: Return a 1x1 transparent PNG as minimal placeholder
@@ -797,7 +797,54 @@ public partial class JellyfinController : ControllerBase
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         );
 
-        return File(transparentPng, "image/png");
+        return CreateConditionalImageResponse(transparentPng, "image/png");
+    }
+
+    private IActionResult CreateConditionalImageResponse(byte[] imageBytes, string contentType)
+    {
+        var etag = ImageConditionalRequestHelper.ComputeStrongETag(imageBytes);
+        Response.Headers["ETag"] = etag;
+
+        if (ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag))
+        {
+            return StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        return File(imageBytes, contentType);
+    }
+
+    private async Task<string?> ResolveCurrentSpotifyPlaylistImageTagAsync(string itemId, string imageType)
+    {
+        try
+        {
+            var (itemResult, statusCode) = await _proxyService.GetJsonAsyncInternal($"Items/{itemId}");
+            if (itemResult == null || statusCode != 200)
+            {
+                return null;
+            }
+
+            using var itemDocument = itemResult;
+            var imageTag = ExtractImageTag(itemDocument.RootElement, imageType);
+
+            if (!string.IsNullOrWhiteSpace(imageTag))
+            {
+                _logger.LogDebug(
+                    "Resolved current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}: {ImageTag}",
+                    imageType,
+                    itemId,
+                    imageTag);
+            }
+
+            return imageTag;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Failed to resolve current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}",
+                imageType,
+                itemId);
+            return null;
+        }
     }
 
     private async Task<string?> ResolveCurrentSpotifyPlaylistImageTagAsync(string itemId, string imageType)
