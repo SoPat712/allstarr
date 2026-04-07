@@ -965,7 +965,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// The admin UI is documented and intended to be reachable directly over HTTP on port 5275.
+// Keep HTTPS redirection for non-admin traffic only.
+app.UseWhen(
+    context => context.Connection.LocalPort != 5275,
+    branch => branch.UseHttpsRedirection());
 
 // Serve static files only on admin port (5275)
 app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
