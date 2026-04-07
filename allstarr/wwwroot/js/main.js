@@ -75,12 +75,7 @@ window.switchTab = function (tabName) {
     content.classList.add("active");
     window.location.hash = tabName;
 
-    if (
-      tabName === "kept" &&
-      authSession?.isAuthenticated?.() &&
-      authSession?.isAdminSession?.() &&
-      typeof window.fetchDownloads === "function"
-    ) {
+    if (tabName === "kept" && typeof window.fetchDownloads === "function") {
       window.fetchDownloads();
     }
   }

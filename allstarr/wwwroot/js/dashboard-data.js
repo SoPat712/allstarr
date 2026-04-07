@@ -193,10 +193,6 @@ async function fetchMissingTracks() {
 }
 
 async function fetchDownloads() {
-  if (!isAuthenticated() || !isAdminSession()) {
-    return;
-  }
-
   try {
     const data = await API.fetchDownloads();
     const tbody = document.getElementById("downloads-table-body");
