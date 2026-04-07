@@ -157,6 +157,7 @@ window.searchJellyfinTracks = searchJellyfinTracks;
 window.saveLocalMapping = saveLocalMapping;
 window.saveManualMapping = saveManualMapping;
 window.searchExternalTracks = searchExternalTracks;
+window.searchProvider = searchProvider;
 window.validateExternalMapping = validateExternalMapping;
 window.saveLyricsMapping = saveLyricsMapping;
 // Note: viewTracks/selectExternalTrack/selectJellyfinTrack/openLyricsMap/searchProvider
