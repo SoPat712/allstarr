@@ -20,6 +20,7 @@ public class JellyfinSessionManager : IDisposable
     private readonly ILogger<JellyfinSessionManager> _logger;
     private readonly ConcurrentDictionary<string, SessionInfo> _sessions = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionInitLocks = new();
+    private readonly ConcurrentDictionary<string, byte> _proxiedWebSocketConnections = new();
     private readonly Timer _keepAliveTimer;
 
     public JellyfinSessionManager(
@@ -53,21 +54,28 @@ public class JellyfinSessionManager : IDisposable
         await initLock.WaitAsync();
         try
         {
+            var hasProxiedWebSocket = HasProxiedWebSocket(deviceId);
+
             // Check if we already have this session tracked
             if (_sessions.TryGetValue(deviceId, out var existingSession))
             {
                 existingSession.LastActivity = DateTime.UtcNow;
+                existingSession.HasProxiedWebSocket = hasProxiedWebSocket;
                 _logger.LogInformation("Session already exists for device {DeviceId}", deviceId);
 
-                // Refresh capabilities to keep session alive
-                // If this returns false (401), the token expired and client needs to re-auth
-                var refreshOk = await PostCapabilitiesAsync(headers);
-                if (!refreshOk)
+                if (!hasProxiedWebSocket)
                 {
-                    // Token expired - remove the stale session
-                    _logger.LogWarning("Token expired for device {DeviceId} - removing session", deviceId);
-                    await RemoveSessionAsync(deviceId);
-                    return false;
+                    // Refresh capabilities to keep session alive only for sessions that Allstarr
+                    // is synthesizing itself. Native proxied websocket sessions should be left
+                    // entirely under Jellyfin's control.
+                    var refreshOk = await PostCapabilitiesAsync(headers);
+                    if (!refreshOk)
+                    {
+                        // Token expired - remove the stale session
+                        _logger.LogWarning("Token expired for device {DeviceId} - removing session", deviceId);
+                        await RemoveSessionAsync(deviceId);
+                        return false;
+                    }
                 }
 
                 return true;
@@ -75,16 +83,26 @@ public class JellyfinSessionManager : IDisposable
 
             _logger.LogDebug("Creating new session for device: {DeviceId} ({Client} on {Device})", deviceId, client, device);
 
-            // Post session capabilities to Jellyfin - this creates the session
-            var createOk = await PostCapabilitiesAsync(headers);
-            if (!createOk)
+            if (!hasProxiedWebSocket)
             {
-                // Token expired or invalid - client needs to re-authenticate
-                _logger.LogError("Failed to create session for {DeviceId} - token may be expired", deviceId);
-                return false;
-            }
+                // Post session capabilities to Jellyfin only when Allstarr is creating a
+                // synthetic session. If the real client already has a proxied websocket,
+                // re-posting capabilities can overwrite its remote-control state.
+                var createOk = await PostCapabilitiesAsync(headers);
+                if (!createOk)
+                {
+                    // Token expired or invalid - client needs to re-authenticate
+                    _logger.LogError("Failed to create session for {DeviceId} - token may be expired", deviceId);
+                    return false;
+                }
 
-            _logger.LogInformation("Session created for {DeviceId}", deviceId);
+                _logger.LogInformation("Session created for {DeviceId}", deviceId);
+            }
+            else
+            {
+                _logger.LogDebug("Skipping synthetic Jellyfin session bootstrap for proxied websocket device {DeviceId}",
+                    deviceId);
+            }
 
             // Track this session
             var clientIp = headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
@@ -99,11 +117,16 @@ public class JellyfinSessionManager : IDisposable
                 Version = version,
                 LastActivity = DateTime.UtcNow,
                 Headers = CloneHeaders(headers),
-                ClientIp = clientIp
+                ClientIp = clientIp,
+                HasProxiedWebSocket = hasProxiedWebSocket
             };
 
-            // Start a WebSocket connection to Jellyfin on behalf of this client
-            _ = Task.Run(() => MaintainWebSocketForSessionAsync(deviceId, headers));
+            // Start a synthetic WebSocket connection only when the client itself does not
+            // already have a proxied Jellyfin socket through Allstarr.
+            if (!hasProxiedWebSocket)
+            {
+                _ = Task.Run(() => MaintainWebSocketForSessionAsync(deviceId, headers));
+            }
 
             return true;
         }
@@ -116,6 +139,44 @@ public class JellyfinSessionManager : IDisposable
         {
             initLock.Release();
         }
+    }
+
+    public async Task RegisterProxiedWebSocketAsync(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return;
+        }
+
+        _proxiedWebSocketConnections[deviceId] = 0;
+
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            session.HasProxiedWebSocket = true;
+            session.LastActivity = DateTime.UtcNow;
+            await CloseSyntheticWebSocketAsync(deviceId, session);
+        }
+    }
+
+    public void UnregisterProxiedWebSocket(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return;
+        }
+
+        _proxiedWebSocketConnections.TryRemove(deviceId, out _);
+
+        if (_sessions.TryGetValue(deviceId, out var session))
+        {
+            session.HasProxiedWebSocket = false;
+            session.LastActivity = DateTime.UtcNow;
+        }
+    }
+
+    private bool HasProxiedWebSocket(string deviceId)
+    {
+        return !string.IsNullOrWhiteSpace(deviceId) && _proxiedWebSocketConnections.ContainsKey(deviceId);
     }
 
     /// <summary>
@@ -345,8 +406,10 @@ public class JellyfinSessionManager : IDisposable
             ClientIp = s.ClientIp,
             LastActivity = s.LastActivity,
             InactiveMinutes = Math.Round((now - s.LastActivity).TotalMinutes, 1),
-            HasWebSocket = s.WebSocket != null,
-            WebSocketState = s.WebSocket?.State.ToString() ?? "None"
+            HasWebSocket = s.HasProxiedWebSocket || s.WebSocket != null,
+            HasProxiedWebSocket = s.HasProxiedWebSocket,
+            HasSyntheticWebSocket = s.WebSocket != null,
+            WebSocketState = s.HasProxiedWebSocket ? "Proxied" : s.WebSocket?.State.ToString() ?? "None"
         }).ToList();
 
         return new
@@ -363,6 +426,8 @@ public class JellyfinSessionManager : IDisposable
     /// </summary>
     public async Task RemoveSessionAsync(string deviceId)
     {
+        _proxiedWebSocketConnections.TryRemove(deviceId, out _);
+
         if (_sessions.TryRemove(deviceId, out var session))
         {
             _logger.LogDebug("🗑️ SESSION: Removing session for device {DeviceId}", deviceId);
@@ -419,6 +484,12 @@ public class JellyfinSessionManager : IDisposable
         if (!_sessions.TryGetValue(deviceId, out var session))
         {
             _logger.LogError("⚠️ WEBSOCKET: Cannot create WebSocket - session {DeviceId} not found", deviceId);
+            return;
+        }
+
+        if (session.HasProxiedWebSocket || HasProxiedWebSocket(deviceId))
+        {
+            _logger.LogDebug("Skipping synthetic Jellyfin websocket for proxied device {DeviceId}", deviceId);
             return;
         }
 
@@ -525,6 +596,13 @@ public class JellyfinSessionManager : IDisposable
             {
                 try
                 {
+                    if (HasProxiedWebSocket(deviceId))
+                    {
+                        _logger.LogDebug("Stopping synthetic Jellyfin websocket because proxied client websocket is active for {DeviceId}",
+                            deviceId);
+                        break;
+                    }
+
                     // Use a timeout so we can send keep-alive messages periodically
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
                     timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
@@ -635,6 +713,12 @@ public class JellyfinSessionManager : IDisposable
         {
             try
             {
+                session.HasProxiedWebSocket = HasProxiedWebSocket(session.DeviceId);
+                if (session.HasProxiedWebSocket)
+                {
+                    continue;
+                }
+
                 // Post capabilities again to keep session alive
                 // If this returns false (401), the token has expired
                 var success = await PostCapabilitiesAsync(session.Headers);
@@ -695,6 +779,7 @@ public class JellyfinSessionManager : IDisposable
         public string? LastLocalPlayedSignalItemId { get; set; }
         public string? LastExplicitStopItemId { get; set; }
         public DateTime? LastExplicitStopAtUtc { get; set; }
+        public bool HasProxiedWebSocket { get; set; }
     }
 
     public sealed record ActivePlaybackState(
@@ -727,6 +812,33 @@ public class JellyfinSessionManager : IDisposable
                     session.WebSocket?.Dispose();
                 }
             }
+        }
+    }
+
+    private async Task CloseSyntheticWebSocketAsync(string deviceId, SessionInfo session)
+    {
+        var syntheticSocket = session.WebSocket;
+        if (syntheticSocket == null)
+        {
+            return;
+        }
+
+        session.WebSocket = null;
+
+        try
+        {
+            if (syntheticSocket.State == WebSocketState.Open || syntheticSocket.State == WebSocketState.CloseReceived)
+            {
+                await syntheticSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Native client websocket active", CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to close synthetic Jellyfin websocket for proxied device {DeviceId}", deviceId);
+        }
+        finally
+        {
+            syntheticSocket.Dispose();
         }
     }
 }

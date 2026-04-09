@@ -1,4 +1,4 @@
-import { escapeHtml, showToast, formatCookieAge } from "./utils.js";
+import { escapeHtml, escapeJs, showToast, formatCookieAge } from "./utils.js";
 import * as API from "./api.js";
 import * as UI from "./ui.js";
 import { renderCookieAge } from "./settings-editor.js";
@@ -15,6 +15,7 @@ let onCookieNeedsInit = async () => {};
 let setCurrentConfigState = () => {};
 let syncConfigUiExtras = () => {};
 let loadScrobblingConfig = () => {};
+let jellyfinPlaylistRequestToken = 0;
 
 async function fetchStatus() {
   try {
@@ -129,6 +130,7 @@ async function fetchMissingTracks() {
           missing.forEach((t) => {
             missingTracks.push({
               playlist: playlist.name,
+              provider: t.externalProvider || t.provider || "squidwtf",
               ...t,
             });
           });
@@ -151,6 +153,7 @@ async function fetchMissingTracks() {
         const artist =
           t.artists && t.artists.length > 0 ? t.artists.join(", ") : "";
         const searchQuery = `${t.title} ${artist}`;
+        const provider = t.provider || "squidwtf";
         const trackPosition = Number.isFinite(t.position)
           ? Number(t.position)
           : 0;
@@ -163,7 +166,7 @@ async function fetchMissingTracks() {
                     <td class="mapping-actions-cell">
                         <button class="map-action-btn map-action-search missing-track-search-btn"
                             data-query="${escapeHtml(searchQuery)}"
-                            data-provider="squidwtf">🔍 Search</button>
+                            data-provider="${escapeHtml(provider)}">🔍 Search</button>
                         <button class="map-action-btn map-action-local missing-track-local-btn"
                             data-playlist="${escapeHtml(t.playlist)}"
                             data-position="${trackPosition}"
@@ -213,9 +216,9 @@ async function fetchDownloads() {
                     <td style="font-family:monospace;font-size:0.85rem;">${escapeHtml(f.fileName)}</td>
                     <td style="color:var(--text-secondary);">${f.sizeFormatted}</td>
                     <td>
-                        <button onclick="downloadFile('${escapeJs(f.path)}')"
+                        <button data-action="downloadFile" data-arg-path="${escapeHtml(escapeJs(f.path))}"
                             style="margin-right:4px;font-size:0.75rem;padding:4px 8px;background:var(--accent);border-color:var(--accent);">Download</button>
-                        <button onclick="deleteDownload('${escapeJs(f.path)}')"
+                        <button data-action="deleteDownload" data-arg-path="${escapeHtml(escapeJs(f.path))}"
                             class="danger" style="font-size:0.75rem;padding:4px 8px;">Delete</button>
                     </td>
                 </tr>
@@ -245,11 +248,28 @@ async function fetchJellyfinPlaylists() {
     '<tr><td colspan="4" class="loading"><span class="spinner"></span> Loading Jellyfin playlists...</td></tr>';
 
   try {
+    const requestToken = ++jellyfinPlaylistRequestToken;
     const userId = isAdminSession()
       ? document.getElementById("jellyfin-user-select")?.value
       : null;
-    const data = await API.fetchJellyfinPlaylists(userId);
-    UI.updateJellyfinPlaylistsUI(data);
+    const baseData = await API.fetchJellyfinPlaylists(userId, false);
+    if (requestToken !== jellyfinPlaylistRequestToken) {
+      return;
+    }
+
+    UI.updateJellyfinPlaylistsUI(baseData);
+
+    // Enrich counts after initial render so big accounts don't appear empty.
+    API.fetchJellyfinPlaylists(userId, true)
+      .then((statsData) => {
+        if (requestToken !== jellyfinPlaylistRequestToken) {
+          return;
+        }
+        UI.updateJellyfinPlaylistsUI(statsData);
+      })
+      .catch((err) => {
+        console.error("Failed to fetch Jellyfin playlist track stats:", err);
+      });
   } catch (error) {
     console.error("Failed to fetch Jellyfin playlists:", error);
     tbody.innerHTML =
@@ -346,7 +366,10 @@ function startDashboardRefresh() {
       fetchPlaylists();
       fetchTrackMappings();
       fetchMissingTracks();
-      fetchDownloads();
+      const keptTab = document.getElementById("tab-kept");
+      if (keptTab && keptTab.classList.contains("active")) {
+        fetchDownloads();
+      }
 
       const endpointsTab = document.getElementById("tab-endpoints");
       if (endpointsTab && endpointsTab.classList.contains("active")) {
@@ -380,7 +403,6 @@ async function loadDashboardData() {
   }
 
   startDashboardRefresh();
-  startDownloadActivityStream();
 }
 
 function startDownloadActivityStream() {

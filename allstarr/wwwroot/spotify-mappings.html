@@ -4,6 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Spotify Track Mappings - Allstarr</title>
+        <link rel="stylesheet" href="styles.css" />
         <style>
             :root {
                 --bg-primary: #0d1117;
@@ -39,6 +40,26 @@
                 max-width: 1400px;
                 margin: 0 auto;
                 padding: 20px;
+            }
+
+            .support-footer {
+                max-width: 1400px;
+                margin: 0 auto 24px;
+                padding: 20px;
+                border-top: 1px solid var(--border);
+                color: var(--text-secondary);
+                font-size: 0.92rem;
+                text-align: center;
+            }
+
+            .support-footer a {
+                color: var(--accent);
+                text-decoration: none;
+            }
+
+            .support-footer a:hover {
+                color: var(--accent-hover);
+                text-decoration: underline;
             }
 
             header {
@@ -646,5 +667,32 @@
                 </div>
             </div>
         </div>
+
+        <footer class="support-footer">
+            <p class="support-text">
+                If Allstarr has helped you, or maybe even replaced a monthly streaming service subscription, consider
+                supporting its development
+            </p>
+            <ul class="support-funding-icons">
+                <li>
+                    <a class="support-funding-link" href="https://ko-fi.com/joshpatra" target="_blank"
+                        rel="noopener noreferrer" aria-label="Support on Ko-fi">
+                        <img src="images/kofi_symbol.svg" alt="" width="37" height="30" decoding="async" />
+                    </a>
+                </li>
+                <li>
+                    <a class="support-funding-link" href="https://github.com/sponsors/SoPat712" target="_blank"
+                        rel="noopener noreferrer" aria-label="GitHub Sponsors">
+                        <img src="images/github-mark.svg" alt="" width="30" height="29" decoding="async" />
+                    </a>
+                </li>
+                <li>
+                    <a class="support-funding-link" href="https://buymeacoffee.com/treeman183" target="_blank"
+                        rel="noopener noreferrer" aria-label="Buy Me a Coffee">
+                        <img src="images/buymeacoffee-symbol.svg" alt="" width="30" height="30" decoding="async" />
+                    </a>
+                </li>
+            </ul>
+        </footer>
     </body>
 </html>

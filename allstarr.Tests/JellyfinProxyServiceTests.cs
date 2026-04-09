@@ -312,6 +312,169 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task GetPassthroughResponseAsync_WithRepeatedFields_PreservesAllFieldParameters()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=Genres&Fields=DateCreated&Fields=MediaSources&UserId=user-abc");
+
+        // Assert
+        Assert.NotNull(captured);
+        var query = captured!.RequestUri!.Query;
+        Assert.Contains("Fields=Genres", query);
+        Assert.Contains("Fields=DateCreated", query);
+        Assert.Contains("Fields=MediaSources", query);
+        Assert.Contains("UserId=user-abc", query);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPassthroughResponseAsync_WithClientAuth_ForwardsAuthHeader()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
+        };
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=Genres",
+            headers);
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.True(captured!.Headers.TryGetValues("X-Emby-Authorization", out var values));
+        Assert.Contains("MediaBrowser Token=\"abc\"", values);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithNoBody_PreservesEmptyRequestBody()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
+        };
+
+        // Act
+        var (_, statusCode) = await _service.SendAsync(
+            HttpMethod.Post,
+            "Sessions/session-123/Playing/Pause?controllingUserId=user-123",
+            null,
+            headers);
+
+        // Assert
+        Assert.Equal(204, statusCode);
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Null(captured.Content);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithCustomContentType_PreservesOriginalType()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        var headers = new HeaderDictionary
+        {
+            ["X-Emby-Authorization"] = "MediaBrowser Token=\"abc\""
+        };
+
+        // Act
+        await _service.SendAsync(
+            HttpMethod.Put,
+            "Sessions/session-123/Command/DisplayMessage",
+            "{\"Text\":\"hello\"}",
+            headers,
+            "application/json; charset=utf-8");
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Put, captured!.Method);
+        Assert.NotNull(captured.Content);
+        Assert.Equal("application/json; charset=utf-8", captured.Content!.Headers.ContentType!.ToString());
+    }
+
+    [Fact]
+    public async Task GetPassthroughResponseAsync_WithAcceptEncoding_ForwardsCompressionHeaders()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        var headers = new HeaderDictionary
+        {
+            ["Accept-Encoding"] = "gzip, br",
+            ["User-Agent"] = "Finamp/1.0",
+            ["Accept-Language"] = "en-US"
+        };
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=Genres",
+            headers);
+
+        // Assert
+        Assert.NotNull(captured);
+        Assert.True(captured!.Headers.TryGetValues("Accept-Encoding", out var encodings));
+        Assert.Contains("gzip", encodings);
+        Assert.Contains("br", encodings);
+        Assert.True(captured.Headers.TryGetValues("User-Agent", out var userAgents));
+        Assert.Contains("Finamp/1.0", userAgents);
+        Assert.True(captured.Headers.TryGetValues("Accept-Language", out var languages));
+        Assert.Contains("en-US", languages);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GetJsonAsync_WithEndpointAndExplicitQuery_MergesWithExplicitPrecedence()
     {
         // Arrange

@@ -34,16 +34,12 @@ import {
 } from "./playlist-admin.js";
 import { initScrobblingAdmin } from "./scrobbling-admin.js";
 import { initAuthSession } from "./auth-session.js";
+import { initActionDispatcher } from "./action-dispatcher.js";
+import { initNavigationView } from "./views/navigation-view.js";
+import { initScrobblingView } from "./views/scrobbling-view.js";
 
 let cookieDateInitialized = false;
 let restartRequired = false;
-
-window.showToast = showToast;
-window.escapeHtml = escapeHtml;
-window.escapeJs = escapeJs;
-window.openModal = openModal;
-window.closeModal = closeModal;
-window.capitalizeProvider = capitalizeProvider;
 
 window.showRestartBanner = function () {
   restartRequired = true;
@@ -59,16 +55,29 @@ window.switchTab = function (tabName) {
     .querySelectorAll(".tab")
     .forEach((tab) => tab.classList.remove("active"));
   document
+    .querySelectorAll(".sidebar-link")
+    .forEach((link) => link.classList.remove("active"));
+  document
     .querySelectorAll(".tab-content")
     .forEach((content) => content.classList.remove("active"));
 
   const tab = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  const sidebarLink = document.querySelector(
+    `.sidebar-link[data-tab="${tabName}"]`,
+  );
   const content = document.getElementById(`tab-${tabName}`);
 
   if (tab && content) {
     tab.classList.add("active");
+    if (sidebarLink) {
+      sidebarLink.classList.add("active");
+    }
     content.classList.add("active");
     window.location.hash = tabName;
+
+    if (tabName === "kept" && typeof window.fetchDownloads === "function") {
+      window.fetchDownloads();
+    }
   }
 };
 
@@ -138,46 +147,112 @@ const authSession = initAuthSession({
   },
 });
 
-window.viewTracks = viewTracks;
 window.openManualMap = openManualMap;
 window.openExternalMap = openExternalMap;
 window.openMapToLocal = openManualMap;
 window.openMapToExternal = openExternalMap;
+window.openModal = openModal;
+window.closeModal = closeModal;
 window.searchJellyfinTracks = searchJellyfinTracks;
-window.selectJellyfinTrack = selectJellyfinTrack;
 window.saveLocalMapping = saveLocalMapping;
 window.saveManualMapping = saveManualMapping;
 window.searchExternalTracks = searchExternalTracks;
-window.selectExternalTrack = selectExternalTrack;
-window.validateExternalMapping = validateExternalMapping;
-window.openLyricsMap = openLyricsMap;
-window.saveLyricsMapping = saveLyricsMapping;
 window.searchProvider = searchProvider;
+window.validateExternalMapping = validateExternalMapping;
+window.saveLyricsMapping = saveLyricsMapping;
+// Note: viewTracks/selectExternalTrack/selectJellyfinTrack/openLyricsMap/searchProvider
+// are now wired via the ActionDispatcher and no longer require window exports.
 
 document.addEventListener("DOMContentLoaded", () => {
   console.log("🚀 Allstarr Admin UI (Modular) loaded");
 
-  document.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      window.switchTab(tab.dataset.tab);
-    });
+  const dispatcher = initActionDispatcher({ root: document });
+  // Register a few core actions first; more will be migrated as inline
+  // onclick handlers are removed from HTML and generated markup.
+  dispatcher.register("switchTab", ({ args }) => {
+    const tab = args?.tab || args?.tabName;
+    if (tab) {
+      window.switchTab(tab);
+    }
   });
+  dispatcher.register("logoutAdminSession", () => window.logoutAdminSession?.());
+  dispatcher.register("dismissRestartBanner", () =>
+    window.dismissRestartBanner?.(),
+  );
+  dispatcher.register("restartContainer", () => window.restartContainer?.());
+  dispatcher.register("refreshPlaylists", () => window.refreshPlaylists?.());
+  dispatcher.register("clearCache", () => window.clearCache?.());
+  dispatcher.register("openAddPlaylist", () => window.openAddPlaylist?.());
+  dispatcher.register("toggleRowMenu", ({ event, args }) =>
+    window.toggleRowMenu?.(event, args?.menuId),
+  );
+  dispatcher.register("toggleDetailsRow", ({ event, args }) =>
+    window.toggleDetailsRow?.(event, args?.detailsRowId),
+  );
+  dispatcher.register("viewTracks", ({ args }) => viewTracks(args?.playlistName));
+  dispatcher.register("refreshPlaylist", ({ args }) =>
+    window.refreshPlaylist?.(args?.playlistName),
+  );
+  dispatcher.register("matchPlaylistTracks", ({ args }) =>
+    window.matchPlaylistTracks?.(args?.playlistName),
+  );
+  dispatcher.register("clearPlaylistCache", ({ args }) =>
+    window.clearPlaylistCache?.(args?.playlistName),
+  );
+  dispatcher.register("editPlaylistSchedule", ({ args }) =>
+    window.editPlaylistSchedule?.(args?.playlistName, args?.syncSchedule),
+  );
+  dispatcher.register("removePlaylist", ({ args }) =>
+    window.removePlaylist?.(args?.playlistName),
+  );
+  dispatcher.register("openLinkPlaylist", ({ args }) =>
+    window.openLinkPlaylist?.(args?.jellyfinId, args?.jellyfinName),
+  );
+  dispatcher.register("unlinkPlaylist", ({ args }) =>
+    window.unlinkPlaylist?.(args?.jellyfinId, args?.jellyfinName),
+  );
+  dispatcher.register("fetchJellyfinPlaylists", () =>
+    window.fetchJellyfinPlaylists?.(),
+  );
+  dispatcher.register("searchProvider", ({ args }) =>
+    searchProvider(args?.query, args?.provider),
+  );
+  dispatcher.register("openLyricsMap", ({ args, toNumber }) =>
+    openLyricsMap(
+      args?.artist,
+      args?.title,
+      args?.album,
+      toNumber(args?.durationSeconds) ?? 0,
+    ),
+  );
+  dispatcher.register("selectJellyfinTrack", ({ args }) =>
+    selectJellyfinTrack(args?.jellyfinId),
+  );
+  dispatcher.register("selectExternalTrack", ({ args, toNumber }) =>
+    selectExternalTrack(
+      toNumber(args?.resultIndex),
+      args?.externalId,
+      args?.title,
+      args?.artist,
+      args?.provider,
+      args?.externalUrl,
+    ),
+  );
+  dispatcher.register("downloadFile", ({ args }) =>
+    window.downloadFile?.(args?.path),
+  );
+  dispatcher.register("deleteDownload", ({ args }) =>
+    window.deleteDownload?.(args?.path),
+  );
 
-  const hash = window.location.hash.substring(1);
-  if (hash) {
-    window.switchTab(hash);
-  }
+  initNavigationView({ switchTab: window.switchTab });
 
   setupModalBackdropClose();
 
-  const scrobblingTab = document.querySelector('.tab[data-tab="scrobbling"]');
-  if (scrobblingTab) {
-    scrobblingTab.addEventListener("click", () => {
-      if (authSession.isAuthenticated()) {
-        window.loadScrobblingConfig();
-      }
-    });
-  }
+  initScrobblingView({
+    isAuthenticated: () => authSession.isAuthenticated(),
+    loadScrobblingConfig: () => window.loadScrobblingConfig?.(),
+  });
 
   authSession.bootstrapAuth();
 });

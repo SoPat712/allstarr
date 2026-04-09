@@ -628,13 +628,20 @@ public partial class JellyfinController : ControllerBase
 
         if (!isExternal)
         {
+            var effectiveImageTag = tag;
+            if (string.IsNullOrWhiteSpace(effectiveImageTag) &&
+                _spotifySettings.IsSpotifyPlaylist(itemId))
+            {
+                effectiveImageTag = await ResolveCurrentSpotifyPlaylistImageTagAsync(itemId, imageType);
+            }
+
             // Proxy image from Jellyfin for local content
             var (imageBytes, contentType) = await _proxyService.GetImageAsync(
                 itemId,
                 imageType,
                 maxWidth,
                 maxHeight,
-                tag);
+                effectiveImageTag);
 
             if (imageBytes == null || contentType == null)
             {
@@ -671,7 +678,7 @@ public partial class JellyfinController : ControllerBase
 
                         if (fallbackBytes != null && fallbackContentType != null)
                         {
-                            return File(fallbackBytes, fallbackContentType);
+                            return CreateConditionalImageResponse(fallbackBytes, fallbackContentType);
                         }
                     }
                 }
@@ -680,7 +687,7 @@ public partial class JellyfinController : ControllerBase
                 return await GetPlaceholderImageAsync();
             }
 
-            return File(imageBytes, contentType);
+            return CreateConditionalImageResponse(imageBytes, contentType);
         }
 
         // Check Redis cache for previously fetched external image
@@ -689,7 +696,7 @@ public partial class JellyfinController : ControllerBase
         if (cachedImageBytes != null)
         {
             _logger.LogDebug("Cache hit for external {Type} image: {Provider}/{ExternalId}", type, provider, externalId);
-            return File(cachedImageBytes, "image/jpeg");
+            return CreateConditionalImageResponse(cachedImageBytes, "image/jpeg");
         }
 
         // Get external cover art URL
@@ -760,7 +767,7 @@ public partial class JellyfinController : ControllerBase
 
             _logger.LogDebug("Successfully fetched and cached external image from host {Host}, size: {Size} bytes",
                 safeCoverUri.Host, imageBytes.Length);
-            return File(imageBytes, "image/jpeg");
+            return CreateConditionalImageResponse(imageBytes, "image/jpeg");
         }
         catch (Exception ex)
         {
@@ -782,7 +789,7 @@ public partial class JellyfinController : ControllerBase
         if (System.IO.File.Exists(placeholderPath))
         {
             var imageBytes = await System.IO.File.ReadAllBytesAsync(placeholderPath);
-            return File(imageBytes, "image/png");
+            return CreateConditionalImageResponse(imageBytes, "image/png");
         }
 
         // Fallback: Return a 1x1 transparent PNG as minimal placeholder
@@ -790,7 +797,54 @@ public partial class JellyfinController : ControllerBase
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         );
 
-        return File(transparentPng, "image/png");
+        return CreateConditionalImageResponse(transparentPng, "image/png");
+    }
+
+    private IActionResult CreateConditionalImageResponse(byte[] imageBytes, string contentType)
+    {
+        var etag = ImageConditionalRequestHelper.ComputeStrongETag(imageBytes);
+        Response.Headers["ETag"] = etag;
+
+        if (ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag))
+        {
+            return StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        return File(imageBytes, contentType);
+    }
+
+    private async Task<string?> ResolveCurrentSpotifyPlaylistImageTagAsync(string itemId, string imageType)
+    {
+        try
+        {
+            var (itemResult, statusCode) = await _proxyService.GetJsonAsyncInternal($"Items/{itemId}");
+            if (itemResult == null || statusCode != 200)
+            {
+                return null;
+            }
+
+            using var itemDocument = itemResult;
+            var imageTag = ExtractImageTag(itemDocument.RootElement, imageType);
+
+            if (!string.IsNullOrWhiteSpace(imageTag))
+            {
+                _logger.LogDebug(
+                    "Resolved current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}: {ImageTag}",
+                    imageType,
+                    itemId,
+                    imageTag);
+            }
+
+            return imageTag;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Failed to resolve current Jellyfin {ImageType} image tag for Spotify playlist {PlaylistId}",
+                imageType,
+                itemId);
+            return null;
+        }
     }
 
     #endregion
@@ -1292,33 +1346,37 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
-        // Intercept Spotify playlist requests by ID
-        if (_spotifySettings.Enabled &&
-            path.StartsWith("playlists/", StringComparison.OrdinalIgnoreCase) &&
-            path.Contains("/items", StringComparison.OrdinalIgnoreCase))
+        var playlistItemsRequestId = GetExactPlaylistItemsRequestId(path);
+        if (!string.IsNullOrEmpty(playlistItemsRequestId))
         {
-            // Extract playlist ID from path: playlists/{id}/items
-            var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase))
+            if (_spotifySettings.Enabled)
             {
-                var playlistId = parts[1];
-
                 _logger.LogDebug("=== PLAYLIST REQUEST ===");
-                _logger.LogInformation("Playlist ID: {PlaylistId}", playlistId);
+                _logger.LogInformation("Playlist ID: {PlaylistId}", playlistItemsRequestId);
                 _logger.LogInformation("Spotify Enabled: {Enabled}", _spotifySettings.Enabled);
                 _logger.LogInformation("Configured Playlists: {Playlists}", string.Join(", ", _spotifySettings.Playlists.Select(p => $"{p.Name}:{p.Id}")));
-                _logger.LogInformation("Is configured: {IsConfigured}", _spotifySettings.IsSpotifyPlaylist(playlistId));
+                _logger.LogInformation("Is configured: {IsConfigured}", _spotifySettings.IsSpotifyPlaylist(playlistItemsRequestId));
 
                 // Check if this playlist ID is configured for Spotify injection
-                if (_spotifySettings.IsSpotifyPlaylist(playlistId))
+                if (_spotifySettings.IsSpotifyPlaylist(playlistItemsRequestId))
                 {
                     _logger.LogInformation("========================================");
                     _logger.LogInformation("=== INTERCEPTING SPOTIFY PLAYLIST ===");
-                    _logger.LogInformation("Playlist ID: {PlaylistId}", playlistId);
+                    _logger.LogInformation("Playlist ID: {PlaylistId}", playlistItemsRequestId);
                     _logger.LogInformation("========================================");
-                    return await GetPlaylistTracks(playlistId);
+                    return await GetPlaylistTracks(playlistItemsRequestId);
                 }
             }
+
+            var playlistItemsPath = path;
+            if (Request.QueryString.HasValue)
+            {
+                playlistItemsPath = $"{playlistItemsPath}{Request.QueryString.Value}";
+            }
+
+            _logger.LogDebug("Using transparent Jellyfin passthrough for non-injected playlist {PlaylistId}",
+                playlistItemsRequestId);
+            return await ProxyJsonPassthroughAsync(playlistItemsPath);
         }
 
         // Handle non-JSON responses (images, robots.txt, etc.)

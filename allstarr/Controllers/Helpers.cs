@@ -1,15 +1,31 @@
 using System.Text.Json;
 using System.Text;
+using System.Net.Http;
 using allstarr.Models.Domain;
 using allstarr.Models.Spotify;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace allstarr.Controllers;
 
 public partial class JellyfinController
 {
     #region Helpers
+
+    private static readonly HashSet<string> PassthroughResponseHeadersToSkip = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Connection",
+        "Keep-Alive",
+        "Proxy-Authenticate",
+        "Proxy-Authorization",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade",
+        "Content-Type",
+        "Content-Length"
+    };
 
     /// <summary>
     /// Helper to handle proxy responses with proper status code handling.
@@ -46,6 +62,60 @@ public partial class JellyfinController
         }
 
         return NoContent();
+    }
+
+    private async Task<IActionResult> ProxyJsonPassthroughAsync(string endpoint)
+    {
+        try
+        {
+            // Match the previous proxy semantics for client compatibility.
+            // Some Jellyfin clients/proxies cancel the ASP.NET request token aggressively
+            // even though the upstream request would still complete successfully.
+            var upstreamResponse = await _proxyService.GetPassthroughResponseAsync(
+                endpoint,
+                Request.Headers);
+
+            HttpContext.Response.RegisterForDispose(upstreamResponse);
+            HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+            Response.StatusCode = (int)upstreamResponse.StatusCode;
+            Response.Headers["X-Accel-Buffering"] = "no";
+
+            CopyPassthroughResponseHeaders(upstreamResponse);
+
+            if (upstreamResponse.Content.Headers.ContentLength.HasValue)
+            {
+                Response.ContentLength = upstreamResponse.Content.Headers.ContentLength.Value;
+            }
+
+            var contentType = upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/json";
+            var stream = await upstreamResponse.Content.ReadAsStreamAsync();
+
+            return new FileStreamResult(stream, contentType);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to transparently proxy Jellyfin request for {Endpoint}", endpoint);
+            return StatusCode(502, new { error = "Failed to connect to Jellyfin server" });
+        }
+    }
+
+    private void CopyPassthroughResponseHeaders(HttpResponseMessage upstreamResponse)
+    {
+        foreach (var header in upstreamResponse.Headers)
+        {
+            if (!PassthroughResponseHeadersToSkip.Contains(header.Key))
+            {
+                Response.Headers[header.Key] = header.Value.ToArray();
+            }
+        }
+
+        foreach (var header in upstreamResponse.Content.Headers)
+        {
+            if (!PassthroughResponseHeadersToSkip.Contains(header.Key))
+            {
+                Response.Headers[header.Key] = header.Value.ToArray();
+            }
+        }
     }
 
     /// <summary>
@@ -405,6 +475,47 @@ public partial class JellyfinController
         }
 
         return includeItemTypes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static string? GetExactPlaylistItemsRequestId(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 ||
+            !parts[0].Equals("playlists", StringComparison.OrdinalIgnoreCase) ||
+            !parts[2].Equals("items", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return parts[1];
+    }
+
+    private static string? ExtractImageTag(JsonElement item, string imageType)
+    {
+        if (item.TryGetProperty("ImageTags", out var imageTags) &&
+            imageTags.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var imageTag in imageTags.EnumerateObject())
+            {
+                if (string.Equals(imageTag.Name, imageType, StringComparison.OrdinalIgnoreCase))
+                {
+                    return imageTag.Value.GetString();
+                }
+            }
+        }
+
+        if (string.Equals(imageType, "Primary", StringComparison.OrdinalIgnoreCase) &&
+            item.TryGetProperty("PrimaryImageTag", out var primaryImageTag))
+        {
+            return primaryImageTag.GetString();
+        }
+
+        return null;
     }
 
     /// <summary>

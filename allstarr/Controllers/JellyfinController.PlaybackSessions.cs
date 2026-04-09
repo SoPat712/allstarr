@@ -1558,9 +1558,14 @@ public partial class JellyfinController
                 string.Join(", ", Request.Headers.Keys.Where(h =>
                     h.Contains("Auth", StringComparison.OrdinalIgnoreCase))));
 
-            // Read body if present
-            string body = "{}";
-            if ((method == "POST" || method == "PUT") && Request.ContentLength > 0)
+            // Read body if present. Preserve true empty-body requests because Jellyfin
+            // uses several POST session-control endpoints with query params only.
+            string? body = null;
+            var hasRequestBody = !HttpMethods.IsGet(method) &&
+                                 (Request.ContentLength.GetValueOrDefault() > 0 ||
+                                  Request.Headers.ContainsKey("Transfer-Encoding"));
+
+            if (hasRequestBody)
             {
                 Request.EnableBuffering();
                 using (var reader = new StreamReader(Request.Body, System.Text.Encoding.UTF8,
@@ -1577,9 +1582,9 @@ public partial class JellyfinController
             var (result, statusCode) = method switch
             {
                 "GET" => await _proxyService.GetJsonAsync(endpoint, null, Request.Headers),
-                "POST" => await _proxyService.PostJsonAsync(endpoint, body, Request.Headers),
-                "PUT" => await _proxyService.PostJsonAsync(endpoint, body, Request.Headers), // Use POST for PUT
-                "DELETE" => await _proxyService.PostJsonAsync(endpoint, body, Request.Headers), // Use POST for DELETE
+                "POST" => await _proxyService.SendAsync(HttpMethod.Post, endpoint, body, Request.Headers, Request.ContentType),
+                "PUT" => await _proxyService.SendAsync(HttpMethod.Put, endpoint, body, Request.Headers, Request.ContentType),
+                "DELETE" => await _proxyService.SendAsync(HttpMethod.Delete, endpoint, body, Request.Headers, Request.ContentType),
                 _ => (null, 405)
             };
 

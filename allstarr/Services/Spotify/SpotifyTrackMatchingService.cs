@@ -38,6 +38,7 @@ public class SpotifyTrackMatchingService : BackgroundService
     private readonly IServiceProvider _serviceProvider;
     private const int DelayBetweenSearchesMs = 150; // 150ms = ~6.6 searches/second to avoid rate limiting
     private const int BatchSize = 11; // Number of parallel searches (matches SquidWTF provider count)
+    private static readonly TimeSpan ExternalProviderSearchTimeout = TimeSpan.FromSeconds(30);
 
     // Track last run time per playlist to prevent duplicate runs
     private readonly Dictionary<string, DateTime> _lastRunTimes = new();
@@ -295,6 +296,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             throw;
         }
 
+        await ClearPlaylistImageCacheAsync(playlist);
         _logger.LogInformation("✓ Rebuild complete for {Playlist}", playlistName);
     }
 
@@ -337,6 +339,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                 await MatchPlaylistTracksLegacyAsync(
                     playlist.Name, metadataService, cancellationToken);
             }
+
+            await ClearPlaylistImageCacheAsync(playlist);
         }
         catch (Exception ex)
         {
@@ -345,14 +349,27 @@ public class SpotifyTrackMatchingService : BackgroundService
         }
     }
 
+    private async Task ClearPlaylistImageCacheAsync(SpotifyPlaylistConfig playlist)
+    {
+        if (string.IsNullOrWhiteSpace(playlist.JellyfinId))
+        {
+            return;
+        }
+
+        var deletedCount = await _cache.DeleteByPatternAsync($"image:{playlist.JellyfinId}:*");
+        _logger.LogDebug("Cleared {Count} cached local image entries for playlist {Playlist}",
+            deletedCount,
+            playlist.Name);
+    }
+
     /// <summary>
     /// Public method to trigger full rebuild for all playlists (called from "Rebuild All Remote" button).
     /// This clears caches, fetches fresh data, and re-matches everything immediately.
     /// </summary>
-    public async Task TriggerRebuildAllAsync()
+    public async Task TriggerRebuildAllAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Manual full rebuild triggered for all playlists");
-        await RebuildAllPlaylistsAsync(CancellationToken.None);
+        _logger.LogInformation("Full rebuild triggered for all playlists");
+        await RebuildAllPlaylistsAsync(cancellationToken);
     }
 
     /// <summary>
@@ -757,11 +774,28 @@ public class SpotifyTrackMatchingService : BackgroundService
             if (cancellationToken.IsCancellationRequested) break;
 
             var batch = unmatchedSpotifyTracks.Skip(i).Take(BatchSize).ToList();
+            var batchStart = i + 1;
+            var batchEnd = i + batch.Count;
+            var batchStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            _logger.LogInformation(
+                "Starting external matching batch for {Playlist}: tracks {Start}-{End}/{Total}",
+                playlistName,
+                batchStart,
+                batchEnd,
+                unmatchedSpotifyTracks.Count);
 
             var batchTasks = batch.Select(async spotifyTrack =>
             {
+                var primaryArtist = spotifyTrack.PrimaryArtist;
+                var trackStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
                 try
                 {
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeoutCts.CancelAfter(ExternalProviderSearchTimeout);
+                    var trackCancellationToken = timeoutCts.Token;
+
                     var candidates = new List<(Song Song, double Score, string MatchType)>();
 
                     // Check global external mapping first
@@ -773,12 +807,23 @@ public class SpotifyTrackMatchingService : BackgroundService
                         if (!string.IsNullOrEmpty(globalMapping.ExternalProvider) &&
                             !string.IsNullOrEmpty(globalMapping.ExternalId))
                         {
-                            mappedSong = await metadataService.GetSongAsync(globalMapping.ExternalProvider, globalMapping.ExternalId);
+                            mappedSong = await metadataService.GetSongAsync(
+                                globalMapping.ExternalProvider,
+                                globalMapping.ExternalId,
+                                trackCancellationToken);
                         }
 
                         if (mappedSong != null)
                         {
                             candidates.Add((mappedSong, 100.0, "global-mapping-external"));
+                            trackStopwatch.Stop();
+                            _logger.LogDebug(
+                                "External candidate search finished for {Playlist} track #{Position}: {Title} by {Artist} in {ElapsedMs}ms using global mapping",
+                                playlistName,
+                                spotifyTrack.Position,
+                                spotifyTrack.Title,
+                                primaryArtist,
+                                trackStopwatch.ElapsedMilliseconds);
                             return (spotifyTrack, candidates);
                         }
                     }
@@ -786,10 +831,31 @@ public class SpotifyTrackMatchingService : BackgroundService
                     // Try ISRC match
                     if (_spotifyApiSettings.PreferIsrcMatching && !string.IsNullOrEmpty(spotifyTrack.Isrc))
                     {
-                        var isrcSong = await TryMatchByIsrcAsync(spotifyTrack.Isrc, metadataService);
-                        if (isrcSong != null)
+                        try
                         {
-                            candidates.Add((isrcSong, 100.0, "isrc"));
+                            var isrcSong = await TryMatchByIsrcAsync(
+                                spotifyTrack.Isrc,
+                                metadataService,
+                                trackCancellationToken);
+
+                            if (isrcSong != null)
+                            {
+                                candidates.Add((isrcSong, 100.0, "isrc"));
+                            }
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(
+                                ex,
+                                "ISRC lookup failed for {Playlist} track #{Position}: {Title} by {Artist}",
+                                playlistName,
+                                spotifyTrack.Position,
+                                spotifyTrack.Title,
+                                primaryArtist);
                         }
                     }
 
@@ -797,7 +863,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                     var fuzzySongs = await TryMatchByFuzzyMultipleAsync(
                         spotifyTrack.Title,
                         spotifyTrack.Artists,
-                        metadataService);
+                        metadataService,
+                        trackCancellationToken);
 
                     foreach (var (song, score) in fuzzySongs)
                     {
@@ -807,16 +874,48 @@ public class SpotifyTrackMatchingService : BackgroundService
                         }
                     }
 
+                    trackStopwatch.Stop();
+                    _logger.LogDebug(
+                        "External candidate search finished for {Playlist} track #{Position}: {Title} by {Artist} in {ElapsedMs}ms with {CandidateCount} candidates",
+                        playlistName,
+                        spotifyTrack.Position,
+                        spotifyTrack.Title,
+                        primaryArtist,
+                        trackStopwatch.ElapsedMilliseconds,
+                        candidates.Count);
+
                     return (spotifyTrack, candidates);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return (spotifyTrack, new List<(Song, double, string)>());
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        "External candidate search timed out for {Playlist} track #{Position}: {Title} by {Artist} after {TimeoutSeconds}s",
+                        playlistName,
+                        spotifyTrack.Position,
+                        spotifyTrack.Title,
+                        primaryArtist,
+                        ExternalProviderSearchTimeout.TotalSeconds);
+                    return (spotifyTrack, new List<(Song, double, string)>());
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to match track: {Title}", spotifyTrack.Title);
+                    _logger.LogError(
+                        ex,
+                        "Failed to match track for {Playlist} track #{Position}: {Title} by {Artist}",
+                        playlistName,
+                        spotifyTrack.Position,
+                        spotifyTrack.Title,
+                        primaryArtist);
                     return (spotifyTrack, new List<(Song, double, string)>());
                 }
             }).ToList();
 
             var batchResults = await Task.WhenAll(batchTasks);
+            batchStopwatch.Stop();
 
             foreach (var result in batchResults)
             {
@@ -825,6 +924,16 @@ public class SpotifyTrackMatchingService : BackgroundService
                     allCandidates.Add((result.Item1, candidate.Item1, candidate.Item2, candidate.Item3));
                 }
             }
+
+            var batchCandidateCount = batchResults.Sum(result => result.Item2.Count);
+            _logger.LogInformation(
+                "Finished external matching batch for {Playlist}: tracks {Start}-{End}/{Total} in {ElapsedMs}ms ({CandidateCount} candidates)",
+                playlistName,
+                batchStart,
+                batchEnd,
+                unmatchedSpotifyTracks.Count,
+                batchStopwatch.ElapsedMilliseconds,
+                batchCandidateCount);
 
             if (i + BatchSize < unmatchedSpotifyTracks.Count)
             {
@@ -998,140 +1107,136 @@ public class SpotifyTrackMatchingService : BackgroundService
     private async Task<List<(Song Song, double Score)>> TryMatchByFuzzyMultipleAsync(
         string title,
         List<string> artists,
-        IMusicMetadataService metadataService)
+        IMusicMetadataService metadataService,
+        CancellationToken cancellationToken)
     {
-        try
+        var primaryArtist = artists.FirstOrDefault() ?? "";
+        var titleStripped = FuzzyMatcher.StripDecorators(title);
+        var query = $"{titleStripped} {primaryArtist}";
+
+        var allCandidates = new List<(Song Song, double Score)>();
+
+        // STEP 1: Search LOCAL Jellyfin library FIRST
+        using var scope = _serviceProvider.CreateScope();
+        var proxyService = scope.ServiceProvider.GetService<JellyfinProxyService>();
+        if (proxyService != null)
         {
-            var primaryArtist = artists.FirstOrDefault() ?? "";
-            var titleStripped = FuzzyMatcher.StripDecorators(title);
-            var query = $"{titleStripped} {primaryArtist}";
-
-            var allCandidates = new List<(Song Song, double Score)>();
-
-            // STEP 1: Search LOCAL Jellyfin library FIRST
-            using var scope = _serviceProvider.CreateScope();
-            var proxyService = scope.ServiceProvider.GetService<JellyfinProxyService>();
-            if (proxyService != null)
+            try
             {
-                try
+                // Search Jellyfin for local tracks
+                var searchParams = new Dictionary<string, string>
                 {
-                    // Search Jellyfin for local tracks
-                    var searchParams = new Dictionary<string, string>
-                    {
-                        ["searchTerm"] = query,
-                        ["includeItemTypes"] = "Audio",
-                        ["recursive"] = "true",
-                        ["limit"] = "10"
-                    };
+                    ["searchTerm"] = query,
+                    ["includeItemTypes"] = "Audio",
+                    ["recursive"] = "true",
+                    ["limit"] = "10"
+                };
 
-                    var (searchResponse, _) = await proxyService.GetJsonAsyncInternal("Items", searchParams);
+                var (searchResponse, _) = await proxyService.GetJsonAsyncInternal("Items", searchParams);
 
-                    if (searchResponse != null && searchResponse.RootElement.TryGetProperty("Items", out var items))
+                if (searchResponse != null && searchResponse.RootElement.TryGetProperty("Items", out var items))
+                {
+                    var localResults = new List<Song>();
+                    foreach (var item in items.EnumerateArray())
                     {
-                        var localResults = new List<Song>();
-                        foreach (var item in items.EnumerateArray())
+                        var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
+                        var songTitle = item.TryGetProperty("Name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                        var artist = "";
+
+                        if (item.TryGetProperty("Artists", out var artistsEl) && artistsEl.GetArrayLength() > 0)
                         {
-                            var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
-                            var songTitle = item.TryGetProperty("Name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                            var artist = "";
-
-                            if (item.TryGetProperty("Artists", out var artistsEl) && artistsEl.GetArrayLength() > 0)
-                            {
-                                artist = artistsEl[0].GetString() ?? "";
-                            }
-                            else if (item.TryGetProperty("AlbumArtist", out var albumArtistEl))
-                            {
-                                artist = albumArtistEl.GetString() ?? "";
-                            }
-
-                            localResults.Add(new Song
-                            {
-                                Id = id,
-                                Title = songTitle,
-                                Artist = artist,
-                                IsLocal = true
-                            });
+                            artist = artistsEl[0].GetString() ?? "";
+                        }
+                        else if (item.TryGetProperty("AlbumArtist", out var albumArtistEl))
+                        {
+                            artist = albumArtistEl.GetString() ?? "";
                         }
 
-                        if (localResults.Count > 0)
+                        localResults.Add(new Song
                         {
-                            // Score local results
-                            var scoredLocal = localResults
-                                .Select(song => new
-                                {
-                                    Song = song,
-                                    TitleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, song.Title),
-                                    ArtistScore = FuzzyMatcher.CalculateArtistMatchScore(artists, song.Artist, song.Contributors)
-                                })
-                                .Select(x => new
-                                {
-                                    x.Song,
-                                    x.TitleScore,
-                                    x.ArtistScore,
-                                    TotalScore = (x.TitleScore * 0.7) + (x.ArtistScore * 0.3)
-                                })
-                                .Where(x =>
-                                    x.TotalScore >= 40 ||
-                                    (x.ArtistScore >= 70 && x.TitleScore >= 30) ||
-                                    x.TitleScore >= 85)
-                                .OrderByDescending(x => x.TotalScore)
-                                .Select(x => (x.Song, x.TotalScore))
-                                .ToList();
+                            Id = id,
+                            Title = songTitle,
+                            Artist = artist,
+                            IsLocal = true
+                        });
+                    }
 
-                            allCandidates.AddRange(scoredLocal);
-
-                            // If we found good local matches, return them (don't search external)
-                            if (scoredLocal.Any(x => x.TotalScore >= 70))
+                    if (localResults.Count > 0)
+                    {
+                        // Score local results
+                        var scoredLocal = localResults
+                            .Select(song => new
                             {
-                                _logger.LogDebug("Found {Count} local matches for '{Title}', skipping external search",
-                                    scoredLocal.Count, title);
-                                return allCandidates;
-                            }
+                                Song = song,
+                                TitleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, song.Title),
+                                ArtistScore = FuzzyMatcher.CalculateArtistMatchScore(artists, song.Artist, song.Contributors)
+                            })
+                            .Select(x => new
+                            {
+                                x.Song,
+                                x.TitleScore,
+                                x.ArtistScore,
+                                TotalScore = (x.TitleScore * 0.7) + (x.ArtistScore * 0.3)
+                            })
+                            .Where(x =>
+                                x.TotalScore >= 40 ||
+                                (x.ArtistScore >= 70 && x.TitleScore >= 30) ||
+                                x.TitleScore >= 85)
+                            .OrderByDescending(x => x.TotalScore)
+                            .Select(x => (x.Song, x.TotalScore))
+                            .ToList();
+
+                        allCandidates.AddRange(scoredLocal);
+
+                        // If we found good local matches, return them (don't search external)
+                        if (scoredLocal.Any(x => x.TotalScore >= 70))
+                        {
+                            _logger.LogDebug("Found {Count} local matches for '{Title}', skipping external search",
+                                scoredLocal.Count, title);
+                            return allCandidates;
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to search local library for '{Title}'", title);
-                }
             }
-
-            // STEP 2: Only search EXTERNAL if no good local match found
-            var externalResults = await metadataService.SearchSongsAsync(query, limit: 10);
-
-            if (externalResults.Count > 0)
+            catch (Exception ex)
             {
-                var scoredExternal = externalResults
-                    .Select(song => new
-                    {
-                        Song = song,
-                        TitleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, song.Title),
-                        ArtistScore = FuzzyMatcher.CalculateArtistMatchScore(artists, song.Artist, song.Contributors)
-                    })
-                    .Select(x => new
-                    {
-                        x.Song,
-                        x.TitleScore,
-                        x.ArtistScore,
-                        TotalScore = (x.TitleScore * 0.7) + (x.ArtistScore * 0.3)
-                    })
-                    .Where(x =>
-                        x.TotalScore >= 40 ||
-                        (x.ArtistScore >= 70 && x.TitleScore >= 30) ||
-                        x.TitleScore >= 85)
-                    .OrderByDescending(x => x.TotalScore)
-                    .Select(x => (x.Song, x.TotalScore))
-                    .ToList();
-
-                allCandidates.AddRange(scoredExternal);
+                _logger.LogWarning(ex, "Failed to search local library for '{Title}'", title);
             }
+        }
 
-            return allCandidates;
-        }
-        catch
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // STEP 2: Only search EXTERNAL if no good local match found
+        var externalResults = await metadataService.SearchSongsAsync(query, limit: 10, cancellationToken);
+
+        if (externalResults.Count > 0)
         {
-            return new List<(Song, double)>();
+            var scoredExternal = externalResults
+                .Select(song => new
+                {
+                    Song = song,
+                    TitleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, song.Title),
+                    ArtistScore = FuzzyMatcher.CalculateArtistMatchScore(artists, song.Artist, song.Contributors)
+                })
+                .Select(x => new
+                {
+                    x.Song,
+                    x.TitleScore,
+                    x.ArtistScore,
+                    TotalScore = (x.TitleScore * 0.7) + (x.ArtistScore * 0.3)
+                })
+                .Where(x =>
+                    x.TotalScore >= 40 ||
+                    (x.ArtistScore >= 70 && x.TitleScore >= 30) ||
+                    x.TitleScore >= 85)
+                .OrderByDescending(x => x.TotalScore)
+                .Select(x => (x.Song, x.TotalScore))
+                .ToList();
+
+            allCandidates.AddRange(scoredExternal);
         }
+
+        return allCandidates;
     }
 
     private double CalculateMatchScore(string jellyfinTitle, string jellyfinArtist, string spotifyTitle, string spotifyArtist)
@@ -1145,21 +1250,19 @@ public class SpotifyTrackMatchingService : BackgroundService
     /// Attempts to match a track by ISRC.
     /// SEARCHES LOCAL FIRST, then external if no local match found.
     /// </summary>
-    private async Task<Song?> TryMatchByIsrcAsync(string isrc, IMusicMetadataService metadataService)
+    private async Task<Song?> TryMatchByIsrcAsync(
+        string isrc,
+        IMusicMetadataService metadataService,
+        CancellationToken cancellationToken)
     {
-        try
-        {
-            // STEP 1: Search LOCAL Jellyfin library FIRST by ISRC
-            // Note: Jellyfin doesn't have ISRC search, so we skip local ISRC search
-            // Local tracks will be found via fuzzy matching instead
+        // STEP 1: Search LOCAL Jellyfin library FIRST by ISRC
+        // Note: Jellyfin doesn't have ISRC search, so we skip local ISRC search
+        // Local tracks will be found via fuzzy matching instead
 
-            // STEP 2: Search EXTERNAL by ISRC
-            return await metadataService.FindSongByIsrcAsync(isrc);
-        }
-        catch
-        {
-            return null;
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // STEP 2: Search EXTERNAL by ISRC
+        return await metadataService.FindSongByIsrcAsync(isrc, cancellationToken);
     }
 
     /// <summary>

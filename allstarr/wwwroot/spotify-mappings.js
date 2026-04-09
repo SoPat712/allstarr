@@ -15,6 +15,7 @@ let localMapContext = null;
 let localMapResults = [];
 let localMapSelectedIndex = -1;
 let externalMapContext = null;
+const modalFocusState = new Map();
 
 function showToast(message, type = "success", duration = 3000) {
   const toast = document.createElement("div");
@@ -247,9 +248,26 @@ function toggleModal(modalId, shouldOpen) {
   }
 
   if (shouldOpen) {
+    const previousActive = document.activeElement;
+    modalFocusState.set(modalId, previousActive);
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.removeAttribute("aria-hidden");
     modal.classList.add("active");
+    const firstFocusable = modal.querySelector(
+      'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])',
+    );
+    if (firstFocusable) {
+      firstFocusable.focus();
+    }
   } else {
     modal.classList.remove("active");
+    modal.setAttribute("aria-hidden", "true");
+    const previousActive = modalFocusState.get(modalId);
+    if (previousActive && typeof previousActive.focus === "function") {
+      previousActive.focus();
+    }
+    modalFocusState.delete(modalId);
   }
 }
 
@@ -626,6 +644,10 @@ function initializeEventListeners() {
 
     closeLocalMapModal();
     closeExternalMapModal();
+  });
+
+  document.querySelectorAll(".modal-overlay").forEach((modal) => {
+    modal.setAttribute("aria-hidden", "true");
   });
 }
 
