@@ -97,6 +97,54 @@ body {
     text-decoration: underline;
 }
 
+.support-text {
+    margin: 0 0 10px;
+}
+
+.support-funding-icons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.support-funding-icons li {
+    display: flex;
+    align-items: center;
+}
+
+.support-badge .support-funding-icons {
+    justify-content: flex-start;
+}
+
+.support-footer .support-funding-icons {
+    justify-content: center;
+}
+
+.support-funding-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.9;
+    line-height: 0;
+}
+
+.support-badge .support-funding-link:hover,
+.support-footer .support-funding-link:hover {
+    opacity: 1;
+    text-decoration: none;
+    color: inherit;
+}
+
+.support-funding-link img {
+    display: block;
+    height: 30px;
+    width: auto;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
