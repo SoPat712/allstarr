@@ -235,9 +235,6 @@ bindRowMenuHandlers();
 bindTableRowHandlers();
 
 export function updateStatusUI(data) {
-  const versionEl = document.getElementById("version");
-  if (versionEl) versionEl.textContent = "v" + data.version;
-
   const sidebarVersionEl = document.getElementById("sidebar-version");
   if (sidebarVersionEl) sidebarVersionEl.textContent = "v" + data.version;
 

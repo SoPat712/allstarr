@@ -146,9 +146,9 @@ body {
 }
 
 .container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
+    max-width: 1280px;
+    margin: 0 auto 0 0;
+    padding: 20px 20px 20px 8px;
 }
 
 .app-shell {
@@ -188,6 +188,18 @@ body {
     font-size: 0.82rem;
     font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
         monospace;
+}
+
+.sidebar-status {
+    margin-top: 12px;
+}
+
+.sidebar-status .status-badge {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    padding: 8px 12px;
+    border-radius: 8px;
 }
 
 .sidebar-nav {
@@ -264,12 +276,6 @@ header {
     margin-bottom: 30px;
 }
 
-.header-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
 .auth-user {
     color: var(--text-secondary);
     font-size: 0.85rem;
@@ -281,12 +287,6 @@ h1 {
     display: flex;
     align-items: center;
     gap: 10px;
-}
-
-h1 .version {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    font-weight: normal;
 }
 
 .status-badge {
@@ -1040,6 +1040,10 @@ input::placeholder {
 }
 
 @media (max-width: 768px) {
+    .container {
+        padding: 12px;
+    }
+
     .app-shell {
         grid-template-columns: 1fr;
         gap: 12px;
