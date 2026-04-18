@@ -5,6 +5,7 @@ import { escapeHtml, escapeJs, capitalizeProvider } from "./utils.js";
 let rowMenuHandlersBound = false;
 let tableRowHandlersBound = false;
 const expandedInjectedPlaylistDetails = new Set();
+let openInjectedPlaylistMenuKey = null;
 
 function bindRowMenuHandlers() {
   if (rowMenuHandlersBound) {
@@ -57,8 +58,16 @@ function closeAllRowMenus(exceptId = null) {
   document.querySelectorAll(".row-actions-menu.open").forEach((menu) => {
     if (!exceptId || menu.id !== exceptId) {
       menu.classList.remove("open");
+      const trigger = menu.parentElement?.querySelector?.(".menu-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
     }
   });
+
+  if (!exceptId) {
+    openInjectedPlaylistMenuKey = null;
+  }
 }
 
 function closeRowMenu(event, menuId) {
@@ -69,6 +78,13 @@ function closeRowMenu(event, menuId) {
   const menu = document.getElementById(menuId);
   if (menu) {
     menu.classList.remove("open");
+    const trigger = menu.parentElement?.querySelector?.(".menu-trigger");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    if (menu.dataset.menuKey) {
+      openInjectedPlaylistMenuKey = null;
+    }
   }
 }
 
@@ -85,6 +101,14 @@ function toggleRowMenu(event, menuId) {
   const isOpen = menu.classList.contains("open");
   closeAllRowMenus(menuId);
   menu.classList.toggle("open", !isOpen);
+  const trigger = menu.parentElement?.querySelector?.(".menu-trigger");
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", String(!isOpen));
+  }
+
+  if (menu.dataset.menuKey) {
+    openInjectedPlaylistMenuKey = isOpen ? null : menu.dataset.menuKey;
+  }
 }
 
 function toggleDetailsRow(event, detailsRowId) {
@@ -224,6 +248,275 @@ function getPlaylistStatusSummary(playlist) {
   };
 }
 
+function syncElementAttributes(target, source) {
+  if (!target || !source) {
+    return;
+  }
+
+  const sourceAttributes = new Map(
+    Array.from(source.attributes || []).map((attribute) => [
+      attribute.name,
+      attribute.value,
+    ]),
+  );
+
+  Array.from(target.attributes || []).forEach((attribute) => {
+    if (!sourceAttributes.has(attribute.name)) {
+      target.removeAttribute(attribute.name);
+    }
+  });
+
+  sourceAttributes.forEach((value, name) => {
+    target.setAttribute(name, value);
+  });
+}
+
+function syncPlaylistRowActionsWrap(existingWrap, nextWrap) {
+  if (!existingWrap || !nextWrap) {
+    return;
+  }
+
+  syncElementAttributes(existingWrap, nextWrap);
+
+  const activeElement = document.activeElement;
+  let focusTarget = null;
+
+  if (activeElement && existingWrap.contains(activeElement)) {
+    if (activeElement.classList.contains("menu-trigger")) {
+      focusTarget = { type: "trigger" };
+    } else if (activeElement.tagName === "BUTTON") {
+      focusTarget = {
+        type: "menu-item",
+        action: activeElement.getAttribute("data-action") || "",
+        text: activeElement.textContent || "",
+      };
+    }
+  }
+
+  const existingTrigger = existingWrap.querySelector(".menu-trigger");
+  const nextTrigger = nextWrap.querySelector(".menu-trigger");
+  if (existingTrigger && nextTrigger) {
+    syncElementAttributes(existingTrigger, nextTrigger);
+    existingTrigger.textContent = nextTrigger.textContent;
+  } else if (nextTrigger && !existingTrigger) {
+    existingWrap.prepend(nextTrigger.cloneNode(true));
+  } else if (existingTrigger && !nextTrigger) {
+    existingTrigger.remove();
+  }
+
+  const existingMenu = existingWrap.querySelector(".row-actions-menu");
+  const nextMenu = nextWrap.querySelector(".row-actions-menu");
+  if (existingMenu && nextMenu) {
+    syncElementAttributes(existingMenu, nextMenu);
+    existingMenu.replaceChildren(
+      ...Array.from(nextMenu.children).map((child) => child.cloneNode(true)),
+    );
+  } else if (nextMenu && !existingMenu) {
+    existingWrap.append(nextMenu.cloneNode(true));
+  } else if (existingMenu && !nextMenu) {
+    existingMenu.remove();
+  }
+
+  if (!focusTarget) {
+    return;
+  }
+
+  if (focusTarget.type === "trigger") {
+    existingWrap.querySelector(".menu-trigger")?.focus();
+    return;
+  }
+
+  const matchingButton =
+    Array.from(existingWrap.querySelectorAll(".row-actions-menu button")).find(
+      (button) =>
+        (button.getAttribute("data-action") || "") === focusTarget.action &&
+        button.textContent === focusTarget.text,
+    ) ||
+    Array.from(existingWrap.querySelectorAll(".row-actions-menu button")).find(
+      (button) =>
+        (button.getAttribute("data-action") || "") === focusTarget.action,
+    );
+
+  matchingButton?.focus();
+}
+
+function syncPlaylistControlsCell(
+  existingControlsCell,
+  nextControlsCell,
+  preserveOpenMenu = false,
+) {
+  if (!existingControlsCell || !nextControlsCell) {
+    return;
+  }
+
+  syncElementAttributes(existingControlsCell, nextControlsCell);
+
+  if (!preserveOpenMenu) {
+    existingControlsCell.innerHTML = nextControlsCell.innerHTML;
+    return;
+  }
+
+  const existingDetailsTrigger =
+    existingControlsCell.querySelector(".details-trigger");
+  const nextDetailsTrigger = nextControlsCell.querySelector(".details-trigger");
+  const existingWrap = existingControlsCell.querySelector(".row-actions-wrap");
+  const nextWrap = nextControlsCell.querySelector(".row-actions-wrap");
+
+  if (
+    !existingDetailsTrigger ||
+    !nextDetailsTrigger ||
+    !existingWrap ||
+    !nextWrap
+  ) {
+    existingControlsCell.innerHTML = nextControlsCell.innerHTML;
+    return;
+  }
+
+  syncElementAttributes(existingDetailsTrigger, nextDetailsTrigger);
+  existingDetailsTrigger.textContent = nextDetailsTrigger.textContent;
+  syncPlaylistRowActionsWrap(existingWrap, nextWrap);
+}
+
+function syncPlaylistMainRow(
+  existingMainRow,
+  nextMainRow,
+  preserveOpenMenu = false,
+) {
+  if (!existingMainRow || !nextMainRow) {
+    return;
+  }
+
+  syncElementAttributes(existingMainRow, nextMainRow);
+
+  const nextCells = Array.from(nextMainRow.children);
+  const existingCells = Array.from(existingMainRow.children);
+
+  if (!preserveOpenMenu || nextCells.length !== existingCells.length) {
+    existingMainRow.innerHTML = nextMainRow.innerHTML;
+    return;
+  }
+
+  nextCells.forEach((nextCell, index) => {
+    const existingCell = existingCells[index];
+    if (!existingCell) {
+      existingMainRow.append(nextCell.cloneNode(true));
+      return;
+    }
+
+    if (index === nextCells.length - 1) {
+      syncPlaylistControlsCell(existingCell, nextCell, preserveOpenMenu);
+      return;
+    }
+
+    existingCell.replaceWith(nextCell.cloneNode(true));
+  });
+
+  while (existingMainRow.children.length > nextCells.length) {
+    existingMainRow.lastElementChild?.remove();
+  }
+}
+
+function syncPlaylistDetailsRow(existingDetailsRow, nextDetailsRow) {
+  if (!existingDetailsRow || !nextDetailsRow) {
+    return;
+  }
+
+  syncElementAttributes(existingDetailsRow, nextDetailsRow);
+  existingDetailsRow.innerHTML = nextDetailsRow.innerHTML;
+}
+
+function renderPlaylistRowPairMarkup(playlist, index) {
+  const summary = getPlaylistStatusSummary(playlist);
+  const detailsRowId = `playlist-details-${index}`;
+  const menuId = `playlist-menu-${index}`;
+  const detailsKey = `${playlist.id || playlist.name || index}`;
+  const isExpanded = expandedInjectedPlaylistDetails.has(detailsKey);
+  const isMenuOpen = openInjectedPlaylistMenuKey === detailsKey;
+  const syncSchedule = playlist.syncSchedule || "0 8 * * *";
+  const escapedPlaylistName = escapeHtml(playlist.name);
+  const escapedSyncSchedule = escapeHtml(syncSchedule);
+  const escapedDetailsKey = escapeHtml(detailsKey);
+
+  const breakdownBadges = [
+    `<span class="status-pill neutral">${summary.localCount} Local</span>`,
+    `<span class="status-pill info">${summary.externalMatched} External</span>`,
+  ];
+
+  if (summary.externalMissing > 0) {
+    breakdownBadges.push(
+      `<span class="status-pill warning">${summary.externalMissing} Missing</span>`,
+    );
+  }
+
+  return `
+            <tr class="compact-row ${isExpanded ? "expanded" : ""}" data-details-row="${detailsRowId}" data-details-key="${escapedDetailsKey}">
+                <td>
+                    <div class="name-cell">
+                        <strong>${escapeHtml(playlist.name)}</strong>
+                        <span class="meta-text subtle-mono">${escapeHtml(playlist.id || "-")}</span>
+                    </div>
+                </td>
+                <td>
+                    <span class="track-count">${summary.totalPlayable}/${summary.spotifyTotal}</span>
+                    <div class="meta-text">${summary.completionPct}% playable</div>
+                </td>
+                <td><span class="status-pill ${summary.statusClass}">${summary.statusLabel}</span></td>
+                <td class="row-controls">
+                    <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Hide" : "Details"}</button>
+                    <div class="row-actions-wrap">
+                        <button class="icon-btn menu-trigger" aria-haspopup="true" aria-expanded="${isMenuOpen ? "true" : "false"}"
+                            data-action="toggleRowMenu" data-arg-menu-id="${menuId}">...</button>
+                        <div class="row-actions-menu ${isMenuOpen ? "open" : ""}" id="${menuId}" data-menu-key="${escapedDetailsKey}" role="menu">
+                            <button data-action="viewTracks" data-arg-playlist-name="${escapedPlaylistName}">View Tracks</button>
+                            <button data-action="refreshPlaylist" data-arg-playlist-name="${escapedPlaylistName}">Refresh</button>
+                            <button data-action="matchPlaylistTracks" data-arg-playlist-name="${escapedPlaylistName}">Rematch</button>
+                            <button data-action="clearPlaylistCache" data-arg-playlist-name="${escapedPlaylistName}">Rebuild</button>
+                            <button data-action="editPlaylistSchedule" data-arg-playlist-name="${escapedPlaylistName}" data-arg-sync-schedule="${escapedSyncSchedule}">Edit Schedule</button>
+                            <hr>
+                            <button class="danger-item" data-action="removePlaylist" data-arg-playlist-name="${escapedPlaylistName}">Remove Playlist</button>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            <tr id="${detailsRowId}" class="details-row" ${isExpanded ? "" : "hidden"}>
+                <td colspan="4">
+                    <div class="details-panel">
+                        <div class="details-grid">
+                            <div class="detail-item">
+                                <span class="detail-label">Sync Schedule</span>
+                                <span class="detail-value mono">
+                                    ${escapeHtml(syncSchedule)}
+                                    <button class="inline-action-link" data-action="editPlaylistSchedule" data-arg-playlist-name="${escapedPlaylistName}" data-arg-sync-schedule="${escapedSyncSchedule}">Edit</button>
+                                </span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Cache Age</span>
+                                <span class="detail-value">${escapeHtml(playlist.cacheAge || "-")}</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Track Breakdown</span>
+                                <span class="detail-value">${breakdownBadges.join(" ")}</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Completion</span>
+                                <div class="completion-bar">
+                                    <div class="completion-fill ${summary.completionClass}" style="width:${Math.max(0, Math.min(summary.completionPct, 100))}%;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        `;
+}
+
+function createPlaylistRowPair(playlist, index) {
+  const template = document.createElement("template");
+  template.innerHTML = renderPlaylistRowPairMarkup(playlist, index).trim();
+  const [mainRow, detailsRow] = template.content.querySelectorAll("tr");
+  return { mainRow, detailsRow };
+}
+
 if (typeof window !== "undefined") {
   window.toggleRowMenu = toggleRowMenu;
   window.closeRowMenu = closeRowMenu;
@@ -318,10 +611,15 @@ export function updateStatusUI(data) {
 
 export function updatePlaylistsUI(data) {
   const tbody = document.getElementById("playlist-table-body");
+  if (!tbody) {
+    return;
+  }
+
   const playlists = data.playlists || [];
 
   if (playlists.length === 0) {
     expandedInjectedPlaylistDetails.clear();
+    openInjectedPlaylistMenuKey = null;
     tbody.innerHTML =
       '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:40px;">No playlists configured. Link playlists from the Link Playlists tab.</td></tr>';
     renderGuidance("playlists-guidance", [
@@ -375,91 +673,68 @@ export function updatePlaylistsUI(data) {
   });
   renderGuidance("playlists-guidance", guidance);
 
-  tbody.innerHTML = playlists
-    .map((playlist, index) => {
-      const summary = getPlaylistStatusSummary(playlist);
-      const detailsRowId = `playlist-details-${index}`;
-      const menuId = `playlist-menu-${index}`;
-      const detailsKey = `${playlist.id || playlist.name || index}`;
-      const isExpanded = expandedInjectedPlaylistDetails.has(detailsKey);
-      const syncSchedule = playlist.syncSchedule || "0 8 * * *";
-      const escapedPlaylistName = escapeHtml(playlist.name);
-      const escapedSyncSchedule = escapeHtml(syncSchedule);
-      const escapedDetailsKey = escapeHtml(detailsKey);
+  const existingPairs = new Map();
+  Array.from(
+    tbody.querySelectorAll("tr.compact-row[data-details-key]"),
+  ).forEach((mainRow) => {
+    const detailsKey = mainRow.getAttribute("data-details-key");
+    if (!detailsKey || existingPairs.has(detailsKey)) {
+      return;
+    }
 
-      const breakdownBadges = [
-        `<span class="status-pill neutral">${summary.localCount} Local</span>`,
-        `<span class="status-pill info">${summary.externalMatched} External</span>`,
-      ];
+    const detailsRowId = mainRow.getAttribute("data-details-row");
+    const detailsRow =
+      (detailsRowId && document.getElementById(detailsRowId)) ||
+      mainRow.nextElementSibling;
+    if (!detailsRow) {
+      return;
+    }
 
-      if (summary.externalMissing > 0) {
-        breakdownBadges.push(
-          `<span class="status-pill warning">${summary.externalMissing} Missing</span>`,
-        );
-      }
+    existingPairs.set(detailsKey, { mainRow, detailsRow });
+  });
 
-      return `
-                <tr class="compact-row ${isExpanded ? "expanded" : ""}" data-details-row="${detailsRowId}" data-details-key="${escapedDetailsKey}">
-                    <td>
-                        <div class="name-cell">
-                            <strong>${escapeHtml(playlist.name)}</strong>
-                            <span class="meta-text subtle-mono">${escapeHtml(playlist.id || "-")}</span>
-                        </div>
-                    </td>
-                    <td>
-                        <span class="track-count">${summary.totalPlayable}/${summary.spotifyTotal}</span>
-                        <div class="meta-text">${summary.completionPct}% playable</div>
-                    </td>
-                    <td><span class="status-pill ${summary.statusClass}">${summary.statusLabel}</span></td>
-                    <td class="row-controls">
-                        <button class="icon-btn details-trigger" data-details-target="${detailsRowId}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Hide" : "Details"}</button>
-                        <div class="row-actions-wrap">
-                            <button class="icon-btn menu-trigger" aria-haspopup="true" aria-expanded="false"
-                                data-action="toggleRowMenu" data-arg-menu-id="${menuId}">...</button>
-                            <div class="row-actions-menu" id="${menuId}" role="menu">
-                                <button data-action="viewTracks" data-arg-playlist-name="${escapedPlaylistName}">View Tracks</button>
-                                <button data-action="refreshPlaylist" data-arg-playlist-name="${escapedPlaylistName}">Refresh</button>
-                                <button data-action="matchPlaylistTracks" data-arg-playlist-name="${escapedPlaylistName}">Rematch</button>
-                                <button data-action="clearPlaylistCache" data-arg-playlist-name="${escapedPlaylistName}">Rebuild</button>
-                                <button data-action="editPlaylistSchedule" data-arg-playlist-name="${escapedPlaylistName}" data-arg-sync-schedule="${escapedSyncSchedule}">Edit Schedule</button>
-                                <hr>
-                                <button class="danger-item" data-action="removePlaylist" data-arg-playlist-name="${escapedPlaylistName}">Remove Playlist</button>
-                            </div>
-                        </div>
-                    </td>
-                </tr>
-                <tr id="${detailsRowId}" class="details-row" ${isExpanded ? "" : "hidden"}>
-                    <td colspan="4">
-                        <div class="details-panel">
-                            <div class="details-grid">
-                                <div class="detail-item">
-                                    <span class="detail-label">Sync Schedule</span>
-                                    <span class="detail-value mono">
-                                        ${escapeHtml(syncSchedule)}
-                                        <button class="inline-action-link" data-action="editPlaylistSchedule" data-arg-playlist-name="${escapedPlaylistName}" data-arg-sync-schedule="${escapedSyncSchedule}">Edit</button>
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Cache Age</span>
-                                    <span class="detail-value">${escapeHtml(playlist.cacheAge || "-")}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Track Breakdown</span>
-                                    <span class="detail-value">${breakdownBadges.join(" ")}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Completion</span>
-                                    <div class="completion-bar">
-                                        <div class="completion-fill ${summary.completionClass}" style="width:${Math.max(0, Math.min(summary.completionPct, 100))}%;"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </td>
-                </tr>
-            `;
-    })
-    .join("");
+  const orderedRows = [];
+  playlists.forEach((playlist, index) => {
+    const detailsKey = `${playlist.id || playlist.name || index}`;
+    const { mainRow: nextMainRow, detailsRow: nextDetailsRow } =
+      createPlaylistRowPair(playlist, index);
+    const existingPair = existingPairs.get(detailsKey);
+
+    if (!existingPair) {
+      orderedRows.push(nextMainRow, nextDetailsRow);
+      return;
+    }
+
+    syncPlaylistMainRow(
+      existingPair.mainRow,
+      nextMainRow,
+      detailsKey === openInjectedPlaylistMenuKey,
+    );
+    syncPlaylistDetailsRow(existingPair.detailsRow, nextDetailsRow);
+
+    orderedRows.push(existingPair.mainRow, existingPair.detailsRow);
+    existingPairs.delete(detailsKey);
+  });
+
+  const activeRows = new Set(orderedRows);
+  orderedRows.forEach((row) => {
+    tbody.append(row);
+  });
+  Array.from(tbody.children).forEach((row) => {
+    if (!activeRows.has(row)) {
+      row.remove();
+    }
+  });
+
+  if (
+    openInjectedPlaylistMenuKey &&
+    !playlists.some(
+      (playlist, index) =>
+        `${playlist.id || playlist.name || index}` === openInjectedPlaylistMenuKey,
+    )
+  ) {
+    openInjectedPlaylistMenuKey = null;
+  }
 }
 
 export function updateTrackMappingsUI(data) {

@@ -15,6 +15,7 @@ let onCookieNeedsInit = async () => {};
 let setCurrentConfigState = () => {};
 let syncConfigUiExtras = () => {};
 let loadScrobblingConfig = () => {};
+let injectedPlaylistRequestToken = 0;
 let jellyfinPlaylistRequestToken = 0;
 
 async function fetchStatus() {
@@ -39,10 +40,20 @@ async function fetchStatus() {
 }
 
 async function fetchPlaylists(silent = false) {
+  const requestToken = ++injectedPlaylistRequestToken;
+
   try {
     const data = await API.fetchPlaylists();
+    if (requestToken !== injectedPlaylistRequestToken) {
+      return;
+    }
+
     UI.updatePlaylistsUI(data);
   } catch (error) {
+    if (requestToken !== injectedPlaylistRequestToken) {
+      return;
+    }
+
     if (!silent) {
       console.error("Failed to fetch playlists:", error);
       showToast("Failed to fetch playlists", "error");
