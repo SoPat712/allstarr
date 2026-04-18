@@ -182,6 +182,15 @@ body {
     letter-spacing: 0.2px;
 }
 
+.title-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.title-link:hover {
+    color: var(--accent-hover);
+}
+
 .sidebar-subtitle {
     margin-top: 2px;
     color: var(--text-secondary);
