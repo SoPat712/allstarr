@@ -253,15 +253,6 @@ body {
     min-width: 0;
 }
 
-.app-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 0 16px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 18px;
-}
-
 .top-tabs,
 .tabs.top-tabs {
     display: none !important;
@@ -274,15 +265,6 @@ body {
     color: var(--text-secondary);
     font-size: 0.92rem;
     text-align: center;
-}
-
-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 30px;
 }
 
 .auth-user {
