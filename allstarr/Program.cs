@@ -712,6 +712,7 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 
 // Register Lyrics Orchestrator (manages priority-based lyrics fetching)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
+builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService, allstarr.Services.Lyrics.KeptLyricsSidecarService>();
 
 // Register Spotify mapping service (global Spotify ID → Local/External mappings)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>();

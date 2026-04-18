@@ -9,6 +9,8 @@ namespace allstarr.Controllers;
 
 public partial class JellyfinController
 {
+    private static readonly string[] KeptAudioExtensions = [".flac", ".mp3", ".m4a", ".opus"];
+
     #region Spotify Playlist Injection
 
     /// <summary>
@@ -480,10 +482,13 @@ public partial class JellyfinController
             if (Directory.Exists(keptAlbumPath))
             {
                 var sanitizedTitle = AdminHelperService.SanitizeFileName(song.Title);
-                var existingFiles = Directory.GetFiles(keptAlbumPath, $"*{sanitizedTitle}*");
-                if (existingFiles.Length > 0)
+                var existingAudioFiles = Directory.GetFiles(keptAlbumPath, $"*{sanitizedTitle}*")
+                    .Where(IsKeptAudioFile)
+                    .ToArray();
+                if (existingAudioFiles.Length > 0)
                 {
-                    _logger.LogInformation("Track already exists in kept folder: {Path}", existingFiles[0]);
+                    _logger.LogInformation("Track already exists in kept folder: {Path}", existingAudioFiles[0]);
+                    await EnsureLyricsSidecarForKeptTrackAsync(existingAudioFiles[0], song, provider, externalId);
                     // Mark as favorited even if we didn't download it
                     await MarkTrackAsFavoritedAsync(itemId, song);
                     return;
@@ -572,6 +577,7 @@ public partial class JellyfinController
             {
                 // Race condition - file was created by another request
                 _logger.LogInformation("Track already exists in kept folder (race condition): {Path}", keptFilePath);
+                await EnsureLyricsSidecarForKeptTrackAsync(keptFilePath, song, provider, externalId);
                 await MarkTrackAsFavoritedAsync(itemId, song);
                 return;
             }
@@ -589,6 +595,7 @@ public partial class JellyfinController
                 {
                     // Race condition on copy fallback
                     _logger.LogInformation("Track already exists in kept folder (race condition on copy): {Path}", keptFilePath);
+                    await EnsureLyricsSidecarForKeptTrackAsync(keptFilePath, song, provider, externalId);
                     await MarkTrackAsFavoritedAsync(itemId, song);
                     return;
                 }
@@ -649,6 +656,8 @@ public partial class JellyfinController
                     }
                 }
             }
+
+            await EnsureLyricsSidecarForKeptTrackAsync(keptFilePath, song, provider, externalId);
 
             // Mark as favorited in persistent storage
             await MarkTrackAsFavoritedAsync(itemId, song);
@@ -901,6 +910,33 @@ public partial class JellyfinController
         {
             _logger.LogError(ex, "Failed to delete track {ItemId}", itemId);
         }
+    }
+
+    private async Task EnsureLyricsSidecarForKeptTrackAsync(string keptFilePath, Song song, string provider, string externalId)
+    {
+        if (_keptLyricsSidecarService == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _keptLyricsSidecarService.EnsureSidecarAsync(
+                keptFilePath,
+                song,
+                provider,
+                externalId,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to create kept lyrics sidecar for {Path}", keptFilePath);
+        }
+    }
+
+    private static bool IsKeptAudioFile(string path)
+    {
+        return KeptAudioExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
     }
 
     #endregion
