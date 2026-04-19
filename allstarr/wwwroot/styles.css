@@ -780,7 +780,8 @@ button.danger:hover {
 }
 
 input,
-select {
+select,
+textarea {
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
     color: var(--text-primary);
@@ -790,13 +791,22 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
     outline: none;
     border-color: var(--accent);
 }
 
-input::placeholder {
+input::placeholder,
+textarea::placeholder {
     color: var(--text-secondary);
+}
+
+textarea {
+    width: 100%;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: inherit;
 }
 
 .form-row {
@@ -1045,6 +1055,14 @@ input::placeholder {
         max-height: none;
     }
 
+    .report-issue-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .report-preview-panel textarea {
+        min-height: 360px;
+    }
+
     .support-badge {
         right: 12px;
         bottom: 12px;
@@ -1065,6 +1083,43 @@ input::placeholder {
 
 .tab-content.active {
     display: block;
+}
+
+.report-issue-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.report-issue-panel,
+.report-preview-panel {
+    display: grid;
+    gap: 16px;
+}
+
+.report-issue-panel .form-group,
+.report-preview-panel .form-group {
+    margin-bottom: 0;
+}
+
+.report-issue-panel label,
+.report-preview-panel label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+}
+
+.report-preview-panel textarea {
+    min-height: 520px;
+    font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
+        monospace;
+    font-size: 0.84rem;
+}
+
+.report-preview-help {
+    color: var(--text-secondary);
+    font-size: 0.84rem;
 }
 
 /* Utility classes to reduce inline styles in index.html */

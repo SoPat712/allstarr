@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Allstarr Documentation
+    url: https://github.com/SoPat712/allstarr#readme
+    about: Check the setup and usage docs before filing a new issue.

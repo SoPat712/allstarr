@@ -84,6 +84,7 @@
                     <button class="sidebar-link" type="button" data-tab="kept">Kept Downloads</button>
                     <button class="sidebar-link" type="button" data-tab="scrobbling">Scrobbling</button>
                     <button class="sidebar-link" type="button" data-tab="config">Configuration</button>
+                    <button class="sidebar-link" type="button" data-tab="report-issues">Report Issues</button>
                     <button class="sidebar-link" type="button" data-tab="endpoints">API Analytics</button>
                 </nav>
                 <div class="sidebar-footer">
@@ -102,6 +103,7 @@
                     <div class="tab" data-tab="kept">Kept Downloads</div>
                     <div class="tab" data-tab="scrobbling">Scrobbling</div>
                     <div class="tab" data-tab="config">Configuration</div>
+                    <div class="tab" data-tab="report-issues">Report Issues</div>
                     <div class="tab" data-tab="endpoints">API Analytics</div>
                 </div>
 
@@ -891,6 +893,81 @@
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                     <button class="danger" onclick="clearCache()">Clear All Cache</button>
                     <button class="danger" onclick="restartContainer()">Restart Allstarr</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Issues Tab -->
+        <div class="tab-content" id="tab-report-issues">
+            <div class="card">
+                <h2>Report Issues</h2>
+                <div class="guidance-banner info mb-16">
+                    <span>ℹ️</span>
+                    <div class="guidance-content">
+                        <div class="guidance-title">Draft a GitHub issue from inside Allstarr.</div>
+                        <div class="guidance-detail">Allstarr includes only safe diagnostics here. Sensitive values stay redacted, and the final submit still happens on GitHub.</div>
+                    </div>
+                </div>
+
+                <div class="report-issue-layout">
+                    <div class="report-issue-panel">
+                        <div class="form-group">
+                            <label for="issue-report-type">Report Type</label>
+                            <select id="issue-report-type">
+                                <option value="bug">Bug Report</option>
+                                <option value="feature">Feature Request</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-title">Title</label>
+                            <input type="text" id="issue-report-title" placeholder="Short summary of the issue">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-primary" id="issue-report-primary-label">Describe the bug</label>
+                            <textarea id="issue-report-primary" rows="5"
+                                placeholder="What happened? What looked wrong?"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-secondary" id="issue-report-secondary-label">To Reproduce</label>
+                            <textarea id="issue-report-secondary" rows="5"
+                                placeholder="List the steps needed to reproduce the issue"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-tertiary" id="issue-report-tertiary-label">Expected behavior</label>
+                            <textarea id="issue-report-tertiary" rows="4"
+                                placeholder="What did you expect to happen instead?"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-context" id="issue-report-context-label">Additional context</label>
+                            <textarea id="issue-report-context" rows="4"
+                                placeholder="Anything else that might help, including screenshots or surrounding context"></textarea>
+                        </div>
+
+                        <div class="card-actions-row">
+                            <button class="primary" type="button" id="open-github-issue-btn">Open Bug Report on GitHub</button>
+                            <button type="button" id="copy-issue-report-btn">Copy Report</button>
+                        </div>
+                    </div>
+
+                    <div class="report-preview-panel">
+                        <div class="guidance-banner compact">
+                            Safe diagnostics only: version, backend type, active tab, client browser, and redacted config state.
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-preview">GitHub Issue Preview</label>
+                            <textarea id="issue-report-preview" rows="22" readonly></textarea>
+                        </div>
+
+                        <div class="report-preview-help" id="issue-report-preview-help">
+                            GitHub drafts that exceed the URL size limit will open with a shorter body. The full report will also be copied to your clipboard.
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

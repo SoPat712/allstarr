@@ -37,6 +37,7 @@ import { initAuthSession } from "./auth-session.js";
 import { initActionDispatcher } from "./action-dispatcher.js";
 import { initNavigationView } from "./views/navigation-view.js";
 import { initScrobblingView } from "./views/scrobbling-view.js";
+import { initIssueReporter } from "./issue-reporter.js";
 
 let cookieDateInitialized = false;
 let restartRequired = false;
@@ -136,6 +137,8 @@ initPlaylistAdmin({
   fetchPlaylists: dashboard.fetchPlaylists,
   fetchJellyfinPlaylists: dashboard.fetchJellyfinPlaylists,
 });
+
+initIssueReporter();
 
 const authSession = initAuthSession({
   stopDashboardRefresh: dashboard.stopDashboardRefresh,

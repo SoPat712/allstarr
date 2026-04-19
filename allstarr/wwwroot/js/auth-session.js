@@ -72,6 +72,7 @@ function applyAuthorizationScope() {
     "kept",
     "scrobbling",
     "config",
+    "report-issues",
     "endpoints",
   ];
 
