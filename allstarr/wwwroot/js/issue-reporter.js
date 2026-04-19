@@ -173,9 +173,6 @@ function getReportState() {
 function renderIssueBody(state, includeDiagnostics = true) {
   const diagnostics = getDiagnostics();
   const diagnosticsLines = [
-    "<details>",
-    "<summary>Safe diagnostics from Allstarr</summary>",
-    "",
     "- Sensitive values stay redacted in this block.",
     `- Allstarr Version: ${diagnostics.version}`,
     `- Backend Type: ${diagnostics.backendType}`,
@@ -193,33 +190,31 @@ function renderIssueBody(state, includeDiagnostics = true) {
     `- Client: ${diagnostics.client}`,
     `- Generated At (UTC): ${diagnostics.generatedAt}`,
     `- Browser Time Zone: ${diagnostics.timezone}`,
-    "",
-    "</details>",
   ];
   const diagnosticsMarkdown = diagnosticsLines.filter(Boolean).join("\n");
 
   if (state.type === "feature") {
     const sections = [
       [
-        "**Is your feature request related to a problem? Please describe.**",
+        "## Problem to solve",
         state.primary || "_Please describe the problem you want to solve._",
       ],
       [
-        "**Describe the solution you'd like**",
+        "## Solution you'd like",
         state.secondary || "_Please describe the solution you want._",
       ],
       [
-        "**Describe alternatives you've considered**",
+        "## Alternatives considered",
         state.tertiary || "_Please describe alternatives or workarounds you've considered._",
       ],
       [
-        "**Additional context**",
+        "## Additional context",
         state.context || "_Add any other context, screenshots, or examples here._",
       ],
     ];
 
     if (includeDiagnostics) {
-      sections.push(["**Environment**", diagnosticsMarkdown]);
+      sections.push(["## Safe diagnostics from Allstarr", diagnosticsMarkdown]);
     }
 
     return sections.map(([heading, content]) => `${heading}\n${content}`).join("\n\n");
@@ -227,26 +222,26 @@ function renderIssueBody(state, includeDiagnostics = true) {
 
   const sections = [
     [
-      "**Describe the bug**",
+      "## Describe the bug",
       state.primary || "_Please describe the bug._",
     ],
     [
-      "**To Reproduce**",
+      "## To Reproduce",
       state.secondary ||
         "_Please list the steps needed to reproduce the issue._",
     ],
     [
-      "**Expected behavior**",
+      "## Expected behavior",
       state.tertiary || "_Please describe what you expected to happen._",
     ],
     [
-      "**Additional context**",
+      "## Additional context",
       state.context || "_Add any other context, screenshots, or examples here._",
     ],
   ];
 
   if (includeDiagnostics) {
-    sections.push(["**Details**", diagnosticsMarkdown]);
+    sections.push(["## Safe diagnostics from Allstarr", diagnosticsMarkdown]);
   }
 
   return sections.map(([heading, content]) => `${heading}\n${content}`).join("\n\n");
