@@ -37,6 +37,15 @@ const DIAGNOSTIC_SOURCE_IDS = [
   "backend-type",
   "spotify-status",
   "jellyfin-url",
+  "config-music-service",
+  "config-storage-mode",
+  "config-download-mode",
+  "config-redis-enabled",
+  "config-spotify-import-enabled",
+  "config-deezer-quality",
+  "config-squid-quality",
+  "config-qobuz-quality",
+  "scrobbling-enabled-value",
 ];
 
 function getElement(id) {
@@ -74,12 +83,48 @@ function sanitizeTitle(title, type) {
   return prefix + trimmed;
 }
 
-function formatCurrentTab() {
-  const activeTab =
-    document.querySelector(".sidebar-link.active") ||
-    document.querySelector(".tab.active");
-  const text = activeTab?.textContent?.trim();
-  return normalizeText(text, "Unknown");
+function getElementText(id, fallback = "Unavailable") {
+  return normalizeText(getElement(id)?.textContent, fallback);
+}
+
+function getMusicServiceQuality(musicService) {
+  const normalized = String(musicService ?? "").trim().toLowerCase();
+  if (normalized === "deezer") {
+    return getElementText("config-deezer-quality");
+  }
+  if (normalized === "qobuz") {
+    return getElementText("config-qobuz-quality");
+  }
+  if (normalized === "squidwtf") {
+    return getElementText("config-squid-quality");
+  }
+
+  return "";
+}
+
+function getClientSummary() {
+  const ua = String(window.navigator?.userAgent ?? "");
+  const browser =
+    ua.match(/Firefox\/(\d+)/)?.[0]?.replace("/", " ") ||
+    ua.match(/Edg\/(\d+)/)?.[0]?.replace("/", " ") ||
+    ua.match(/Chrome\/(\d+)/)?.[0]?.replace("/", " ") ||
+    (ua.includes("Safari/") && ua.match(/Version\/(\d+)/)?.[0]?.replace("/", " ")) ||
+    "Unknown browser";
+
+  let platform = "Unknown OS";
+  if (/Mac OS X/i.test(ua)) {
+    platform = "macOS";
+  } else if (/Windows/i.test(ua)) {
+    platform = "Windows";
+  } else if (/Android/i.test(ua)) {
+    platform = "Android";
+  } else if (/iPhone|iPad|iPod/i.test(ua)) {
+    platform = "iOS";
+  } else if (/Linux/i.test(ua)) {
+    platform = "Linux";
+  }
+
+  return `${browser} on ${platform}`;
 }
 
 function getRedactedUrlState() {
@@ -90,17 +135,24 @@ function getRedactedUrlState() {
 function getDiagnostics() {
   const timezone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "Unavailable";
+  const musicService = getElementText("config-music-service");
 
   return {
-    version: normalizeText(getElement("sidebar-version")?.textContent),
+    version: getElementText("sidebar-version"),
     backendType: normalizeText(
       getElement("backend-type")?.textContent ||
         getElement("config-backend-type")?.textContent,
     ),
-    spotifyStatus: normalizeText(getElement("spotify-status")?.textContent),
+    musicService,
+    musicServiceQuality: getMusicServiceQuality(musicService),
+    storageMode: getElementText("config-storage-mode"),
+    downloadMode: getElementText("config-download-mode"),
+    redisEnabled: getElementText("config-redis-enabled"),
+    spotifyImportEnabled: getElementText("config-spotify-import-enabled"),
+    scrobblingEnabled: getElementText("scrobbling-enabled-value"),
+    spotifyStatus: getElementText("spotify-status"),
     jellyfinUrl: getRedactedUrlState(),
-    currentTab: formatCurrentTab(),
-    browser: normalizeText(window.navigator?.userAgent),
+    client: getClientSummary(),
     generatedAt: new Date().toISOString(),
     timezone,
   };
@@ -120,22 +172,31 @@ function getReportState() {
 
 function renderIssueBody(state, includeDiagnostics = true) {
   const diagnostics = getDiagnostics();
-  const diagnosticsMarkdown = [
+  const diagnosticsLines = [
     "<details>",
     "<summary>Safe diagnostics from Allstarr</summary>",
     "",
     "- Sensitive values stay redacted in this block.",
     `- Allstarr Version: ${diagnostics.version}`,
     `- Backend Type: ${diagnostics.backendType}`,
+    `- Music Service: ${diagnostics.musicService}`,
+    diagnostics.musicServiceQuality
+      ? `- Music Service Quality: ${diagnostics.musicServiceQuality}`
+      : null,
+    `- Storage Mode: ${diagnostics.storageMode}`,
+    `- Download Mode: ${diagnostics.downloadMode}`,
+    `- Redis Enabled: ${diagnostics.redisEnabled}`,
+    `- Spotify Import Enabled: ${diagnostics.spotifyImportEnabled}`,
+    `- Scrobbling Enabled: ${diagnostics.scrobblingEnabled}`,
     `- Spotify Status: ${diagnostics.spotifyStatus}`,
     `- Jellyfin URL: ${diagnostics.jellyfinUrl}`,
-    `- Current Tab: ${diagnostics.currentTab}`,
-    `- Browser: ${diagnostics.browser}`,
+    `- Client: ${diagnostics.client}`,
     `- Generated At (UTC): ${diagnostics.generatedAt}`,
     `- Browser Time Zone: ${diagnostics.timezone}`,
     "",
     "</details>",
-  ].join("\n");
+  ];
+  const diagnosticsMarkdown = diagnosticsLines.filter(Boolean).join("\n");
 
   if (state.type === "feature") {
     const sections = [
