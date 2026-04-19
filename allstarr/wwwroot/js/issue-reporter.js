@@ -387,7 +387,12 @@ async function openGithubIssueDraft() {
   const openedWindow = window.open(payload.url, "_blank", "noopener,noreferrer");
 
   if (!openedWindow) {
-    window.location.href = payload.url;
+    showToast(
+      "GitHub draft popup was blocked. Allow popups for this site, then try again.",
+      "warning",
+      5000,
+    );
+    return;
   }
 
   const message = payload.truncated
