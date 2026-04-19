@@ -33,22 +33,33 @@ public class AdminAuthSessionService
     public static readonly TimeSpan DefaultSessionLifetime = TimeSpan.FromHours(12);
     public static readonly TimeSpan PersistentSessionLifetime = TimeSpan.FromDays(30);
 
-    private const string SessionStoreFilePath = "/app/cache/admin-auth/sessions.protected";
-
     private readonly ConcurrentDictionary<string, AdminAuthSession> _sessions = new();
     private readonly IDataProtector _protector;
     private readonly ILogger<AdminAuthSessionService> _logger;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly object _persistLock = new();
+    private readonly string _sessionStoreFilePath;
 
     public AdminAuthSessionService(
         IDataProtectionProvider dataProtectionProvider,
         ILogger<AdminAuthSessionService> logger)
+        : this(
+            dataProtectionProvider,
+            logger,
+            "/app/cache/admin-auth/sessions.protected")
+    {
+    }
+
+    private AdminAuthSessionService(
+        IDataProtectionProvider dataProtectionProvider,
+        ILogger<AdminAuthSessionService> logger,
+        string sessionStoreFilePath)
     {
         _protector = dataProtectionProvider.CreateProtector("allstarr.admin.auth.sessions.v1");
         _logger = logger;
+        _sessionStoreFilePath = sessionStoreFilePath;
 
-        var directory = Path.GetDirectoryName(SessionStoreFilePath);
+        var directory = Path.GetDirectoryName(_sessionStoreFilePath);
         if (!string.IsNullOrWhiteSpace(directory))
         {
             Directory.CreateDirectory(directory);
@@ -58,12 +69,18 @@ public class AdminAuthSessionService
     }
 
     public AdminAuthSessionService(ILogger<AdminAuthSessionService> logger)
-        : this(CreateFallbackDataProtectionProvider(), logger)
+        : this(
+            CreateFallbackDataProtectionProvider(),
+            logger,
+            Path.Combine(Path.GetTempPath(), "allstarr-admin-auth", "sessions.protected"))
     {
     }
 
     public AdminAuthSessionService()
-        : this(CreateFallbackDataProtectionProvider(), NullLogger<AdminAuthSessionService>.Instance)
+        : this(
+            CreateFallbackDataProtectionProvider(),
+            NullLogger<AdminAuthSessionService>.Instance,
+            Path.Combine(Path.GetTempPath(), "allstarr-admin-auth", "sessions.protected"))
     {
     }
 
@@ -158,12 +175,12 @@ public class AdminAuthSessionService
     {
         try
         {
-            if (!File.Exists(SessionStoreFilePath))
+            if (!File.Exists(_sessionStoreFilePath))
             {
                 return;
             }
 
-            var protectedPayload = File.ReadAllText(SessionStoreFilePath);
+            var protectedPayload = File.ReadAllText(_sessionStoreFilePath);
             if (string.IsNullOrWhiteSpace(protectedPayload))
             {
                 return;
@@ -235,7 +252,7 @@ public class AdminAuthSessionService
 
                 var json = JsonSerializer.Serialize(activeSessions, _jsonOptions);
                 var protectedPayload = _protector.Protect(json);
-                File.WriteAllText(SessionStoreFilePath, protectedPayload);
+                File.WriteAllText(_sessionStoreFilePath, protectedPayload);
             }
             catch (Exception ex)
             {
