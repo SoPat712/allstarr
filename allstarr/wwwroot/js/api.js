@@ -56,10 +56,10 @@ export async function fetchAdminSession() {
   );
 }
 
-export async function loginAdminSession(username, password) {
+export async function loginAdminSession(username, password, rememberMe = false) {
   return requestJson(
     "/api/admin/auth/login",
-    asJsonBody({ username, password }),
+    asJsonBody({ username, password, rememberMe }),
     "Authentication failed",
   );
 }

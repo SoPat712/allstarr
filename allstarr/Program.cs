@@ -12,8 +12,10 @@ using allstarr.Services.Lyrics;
 using allstarr.Services.Scrobbling;
 using allstarr.Middleware;
 using allstarr.Filters;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Http;
 using System.Net;
+using System.IO;
 
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment, Console.Out);
@@ -198,6 +200,11 @@ builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
+var dataProtectionKeysDirectory = new DirectoryInfo("/app/cache/data-protection");
+dataProtectionKeysDirectory.Create();
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(dataProtectionKeysDirectory)
+    .SetApplicationName("allstarr-admin");
 
 // Exception handling
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();

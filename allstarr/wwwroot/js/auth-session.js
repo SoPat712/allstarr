@@ -197,9 +197,11 @@ function wireLoginForm() {
 
     const usernameInput = document.getElementById("auth-username");
     const passwordInput = document.getElementById("auth-password");
+    const rememberMeInput = document.getElementById("auth-remember-me");
     const authError = document.getElementById("auth-error");
     const username = usernameInput?.value?.trim() || "";
     const password = passwordInput?.value || "";
+    const rememberMe = Boolean(rememberMeInput?.checked);
 
     if (!username || !password) {
       if (authError) {
@@ -213,7 +215,7 @@ function wireLoginForm() {
         authError.textContent = "";
       }
 
-      const result = await API.loginAdminSession(username, password);
+      const result = await API.loginAdminSession(username, password, rememberMe);
       if (passwordInput) {
         passwordInput.value = "";
       }

@@ -28,6 +28,12 @@
                 <label for="auth-password">Password</label>
                 <input id="auth-password" type="password" required>
 
+                <label class="auth-checkbox" for="auth-remember-me">
+                    <input id="auth-remember-me" type="checkbox">
+                    <span>Keep me signed in for 30 days on this browser</span>
+                </label>
+                <small class="auth-note">Use only on a device you trust.</small>
+
                 <button class="primary" type="submit">Sign In</button>
                 <div class="auth-error" id="auth-error" role="alert"></div>
             </form>
@@ -951,6 +957,7 @@
                         <div class="card-actions-row">
                             <button class="primary" type="button" id="open-github-issue-btn">Open Bug Report on GitHub</button>
                             <button type="button" id="copy-issue-report-btn">Copy Report</button>
+                            <button type="button" id="clear-issue-report-btn">Clear Report</button>
                         </div>
                     </div>
 

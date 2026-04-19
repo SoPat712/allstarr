@@ -58,6 +58,26 @@ body {
     gap: 10px;
 }
 
+.auth-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    margin-top: 4px;
+}
+
+.auth-checkbox input {
+    width: auto;
+    margin: 0;
+}
+
+.auth-note {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: -4px;
+}
+
 .auth-card label {
     color: var(--text-secondary);
     font-size: 0.85rem;

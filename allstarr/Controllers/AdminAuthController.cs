@@ -114,7 +114,8 @@ public class AdminAuthController : ControllerBase
                 userName: userName,
                 isAdministrator: isAdministrator,
                 jellyfinAccessToken: accessToken,
-                jellyfinServerId: serverId);
+                jellyfinServerId: serverId,
+                isPersistent: request.RememberMe);
 
             SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
 
@@ -130,6 +131,7 @@ public class AdminAuthController : ControllerBase
                     name = session.UserName,
                     isAdministrator = session.IsAdministrator
                 },
+                rememberMe = session.IsPersistent,
                 expiresAtUtc = session.ExpiresAtUtc
             });
         }
@@ -159,6 +161,7 @@ public class AdminAuthController : ControllerBase
                 name = session.UserName,
                 isAdministrator = session.IsAdministrator
             },
+            rememberMe = session.IsPersistent,
             expiresAtUtc = session.ExpiresAtUtc
         });
     }
@@ -196,6 +199,7 @@ public class AdminAuthController : ControllerBase
     {
         public string? Username { get; set; }
         public string? Password { get; set; }
+        public bool RememberMe { get; set; }
     }
 
     private sealed class JellyfinAuthenticateRequest

@@ -336,6 +336,36 @@ async function copyIssueReport({ silent = false } = {}) {
   return copied;
 }
 
+function clearIssueReport() {
+  const titleInput = getElement("issue-report-title");
+  const primaryInput = getElement("issue-report-primary");
+  const secondaryInput = getElement("issue-report-secondary");
+  const tertiaryInput = getElement("issue-report-tertiary");
+  const contextInput = getElement("issue-report-context");
+
+  const hasDraft = [
+    titleInput?.value,
+    primaryInput?.value,
+    secondaryInput?.value,
+    tertiaryInput?.value,
+    contextInput?.value,
+  ].some((value) => String(value ?? "").trim().length > 0);
+
+  if (hasDraft && !window.confirm("Clear the current report draft?")) {
+    return;
+  }
+
+  if (titleInput) titleInput.value = "";
+  if (primaryInput) primaryInput.value = "";
+  if (secondaryInput) secondaryInput.value = "";
+  if (tertiaryInput) tertiaryInput.value = "";
+  if (contextInput) contextInput.value = "";
+
+  refreshIssueReportPreview();
+  titleInput?.focus();
+  showToast("Report draft cleared", "success", 2500);
+}
+
 function validateTitle() {
   const titleInput = getElement("issue-report-title");
   if (!titleInput?.value?.trim()) {
@@ -411,6 +441,7 @@ export function initIssueReporter() {
   const tertiaryInput = getElement("issue-report-tertiary");
   const contextInput = getElement("issue-report-context");
   const copyButton = getElement("copy-issue-report-btn");
+  const clearButton = getElement("clear-issue-report-btn");
   const openButton = getElement("open-github-issue-btn");
 
   if (
@@ -421,6 +452,7 @@ export function initIssueReporter() {
     !tertiaryInput ||
     !contextInput ||
     !copyButton ||
+    !clearButton ||
     !openButton
   ) {
     return;
@@ -435,6 +467,9 @@ export function initIssueReporter() {
 
   copyButton.addEventListener("click", () => {
     copyIssueReport();
+  });
+  clearButton.addEventListener("click", () => {
+    clearIssueReport();
   });
   openButton.addEventListener("click", () => {
     openGithubIssueDraft();
