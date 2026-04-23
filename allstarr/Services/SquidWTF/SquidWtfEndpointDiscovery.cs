@@ -7,7 +7,8 @@ public static class SquidWtfEndpointDiscovery
     public static readonly IReadOnlyList<string> SourceUrls = new[]
     {
         "https://tidal-uptime.jiffy-puffs-1j.workers.dev/",
-        "https://tidal-uptime.props-76styles.workers.dev/"
+        "https://tidal-uptime.props-76styles.workers.dev/",
+        "https://tidal-uptime.geeked.wtf/"
     };
 
     public static async Task<SquidWtfEndpointCatalog> DiscoverAsync(CancellationToken cancellationToken = default)
