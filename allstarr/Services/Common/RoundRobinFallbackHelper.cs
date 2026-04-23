@@ -288,6 +288,9 @@ public class RoundRobinFallbackHelper
             return await action(endpointsToRace[0], cancellationToken);
         }
 
+        _logger.LogInformation("Racing {Count} {Service} endpoints: {Endpoints}",
+            endpointsToRace.Count, _serviceName, string.Join(", ", endpointsToRace));
+
         using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var tasks = new List<Task<(T result, string endpoint, bool success)>>();
 
@@ -320,7 +323,7 @@ public class RoundRobinFallbackHelper
 
             if (success)
             {
-                _logger.LogDebug("🏆 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
+                _logger.LogInformation("{Service} race won by {Endpoint}", _serviceName, endpoint);
                 raceCts.Cancel(); // Cancel all other requests
                 return result;
             }
@@ -328,6 +331,8 @@ public class RoundRobinFallbackHelper
             tasks.Remove(completedTask);
         }
 
+        _logger.LogError("All raced {Service} endpoints failed: {Endpoints}",
+            _serviceName, string.Join(", ", endpointsToRace));
         throw new Exception($"All {topN} {_serviceName} endpoints failed in race");
     }
 

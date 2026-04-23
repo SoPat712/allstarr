@@ -954,7 +954,7 @@ app.UseMiddleware<BotProbeBlockMiddleware>();
 // Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-app.UseExceptionHandler(_ => { }); // Global exception handler
+app.UseExceptionHandler(); // Use registered GlobalExceptionHandler
 
 // Enable response compression EARLY in the pipeline
 app.UseResponseCompression();

@@ -820,9 +820,14 @@ public partial class JellyfinController : ControllerBase
     {
         try
         {
-            var (itemResult, statusCode) = await _proxyService.GetJsonAsyncInternal($"Items/{itemId}");
+            var (itemResult, statusCode) = await _proxyService.GetJsonAsync($"Items/{itemId}", null, Request.Headers);
             if (itemResult == null || statusCode != 200)
             {
+                _logger.LogDebug(
+                    "Skipping Jellyfin {ImageType} image tag resolution for Spotify playlist {PlaylistId}: upstream returned {StatusCode}",
+                    imageType,
+                    itemId,
+                    statusCode);
                 return null;
             }
 
