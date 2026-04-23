@@ -76,7 +76,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
         List<string> apiUrls,
         GenreEnrichmentService? genreEnrichment = null)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("SquidWTF");
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;

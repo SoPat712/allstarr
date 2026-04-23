@@ -163,6 +163,7 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("SquidWTF");
 builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 {
     options.HttpMessageHandlerBuilderActions.Add(builder =>
@@ -643,7 +644,7 @@ builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
 builder.Services.AddSingleton<IStartupValidator>(sp =>
     new SquidWTFStartupValidator(
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-        sp.GetRequiredService<IHttpClientFactory>().CreateClient(),
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
         squidWtfApiUrls,
         squidWtfStreamingUrls,
         sp.GetRequiredService<EndpointBenchmarkService>(),

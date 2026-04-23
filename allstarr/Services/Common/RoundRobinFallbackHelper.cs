@@ -26,17 +26,17 @@ public class RoundRobinFallbackHelper
         _apiUrls = apiUrls ?? throw new ArgumentNullException(nameof(apiUrls));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _serviceName = serviceName ?? "Service";
-        
-        if (_apiUrls.Count == 0)
-        {
-            throw new ArgumentException("API URLs list cannot be empty", nameof(apiUrls));
-        }
-        
+
         // Create a dedicated HttpClient for health checks with short timeout
         _healthCheckClient = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(3) // Quick health check timeout
         };
+
+        if (_apiUrls.Count == 0)
+        {
+            _logger.LogWarning("{Service} initialized with zero endpoints; external provider is currently unavailable", _serviceName);
+        }
     }
 
     /// <summary>
@@ -124,6 +124,11 @@ public class RoundRobinFallbackHelper
     /// </summary>
     private async Task<List<string>> GetHealthyEndpointsAsync()
     {
+        if (_apiUrls.Count == 0)
+        {
+            return new List<string>();
+        }
+
         var healthCheckTasks = _apiUrls.Select(async url => new
         {
             Url = url,
@@ -212,6 +217,11 @@ public class RoundRobinFallbackHelper
     /// </summary>
     public async Task<T> TryWithFallbackAsync<T>(Func<string, Task<T>> action)
     {
+        if (_apiUrls.Count == 0)
+        {
+            throw new InvalidOperationException($"No {_serviceName} endpoints are configured");
+        }
+
         // Get healthy endpoints first (with caching to avoid excessive checks)
         var healthyEndpoints = await GetHealthyEndpointsAsync();
 
@@ -254,71 +264,72 @@ public class RoundRobinFallbackHelper
     }
 
     /// <summary>
-    /// Races all endpoints in parallel and returns the first successful result.
-    /// Cancels remaining requests once one succeeds. Great for latency-sensitive operations.
+    /// Races the top N fastest endpoints in parallel and returns the first successful result.
+    /// Cancels remaining requests once one succeeds. Used for latency-sensitive operations like search.
     /// </summary>
-    /// <summary>
-        /// Races the top N fastest endpoints in parallel and returns the first successful result.
-        /// Cancels remaining requests once one succeeds. Used for latency-sensitive operations like search.
-        /// </summary>
-        public async Task<T> RaceTopEndpointsAsync<T>(int topN, Func<string, CancellationToken, Task<T>> action, CancellationToken cancellationToken = default)
+    public async Task<T> RaceTopEndpointsAsync<T>(int topN, Func<string, CancellationToken, Task<T>> action, CancellationToken cancellationToken = default)
+    {
+        if (_apiUrls.Count == 0)
         {
-            if (_apiUrls.Count == 1 || topN <= 1)
-            {
-                // No point racing with one endpoint - use fallback instead
-                return await TryWithFallbackAsync(baseUrl => action(baseUrl, cancellationToken));
-            }
-
-            // Get top N fastest healthy endpoints
-            var endpointsToRace = _apiUrls.Take(Math.Min(topN, _apiUrls.Count)).ToList();
-
-            if (endpointsToRace.Count == 1)
-            {
-                return await action(endpointsToRace[0], cancellationToken);
-            }
-
-            using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var tasks = new List<Task<(T result, string endpoint, bool success)>>();
-
-            // Start racing the top N endpoints
-            foreach (var baseUrl in endpointsToRace)
-            {
-                var task = Task.Run(async () =>
-                {
-                    try
-                    {
-                        _logger.LogDebug("🏁 Racing {Service} endpoint {Endpoint}", _serviceName, baseUrl);
-                        var result = await action(baseUrl, raceCts.Token);
-                        return (result, baseUrl, true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug("{Service} race failed for endpoint {Endpoint}: {Message}", _serviceName, baseUrl, ex.Message);
-                        return (default(T)!, baseUrl, false);
-                    }
-                }, raceCts.Token);
-
-                tasks.Add(task);
-            }
-
-            // Wait for first successful completion
-            while (tasks.Count > 0)
-            {
-                var completedTask = await Task.WhenAny(tasks);
-                var (result, endpoint, success) = await completedTask;
-
-                if (success)
-                {
-                    _logger.LogDebug("🏆 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
-                    raceCts.Cancel(); // Cancel all other requests
-                    return result;
-                }
-
-                tasks.Remove(completedTask);
-            }
-
-            throw new Exception($"All {topN} {_serviceName} endpoints failed in race");
+            throw new InvalidOperationException($"No {_serviceName} endpoints are configured");
         }
+
+        if (_apiUrls.Count == 1 || topN <= 1)
+        {
+            // No point racing with one endpoint - use fallback instead
+            return await TryWithFallbackAsync(baseUrl => action(baseUrl, cancellationToken));
+        }
+
+        // Get top N fastest healthy endpoints
+        var endpointsToRace = _apiUrls.Take(Math.Min(topN, _apiUrls.Count)).ToList();
+
+        if (endpointsToRace.Count == 1)
+        {
+            return await action(endpointsToRace[0], cancellationToken);
+        }
+
+        using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var tasks = new List<Task<(T result, string endpoint, bool success)>>();
+
+        // Start racing the top N endpoints
+        foreach (var baseUrl in endpointsToRace)
+        {
+            var task = Task.Run(async () =>
+            {
+                try
+                {
+                    _logger.LogDebug("🏁 Racing {Service} endpoint {Endpoint}", _serviceName, baseUrl);
+                    var result = await action(baseUrl, raceCts.Token);
+                    return (result, baseUrl, true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("{Service} race failed for endpoint {Endpoint}: {Message}", _serviceName, baseUrl, ex.Message);
+                    return (default(T)!, baseUrl, false);
+                }
+            }, raceCts.Token);
+
+            tasks.Add(task);
+        }
+
+        // Wait for first successful completion
+        while (tasks.Count > 0)
+        {
+            var completedTask = await Task.WhenAny(tasks);
+            var (result, endpoint, success) = await completedTask;
+
+            if (success)
+            {
+                _logger.LogDebug("🏆 {Service} race won by {Endpoint}, canceling others", _serviceName, endpoint);
+                raceCts.Cancel(); // Cancel all other requests
+                return result;
+            }
+
+            tasks.Remove(completedTask);
+        }
+
+        throw new Exception($"All {topN} {_serviceName} endpoints failed in race");
+    }
 
     /// <summary>
     /// Tries the request with the next provider in round-robin, then falls back to others on failure.
@@ -327,6 +338,12 @@ public class RoundRobinFallbackHelper
     /// </summary>
     public async Task<T> TryWithFallbackAsync<T>(Func<string, Task<T>> action, T defaultValue)
     {
+        if (_apiUrls.Count == 0)
+        {
+            _logger.LogWarning("No {Service} endpoints are configured, returning default value", _serviceName);
+            return defaultValue;
+        }
+
         // Get healthy endpoints first (with caching to avoid excessive checks)
         var healthyEndpoints = await GetHealthyEndpointsAsync();
 
@@ -381,6 +398,12 @@ public class RoundRobinFallbackHelper
         if (isAcceptableResult == null)
         {
             throw new ArgumentNullException(nameof(isAcceptableResult));
+        }
+
+        if (_apiUrls.Count == 0)
+        {
+            _logger.LogWarning("No {Service} endpoints are configured, returning default value", _serviceName);
+            return defaultValue;
         }
 
         // Get healthy endpoints first (with caching to avoid excessive checks)
@@ -480,6 +503,12 @@ public class RoundRobinFallbackHelper
     {
         if (!items.Any())
         {
+            return new List<TResult>();
+        }
+
+        if (_apiUrls.Count == 0)
+        {
+            _logger.LogWarning("No {Service} endpoints are configured, skipping parallel processing", _serviceName);
             return new List<TResult>();
         }
 
