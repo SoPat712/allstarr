@@ -87,6 +87,7 @@
                     <button class="sidebar-link active" type="button" data-tab="dashboard">Dashboard</button>
                     <button class="sidebar-link" type="button" data-tab="jellyfin-playlists">Link Playlists</button>
                     <button class="sidebar-link" type="button" data-tab="playlists">Injected Playlists</button>
+                    <button class="sidebar-link" type="button" data-tab="song-migration">Song Migration</button>
                     <button class="sidebar-link" type="button" data-tab="kept">Kept Downloads</button>
                     <button class="sidebar-link" type="button" data-tab="scrobbling">Scrobbling</button>
                     <button class="sidebar-link" type="button" data-tab="config">Configuration</button>
@@ -106,6 +107,7 @@
                     <div class="tab active" data-tab="dashboard">Dashboard</div>
                     <div class="tab" data-tab="jellyfin-playlists">Link Playlists</div>
                     <div class="tab" data-tab="playlists">Injected Playlists</div>
+                    <div class="tab" data-tab="song-migration">Song Migration</div>
                     <div class="tab" data-tab="kept">Kept Downloads</div>
                     <div class="tab" data-tab="scrobbling">Scrobbling</div>
                     <div class="tab" data-tab="config">Configuration</div>
@@ -367,6 +369,61 @@
                         <tr>
                             <td colspan="5" class="loading">
                                 <span class="spinner"></span> Loading missing tracks...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Song Migration Tab -->
+        <div class="tab-content" id="tab-song-migration">
+            <div class="card">
+                <h2>
+                    Song Migration
+                    <div class="actions">
+                        <button class="primary" data-action="downloadSongMigrationCsv"
+                            title="Download all non-Jellyfin tracks (external + missing) across all injected playlists as CSV">Download CSV (All)</button>
+                        <button data-action="fetchSongMigration">Refresh</button>
+                    </div>
+                </h2>
+                <p class="text-secondary mb-12">
+                    Tracks from your injected Spotify playlists that are <strong>not</strong> in your Jellyfin library.
+                    This includes tracks matched through external providers (SquidWTF, Deezer, Qobuz) and tracks that
+                    are still missing. Use the CSV export to download these tracks with your preferred tool.
+                </p>
+                <div id="song-migration-guidance" class="guidance-stack"></div>
+                <div id="song-migration-summary" class="summary-box">
+                    <div>
+                        <span class="summary-label">Playlists:</span>
+                        <span class="summary-value accent" id="song-migration-playlist-count">0</span>
+                    </div>
+                    <div>
+                        <span class="summary-label">External:</span>
+                        <span class="summary-value success" id="song-migration-external-count">0</span>
+                    </div>
+                    <div>
+                        <span class="summary-label">Missing:</span>
+                        <span class="summary-value warning" id="song-migration-missing-count">0</span>
+                    </div>
+                    <div>
+                        <span class="summary-label">Total to Migrate:</span>
+                        <span class="summary-value accent" id="song-migration-total-count">0</span>
+                    </div>
+                </div>
+                <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Non-Local Tracks</th>
+                            <th>Status</th>
+                            <th>...</th>
+                        </tr>
+                    </thead>
+                    <tbody id="song-migration-table-body">
+                        <tr>
+                            <td colspan="4" class="loading">
+                                <span class="spinner"></span> Loading playlists...
                             </td>
                         </tr>
                     </tbody>

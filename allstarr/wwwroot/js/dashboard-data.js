@@ -382,6 +382,15 @@ function startDashboardRefresh() {
         fetchDownloads();
       }
 
+      const songMigrationTab = document.getElementById("tab-song-migration");
+      if (
+        songMigrationTab &&
+        songMigrationTab.classList.contains("active") &&
+        typeof window.fetchSongMigration === "function"
+      ) {
+        window.fetchSongMigration();
+      }
+
       const endpointsTab = document.getElementById("tab-endpoints");
       if (endpointsTab && endpointsTab.classList.contains("active")) {
         fetchEndpointUsage();
@@ -418,13 +427,15 @@ async function loadDashboardData() {
 
 function startDownloadActivityStream() {
   if (!isAdminSession()) return;
-  
+
   if (downloadActivityEventSource) {
     downloadActivityEventSource.close();
   }
 
-  downloadActivityEventSource = new EventSource("/api/admin/downloads/activity");
-  
+  downloadActivityEventSource = new EventSource(
+    "/api/admin/downloads/activity",
+  );
+
   downloadActivityEventSource.onmessage = (event) => {
     try {
       const downloads = JSON.parse(event.data);
@@ -450,40 +461,50 @@ function renderDownloadActivity(downloads) {
   }
 
   const statusIcons = {
-    0: '⏳', // NotStarted
+    0: "⏳", // NotStarted
     1: '<span class="spinner" style="border-width:2px; height:12px; width:12px; display:inline-block; margin-right:4px;"></span> Downloading', // InProgress
-    2: '✅ Completed', // Completed
-    3: '❌ Failed' // Failed
+    2: "✅ Completed", // Completed
+    3: "❌ Failed", // Failed
   };
 
-  const html = downloads.map(d => {
-    const downloadProgress = clampProgress(d.progress);
-    const playbackProgress = clampProgress(d.playbackProgress);
+  const html = downloads
+    .map((d) => {
+      const downloadProgress = clampProgress(d.progress);
+      const playbackProgress = clampProgress(d.playbackProgress);
 
-    // Determine elapsed/duration text
-    let timeText = "";
-    if (d.startedAt) {
-      const start = new Date(d.startedAt);
-      const end = d.completedAt ? new Date(d.completedAt) : new Date();
-      const diffSecs = Math.floor((end.getTime() - start.getTime()) / 1000);
-      timeText = diffSecs < 60 ? `${diffSecs}s` : `${Math.floor(diffSecs/60)}m ${diffSecs%60}s`;
-    }
+      // Determine elapsed/duration text
+      let timeText = "";
+      if (d.startedAt) {
+        const start = new Date(d.startedAt);
+        const end = d.completedAt ? new Date(d.completedAt) : new Date();
+        const diffSecs = Math.floor((end.getTime() - start.getTime()) / 1000);
+        timeText =
+          diffSecs < 60
+            ? `${diffSecs}s`
+            : `${Math.floor(diffSecs / 60)}m ${diffSecs % 60}s`;
+      }
 
-    const progressMeta = [];
-    if (typeof d.durationSeconds === "number" && typeof d.playbackPositionSeconds === "number") {
-      progressMeta.push(`${formatSeconds(d.playbackPositionSeconds)} / ${formatSeconds(d.durationSeconds)}`);
-    } else if (typeof d.durationSeconds === "number") {
-      progressMeta.push(formatSeconds(d.durationSeconds));
-    }
-    if (d.requestedForStreaming) {
-      progressMeta.push("stream");
-    }
+      const progressMeta = [];
+      if (
+        typeof d.durationSeconds === "number" &&
+        typeof d.playbackPositionSeconds === "number"
+      ) {
+        progressMeta.push(
+          `${formatSeconds(d.playbackPositionSeconds)} / ${formatSeconds(d.durationSeconds)}`,
+        );
+      } else if (typeof d.durationSeconds === "number") {
+        progressMeta.push(formatSeconds(d.durationSeconds));
+      }
+      if (d.requestedForStreaming) {
+        progressMeta.push("stream");
+      }
 
-    const progressMetaText = progressMeta.length > 0
-      ? `<div class="download-progress-meta">${progressMeta.map(escapeHtml).join(" • ")}</div>`
-      : "";
+      const progressMetaText =
+        progressMeta.length > 0
+          ? `<div class="download-progress-meta">${progressMeta.map(escapeHtml).join(" • ")}</div>`
+          : "";
 
-    const progressBar = `
+      const progressBar = `
       <div class="download-progress-bar" aria-hidden="true">
         <div class="download-progress-buffer" style="width:${downloadProgress * 100}%"></div>
         <div class="download-progress-playback" style="width:${playbackProgress * 100}%"></div>
@@ -491,17 +512,19 @@ function renderDownloadActivity(downloads) {
       ${progressMetaText}
     `;
 
-    const title = d.title || 'Unknown Title';
-    const artist = d.artist || 'Unknown Artist';
-    const errorText = d.errorMessage ? `<div style="color:var(--error); font-size:0.8rem; margin-top:4px;">${escapeHtml(d.errorMessage)}</div>` : '';
-    const streamBadge = d.requestedForStreaming
-      ? '<span class="download-queue-badge">Stream</span>'
-      : '';
-    const playingBadge = d.isPlaying
-      ? '<span class="download-queue-badge is-playing">Playing</span>'
-      : '';
+      const title = d.title || "Unknown Title";
+      const artist = d.artist || "Unknown Artist";
+      const errorText = d.errorMessage
+        ? `<div style="color:var(--error); font-size:0.8rem; margin-top:4px;">${escapeHtml(d.errorMessage)}</div>`
+        : "";
+      const streamBadge = d.requestedForStreaming
+        ? '<span class="download-queue-badge">Stream</span>'
+        : "";
+      const playingBadge = d.isPlaying
+        ? '<span class="download-queue-badge is-playing">Playing</span>'
+        : "";
 
-    return `
+      return `
       <div class="download-queue-item">
         <div class="download-queue-info">
           <div class="download-queue-title">${escapeHtml(title)}</div>
@@ -515,12 +538,13 @@ function renderDownloadActivity(downloads) {
           ${errorText}
         </div>
         <div class="download-queue-status">
-          <span style="font-size:0.85rem;">${statusIcons[d.status] || 'Unknown'}</span>
+          <span style="font-size:0.85rem;">${statusIcons[d.status] || "Unknown"}</span>
           <span class="download-queue-time">${timeText}</span>
         </div>
       </div>
     `;
-  }).join('');
+    })
+    .join("");
 
   container.innerHTML = html;
 }
@@ -534,7 +558,11 @@ function clampProgress(value) {
 }
 
 function formatSeconds(totalSeconds) {
-  if (typeof totalSeconds !== "number" || Number.isNaN(totalSeconds) || totalSeconds < 0) {
+  if (
+    typeof totalSeconds !== "number" ||
+    Number.isNaN(totalSeconds) ||
+    totalSeconds < 0
+  ) {
     return "0:00";
   }
 

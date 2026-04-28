@@ -32,6 +32,10 @@ import {
   initPlaylistAdmin,
   resetPlaylistAdminState,
 } from "./playlist-admin.js";
+import {
+  initSongMigration,
+  resetSongMigrationState,
+} from "./song-migration.js";
 import { initScrobblingAdmin } from "./scrobbling-admin.js";
 import { initAuthSession } from "./auth-session.js";
 import { initActionDispatcher } from "./action-dispatcher.js";
@@ -78,6 +82,13 @@ window.switchTab = function (tabName) {
 
     if (tabName === "kept" && typeof window.fetchDownloads === "function") {
       window.fetchDownloads();
+    }
+
+    if (
+      tabName === "song-migration" &&
+      typeof window.fetchSongMigration === "function"
+    ) {
+      window.fetchSongMigration();
     }
   }
 };
@@ -138,6 +149,10 @@ initPlaylistAdmin({
   fetchJellyfinPlaylists: dashboard.fetchJellyfinPlaylists,
 });
 
+initSongMigration({
+  isAdminSession: () => authSession?.isAdminSession() ?? false,
+});
+
 initIssueReporter();
 
 const authSession = initAuthSession({
@@ -146,6 +161,7 @@ const authSession = initAuthSession({
   switchTab: window.switchTab,
   onUnauthenticated: () => {
     resetPlaylistAdminState();
+    resetSongMigrationState();
     setCurrentConfigState(null);
   },
 });
@@ -178,7 +194,9 @@ document.addEventListener("DOMContentLoaded", () => {
       window.switchTab(tab);
     }
   });
-  dispatcher.register("logoutAdminSession", () => window.logoutAdminSession?.());
+  dispatcher.register("logoutAdminSession", () =>
+    window.logoutAdminSession?.(),
+  );
   dispatcher.register("dismissRestartBanner", () =>
     window.dismissRestartBanner?.(),
   );
@@ -192,7 +210,9 @@ document.addEventListener("DOMContentLoaded", () => {
   dispatcher.register("toggleDetailsRow", ({ event, args }) =>
     window.toggleDetailsRow?.(event, args?.detailsRowId),
   );
-  dispatcher.register("viewTracks", ({ args }) => viewTracks(args?.playlistName));
+  dispatcher.register("viewTracks", ({ args }) =>
+    viewTracks(args?.playlistName),
+  );
   dispatcher.register("refreshPlaylist", ({ args }) =>
     window.refreshPlaylist?.(args?.playlistName),
   );
@@ -246,6 +266,12 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   dispatcher.register("deleteDownload", ({ args }) =>
     window.deleteDownload?.(args?.path),
+  );
+  dispatcher.register("fetchSongMigration", () =>
+    window.fetchSongMigration?.(),
+  );
+  dispatcher.register("downloadSongMigrationCsv", () =>
+    window.downloadSongMigrationCsv?.(),
   );
 
   initNavigationView({ switchTab: window.switchTab });
