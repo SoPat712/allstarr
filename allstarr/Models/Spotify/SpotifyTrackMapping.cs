@@ -30,6 +30,13 @@ public class SpotifyTrackMapping
     /// External provider track ID (if TargetType is "external")
     /// </summary>
     public string? ExternalId { get; set; }
+
+    /// <summary>
+    /// Multi-provider external mappings for this Spotify track.
+    /// Keeps additional external provider IDs so rematch/rebuild can add
+    /// provider-specific mappings without replacing existing ones.
+    /// </summary>
+    public List<ExternalTrackMapping> ExternalMappings { get; set; } = new();
     
     /// <summary>
     /// Track metadata for display purposes
@@ -79,6 +86,55 @@ public class SpotifyTrackMapping
         
         return false;
     }
+
+    /// <summary>
+    /// Resolves the best external mapping target, preferring the requested provider when available.
+    /// </summary>
+    public bool TryGetExternalTarget(string? preferredProvider, out string provider, out string externalId)
+    {
+        provider = string.Empty;
+        externalId = string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(preferredProvider))
+        {
+            var preferred = ExternalMappings.FirstOrDefault(m =>
+                string.Equals(m.Provider, preferredProvider, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(m.ExternalId));
+            if (preferred != null)
+            {
+                provider = preferred.Provider;
+                externalId = preferred.ExternalId;
+                return true;
+            }
+        }
+
+        var first = ExternalMappings.FirstOrDefault(m =>
+            !string.IsNullOrWhiteSpace(m.Provider) && !string.IsNullOrWhiteSpace(m.ExternalId));
+        if (first != null)
+        {
+            provider = first.Provider;
+            externalId = first.ExternalId;
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ExternalProvider) && !string.IsNullOrWhiteSpace(ExternalId))
+        {
+            provider = ExternalProvider;
+            externalId = ExternalId;
+            return true;
+        }
+
+        return false;
+    }
+}
+
+public class ExternalTrackMapping
+{
+    public required string Provider { get; set; }
+    public required string ExternalId { get; set; }
+    public string Source { get; set; } = "auto";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
 }
 
 /// <summary>

@@ -496,7 +496,7 @@ public partial class JellyfinController
             }
 
             // Look for the track in cache folder first
-            var cacheBasePath = "/tmp/allstarr-cache";
+            var cacheBasePath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "cache");
             var cacheArtistPath = Path.Combine(cacheBasePath, AdminHelperService.SanitizeFileName(song.Artist));
             var cacheAlbumPath = Path.Combine(cacheArtistPath, AdminHelperService.SanitizeFileName(song.Album));
 
