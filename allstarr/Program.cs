@@ -20,11 +20,6 @@ using System.IO;
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment, Console.Out);
 
-// Discover SquidWTF API and streaming endpoints from uptime feeds.
-var squidWtfEndpointCatalog = await SquidWtfEndpointDiscovery.DiscoverAsync();
-var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
-var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
-
 // Configure forwarded headers for reverse proxy support (nginx, etc.)
 // Trust should be explicit: set ForwardedHeaders__KnownProxies and/or
 // ForwardedHeaders__KnownNetworks (comma-separated) in deployment config.
@@ -534,6 +529,13 @@ else
     enableExternalPlaylists = builder.Configuration.GetValue<bool>("Subsonic:EnableExternalPlaylists", true);
 }
 
+// Discover SquidWTF endpoints only when SquidWTF is selected as primary music service.
+var squidWtfEndpointCatalog = musicService == MusicService.SquidWTF
+    ? await SquidWtfEndpointDiscovery.DiscoverAsync()
+    : new SquidWtfEndpointCatalog(new List<string>(), new List<string>());
+var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
+var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
+
 // Business services - shared across backends
 builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<RedisCacheService>();
@@ -641,14 +643,17 @@ builder.Services.AddSingleton<EndpointBenchmarkService>();
 
 builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
 builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
-builder.Services.AddSingleton<IStartupValidator>(sp =>
-    new SquidWTFStartupValidator(
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-        sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
-        squidWtfApiUrls,
-        squidWtfStreamingUrls,
-        sp.GetRequiredService<EndpointBenchmarkService>(),
-        sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
+if (musicService == MusicService.SquidWTF)
+{
+    builder.Services.AddSingleton<IStartupValidator>(sp =>
+        new SquidWTFStartupValidator(
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
+            squidWtfApiUrls,
+            squidWtfStreamingUrls,
+            sp.GetRequiredService<EndpointBenchmarkService>(),
+            sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
+}
 builder.Services.AddSingleton<IStartupValidator, LyricsStartupValidator>();
 
 // Register orchestrator as hosted service
