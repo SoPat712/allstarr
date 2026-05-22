@@ -34,7 +34,8 @@ public class DeezerMetadataServiceTests
     private DeezerMetadataService CreateService(SubsonicSettings settings)
     {
         var options = Options.Create(settings);
-        return new DeezerMetadataService(_httpClientFactoryMock.Object, options);
+        var deezerOptions = Options.Create(new DeezerSettings { MinRequestIntervalMs = 0 });
+        return new DeezerMetadataService(_httpClientFactoryMock.Object, options, deezerSettings: deezerOptions);
     }
 
     [Fact]
@@ -49,6 +50,7 @@ public class DeezerMetadataServiceTests
                 {
                     id = 123456,
                     title = "Test Song",
+                    isrc = "TESTISRC1234",
                     duration = 180,
                     track_position = 1,
                     artist = new { id = 789, name = "Test Artist" },
@@ -70,8 +72,47 @@ public class DeezerMetadataServiceTests
         Assert.Equal("Test Artist", result[0].Artist);
         Assert.Equal("Test Album", result[0].Album);
         Assert.Equal(180, result[0].Duration);
+        Assert.Equal("TESTISRC1234", result[0].Isrc);
         Assert.False(result[0].IsLocal);
         Assert.Equal("deezer", result[0].ExternalProvider);
+    }
+
+    [Fact]
+    public async Task SearchSongsAsync_AmpersandVariant_PreservesProviderOrderAndDeduplicates()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            var pathAndQuery = request.RequestUri!.PathAndQuery;
+            requests.Add(pathAndQuery);
+
+            var response = pathAndQuery.Contains("q=love%20and%20hyperbole", StringComparison.Ordinal)
+                ? new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(2, "Shared Result"),
+                        CreateTrackSearchResult(3, "Variant Result")
+                    }
+                }
+                : new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(1, "Original Result"),
+                        CreateTrackSearchResult(2, "Shared Result")
+                    }
+                };
+
+            return CreateJsonResponse(JsonSerializer.Serialize(response));
+        });
+
+        var result = await _service.SearchSongsAsync("love & hyperbole", 3);
+
+        Assert.Equal(["Original Result", "Shared Result", "Variant Result"], result.Select(song => song.Title));
+        Assert.Equal(2, requests.Count);
+        Assert.Contains("q=love%20%26%20hyperbole&limit=3&order=RANKING", requests[0]);
+        Assert.Contains("q=love%20and%20hyperbole&limit=3&order=RANKING", requests[1]);
     }
 
     [Fact]
@@ -157,6 +198,70 @@ public class DeezerMetadataServiceTests
         Assert.NotNull(result.Songs);
         Assert.NotNull(result.Albums);
         Assert.NotNull(result.Artists);
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_AmpersandQuery_UsesVariantsForEachRequestedBucket()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            lock (requests)
+            {
+                requests.Add(request.RequestUri!.PathAndQuery);
+            }
+
+            return CreateJsonResponse(JsonSerializer.Serialize(new { data = Array.Empty<object>() }));
+        });
+
+        await _service.SearchAllAsync("love & hyperbole", songLimit: 1, albumLimit: 1, artistLimit: 1);
+
+        Assert.Contains(requests, request =>
+            request.Contains("/search/track?q=love%20%26%20hyperbole&limit=1", StringComparison.Ordinal));
+        Assert.Contains(requests, request =>
+            request.Contains("/search/track?q=love%20and%20hyperbole&limit=1", StringComparison.Ordinal));
+        Assert.Contains(requests, request =>
+            request.Contains("/search/album?q=love%20%26%20hyperbole&limit=1", StringComparison.Ordinal));
+        Assert.Contains(requests, request =>
+            request.Contains("/search/album?q=love%20and%20hyperbole&limit=1", StringComparison.Ordinal));
+        Assert.Contains(requests, request =>
+            request.Contains("/search/artist?q=love%20%26%20hyperbole&limit=1", StringComparison.Ordinal));
+        Assert.Contains(requests, request =>
+            request.Contains("/search/artist?q=love%20and%20hyperbole&limit=1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task FindSongByIsrcAsync_UsesExactTrackEndpoint()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+
+            return CreateJsonResponse(JsonSerializer.Serialize(new
+            {
+                id = 116348632,
+                title = "Hey Jude",
+                isrc = "GBUM71505902",
+                duration = 429,
+                track_position = 21,
+                disk_number = 1,
+                artist = new { id = 1, name = "The Beatles" },
+                album = new
+                {
+                    id = 12047956,
+                    title = "1",
+                    cover_medium = "https://example.com/cover.jpg"
+                }
+            }));
+        });
+
+        var result = await _service.FindSongByIsrcAsync(" GBUM71505902 ");
+
+        Assert.NotNull(result);
+        Assert.Equal("ext-deezer-song-116348632", result.Id);
+        Assert.Equal("GBUM71505902", result.Isrc);
+        Assert.Equal(["/track/isrc:GBUM71505902"], requests);
     }
 
     [Fact]
@@ -285,6 +390,111 @@ public class DeezerMetadataServiceTests
         Assert.Null(result);
     }
 
+    [Fact]
+    public async Task GetAlbumAsync_PaginatesTracklistWhenAlbumDetailIsPartial()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            var pathAndQuery = request.RequestUri!.PathAndQuery;
+            requests.Add(pathAndQuery);
+
+            if (pathAndQuery.Contains("index=1", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse(JsonSerializer.Serialize(new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(222, "Track 2")
+                    }
+                }));
+            }
+
+            if (pathAndQuery.Contains("/tracks", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse(JsonSerializer.Serialize(new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(111, "Track 1")
+                    },
+                    next = "https://api.deezer.com/album/456789/tracks?limit=100&index=1"
+                }));
+            }
+
+            return CreateJsonResponse(JsonSerializer.Serialize(new
+            {
+                id = 456789,
+                title = "Paged Album",
+                nb_tracks = 2,
+                artist = new { id = 123, name = "Test Artist" },
+                tracks = new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(111, "Track 1")
+                    }
+                }
+            }));
+        });
+
+        var result = await _service.GetAlbumAsync("deezer", "456789");
+
+        Assert.NotNull(result);
+        Assert.Equal(["Track 1", "Track 2"], result.Songs.Select(song => song.Title));
+        Assert.Contains("/album/456789/tracks?index=0&limit=100", requests);
+        Assert.Contains("/album/456789/tracks?limit=100&index=1", requests);
+    }
+
+    [Fact]
+    public async Task GetArtistAlbumsAsync_FallsBackToDocumentedIndexPagination()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            var pathAndQuery = request.RequestUri!.PathAndQuery;
+            requests.Add(pathAndQuery);
+
+            if (pathAndQuery.Contains("index=1", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse(JsonSerializer.Serialize(new
+                {
+                    data = new object[]
+                    {
+                        new
+                        {
+                            id = 2002,
+                            title = "Second Album",
+                            nb_tracks = 8,
+                            artist = new { id = 27, name = "Artist" }
+                        }
+                    }
+                }));
+            }
+
+            return CreateJsonResponse(JsonSerializer.Serialize(new
+            {
+                data = new object[]
+                {
+                    new
+                    {
+                        id = 2001,
+                        title = "First Album",
+                        nb_tracks = 10,
+                        artist = new { id = 27, name = "Artist" }
+                    }
+                },
+                total = 2
+            }));
+        });
+
+        var result = await _service.GetArtistAlbumsAsync("deezer", "27");
+
+        Assert.Equal(["First Album", "Second Album"], result.Select(album => album.Title));
+        Assert.Contains("/artist/27/albums?index=0&limit=100", requests);
+        Assert.Contains("/artist/27/albums?index=1&limit=100", requests);
+    }
+
     private void SetupHttpResponse(string content, HttpStatusCode statusCode = HttpStatusCode.OK)
     {
         _httpMessageHandlerMock
@@ -298,6 +508,51 @@ public class DeezerMetadataServiceTests
                 StatusCode = statusCode,
                 Content = new StringContent(content)
             });
+    }
+
+    private void SetupHttpResponse(Func<HttpRequestMessage, HttpResponseMessage> responseFactory)
+    {
+        _httpMessageHandlerMock
+            .Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((HttpRequestMessage request, CancellationToken _) =>
+                Task.FromResult(responseFactory(request)));
+    }
+
+    private static HttpResponseMessage CreateJsonResponse(string content)
+    {
+        return new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(content)
+        };
+    }
+
+    private static object CreateTrackSearchResult(long id, string title)
+    {
+        return new
+        {
+            id,
+            title,
+            duration = 180,
+            artist = new { id = 789, name = "Test Artist" },
+            album = new { id = 456, title = "Test Album", cover_medium = "https://example.com/cover.jpg" }
+        };
+    }
+
+    private static object CreatePlaylistSearchResult(long id, string title)
+    {
+        return new
+        {
+            id,
+            title,
+            nb_tracks = 10,
+            picture_medium = "https://example.com/playlist.jpg",
+            user = new { name = "Playlist User" }
+        };
     }
 
     #region Explicit Filter Tests
@@ -623,6 +878,44 @@ public class DeezerMetadataServiceTests
     }
 
     [Fact]
+    public async Task SearchPlaylistsAsync_AmpersandVariant_PreservesProviderOrderAndDeduplicates()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            var pathAndQuery = request.RequestUri!.PathAndQuery;
+            requests.Add(pathAndQuery);
+
+            var response = pathAndQuery.Contains("q=love%20and%20hyperbole", StringComparison.Ordinal)
+                ? new
+                {
+                    data = new object[]
+                    {
+                        CreatePlaylistSearchResult(2, "Shared Playlist"),
+                        CreatePlaylistSearchResult(3, "Variant Playlist")
+                    }
+                }
+                : new
+                {
+                    data = new object[]
+                    {
+                        CreatePlaylistSearchResult(1, "Original Playlist"),
+                        CreatePlaylistSearchResult(2, "Shared Playlist")
+                    }
+                };
+
+            return CreateJsonResponse(JsonSerializer.Serialize(response));
+        });
+
+        var result = await _service.SearchPlaylistsAsync("love & hyperbole", 3);
+
+        Assert.Equal(["Original Playlist", "Shared Playlist", "Variant Playlist"], result.Select(playlist => playlist.Name));
+        Assert.Equal(2, requests.Count);
+        Assert.Contains("q=love%20%26%20hyperbole&limit=3&order=RANKING", requests[0]);
+        Assert.Contains("q=love%20and%20hyperbole&limit=3&order=RANKING", requests[1]);
+    }
+
+    [Fact]
     public async Task SearchPlaylistsAsync_WithLimit_RespectsLimit()
     {
         // Arrange
@@ -718,6 +1011,7 @@ public class DeezerMetadataServiceTests
                     {
                         id = 111,
                         title = "Track 1",
+                        isrc = "TESTISRC0001",
                         duration = 200,
                         track_position = 1,
                         disk_number = 1,
@@ -738,6 +1032,7 @@ public class DeezerMetadataServiceTests
                     {
                         id = 222,
                         title = "Track 2",
+                        isrc = "TESTISRC0002",
                         duration = 180,
                         track_position = 2,
                         disk_number = 1,
@@ -768,6 +1063,7 @@ public class DeezerMetadataServiceTests
         Assert.Equal("Track 1", result[0].Title);
         Assert.Equal("Artist A", result[0].Artist);
         Assert.Equal("ext-deezer-song-111", result[0].Id);
+        Assert.Equal("TESTISRC0001", result[0].Isrc);
     }
 
     [Fact]
@@ -778,6 +1074,63 @@ public class DeezerMetadataServiceTests
 
         // Assert
         Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetPlaylistTracksAsync_PaginatesTracklistWhenPlaylistDetailIsPartial()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            var pathAndQuery = request.RequestUri!.PathAndQuery;
+            requests.Add(pathAndQuery);
+
+            if (pathAndQuery.Contains("index=1", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse(JsonSerializer.Serialize(new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(222, "Track 2")
+                    }
+                }));
+            }
+
+            if (pathAndQuery.Contains("/tracks", StringComparison.Ordinal))
+            {
+                return CreateJsonResponse(JsonSerializer.Serialize(new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(111, "Track 1")
+                    },
+                    next = "https://api.deezer.com/playlist/12345/tracks?limit=100&index=1"
+                }));
+            }
+
+            return CreateJsonResponse(JsonSerializer.Serialize(new
+            {
+                id = 12345,
+                title = "Paged Playlist",
+                nb_tracks = 2,
+                tracks = new
+                {
+                    data = new object[]
+                    {
+                        CreateTrackSearchResult(111, "Track 1")
+                    }
+                }
+            }));
+        });
+
+        var result = await _service.GetPlaylistTracksAsync("deezer", "12345");
+
+        Assert.Equal(["Track 1", "Track 2"], result.Select(song => song.Title));
+        Assert.All(result, song => Assert.Equal("Paged Playlist", song.Album));
+        Assert.Equal(1, result[0].Track);
+        Assert.Equal(2, result[1].Track);
+        Assert.Contains("/playlist/12345/tracks?index=0&limit=100", requests);
+        Assert.Contains("/playlist/12345/tracks?limit=100&index=1", requests);
     }
 
     [Fact]

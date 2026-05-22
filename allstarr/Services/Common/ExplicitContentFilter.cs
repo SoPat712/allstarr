@@ -27,7 +27,7 @@ public static class ExplicitContentFilter
             ExplicitFilter.All => true,
             
             // ExplicitOnly: Exclude clean/edited versions (value 3)
-            // Include: 0 (naturally clean), 1 (explicit), 2 (not applicable), 6/7 (unknown)
+            // Include: 0 (naturally clean), 1 (explicit), 2 (unknown), 6/7 (no advice)
             ExplicitFilter.ExplicitOnly => song.ExplicitContentLyrics != 3,
             
             // CleanOnly: Only show clean content

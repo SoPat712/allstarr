@@ -82,6 +82,16 @@ public partial class JellyfinController
         }
 
         if (cachedItems != null && cachedItems.Count > 0 &&
+            InjectedPlaylistItemHelper.ContainsLegacyExternalSourceLabels(cachedItems))
+        {
+            _logger.LogInformation(
+                "Ignoring Redis playlist cache for {Playlist}: external items still use legacy source labels",
+                spotifyPlaylistName);
+            await _cache.DeleteAsync(cacheKey);
+            cachedItems = null;
+        }
+
+        if (cachedItems != null && cachedItems.Count > 0 &&
             requestNeedsGenreMetadata &&
             InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(cachedItems))
         {
@@ -118,6 +128,15 @@ public partial class JellyfinController
         {
             _logger.LogWarning(
                 "Ignoring file playlist cache for {Playlist}: found synthesized local items that should have remained raw Jellyfin objects",
+                spotifyPlaylistName);
+            fileItems = null;
+        }
+
+        if (fileItems != null && fileItems.Count > 0 &&
+            InjectedPlaylistItemHelper.ContainsLegacyExternalSourceLabels(fileItems))
+        {
+            _logger.LogInformation(
+                "Ignoring file playlist cache for {Playlist}: external items still use legacy source labels",
                 spotifyPlaylistName);
             fileItems = null;
         }

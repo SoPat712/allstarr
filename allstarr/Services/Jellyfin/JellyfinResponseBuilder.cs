@@ -134,7 +134,7 @@ public class JellyfinResponseBuilder
             var albumItem = new Dictionary<string, object?>
             {
                 ["Id"] = playlist.Id,
-                ["Name"] = $"{playlist.Name} [S/P]",  // Label as playlist
+                ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
                 ["Type"] = "MusicAlbum",  // Must be MusicAlbum for Jellyfin clients
                 ["ServerId"] = "allstarr",
                 ["ChannelId"] = null,
@@ -304,21 +304,11 @@ public class JellyfinResponseBuilder
         {
             songTitle = BuildExternalSongTitle(song);
 
-            // Also add [S] to artist and album names for consistency
-            if (!string.IsNullOrEmpty(artistName) && !artistName.EndsWith(" [S]"))
-            {
-                artistName = $"{artistName} [S]";
-            }
-
-            if (!string.IsNullOrEmpty(albumName) && !albumName.EndsWith(" [S]"))
-            {
-                albumName = $"{albumName} [S]";
-            }
-
-            // Add [S] to all artist names in the list
-            artistNames = artistNames.Select(a =>
-                !string.IsNullOrEmpty(a) && !a.EndsWith(" [S]") ? $"{a} [S]" : a
-            ).ToList();
+            artistName = AppendExternalSourceLabel(artistName, song.ExternalProvider);
+            albumName = AppendExternalSourceLabel(albumName, song.ExternalProvider);
+            artistNames = artistNames
+                .Select(a => AppendExternalSourceLabel(a, song.ExternalProvider))
+                .ToList();
         }
 
         var item = new Dictionary<string, object?>
@@ -506,7 +496,7 @@ public class JellyfinResponseBuilder
 
     private static string BuildExternalSongTitle(Song song)
     {
-        var title = $"{song.Title} [S]";
+        var title = AppendExternalSourceLabel(song.Title, song.ExternalProvider);
 
         if (song.ExplicitContentLyrics == 1)
         {
@@ -523,16 +513,49 @@ public class JellyfinResponseBuilder
                provider.Equals("squidwtf", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string AppendExternalSourceLabel(string value, string? provider)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        var label = GetExternalSourceLabel(provider);
+        return value.EndsWith($" {label}", StringComparison.Ordinal)
+            ? value
+            : $"{value} {label}";
+    }
+
+    private static string BuildExternalPlaylistName(string playlistName, string? provider)
+    {
+        return $"{playlistName} [{GetExternalSourceCode(provider)}/P]";
+    }
+
+    private static string GetExternalSourceLabel(string? provider)
+    {
+        return $"[{GetExternalSourceCode(provider)}]";
+    }
+
+    private static string GetExternalSourceCode(string? provider)
+    {
+        return provider?.ToLowerInvariant() switch
+        {
+            "deezer" => "D",
+            "qobuz" => "Q",
+            "squidwtf" => "S",
+            _ => "S"
+        };
+    }
+
     /// <summary>
     /// Converts an Album domain model to a Jellyfin item.
     /// </summary>
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album)
     {
-        // Add " [S]" suffix to external album names (S = streaming source)
         var albumName = album.Title;
         if (!album.IsLocal)
         {
-            albumName = $"{album.Title} [S]";
+            albumName = AppendExternalSourceLabel(album.Title, album.ExternalProvider);
         }
 
         var item = new Dictionary<string, object?>
@@ -621,11 +644,10 @@ public class JellyfinResponseBuilder
     /// </summary>
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist)
     {
-        // Add " [S]" suffix to external artist names (S = streaming source)
         var artistName = artist.Name;
         if (!artist.IsLocal)
         {
-            artistName = $"{artist.Name} [S]";
+            artistName = AppendExternalSourceLabel(artist.Name, artist.ExternalProvider);
         }
 
         var item = new Dictionary<string, object?>
@@ -755,7 +777,7 @@ public class JellyfinResponseBuilder
 
         var item = new Dictionary<string, object?>
         {
-            ["Name"] = $"{playlist.Name} [S/P]",
+            ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
             ["ServerId"] = "allstarr",
             ["Id"] = playlist.Id,
             ["ChannelId"] = (object?)null,
@@ -763,7 +785,7 @@ public class JellyfinResponseBuilder
             ["RunTimeTicks"] = playlist.Duration * TimeSpan.TicksPerSecond,
             ["IsFolder"] = true,
             ["Type"] = "MusicAlbum",
-            ["SortName"] = $"{playlist.Name} [S/P]",
+            ["SortName"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
             ["DateCreated"] = playlist.CreatedDate.HasValue
                 ? playlist.CreatedDate.Value.ToString("o")
                 : "1970-01-01T00:00:00.0000000Z",

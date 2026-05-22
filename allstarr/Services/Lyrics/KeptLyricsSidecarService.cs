@@ -305,6 +305,8 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
 
         return value
             .Replace(" [S]", "", StringComparison.Ordinal)
+            .Replace(" [D]", "", StringComparison.Ordinal)
+            .Replace(" [Q]", "", StringComparison.Ordinal)
             .Replace(" [E]", "", StringComparison.Ordinal)
             .Trim();
     }
