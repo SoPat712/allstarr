@@ -116,6 +116,56 @@ public class JellyfinResponseBuilderTests
     }
 
     [Theory]
+    [InlineData("deezer", "[D]")]
+    [InlineData("qobuz", "[Q]")]
+    [InlineData("squidwtf", "[S]")]
+    public void ConvertSongToJellyfinItem_ExternalSong_UsesProviderSourceLabel(string provider, string label)
+    {
+        var song = new Song
+        {
+            Id = $"ext-{provider}-song-12345",
+            Title = "External Track",
+            Artist = "External Artist",
+            Artists = new List<string> { "External Artist" },
+            Album = "External Album",
+            IsLocal = false,
+            ExternalProvider = provider,
+            ExternalId = "12345"
+        };
+
+        var result = _builder.ConvertSongToJellyfinItem(song);
+
+        Assert.Equal($"External Track {label}", result["Name"]);
+        Assert.Equal($"External Album {label}", result["Album"]);
+        var artists = Assert.IsType<string[]>(result["Artists"]);
+        Assert.Equal(new[] { $"External Artist {label}" }, artists);
+    }
+
+    [Fact]
+    public void ConvertSongToJellyfinItem_DeezerPlaylistMatch_LabelsFallbackArtist()
+    {
+        var matchedSong = new Song
+        {
+            Id = "ext-deezer-song-12345",
+            Title = "Matched Track",
+            Artist = "Matched Artist",
+            Album = "Matched Album",
+            IsLocal = false,
+            ExternalProvider = "deezer",
+            ExternalId = "12345"
+        };
+
+        var result = _builder.ConvertSongToJellyfinItem(matchedSong);
+
+        Assert.Equal("Matched Track [D]", result["Name"]);
+        Assert.Equal("Matched Album [D]", result["Album"]);
+        var artists = Assert.IsType<string[]>(result["Artists"]);
+        Assert.Equal(["Matched Artist [D]"], artists);
+        var artistItems = Assert.IsType<Dictionary<string, object?>[]>(result["ArtistItems"]);
+        Assert.Equal("Matched Artist [D]", artistItems[0]["Name"]);
+    }
+
+    [Theory]
     [InlineData("deezer")]
     [InlineData("qobuz")]
     [InlineData("squidwtf")]
@@ -199,6 +249,28 @@ public class JellyfinResponseBuilderTests
         Assert.NotNull(result["BasicSyncInfo"]);
     }
 
+    [Theory]
+    [InlineData("deezer", "[D]")]
+    [InlineData("qobuz", "[Q]")]
+    [InlineData("squidwtf", "[S]")]
+    public void ConvertAlbumToJellyfinItem_ExternalAlbum_UsesProviderSourceLabel(string provider, string label)
+    {
+        var album = new Album
+        {
+            Id = $"ext-{provider}-album-456",
+            Title = "External Album",
+            Artist = "External Artist",
+            IsLocal = false,
+            ExternalProvider = provider,
+            ExternalId = "456"
+        };
+
+        var result = _builder.ConvertAlbumToJellyfinItem(album);
+
+        Assert.Equal($"External Album {label}", result["Name"]);
+        Assert.Equal($"External Album {label}", result["SortName"]);
+    }
+
     [Fact]
     public void ConvertArtistToJellyfinItem_SetsCorrectFields()
     {
@@ -225,6 +297,27 @@ public class JellyfinResponseBuilderTests
         Assert.NotNull(result["BasicSyncInfo"]);
     }
 
+    [Theory]
+    [InlineData("deezer", "[D]")]
+    [InlineData("qobuz", "[Q]")]
+    [InlineData("squidwtf", "[S]")]
+    public void ConvertArtistToJellyfinItem_ExternalArtist_UsesProviderSourceLabel(string provider, string label)
+    {
+        var artist = new Artist
+        {
+            Id = $"ext-{provider}-artist-789",
+            Name = "External Artist",
+            IsLocal = false,
+            ExternalProvider = provider,
+            ExternalId = "789"
+        };
+
+        var result = _builder.ConvertArtistToJellyfinItem(artist);
+
+        Assert.Equal($"External Artist {label}", result["Name"]);
+        Assert.Equal($"External Artist {label}", result["SortName"]);
+    }
+
     [Fact]
     public void ConvertPlaylistToAlbumItem_SetsPlaylistType()
     {
@@ -246,12 +339,12 @@ public class JellyfinResponseBuilderTests
 
         // Assert
         Assert.Equal("ext-playlist-deezer-999", result["Id"]);
-        Assert.Equal("Summer Vibes [S/P]", result["Name"]);
+        Assert.Equal("Summer Vibes [D/P]", result["Name"]);
         Assert.Equal("MusicAlbum", result["Type"]);
         Assert.Equal("DJ Cool", result["AlbumArtist"]);
         Assert.Equal(50, result["ChildCount"]);
         Assert.Equal(2023, result["ProductionYear"]);
-        Assert.Equal("Summer Vibes [S/P]", result["SortName"]);
+        Assert.Equal("Summer Vibes [D/P]", result["SortName"]);
         Assert.NotNull(result["DateCreated"]);
         Assert.NotNull(result["BasicSyncInfo"]);
     }

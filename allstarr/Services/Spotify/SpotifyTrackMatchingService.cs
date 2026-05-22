@@ -4,6 +4,7 @@ using allstarr.Models.Spotify;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using Cronos;
@@ -36,6 +37,7 @@ public class SpotifyTrackMatchingService : BackgroundService
     private readonly SpotifyMappingValidationService _validationService;
     private readonly ILogger<SpotifyTrackMatchingService> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly IConfiguration _configuration;
     private const int DelayBetweenSearchesMs = 150; // 150ms = ~6.6 searches/second to avoid rate limiting
     private const int BatchSize = 11; // Number of parallel searches (matches SquidWTF provider count)
     private static readonly TimeSpan ExternalProviderSearchTimeout = TimeSpan.FromSeconds(30);
@@ -51,6 +53,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         SpotifyMappingService mappingService,
         SpotifyMappingValidationService validationService,
         IServiceProvider serviceProvider,
+        IConfiguration configuration,
         ILogger<SpotifyTrackMatchingService> logger)
     {
         _spotifySettings = spotifySettings.Value;
@@ -59,6 +62,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         _mappingService = mappingService;
         _validationService = validationService;
         _serviceProvider = serviceProvider;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -803,13 +807,13 @@ public class SpotifyTrackMatchingService : BackgroundService
                     if (globalMapping != null && globalMapping.TargetType == "external")
                     {
                         Song? mappedSong = null;
+                        var preferredProvider = GetCurrentMusicServiceProvider();
 
-                        if (!string.IsNullOrEmpty(globalMapping.ExternalProvider) &&
-                            !string.IsNullOrEmpty(globalMapping.ExternalId))
+                        if (globalMapping.TryGetExternalTarget(preferredProvider, out var mappedProvider, out var mappedExternalId))
                         {
                             mappedSong = await metadataService.GetSongAsync(
-                                globalMapping.ExternalProvider,
-                                globalMapping.ExternalId,
+                                mappedProvider,
+                                mappedExternalId,
                                 trackCancellationToken);
                         }
 
@@ -2035,5 +2039,21 @@ public class SpotifyTrackMatchingService : BackgroundService
         }
 
         return song;
+    }
+
+    private string? GetCurrentMusicServiceProvider()
+    {
+        var backendType = _configuration.GetValue<BackendType>("Backend:Type");
+        var musicService = backendType == BackendType.Jellyfin
+            ? _configuration.GetValue<MusicService>("Jellyfin:MusicService")
+            : _configuration.GetValue<MusicService>("Subsonic:MusicService");
+
+        return musicService switch
+        {
+            MusicService.Deezer => "deezer",
+            MusicService.Qobuz => "qobuz",
+            MusicService.SquidWTF => "squidwtf",
+            _ => null
+        };
     }
 }

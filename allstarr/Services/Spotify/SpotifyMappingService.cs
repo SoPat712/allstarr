@@ -31,6 +31,7 @@ public class SpotifyMappingService
 
         if (mapping != null)
         {
+            EnsureExternalMappingsConsistency(mapping);
             _logger.LogDebug("Found mapping for Spotify ID {SpotifyId}: {TargetType}", spotifyId, mapping.TargetType);
         }
 
@@ -44,6 +45,8 @@ public class SpotifyMappingService
     /// </summary>
     public async Task<bool> SaveMappingAsync(SpotifyTrackMapping mapping)
     {
+        EnsureExternalMappingsConsistency(mapping);
+
         // Validate mapping
         if (string.IsNullOrEmpty(mapping.SpotifyId))
         {
@@ -58,9 +61,9 @@ public class SpotifyMappingService
         }
 
         if (mapping.TargetType == "external" &&
-            (string.IsNullOrEmpty(mapping.ExternalProvider) || string.IsNullOrEmpty(mapping.ExternalId)))
+            !mapping.TryGetExternalTarget(preferredProvider: null, out _, out _))
         {
-            _logger.LogWarning("Cannot save external mapping: ExternalProvider and ExternalId are required");
+            _logger.LogWarning("Cannot save external mapping: at least one external provider/id is required");
             return false;
         }
 
@@ -68,6 +71,37 @@ public class SpotifyMappingService
 
         // Check if mapping already exists
         var existingMapping = await GetMappingAsync(mapping.SpotifyId);
+
+        // For external mappings, merge provider-specific mappings so rematch/rebuild
+        // can retain multiple sources (e.g. SquidWTF + Deezer) for the same Spotify ID.
+        if (mapping.TargetType == "external")
+        {
+            if (existingMapping != null && existingMapping.TargetType == "local")
+            {
+                var localMappingWithExternalAlternatives = existingMapping;
+                MergeExternalMappings(localMappingWithExternalAlternatives, mapping);
+                localMappingWithExternalAlternatives.UpdatedAt = DateTime.UtcNow;
+
+                var saveLocalWithAlternatives = await _cache.SetAsync(key, localMappingWithExternalAlternatives, expiry: null);
+                if (saveLocalWithAlternatives)
+                {
+                    await AddToAllMappingsSetAsync(localMappingWithExternalAlternatives.SpotifyId);
+                    await InvalidateAllPlaylistStatsCachesAsync();
+                    _logger.LogInformation(
+                        "Saved external fallback for local mapping: Spotify {SpotifyId} -> {Provider}:{ExternalId}",
+                        mapping.SpotifyId,
+                        mapping.ExternalProvider,
+                        mapping.ExternalId);
+                }
+
+                return saveLocalWithAlternatives;
+            }
+
+            if (existingMapping != null && existingMapping.TargetType == "external")
+            {
+                MergeExternalMappings(mapping, existingMapping);
+            }
+        }
 
         // RULE 1: Never overwrite manual mappings with auto mappings
         if (existingMapping != null &&
@@ -84,6 +118,7 @@ public class SpotifyMappingService
             mapping.TargetType == "local")
         {
             _logger.LogInformation("🎉 UPGRADING: External → Local for {SpotifyId}", mapping.SpotifyId);
+            MergeExternalMappings(mapping, existingMapping);
             // Allow the upgrade to proceed
         }
 
@@ -106,7 +141,13 @@ public class SpotifyMappingService
         if (existingMapping != null)
         {
             mapping.CreatedAt = existingMapping.CreatedAt;
+            if (mapping.TargetType == "local" || mapping.TargetType == "external")
+            {
+                MergeExternalMappings(mapping, existingMapping);
+            }
         }
+
+        EnsureExternalMappingsConsistency(mapping);
 
         // Save mapping (permanent - no TTL)
         var success = await _cache.SetAsync(key, mapping, expiry: null);
@@ -168,6 +209,16 @@ public class SpotifyMappingService
             TargetType = "external",
             ExternalProvider = externalProvider,
             ExternalId = externalId,
+            ExternalMappings = new List<ExternalTrackMapping>
+            {
+                new()
+                {
+                    Provider = externalProvider,
+                    ExternalId = externalId,
+                    Source = "auto",
+                    CreatedAt = DateTime.UtcNow
+                }
+            },
             Metadata = metadata,
             Source = "auto",
             CreatedAt = DateTime.UtcNow
@@ -194,6 +245,20 @@ public class SpotifyMappingService
             LocalId = localId,
             ExternalProvider = externalProvider,
             ExternalId = externalId,
+            ExternalMappings = targetType == "external" &&
+                               !string.IsNullOrWhiteSpace(externalProvider) &&
+                               !string.IsNullOrWhiteSpace(externalId)
+                ? new List<ExternalTrackMapping>
+                {
+                    new()
+                    {
+                        Provider = externalProvider,
+                        ExternalId = externalId,
+                        Source = "manual",
+                        CreatedAt = DateTime.UtcNow
+                    }
+                }
+                : new List<ExternalTrackMapping>(),
             Metadata = metadata,
             Source = "manual",
             CreatedAt = DateTime.UtcNow,
@@ -215,6 +280,65 @@ public class SpotifyMappingService
         {
             await RemoveFromAllMappingsSetAsync(spotifyId);
             _logger.LogInformation("Deleted mapping for Spotify ID {SpotifyId}", spotifyId);
+        }
+
+        return success;
+    }
+
+    /// <summary>
+    /// Removes a single external provider mapping for a Spotify track ID.
+    /// Deletes the entire mapping when no external targets remain on an external-only mapping.
+    /// </summary>
+    public async Task<bool> RemoveExternalProviderAsync(string spotifyId, string provider)
+    {
+        if (string.IsNullOrWhiteSpace(spotifyId) || string.IsNullOrWhiteSpace(provider))
+        {
+            return false;
+        }
+
+        var mapping = await GetMappingAsync(spotifyId);
+        if (mapping == null)
+        {
+            return false;
+        }
+
+        var normalizedProvider = provider.Trim().ToLowerInvariant();
+        var removedCount = mapping.ExternalMappings.RemoveAll(m =>
+            string.Equals(m.Provider, normalizedProvider, StringComparison.OrdinalIgnoreCase));
+
+        var removedLegacy =
+            string.Equals(mapping.ExternalProvider, normalizedProvider, StringComparison.OrdinalIgnoreCase);
+        if (removedLegacy)
+        {
+            mapping.ExternalProvider = null;
+            mapping.ExternalId = null;
+            removedCount++;
+        }
+
+        if (removedCount == 0)
+        {
+            return false;
+        }
+
+        EnsureExternalMappingsConsistency(mapping);
+
+        if (mapping.TargetType == "external" &&
+            !mapping.TryGetExternalTarget(preferredProvider: null, out _, out _))
+        {
+            return await DeleteMappingAsync(spotifyId);
+        }
+
+        mapping.UpdatedAt = DateTime.UtcNow;
+        var key = CacheKeyBuilder.BuildSpotifyGlobalMappingKey(spotifyId);
+        var success = await _cache.SetAsync(key, mapping, expiry: null);
+
+        if (success)
+        {
+            await InvalidateAllPlaylistStatsCachesAsync();
+            _logger.LogInformation(
+                "Removed external provider {Provider} from Spotify mapping {SpotifyId}",
+                normalizedProvider,
+                spotifyId);
         }
 
         return success;
@@ -375,6 +499,87 @@ public class SpotifyMappingService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to invalidate playlist stats caches");
+        }
+    }
+
+    private static void MergeExternalMappings(SpotifyTrackMapping target, SpotifyTrackMapping source)
+    {
+        if (source.TryGetExternalTarget(preferredProvider: null, out var sourceProvider, out var sourceExternalId))
+        {
+            UpsertExternalMapping(
+                target.ExternalMappings,
+                sourceProvider,
+                sourceExternalId,
+                source.Source);
+        }
+
+        foreach (var mapping in source.ExternalMappings)
+        {
+            if (string.IsNullOrWhiteSpace(mapping.Provider) || string.IsNullOrWhiteSpace(mapping.ExternalId))
+            {
+                continue;
+            }
+
+            UpsertExternalMapping(
+                target.ExternalMappings,
+                mapping.Provider,
+                mapping.ExternalId,
+                mapping.Source);
+        }
+    }
+
+    private static void UpsertExternalMapping(
+        List<ExternalTrackMapping> externalMappings,
+        string provider,
+        string externalId,
+        string source)
+    {
+        var normalizedProvider = provider.Trim().ToLowerInvariant();
+        var existing = externalMappings.FirstOrDefault(m =>
+            string.Equals(m.Provider, normalizedProvider, StringComparison.OrdinalIgnoreCase));
+
+        if (existing == null)
+        {
+            externalMappings.Add(new ExternalTrackMapping
+            {
+                Provider = normalizedProvider,
+                ExternalId = externalId,
+                Source = source,
+                CreatedAt = DateTime.UtcNow
+            });
+            return;
+        }
+
+        if (!string.Equals(existing.ExternalId, externalId, StringComparison.Ordinal))
+        {
+            existing.ExternalId = externalId;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            existing.Source = source;
+        }
+    }
+
+    private static void EnsureExternalMappingsConsistency(SpotifyTrackMapping mapping)
+    {
+        mapping.ExternalMappings ??= new List<ExternalTrackMapping>();
+
+        if (!string.IsNullOrWhiteSpace(mapping.ExternalProvider) && !string.IsNullOrWhiteSpace(mapping.ExternalId))
+        {
+            UpsertExternalMapping(
+                mapping.ExternalMappings,
+                mapping.ExternalProvider,
+                mapping.ExternalId,
+                mapping.Source);
+        }
+
+        if (mapping.ExternalMappings.Count > 0)
+        {
+            var first = mapping.ExternalMappings[0];
+            mapping.ExternalProvider = first.Provider;
+            mapping.ExternalId = first.ExternalId;
         }
     }
 }

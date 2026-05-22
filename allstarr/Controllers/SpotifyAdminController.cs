@@ -560,14 +560,30 @@ public class SpotifyAdminController : ControllerBase
     /// Deletes a Spotify track mapping
     /// </summary>
     [HttpDelete("spotify/mappings/{spotifyId}")]
-    public async Task<IActionResult> DeleteSpotifyMapping(string spotifyId)
+    public async Task<IActionResult> DeleteSpotifyMapping(
+        string spotifyId,
+        [FromQuery] string? provider = null)
     {
         try
         {
-            var success = await _mappingService.DeleteMappingAsync(spotifyId);
+            var success = string.IsNullOrWhiteSpace(provider)
+                ? await _mappingService.DeleteMappingAsync(spotifyId)
+                : await _mappingService.RemoveExternalProviderAsync(spotifyId, provider);
+
             if (success)
             {
-                _logger.LogInformation("Deleted mapping for {SpotifyId}", spotifyId);
+                if (string.IsNullOrWhiteSpace(provider))
+                {
+                    _logger.LogInformation("Deleted mapping for {SpotifyId}", spotifyId);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Removed provider {Provider} from mapping for {SpotifyId}",
+                        provider,
+                        spotifyId);
+                }
+
                 return Ok(new { success = true });
             }
 

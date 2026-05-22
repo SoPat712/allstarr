@@ -76,7 +76,7 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
         List<string> apiUrls,
         GenreEnrichmentService? genreEnrichment = null)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("SquidWTF");
         _settings = settings.Value;
         _logger = logger;
         _cache = cache;
@@ -583,50 +583,78 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
     {
         if (externalProvider != "squidwtf") return null;
 
-        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        var raceCount = Math.Min(3, _fallbackHelper.EndpointCount);
+
+        if (raceCount > 1)
         {
-            // Per hifi-api spec: GET /info/?id={trackId} returns track metadata
-            var url = $"{baseUrl}/info/?id={externalId}";
+            _logger.LogInformation(
+                "Racing top {EndpointCount} SquidWTF endpoints for track {TrackId} metadata resolution",
+                raceCount,
+                externalId);
 
-            var response = await _httpClient.GetAsync(url, cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                throw new HttpRequestException($"HTTP {response.StatusCode}");
+                return await _fallbackHelper.RaceTopEndpointsAsync(
+                    raceCount,
+                    (baseUrl, ct) => FetchSongAsync(baseUrl, externalId, ct),
+                    cancellationToken);
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Raced SquidWTF metadata lookup failed for track {TrackId}; falling back to sequential failover",
+                    externalId);
+            }
+        }
 
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            var result = JsonDocument.Parse(json);
+        return await _fallbackHelper.TryWithFallbackAsync(
+            baseUrl => FetchSongAsync(baseUrl, externalId, cancellationToken),
+            (Song?)null);
+    }
 
-            // Per hifi-api spec: response is { "version": "2.0", "data": { track object } }
-			if (!result.RootElement.TryGetProperty("data", out var track))
-			{
-				throw new InvalidOperationException($"SquidWTF /info response for track {externalId} did not contain data");
-			}
+    private async Task<Song> FetchSongAsync(string baseUrl, string externalId, CancellationToken cancellationToken)
+    {
+        var url = $"{baseUrl}/info/?id={externalId}";
 
-			var song = ParseTidalTrackFull(track);
+        _logger.LogInformation(
+            "Requesting SquidWTF track metadata for track {TrackId} from {Endpoint}",
+            externalId,
+            baseUrl);
+        _logger.LogDebug("Fetching SquidWTF track metadata from: {Url}", url);
 
-			// Enrich with MusicBrainz genres if missing (SquidWTF/Tidal doesn't provide genres)
-			if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
-			{
-				// Fire-and-forget: don't block the response waiting for genre enrichment
-				_ = Task.Run(async () =>
-				{
-					try
-					{
-						await _genreEnrichment.EnrichSongGenreAsync(song);
-					}
-					catch (Exception ex)
-					{
-						_logger.LogError(ex, "Failed to enrich genre for {Title}", song.Title);
-					}
-				});
-			}
+        using var response = await _httpClient.GetAsync(url, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"HTTP {response.StatusCode}", null, response.StatusCode);
+        }
 
-			// NOTE: Spotify ID conversion happens during download (in SquidWTFDownloadService)
-			// This avoids redundant conversions and ensures it's done in parallel with the download
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var result = JsonDocument.Parse(json);
 
-			return song;
-        }, (Song?)null);
+        if (!result.RootElement.TryGetProperty("data", out var track))
+        {
+            throw new InvalidOperationException($"SquidWTF /info response for track {externalId} did not contain data");
+        }
+
+        var song = ParseTidalTrackFull(track);
+
+        if (_genreEnrichment != null && string.IsNullOrEmpty(song.Genre))
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _genreEnrichment.EnrichSongGenreAsync(song);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to enrich genre for {Title}", song.Title);
+                }
+            });
+        }
+
+        return song;
     }
 
     public async Task<List<Song>> GetTrackRecommendationsAsync(string externalId, int limit = 20, CancellationToken cancellationToken = default)

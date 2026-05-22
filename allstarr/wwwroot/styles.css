@@ -58,6 +58,26 @@ body {
     gap: 10px;
 }
 
+.auth-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    margin-top: 4px;
+}
+
+.auth-checkbox input {
+    width: auto;
+    margin: 0;
+}
+
+.auth-note {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: -4px;
+}
+
 .auth-card label {
     color: var(--text-secondary);
     font-size: 0.85rem;
@@ -146,9 +166,9 @@ body {
 }
 
 .container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
+    max-width: 1280px;
+    margin: 0 auto 0 0;
+    padding: 20px 20px 20px 8px;
 }
 
 .app-shell {
@@ -182,12 +202,33 @@ body {
     letter-spacing: 0.2px;
 }
 
+.title-link {
+    color: inherit;
+    text-decoration: none;
+}
+
+.title-link:hover {
+    color: var(--accent-hover);
+}
+
 .sidebar-subtitle {
     margin-top: 2px;
     color: var(--text-secondary);
     font-size: 0.82rem;
     font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
         monospace;
+}
+
+.sidebar-status {
+    margin-top: 12px;
+}
+
+.sidebar-status .status-badge {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    padding: 8px 12px;
+    border-radius: 8px;
 }
 
 .sidebar-nav {
@@ -232,15 +273,6 @@ body {
     min-width: 0;
 }
 
-.app-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 0 16px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 18px;
-}
-
 .top-tabs,
 .tabs.top-tabs {
     display: none !important;
@@ -255,21 +287,6 @@ body {
     text-align: center;
 }
 
-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 30px;
-}
-
-.header-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
 .auth-user {
     color: var(--text-secondary);
     font-size: 0.85rem;
@@ -281,12 +298,6 @@ h1 {
     display: flex;
     align-items: center;
     gap: 10px;
-}
-
-h1 .version {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    font-weight: normal;
 }
 
 .status-badge {
@@ -464,6 +475,13 @@ button.danger:hover {
     white-space: nowrap;
 }
 
+.table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .playlist-table {
     width: 100%;
     border-collapse: collapse;
@@ -633,6 +651,83 @@ button.danger:hover {
     background: rgba(13, 17, 23, 0.35);
 }
 
+#tab-song-migration .card {
+    min-width: 0;
+    overflow: hidden;
+}
+
+#tab-song-migration .details-row > td {
+    min-width: 0;
+}
+
+#tab-song-migration .song-migration-table-scroll > .playlist-table {
+    table-layout: fixed;
+}
+
+#tab-song-migration .song-migration-details-content {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+#tab-song-migration .song-migration-tracks-panel {
+    margin: 0;
+}
+
+#tab-song-migration .song-migration-tracks-panel .table-scroll {
+    margin-top: 0;
+}
+
+#tab-song-migration .song-migration-tracks-table {
+    min-width: 880px;
+}
+
+#tab-song-migration .song-migration-tracks-table .mono {
+    word-break: break-all;
+}
+
+.target-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.target-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.target-item .target-id {
+    font-family:
+        ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", monospace;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.target-source {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.target-remove-btn {
+    margin-left: auto;
+    min-width: 28px;
+    padding: 2px 8px;
+    font-size: 1rem;
+    line-height: 1;
+    border-radius: 6px;
+    background: rgba(248, 81, 73, 0.12);
+    border: 1px solid rgba(248, 81, 73, 0.45);
+    color: var(--error);
+}
+
+.target-remove-btn:hover {
+    background: rgba(248, 81, 73, 0.25);
+}
+
 .details-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -789,7 +884,8 @@ button.danger:hover {
 }
 
 input,
-select {
+select,
+textarea {
     background: var(--bg-tertiary);
     border: 1px solid var(--border);
     color: var(--text-primary);
@@ -799,13 +895,22 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
     outline: none;
     border-color: var(--accent);
 }
 
-input::placeholder {
+input::placeholder,
+textarea::placeholder {
     color: var(--text-secondary);
+}
+
+textarea {
+    width: 100%;
+    resize: vertical;
+    line-height: 1.5;
+    font-family: inherit;
 }
 
 .form-row {
@@ -1040,6 +1145,10 @@ input::placeholder {
 }
 
 @media (max-width: 768px) {
+    .container {
+        padding: 12px;
+    }
+
     .app-shell {
         grid-template-columns: 1fr;
         gap: 12px;
@@ -1048,6 +1157,14 @@ input::placeholder {
     .sidebar {
         position: static;
         max-height: none;
+    }
+
+    .report-issue-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .report-preview-panel textarea {
+        min-height: 360px;
     }
 
     .support-badge {
@@ -1070,6 +1187,43 @@ input::placeholder {
 
 .tab-content.active {
     display: block;
+}
+
+.report-issue-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.95fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.report-issue-panel,
+.report-preview-panel {
+    display: grid;
+    gap: 16px;
+}
+
+.report-issue-panel .form-group,
+.report-preview-panel .form-group {
+    margin-bottom: 0;
+}
+
+.report-issue-panel label,
+.report-preview-panel label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+}
+
+.report-preview-panel textarea {
+    min-height: 520px;
+    font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono",
+        monospace;
+    font-size: 0.84rem;
+}
+
+.report-preview-help {
+    color: var(--text-secondary);
+    font-size: 0.84rem;
 }
 
 /* Utility classes to reduce inline styles in index.html */

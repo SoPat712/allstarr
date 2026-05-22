@@ -19,6 +19,11 @@ public static class InjectedPlaylistItemHelper
         return items.Any(LooksLikeLocalItemMissingGenreMetadata);
     }
 
+    public static bool ContainsLegacyExternalSourceLabels(IEnumerable<Dictionary<string, object?>> items)
+    {
+        return items.Any(LooksLikeLegacyExternalSourceLabeledItem);
+    }
+
     public static bool LooksLikeSyntheticLocalItem(IReadOnlyDictionary<string, object?> item)
     {
         var id = GetString(item, "Id");
@@ -42,9 +47,29 @@ public static class InjectedPlaylistItemHelper
         return !HasNonNullValue(item, "Genres") || !HasNonNullValue(item, "GenreItems");
     }
 
+    public static bool LooksLikeLegacyExternalSourceLabeledItem(IReadOnlyDictionary<string, object?> item)
+    {
+        var id = GetString(item, "Id");
+        if (!NeedsProviderSpecificSourceLabel(id))
+        {
+            return false;
+        }
+
+        var name = GetString(item, "Name");
+        return name?.EndsWith(" [S]", StringComparison.Ordinal) == true ||
+               name?.EndsWith(" [S] [E]", StringComparison.Ordinal) == true;
+    }
+
     private static bool IsExternalItemId(string itemId)
     {
         return itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool NeedsProviderSpecificSourceLabel(string? itemId)
+    {
+        return !string.IsNullOrWhiteSpace(itemId) &&
+               (itemId.StartsWith("ext-deezer-", StringComparison.OrdinalIgnoreCase) ||
+                itemId.StartsWith("ext-qobuz-", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool HasNonNullValue(IReadOnlyDictionary<string, object?> item, string key)

@@ -82,4 +82,39 @@ public class InjectedPlaylistItemHelperTests
 
         Assert.False(InjectedPlaylistItemHelper.LooksLikeLocalItemMissingGenreMetadata(item));
     }
+
+    [Theory]
+    [InlineData("ext-deezer-song-123", "Track [S]")]
+    [InlineData("ext-deezer-song-123", "Track [S] [E]")]
+    [InlineData("ext-qobuz-song-123", "Track [S]")]
+    public void LooksLikeLegacyExternalSourceLabeledItem_ReturnsTrue_ForRelabeledProviders(
+        string id,
+        string name)
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["Id"] = id,
+            ["Name"] = name
+        };
+
+        Assert.True(InjectedPlaylistItemHelper.LooksLikeLegacyExternalSourceLabeledItem(item));
+    }
+
+    [Theory]
+    [InlineData("ext-deezer-song-123", "Track [D]")]
+    [InlineData("ext-qobuz-song-123", "Track [Q]")]
+    [InlineData("ext-squidwtf-song-123", "Track [S]")]
+    [InlineData("local-song-123", "Track [S]")]
+    public void LooksLikeLegacyExternalSourceLabeledItem_ReturnsFalse_ForCurrentLabels(
+        string id,
+        string name)
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["Id"] = id,
+            ["Name"] = name
+        };
+
+        Assert.False(InjectedPlaylistItemHelper.LooksLikeLegacyExternalSourceLabeledItem(item));
+    }
 }

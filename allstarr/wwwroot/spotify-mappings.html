@@ -324,6 +324,71 @@
                 color: var(--text-secondary);
             }
 
+            .target-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .target-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .target-item .badge {
+                min-width: 72px;
+                text-align: center;
+                text-transform: lowercase;
+            }
+
+            .target-source {
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+            }
+
+            .target-empty {
+                color: var(--text-secondary);
+            }
+
+            .target-remove-btn {
+                margin-left: auto;
+                min-width: 28px;
+                padding: 2px 8px;
+                font-size: 1rem;
+                line-height: 1;
+                border-radius: 6px;
+                background: rgba(248, 81, 73, 0.12);
+                border: 1px solid rgba(248, 81, 73, 0.45);
+                color: var(--error);
+                cursor: pointer;
+            }
+
+            .target-remove-btn:hover {
+                background: rgba(248, 81, 73, 0.25);
+            }
+
+            .external-existing-panel {
+                margin-bottom: 16px;
+                padding: 12px;
+                border-radius: 8px;
+                border: 1px solid var(--border);
+                background: rgba(13, 17, 23, 0.35);
+            }
+
+            .external-existing-panel h4 {
+                font-size: 0.85rem;
+                color: var(--text-secondary);
+                margin-bottom: 10px;
+                font-weight: 600;
+            }
+
+            .external-existing-empty {
+                color: var(--text-secondary);
+                font-size: 0.85rem;
+            }
+
             .pagination {
                 display: flex;
                 justify-content: center;
@@ -642,8 +707,13 @@
                     <span class="mono" id="external-map-spotify-id"></span>
                 </div>
 
+                <div class="external-existing-panel" id="external-map-existing-panel">
+                    <h4>Existing external mappings</h4>
+                    <div id="external-map-existing"></div>
+                </div>
+
                 <div class="modal-row">
-                    <label for="external-map-provider">Provider</label>
+                    <label for="external-map-provider">Add or update provider</label>
                     <select id="external-map-provider">
                         <option value="squidwtf">SquidWTF</option>
                         <option value="deezer">Deezer</option>
