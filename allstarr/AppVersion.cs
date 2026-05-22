@@ -9,5 +9,5 @@ public static class AppVersion
     /// <summary>
     /// Current application version.
     /// </summary>
-    public const string Version = "2.0.1";
+    public const string Version = "2.0.2";
 }
