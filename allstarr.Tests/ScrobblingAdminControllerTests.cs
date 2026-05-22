@@ -130,6 +130,24 @@ public class ScrobblingAdminControllerTests
         Assert.DoesNotContain(userToken, payload, StringComparison.Ordinal);
     }
 
+    private const string TestLastFmApiKey = "0123456789abcdef0123456789abcdef";
+    private const string TestLastFmSharedSecret = "fedcba9876543210fedcba9876543210";
+
+    [Fact]
+    public async Task AuthenticateLastFm_LegacyApiKey_ReturnsBadRequest()
+    {
+        var settings = CreateSettings("testuser", "password123");
+        settings.LastFm.ApiKey = LastFmSettings.LegacyJellyfinPluginApiKey;
+        settings.LastFm.SharedSecret = LastFmSettings.LegacyJellyfinPluginSharedSecret;
+
+        var controller = CreateController(
+            settings,
+            new HttpResponseMessage(HttpStatusCode.OK));
+
+        var result = await controller.AuthenticateLastFm();
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
     private static ScrobblingSettings CreateSettings(string? username, string? password)
     {
         return new ScrobblingSettings
@@ -139,8 +157,8 @@ public class ScrobblingAdminControllerTests
             LastFm = new LastFmSettings
             {
                 Enabled = true,
-                ApiKey = "cb3bdcd415fcb40cd572b137b2b255f5",
-                SharedSecret = "3a08f9fad6ddc4c35b0dce0062cecb5e",
+                ApiKey = TestLastFmApiKey,
+                SharedSecret = TestLastFmSharedSecret,
                 SessionKey = string.Empty,
                 Username = username,
                 Password = password
