@@ -594,9 +594,9 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
 
             try
             {
-                return await _fallbackHelper.RaceTopEndpointsAsync(
+                return await _fallbackHelper.RaceTopEndpointsAsync<Song?>(
                     raceCount,
-                    (baseUrl, ct) => FetchSongAsync(baseUrl, externalId, ct),
+                    async (baseUrl, ct) => await FetchSongAsync(baseUrl, externalId, ct),
                     cancellationToken);
             }
             catch (Exception ex)
@@ -608,9 +608,9 @@ public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
             }
         }
 
-        return await _fallbackHelper.TryWithFallbackAsync(
-            baseUrl => FetchSongAsync(baseUrl, externalId, cancellationToken),
-            (Song?)null);
+        return await _fallbackHelper.TryWithFallbackAsync<Song?>(
+            async baseUrl => await FetchSongAsync(baseUrl, externalId, cancellationToken),
+            null);
     }
 
     private async Task<Song> FetchSongAsync(string baseUrl, string externalId, CancellationToken cancellationToken)
