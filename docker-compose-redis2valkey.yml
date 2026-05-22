@@ -207,6 +207,7 @@ services:
       - Scrobbling__LocalTracksEnabled=${SCROBBLING_LOCAL_TRACKS_ENABLED:-false}
       - Scrobbling__SyntheticLocalPlayedSignalEnabled=${SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED:-false}
       - Scrobbling__LastFm__Enabled=${SCROBBLING_LASTFM_ENABLED:-false}
+      # Required when Last.fm is enabled — create at https://www.last.fm/api/account/create
       - Scrobbling__LastFm__ApiKey=${SCROBBLING_LASTFM_API_KEY:-}
       - Scrobbling__LastFm__SharedSecret=${SCROBBLING_LASTFM_SHARED_SECRET:-}
       - Scrobbling__LastFm__SessionKey=${SCROBBLING_LASTFM_SESSION_KEY:-}
