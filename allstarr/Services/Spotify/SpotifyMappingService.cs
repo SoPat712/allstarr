@@ -286,6 +286,65 @@ public class SpotifyMappingService
     }
 
     /// <summary>
+    /// Removes a single external provider mapping for a Spotify track ID.
+    /// Deletes the entire mapping when no external targets remain on an external-only mapping.
+    /// </summary>
+    public async Task<bool> RemoveExternalProviderAsync(string spotifyId, string provider)
+    {
+        if (string.IsNullOrWhiteSpace(spotifyId) || string.IsNullOrWhiteSpace(provider))
+        {
+            return false;
+        }
+
+        var mapping = await GetMappingAsync(spotifyId);
+        if (mapping == null)
+        {
+            return false;
+        }
+
+        var normalizedProvider = provider.Trim().ToLowerInvariant();
+        var removedCount = mapping.ExternalMappings.RemoveAll(m =>
+            string.Equals(m.Provider, normalizedProvider, StringComparison.OrdinalIgnoreCase));
+
+        var removedLegacy =
+            string.Equals(mapping.ExternalProvider, normalizedProvider, StringComparison.OrdinalIgnoreCase);
+        if (removedLegacy)
+        {
+            mapping.ExternalProvider = null;
+            mapping.ExternalId = null;
+            removedCount++;
+        }
+
+        if (removedCount == 0)
+        {
+            return false;
+        }
+
+        EnsureExternalMappingsConsistency(mapping);
+
+        if (mapping.TargetType == "external" &&
+            !mapping.TryGetExternalTarget(preferredProvider: null, out _, out _))
+        {
+            return await DeleteMappingAsync(spotifyId);
+        }
+
+        mapping.UpdatedAt = DateTime.UtcNow;
+        var key = CacheKeyBuilder.BuildSpotifyGlobalMappingKey(spotifyId);
+        var success = await _cache.SetAsync(key, mapping, expiry: null);
+
+        if (success)
+        {
+            await InvalidateAllPlaylistStatsCachesAsync();
+            _logger.LogInformation(
+                "Removed external provider {Provider} from Spotify mapping {SpotifyId}",
+                normalizedProvider,
+                spotifyId);
+        }
+
+        return success;
+    }
+
+    /// <summary>
     /// Gets all Spotify IDs that have mappings.
     /// </summary>
     public async Task<List<string>> GetAllMappingIdsAsync()

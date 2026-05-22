@@ -1,6 +1,10 @@
 // UI updates and DOM manipulation
 
 import { escapeHtml, escapeJs, capitalizeProvider } from "./utils.js";
+import {
+  collectExternalTargets,
+  renderExternalTargetsHtml,
+} from "./mapping-targets.js";
 
 let rowMenuHandlersBound = false;
 let tableRowHandlersBound = false;
@@ -763,7 +767,12 @@ export function updateTrackMappingsUI(data) {
     .map((m) => {
       const typeColor = "var(--success)";
       const typeBadge = `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.8rem;background:${typeColor}20;color:${typeColor};font-weight:500;">external</span>`;
-      const targetDisplay = `<span style="font-family:monospace;font-size:0.85rem;color:var(--success);">${m.externalProvider}/${m.externalId}</span>`;
+      const targets = collectExternalTargets(m);
+      const targetDisplay = renderExternalTargetsHtml(targets, {
+        showRemove: true,
+        playlist: m.playlist,
+        spotifyId: m.spotifyId,
+      });
       const createdDate = m.createdAt
         ? new Date(m.createdAt).toLocaleString()
         : "-";
@@ -771,17 +780,50 @@ export function updateTrackMappingsUI(data) {
       return `
             <tr>
                 <td><strong>${escapeHtml(m.playlist)}</strong></td>
-                <td style="font-family:monospace;font-size:0.85rem;color:var(--text-secondary);">${m.spotifyId}</td>
+                <td style="font-family:monospace;font-size:0.85rem;color:var(--text-secondary);">${escapeHtml(m.spotifyId)}</td>
                 <td>${typeBadge}</td>
                 <td>${targetDisplay}</td>
                 <td style="color:var(--text-secondary);font-size:0.85rem;">${createdDate}</td>
                 <td>
-                    <button class="danger delete-mapping-btn" style="padding:4px 12px;font-size:0.8rem;" data-playlist="${escapeHtml(m.playlist)}" data-spotify-id="${m.spotifyId}">Remove</button>
+                    <button type="button" class="danger delete-mapping-btn" style="padding:4px 12px;font-size:0.8rem;"
+                        data-playlist="${escapeHtml(m.playlist)}" data-spotify-id="${escapeHtml(m.spotifyId)}"
+                        title="Remove all mappings for this track">Remove all</button>
                 </td>
             </tr>
         `;
     })
     .join("");
+
+  bindTrackMappingDeleteHandlers(tbody);
+}
+
+function bindTrackMappingDeleteHandlers(tbody) {
+  tbody.querySelectorAll(".delete-mapping-provider-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const playlist = button.getAttribute("data-playlist");
+      const spotifyId = button.getAttribute("data-spotify-id");
+      const provider = button.getAttribute("data-provider");
+      if (!playlist || !spotifyId || !provider) {
+        return;
+      }
+      window.deleteTrackMapping?.(playlist, spotifyId, provider);
+    });
+  });
+
+  tbody.querySelectorAll(".delete-mapping-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const playlist = button.getAttribute("data-playlist");
+      const spotifyId = button.getAttribute("data-spotify-id");
+      if (!playlist || !spotifyId) {
+        return;
+      }
+      window.deleteTrackMapping?.(playlist, spotifyId);
+    });
+  });
 }
 
 export function updateDownloadsUI(data) {

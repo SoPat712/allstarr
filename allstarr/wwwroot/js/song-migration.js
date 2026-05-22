@@ -138,24 +138,26 @@ function renderNonLocalTracksPanel(tracks) {
   }
 
   return `
-        <div class="details-panel">
-            <table class="playlist-table" style="margin-top:8px;">
-                <thead>
-                    <tr>
-                        <th style="width:40px;">#</th>
-                        <th>Title</th>
-                        <th>Artist</th>
-                        <th>Album</th>
-                        <th>Status</th>
-                        <th>ISRC</th>
-                        <th>Spotify</th>
-                        <th>Duration</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${tracks.map(renderNonLocalTrackRow).join("")}
-                </tbody>
-            </table>
+        <div class="details-panel song-migration-tracks-panel">
+            <div class="table-scroll">
+                <table class="playlist-table song-migration-tracks-table">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;">#</th>
+                            <th>Title</th>
+                            <th>Artist</th>
+                            <th>Album</th>
+                            <th>Status</th>
+                            <th>ISRC</th>
+                            <th>Spotify</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tracks.map(renderNonLocalTrackRow).join("")}
+                    </tbody>
+                </table>
+            </div>
         </div>
     `;
 }

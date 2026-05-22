@@ -109,6 +109,108 @@ function updatePagination(pagination) {
 }
 
 /**
+ * Collects all target IDs for a mapping (local + per-provider external).
+ */
+function getMappingTargets(mapping) {
+  const targets = [];
+  const seenProviders = new Set();
+
+  const addExternal = (provider, externalId, source) => {
+    if (!provider || !externalId) {
+      return;
+    }
+
+    const key = String(provider).toLowerCase();
+    if (seenProviders.has(key)) {
+      return;
+    }
+
+    seenProviders.add(key);
+    targets.push({
+      kind: "external",
+      label: provider,
+      value: externalId,
+      source,
+    });
+  };
+
+  if (mapping.TargetType === "local" && mapping.LocalId) {
+    targets.push({
+      kind: "local",
+      label: "local",
+      value: mapping.LocalId,
+    });
+  }
+
+  const externalMappings = mapping.ExternalMappings || [];
+  for (const ext of externalMappings) {
+    addExternal(
+      ext.Provider ?? ext.provider,
+      ext.ExternalId ?? ext.externalId,
+      ext.Source ?? ext.source,
+    );
+  }
+
+  addExternal(mapping.ExternalProvider, mapping.ExternalId);
+
+  return targets;
+}
+
+/**
+ * Renders target IDs (local Jellyfin ID and/or external provider IDs).
+ */
+function renderMappingTargetsHtml(mapping, options = {}) {
+  const { showRemove = false, kinds = null } = options;
+  let targets = getMappingTargets(mapping);
+  if (Array.isArray(kinds) && kinds.length > 0) {
+    targets = targets.filter((target) => kinds.includes(target.kind));
+  }
+  const escapedSpotifyId = escapeHtml(escapeJs(mapping.SpotifyId || ""));
+  const escapedTitle = escapeHtml(
+    escapeJs(mapping.Metadata?.Title || "this track"),
+  );
+
+  if (targets.length === 0) {
+    return '<span class="mono target-empty">—</span>';
+  }
+
+  return `<div class="target-list">${targets
+    .map((target) => {
+      const sourceHint =
+        target.source && target.kind === "external"
+          ? ` <span class="target-source">${escapeHtml(target.source)}</span>`
+          : "";
+
+      const removeBtn =
+        showRemove && target.kind === "external"
+          ? `<button type="button" class="target-remove-btn"
+                onclick="deleteExternalProvider('${escapedSpotifyId}', '${escapeHtml(escapeJs(target.label))}', '${escapedTitle}')"
+                title="Remove ${escapeHtml(target.label)} mapping">×</button>`
+          : "";
+
+      return `<div class="target-item">
+                <span class="badge ${target.kind}">${escapeHtml(target.label)}</span>
+                <span class="mono">${escapeHtml(target.value)}</span>${sourceHint}
+                ${removeBtn}
+            </div>`;
+    })
+    .join("")}</div>`;
+}
+
+function renderExternalMapExistingHtml(mapping) {
+  const html = renderMappingTargetsHtml(mapping, {
+    showRemove: true,
+    kinds: ["external"],
+  });
+
+  if (html.includes("target-empty")) {
+    return '<p class="external-existing-empty">No external provider mappings yet.</p>';
+  }
+
+  return html;
+}
+
+/**
  * Renders the mappings table
  */
 function renderMappings(mappings) {
@@ -130,11 +232,6 @@ function renderMappings(mappings) {
       const artworkUrl = metadata.ArtworkUrl || "/placeholder.png";
       const title = metadata.Title || "Unknown Track";
       const artist = metadata.Artist || "Unknown Artist";
-      const targetInfo =
-        mapping.TargetType === "local"
-          ? mapping.LocalId
-          : `${mapping.ExternalProvider}:${mapping.ExternalId}`;
-
       const escapedSpotifyId = escapeHtml(escapeJs(mapping.SpotifyId || ""));
       const escapedTitle = escapeHtml(escapeJs(title));
       const escapedArtist = escapeHtml(escapeJs(artist));
@@ -158,7 +255,7 @@ function renderMappings(mappings) {
                     <span class="badge ${mapping.TargetType}">${escapeHtml(mapping.TargetType)}</span>
                 </td>
                 <td>
-                    <span class="mono">${escapeHtml(targetInfo)}</span>
+                    ${renderMappingTargetsHtml(mapping, { showRemove: true })}
                 </td>
                 <td>
                     <span class="badge ${mapping.Source}">${escapeHtml(mapping.Source)}</span>
@@ -198,7 +295,7 @@ function renderMappings(mappings) {
                     <th class="sortable" onclick="sortBy('title')">Track${sortIndicator("title")}</th>
                     <th class="sortable" onclick="sortBy('spotifyid')">Spotify ID${sortIndicator("spotifyid")}</th>
                     <th class="sortable" onclick="sortBy('type')">Type${sortIndicator("type")}</th>
-                    <th>Target ID</th>
+                    <th>Target IDs</th>
                     <th class="sortable" onclick="sortBy('source')">Source${sortIndicator("source")}</th>
                     <th class="sortable" onclick="sortBy('created')">Created${sortIndicator("created")}</th>
                     <th>Actions</th>
@@ -432,7 +529,7 @@ async function saveLocalMap() {
   }
 }
 
-function openExternalMapModal(spotifyId, title, artist) {
+async function openExternalMapModal(spotifyId, title, artist) {
   externalMapContext = { spotifyId, title, artist };
 
   document.getElementById("external-map-title").textContent = title;
@@ -442,7 +539,34 @@ function openExternalMapModal(spotifyId, title, artist) {
   document.getElementById("external-map-id").value = "";
   document.getElementById("external-map-save-btn").disabled = true;
 
+  const existingContainer = document.getElementById("external-map-existing");
+  existingContainer.innerHTML =
+    '<p class="external-existing-empty">Loading existing mappings...</p>';
+
   toggleModal("external-map-modal", true);
+
+  try {
+    const response = await fetch(
+      `/api/admin/spotify/mappings/${encodeURIComponent(spotifyId)}`,
+    );
+    if (response.status === 404) {
+      existingContainer.innerHTML =
+        '<p class="external-existing-empty">No external provider mappings yet.</p>';
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        await readErrorMessage(response, "Failed to load mapping"),
+      );
+    }
+
+    const mapping = await response.json();
+    existingContainer.innerHTML = renderExternalMapExistingHtml(mapping);
+  } catch (error) {
+    console.error("Failed to load mapping for external modal:", error);
+    existingContainer.innerHTML = `<p class="external-existing-empty">${escapeHtml(error.message || "Failed to load existing mappings")}</p>`;
+  }
 }
 
 function closeExternalMapModal() {
@@ -498,8 +622,19 @@ async function saveExternalMap() {
       );
     }
 
-    closeExternalMapModal();
     showToast(`Mapped to external track: ${provider}:${externalId}`, "success");
+    document.getElementById("external-map-id").value = "";
+    validateExternalMapForm();
+
+    const existingContainer = document.getElementById("external-map-existing");
+    const mappingResponse = await fetch(
+      `/api/admin/spotify/mappings/${encodeURIComponent(externalMapContext.spotifyId)}`,
+    );
+    if (mappingResponse.ok) {
+      const mapping = await mappingResponse.json();
+      existingContainer.innerHTML = renderExternalMapExistingHtml(mapping);
+    }
+
     await loadMappings();
   } catch (error) {
     console.error("Error saving external mapping:", error);
@@ -528,17 +663,67 @@ function escapeJs(text) {
 }
 
 /**
- * Deletes a Spotify track mapping
+ * Deletes a single external provider from a Spotify track mapping.
  */
-async function deleteMapping(spotifyId, title) {
-  if (!confirm(`Delete mapping for "${title}"?`)) {
+async function deleteExternalProvider(spotifyId, provider, title) {
+  if (
+    !confirm(`Remove the ${provider} mapping for "${title}"?\n\nOther provider mappings will be kept.`)
+  ) {
     return;
   }
 
   try {
-    const response = await fetch(`/api/admin/spotify/mappings/${spotifyId}`, {
-      method: "DELETE",
-    });
+    const response = await fetch(
+      `/api/admin/spotify/mappings/${encodeURIComponent(spotifyId)}?provider=${encodeURIComponent(provider)}`,
+      { method: "DELETE" },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        await readErrorMessage(response, "Failed to remove provider mapping"),
+      );
+    }
+
+    showToast(`Removed ${provider} mapping for "${title}"`, "success");
+
+    if (
+      externalMapContext &&
+      externalMapContext.spotifyId === spotifyId &&
+      document.getElementById("external-map-modal").classList.contains("active")
+    ) {
+      await openExternalMapModal(
+        externalMapContext.spotifyId,
+        externalMapContext.title,
+        externalMapContext.artist,
+      );
+    }
+
+    await loadMappings();
+  } catch (error) {
+    console.error("Error removing provider mapping:", error);
+    showToast(error.message || "Failed to remove provider mapping", "error");
+  }
+}
+
+/**
+ * Deletes a Spotify track mapping (all targets)
+ */
+async function deleteMapping(spotifyId, title) {
+  if (
+    !confirm(
+      `Delete the entire mapping for "${title}"?\n\nThis removes local and all external provider IDs.`,
+    )
+  ) {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/admin/spotify/mappings/${encodeURIComponent(spotifyId)}`,
+      {
+        method: "DELETE",
+      },
+    );
 
     if (!response.ok) {
       throw new Error(

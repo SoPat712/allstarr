@@ -112,13 +112,16 @@ async function deleteDownload(path) {
   }
 }
 
-async function deleteTrackMapping(playlist, spotifyId) {
-  const confirmMessage = `Remove manual external mapping for ${spotifyId} in playlist "${playlist}"?\n\nThis will:\n• Delete the manual mapping from the cache\n• Allow the track to be matched automatically again\n• The track may be re-matched with potentially better results\n\nThis action cannot be undone.`;
+async function deleteTrackMapping(playlist, spotifyId, provider = null) {
+  const providerLabel = provider ? ` (${provider})` : "";
+  const confirmMessage = provider
+    ? `Remove the ${provider} mapping for ${spotifyId} in playlist "${playlist}"?\n\nOther provider mappings for this track will be kept.`
+    : `Remove all mappings for ${spotifyId} in playlist "${playlist}"?\n\nThis will:\n• Delete the manual mapping from the cache\n• Remove the global Spotify mapping\n• Allow the track to be matched automatically again\n\nThis action cannot be undone.`;
 
   const result = await runAction({
     confirmMessage,
-    task: () => API.deleteTrackMapping(playlist, spotifyId),
-    success: "Mapping removed successfully",
+    task: () => API.deleteTrackMapping(playlist, spotifyId, provider),
+    success: `Mapping${providerLabel} removed successfully`,
     error: (err) => err.message || "Failed to remove mapping",
   });
 

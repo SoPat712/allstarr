@@ -100,9 +100,17 @@ export async function fetchTrackMappings() {
   );
 }
 
-export async function deleteTrackMapping(playlist, spotifyId) {
+export async function deleteTrackMapping(playlist, spotifyId, provider = null) {
+  const params = new URLSearchParams({
+    playlist,
+    spotifyId,
+  });
+  if (provider) {
+    params.append("provider", provider);
+  }
+
   return requestJson(
-    `/api/admin/mappings/tracks?playlist=${encodeURIComponent(playlist)}&spotifyId=${encodeURIComponent(spotifyId)}`,
+    `/api/admin/mappings/tracks?${params.toString()}`,
     { method: "DELETE" },
     "Failed to remove mapping",
   );

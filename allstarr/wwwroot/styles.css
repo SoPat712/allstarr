@@ -475,6 +475,13 @@ button.danger:hover {
     white-space: nowrap;
 }
 
+.table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
 .playlist-table {
     width: 100%;
     border-collapse: collapse;
@@ -642,6 +649,83 @@ button.danger:hover {
     border-radius: 8px;
     border: 1px solid var(--border);
     background: rgba(13, 17, 23, 0.35);
+}
+
+#tab-song-migration .card {
+    min-width: 0;
+    overflow: hidden;
+}
+
+#tab-song-migration .details-row > td {
+    min-width: 0;
+}
+
+#tab-song-migration .song-migration-table-scroll > .playlist-table {
+    table-layout: fixed;
+}
+
+#tab-song-migration .song-migration-details-content {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+#tab-song-migration .song-migration-tracks-panel {
+    margin: 0;
+}
+
+#tab-song-migration .song-migration-tracks-panel .table-scroll {
+    margin-top: 0;
+}
+
+#tab-song-migration .song-migration-tracks-table {
+    min-width: 880px;
+}
+
+#tab-song-migration .song-migration-tracks-table .mono {
+    word-break: break-all;
+}
+
+.target-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.target-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.target-item .target-id {
+    font-family:
+        ui-monospace, Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", monospace;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.target-source {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.target-remove-btn {
+    margin-left: auto;
+    min-width: 28px;
+    padding: 2px 8px;
+    font-size: 1rem;
+    line-height: 1;
+    border-radius: 6px;
+    background: rgba(248, 81, 73, 0.12);
+    border: 1px solid rgba(248, 81, 73, 0.45);
+    color: var(--error);
+}
+
+.target-remove-btn:hover {
+    background: rgba(248, 81, 73, 0.25);
 }
 
 .details-grid {
