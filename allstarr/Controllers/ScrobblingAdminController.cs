@@ -59,8 +59,9 @@ public class ScrobblingAdminController : ControllerBase
                 HasApiKey = hasApiCredentials,
                 HasSessionKey = !string.IsNullOrEmpty(_settings.LastFm.SessionKey),
                 Username = _settings.LastFm.Username,
-                UsingHardcodedCredentials = hasApiCredentials &&
-                    _settings.LastFm.ApiKey == LastFmSettings.DefaultApiKey
+                UsingHardcodedCredentials = LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.LastFm.ApiKey),
+                RequiresOwnApiAccount = hasApiCredentials &&
+                    LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.LastFm.ApiKey)
             },
             ListenBrainz = new
             {
@@ -73,7 +74,7 @@ public class ScrobblingAdminController : ControllerBase
 
     /// <summary>
     /// Authenticate with Last.fm using credentials from .env file.
-    /// Uses hardcoded API credentials from Jellyfin Last.fm plugin for convenience.
+    /// Requires your own Last.fm API application credentials in .env.
     /// </summary>
     [HttpPost("lastfm/authenticate")]
     public async Task<IActionResult> AuthenticateLastFm()
@@ -87,10 +88,23 @@ public class ScrobblingAdminController : ControllerBase
             return BadRequest(new { error = "Username and password must be set in .env file (SCROBBLING_LASTFM_USERNAME and SCROBBLING_LASTFM_PASSWORD)" });
         }
 
-        // Check if API credentials are available
+        if (LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.LastFm.ApiKey))
+        {
+            return BadRequest(new
+            {
+                error = "The built-in Jellyfin Last.fm API key is suspended by Last.fm. " +
+                        "Create your own application at https://www.last.fm/api/account/create, " +
+                        "set SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET, then authenticate again."
+            });
+        }
+
         if (string.IsNullOrEmpty(_settings.LastFm.ApiKey) || string.IsNullOrEmpty(_settings.LastFm.SharedSecret))
         {
-            return BadRequest(new { error = "Last.fm API credentials not configured. This should not happen - please report this bug." });
+            return BadRequest(new
+            {
+                error = "Last.fm API credentials are required. Create an application at https://www.last.fm/api/account/create " +
+                        "and set SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET in your .env file."
+            });
         }
 
         try

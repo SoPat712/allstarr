@@ -225,6 +225,8 @@ Track your listening history to Last.fm and/or ListenBrainz. Allstarr automatica
 | `Scrobbling:Enabled` | Enable scrobbling globally (default: `false`) |
 | `Scrobbling:LocalTracksEnabled` | Enable scrobbling for local library tracks (default: `false`) - See note below |
 | `Scrobbling:LastFm:Enabled` | Enable Last.fm scrobbling (default: `false`) |
+| `Scrobbling:LastFm:ApiKey` | Your Last.fm API key (required when enabled) — [create an app](https://www.last.fm/api/account/create) |
+| `Scrobbling:LastFm:SharedSecret` | Your Last.fm shared secret (required when enabled) |
 | `Scrobbling:LastFm:Username` | Your Last.fm username |
 | `Scrobbling:LastFm:Password` | Your Last.fm password (only used for authentication) |
 | `Scrobbling:LastFm:SessionKey` | Last.fm session key (auto-generated via Web UI) |
@@ -242,11 +244,13 @@ SCROBBLING_ENABLED=true
 # - ListenBrainz: https://github.com/lyarenei/jellyfin-plugin-listenbrainz
 SCROBBLING_LOCAL_TRACKS_ENABLED=false
 
-# Last.fm configuration
+# Last.fm configuration (API key + secret required — shared Jellyfin plugin key is suspended)
 SCROBBLING_LASTFM_ENABLED=true
+SCROBBLING_LASTFM_API_KEY=your-api-key
+SCROBBLING_LASTFM_SHARED_SECRET=your-shared-secret
 SCROBBLING_LASTFM_USERNAME=your-username
 SCROBBLING_LASTFM_PASSWORD=your-password
-# Session key is auto-generated via Web UI
+# Session key is auto-generated via Web UI after you set API credentials
 
 # ListenBrainz configuration
 SCROBBLING_LISTENBRAINZ_ENABLED=true
@@ -258,12 +262,14 @@ SCROBBLING_LISTENBRAINZ_USER_TOKEN=your-token-here
 The easiest way to configure scrobbling is through the Web UI at `http://localhost:5275`:
 
 **Last.fm Setup:**
-1. Navigate to the **Scrobbling** tab
-2. Toggle "Last.fm Enabled" to enable
-3. Click "Edit" next to Username and enter your Last.fm username
-4. Click "Edit" next to Password and enter your Last.fm password
-5. Click "Authenticate & Save" to generate a session key
-6. Restart the container for changes to take effect
+1. Create a Last.fm API account at https://www.last.fm/api/account/create and note the API key and shared secret
+2. Set `SCROBBLING_LASTFM_API_KEY` and `SCROBBLING_LASTFM_SHARED_SECRET` in your `.env` file
+3. Navigate to the **Scrobbling** tab
+4. Toggle "Last.fm Enabled" to enable
+5. Click "Edit" next to Username and enter your Last.fm username
+6. Click "Edit" next to Password and enter your Last.fm password
+7. Click "Authenticate & Save" to generate a session key (must be done again if you change API key)
+8. Restart the container for changes to take effect
 
 **ListenBrainz Setup:**
 1. Get your user token from [ListenBrainz Settings](https://listenbrainz.org/settings/)
@@ -288,8 +294,14 @@ The easiest way to configure scrobbling is through the Web UI at `http://localho
 
 #### Troubleshooting
 
+**Last.fm "API Key Suspended" or "not allowed to make requests":**
+- Last.fm suspended the old shared Jellyfin plugin API key that Allstarr used by default
+- Create your own application at https://www.last.fm/api/account/create
+- Set `SCROBBLING_LASTFM_API_KEY` and `SCROBBLING_LASTFM_SHARED_SECRET` in `.env`, restart, then authenticate again in Admin → Scrobbling
+
 **Last.fm authentication fails:**
 - Verify your username and password are correct
+- Ensure API key and shared secret are set (not empty)
 - Check that there are no extra spaces in your credentials
 - Try re-authenticating via the Web UI
 
