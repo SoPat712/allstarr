@@ -9,7 +9,7 @@ namespace allstarr.Tests;
 public class DownloadsControllerPathSecurityTests
 {
     [Fact]
-    public void DownloadFile_PathTraversalIntoPrefixedSibling_IsRejected()
+    public async Task DownloadFile_PathTraversalIntoPrefixedSibling_IsRejected()
     {
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
@@ -23,7 +23,7 @@ public class DownloadsControllerPathSecurityTests
         try
         {
             var controller = CreateController(downloadsRoot);
-            var result = controller.DownloadFile("../kept-malicious/attack.mp3");
+            var result = await controller.DownloadFile("../kept-malicious/attack.mp3");
 
             var badRequest = Assert.IsType<BadRequestObjectResult>(result);
             Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
@@ -63,7 +63,7 @@ public class DownloadsControllerPathSecurityTests
     }
 
     [Fact]
-    public void DownloadFile_ValidPathInsideKeptFolder_AllowsDownload()
+    public async Task DownloadFile_ValidPathInsideKeptFolder_AllowsDownload()
     {
         var testRoot = CreateTestRoot();
         var downloadsRoot = Path.Combine(testRoot, "downloads");
@@ -76,7 +76,7 @@ public class DownloadsControllerPathSecurityTests
         try
         {
             var controller = CreateController(downloadsRoot);
-            var result = controller.DownloadFile("Artist/track.mp3");
+            var result = await controller.DownloadFile("Artist/track.mp3");
 
             Assert.IsType<FileStreamResult>(result);
         }
@@ -97,7 +97,13 @@ public class DownloadsControllerPathSecurityTests
 
         return new DownloadsController(
             NullLogger<DownloadsController>.Instance,
-            config);
+            config)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
     }
 
     private static string CreateTestRoot()

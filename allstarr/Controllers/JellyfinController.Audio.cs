@@ -1,5 +1,6 @@
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
+using System.Net;
 
 namespace allstarr.Controllers;
 
@@ -193,21 +194,73 @@ public partial class JellyfinController
         }
         catch (Exception ex)
         {
-            if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
-            {
-                _logger.LogError("Failed to stream external song {Provider}:{ExternalId}: {StatusCode}: {ReasonPhrase}",
-                    provider,
-                    externalId,
-                    (int)httpRequestException.StatusCode.Value,
-                    httpRequestException.StatusCode.Value);
-                _logger.LogDebug(ex, "Detailed streaming failure for external song {Provider}:{ExternalId}", provider, externalId);
-            }
-            else
-            {
-                _logger.LogError(ex, "Failed to stream external song {Provider}:{ExternalId}", provider, externalId);
-            }
-            return StatusCode(500, new { error = "Streaming failed" });
+            return HandleExternalStreamFailure(provider, externalId, ex);
         }
+    }
+
+    private IActionResult HandleExternalStreamFailure(string provider, string externalId, Exception ex)
+    {
+        if (HttpContext.RequestAborted.IsCancellationRequested && ex is OperationCanceledException)
+        {
+            _logger.LogInformation("Client aborted external stream request for {Provider}:{ExternalId}", provider, externalId);
+            return StatusCode(499);
+        }
+
+        var (statusCode, errorMessage) = MapExternalStreamException(ex);
+
+        if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+        {
+            _logger.LogError("Failed to stream external song {Provider}:{ExternalId}: responding {StatusCode}; upstream returned {UpstreamStatus}: {ReasonPhrase}",
+                provider,
+                externalId,
+                statusCode,
+                (int)httpRequestException.StatusCode.Value,
+                httpRequestException.StatusCode.Value);
+            _logger.LogDebug(ex, "Detailed streaming failure for external song {Provider}:{ExternalId}", provider, externalId);
+        }
+        else
+        {
+            _logger.LogError(ex, "Failed to stream external song {Provider}:{ExternalId}: responding {StatusCode}",
+                provider, externalId, statusCode);
+        }
+
+        return StatusCode(statusCode, new { error = errorMessage });
+    }
+
+    private static (int statusCode, string errorMessage) MapExternalStreamException(Exception ex)
+    {
+        if (ex is TimeoutException || ex is TaskCanceledException)
+        {
+            return (StatusCodes.Status504GatewayTimeout, "External provider timed out");
+        }
+
+        if (ex is HttpRequestException httpRequestException)
+        {
+            return httpRequestException.StatusCode switch
+            {
+                HttpStatusCode.NotFound => (StatusCodes.Status404NotFound, "External track not found"),
+                HttpStatusCode.TooManyRequests => (StatusCodes.Status503ServiceUnavailable, "External provider is rate limiting requests"),
+                HttpStatusCode.BadGateway or
+                HttpStatusCode.ServiceUnavailable or
+                HttpStatusCode.GatewayTimeout or
+                HttpStatusCode.InternalServerError => (StatusCodes.Status503ServiceUnavailable, "External provider is unavailable"),
+                _ => (StatusCodes.Status502BadGateway, "External provider request failed")
+            };
+        }
+
+        if (ex is InvalidOperationException invalidOperationException &&
+            invalidOperationException.Message.Contains("endpoints", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status503ServiceUnavailable, "External provider has no healthy endpoints");
+        }
+
+        if (ex.Message.Contains("endpoints failed", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("No SquidWTF endpoints", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status503ServiceUnavailable, "External provider has no healthy endpoints");
+        }
+
+        return (StatusCodes.Status502BadGateway, "External stream failed");
     }
 
     /// <summary>

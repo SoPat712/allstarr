@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Filters;
 using allstarr.Services.Admin;
+using allstarr.Services.Lyrics;
 
 namespace allstarr.Controllers;
 
@@ -9,15 +10,20 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public class DownloadsController : ControllerBase
 {
+    private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a", ".opus"];
+
     private readonly ILogger<DownloadsController> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IKeptLyricsSidecarService? _keptLyricsSidecarService;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IKeptLyricsSidecarService? keptLyricsSidecarService = null)
     {
         _logger = logger;
         _configuration = configuration;
+        _keptLyricsSidecarService = keptLyricsSidecarService;
     }
 
     [HttpGet("downloads")]
@@ -36,10 +42,8 @@ public class DownloadsController : ControllerBase
             long totalSize = 0;
 
             // Recursively get all audio files from kept folder
-            var audioExtensions = new[] { ".flac", ".mp3", ".m4a", ".opus" };
-
             var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
-                .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Where(IsSupportedAudioFile)
                 .ToList();
 
             foreach (var filePath in allFiles)
@@ -112,6 +116,11 @@ public class DownloadsController : ControllerBase
             }
 
             System.IO.File.Delete(fullPath);
+            var sidecarPath = _keptLyricsSidecarService?.GetSidecarPath(fullPath) ?? Path.ChangeExtension(fullPath, ".lrc");
+            if (System.IO.File.Exists(sidecarPath))
+            {
+                System.IO.File.Delete(sidecarPath);
+            }
 
             // Clean up empty directories (Album folder, then Artist folder if empty)
             var directory = Path.GetDirectoryName(fullPath);
@@ -154,14 +163,19 @@ public class DownloadsController : ControllerBase
                 return Ok(new { success = true, deletedCount = 0, message = "No kept downloads found" });
             }
 
-            var audioExtensions = new[] { ".flac", ".mp3", ".m4a", ".opus" };
             var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
-                .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Where(IsSupportedAudioFile)
                 .ToList();
 
             foreach (var filePath in allFiles)
             {
                 System.IO.File.Delete(filePath);
+            }
+
+            var sidecarFiles = Directory.GetFiles(keptPath, "*.lrc", SearchOption.AllDirectories);
+            foreach (var sidecarFile in sidecarFiles)
+            {
+                System.IO.File.Delete(sidecarFile);
             }
 
             // Clean up empty directories under kept root (deepest first)
@@ -194,7 +208,7 @@ public class DownloadsController : ControllerBase
     /// Downloads a specific file from the kept folder
     /// </summary>
     [HttpGet("downloads/file")]
-    public IActionResult DownloadFile([FromQuery] string path)
+    public async Task<IActionResult> DownloadFile([FromQuery] string path)
     {
         try
         {
@@ -216,8 +230,16 @@ public class DownloadsController : ControllerBase
             }
 
             var fileName = Path.GetFileName(fullPath);
-            var fileStream = System.IO.File.OpenRead(fullPath);
+            if (IsSupportedAudioFile(fullPath))
+            {
+                var sidecarPath = await EnsureLyricsSidecarIfPossibleAsync(fullPath, HttpContext.RequestAborted);
+                if (System.IO.File.Exists(sidecarPath))
+                {
+                    return await CreateSingleTrackArchiveAsync(fullPath, sidecarPath, fileName);
+                }
+            }
 
+            var fileStream = System.IO.File.OpenRead(fullPath);
             return File(fileStream, "application/octet-stream", fileName);
         }
         catch (Exception ex)
@@ -232,7 +254,7 @@ public class DownloadsController : ControllerBase
     /// Downloads all kept files as a zip archive
     /// </summary>
     [HttpGet("downloads/all")]
-    public IActionResult DownloadAllFiles()
+    public async Task<IActionResult> DownloadAllFiles()
     {
         try
         {
@@ -243,9 +265,8 @@ public class DownloadsController : ControllerBase
                 return NotFound(new { error = "No kept files found" });
             }
 
-            var audioExtensions = new[] { ".flac", ".mp3", ".m4a", ".opus" };
             var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
-                .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Where(IsSupportedAudioFile)
                 .ToList();
 
             if (allFiles.Count == 0)
@@ -259,14 +280,18 @@ public class DownloadsController : ControllerBase
             var memoryStream = new MemoryStream();
             using (var archive = new System.IO.Compression.ZipArchive(memoryStream, System.IO.Compression.ZipArchiveMode.Create, true))
             {
+                var addedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var filePath in allFiles)
                 {
                     var relativePath = Path.GetRelativePath(keptPath, filePath);
-                    var entry = archive.CreateEntry(relativePath, System.IO.Compression.CompressionLevel.NoCompression);
+                    await AddFileToArchiveAsync(archive, filePath, relativePath, addedEntries);
 
-                    using var entryStream = entry.Open();
-                    using var fileStream = System.IO.File.OpenRead(filePath);
-                    fileStream.CopyTo(entryStream);
+                    var sidecarPath = await EnsureLyricsSidecarIfPossibleAsync(filePath, HttpContext.RequestAborted);
+                    if (System.IO.File.Exists(sidecarPath))
+                    {
+                        var sidecarRelativePath = Path.GetRelativePath(keptPath, sidecarPath);
+                        await AddFileToArchiveAsync(archive, sidecarPath, sidecarRelativePath, addedEntries);
+                    }
                 }
             }
 
@@ -328,6 +353,54 @@ public class DownloadsController : ControllerBase
         return OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+    }
+
+    private async Task<string> EnsureLyricsSidecarIfPossibleAsync(string audioFilePath, CancellationToken cancellationToken)
+    {
+        var sidecarPath = _keptLyricsSidecarService?.GetSidecarPath(audioFilePath) ?? Path.ChangeExtension(audioFilePath, ".lrc");
+        if (System.IO.File.Exists(sidecarPath) || _keptLyricsSidecarService == null)
+        {
+            return sidecarPath;
+        }
+
+        var generatedSidecar = await _keptLyricsSidecarService.EnsureSidecarAsync(audioFilePath, cancellationToken: cancellationToken);
+        return generatedSidecar ?? sidecarPath;
+    }
+
+    private async Task<IActionResult> CreateSingleTrackArchiveAsync(string audioFilePath, string sidecarPath, string fileName)
+    {
+        var archiveStream = new MemoryStream();
+        using (var archive = new System.IO.Compression.ZipArchive(archiveStream, System.IO.Compression.ZipArchiveMode.Create, true))
+        {
+            await AddFileToArchiveAsync(archive, audioFilePath, Path.GetFileName(audioFilePath), null);
+            await AddFileToArchiveAsync(archive, sidecarPath, Path.GetFileName(sidecarPath), null);
+        }
+
+        archiveStream.Position = 0;
+        var downloadName = $"{Path.GetFileNameWithoutExtension(fileName)}.zip";
+        return File(archiveStream, "application/zip", downloadName);
+    }
+
+    private static async Task AddFileToArchiveAsync(
+        System.IO.Compression.ZipArchive archive,
+        string filePath,
+        string entryPath,
+        HashSet<string>? addedEntries)
+    {
+        if (addedEntries != null && !addedEntries.Add(entryPath))
+        {
+            return;
+        }
+
+        var entry = archive.CreateEntry(entryPath, System.IO.Compression.CompressionLevel.NoCompression);
+        await using var entryStream = entry.Open();
+        await using var fileStream = System.IO.File.OpenRead(filePath);
+        await fileStream.CopyToAsync(entryStream);
+    }
+
+    private static bool IsSupportedAudioFile(string path)
+    {
+        return AudioExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
     }
 
     /// <summary>

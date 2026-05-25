@@ -40,13 +40,22 @@ public class ScrobblingSettings
 /// </summary>
 public class LastFmSettings
 {
-    // These defaults match the Jellyfin Last.fm plugin credentials.
-    // Stored base64-encoded to avoid plain-text source exposure.
-    private const string DefaultApiKeyBase64 = "Y2IzYmRjZDQxNWZjYjQwY2Q1NzJiMTM3YjJiMjU1ZjU=";
-    private const string DefaultSharedSecretBase64 = "M2EwOGY5ZmFkNmRkYzRjMzViMGRjZTAwNjJjZWNiNWU=";
+    // Legacy Jellyfin Last.fm plugin credentials (suspended by Last.fm — do not use).
+    private const string LegacyJellyfinPluginApiKeyBase64 = "Y2IzYmRjZDQxNWZjYjQwY2Q1NzJiMTM3YjJiMjU1ZjU=";
+    private const string LegacyJellyfinPluginSharedSecretBase64 = "M2EwOGY5ZmFkNmRkYzRjMzViMGRjZTAwNjJjZWNiNWU=";
 
-    public static string DefaultApiKey => DecodeBase64(DefaultApiKeyBase64);
-    public static string DefaultSharedSecret => DecodeBase64(DefaultSharedSecretBase64);
+    public static string LegacyJellyfinPluginApiKey => DecodeBase64(LegacyJellyfinPluginApiKeyBase64);
+    public static string LegacyJellyfinPluginSharedSecret => DecodeBase64(LegacyJellyfinPluginSharedSecretBase64);
+
+    [Obsolete("Use LegacyJellyfinPluginApiKey. The shared Jellyfin plugin key is suspended by Last.fm.")]
+    public static string DefaultApiKey => LegacyJellyfinPluginApiKey;
+
+    [Obsolete("Use LegacyJellyfinPluginSharedSecret.")]
+    public static string DefaultSharedSecret => LegacyJellyfinPluginSharedSecret;
+
+    public static bool IsLegacyJellyfinPluginApiKey(string? apiKey) =>
+        !string.IsNullOrEmpty(apiKey) &&
+        string.Equals(apiKey, LegacyJellyfinPluginApiKey, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Whether Last.fm scrobbling is enabled.
@@ -54,18 +63,15 @@ public class LastFmSettings
     public bool Enabled { get; set; }
 
     /// <summary>
-    /// Last.fm API key (32-character hex string).
-    /// Uses hardcoded credentials from Jellyfin Last.fm plugin for convenience.
-    /// Users can override by setting SCROBBLING_LASTFM_API_KEY in .env
+    /// Last.fm API key (32-character hex string). Required when Last.fm is enabled.
+    /// Create an application at https://www.last.fm/api/account/create
     /// </summary>
-    public string ApiKey { get; set; } = DefaultApiKey;
+    public string ApiKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// Last.fm shared secret (32-character hex string).
-    /// Uses hardcoded credentials from Jellyfin Last.fm plugin for convenience.
-    /// Users can override by setting SCROBBLING_LASTFM_SHARED_SECRET in .env
+    /// Last.fm shared secret (32-character hex string). Required when Last.fm is enabled.
     /// </summary>
-    public string SharedSecret { get; set; } = DefaultSharedSecret;
+    public string SharedSecret { get; set; } = string.Empty;
 
     /// <summary>
     /// Last.fm session key (obtained via Mobile Authentication).

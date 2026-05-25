@@ -47,6 +47,7 @@ public partial class JellyfinController : ControllerBase
     private readonly LyricsPlusService? _lyricsPlusService;
     private readonly LrclibService? _lrclibService;
     private readonly LyricsOrchestrator? _lyricsOrchestrator;
+    private readonly IKeptLyricsSidecarService? _keptLyricsSidecarService;
     private readonly ScrobblingOrchestrator? _scrobblingOrchestrator;
     private readonly ScrobblingHelper? _scrobblingHelper;
     private readonly OdesliService _odesliService;
@@ -77,6 +78,7 @@ public partial class JellyfinController : ControllerBase
         LyricsPlusService? lyricsPlusService = null,
         LrclibService? lrclibService = null,
         LyricsOrchestrator? lyricsOrchestrator = null,
+        IKeptLyricsSidecarService? keptLyricsSidecarService = null,
         ScrobblingOrchestrator? scrobblingOrchestrator = null,
         ScrobblingHelper? scrobblingHelper = null)
     {
@@ -98,6 +100,7 @@ public partial class JellyfinController : ControllerBase
         _lyricsPlusService = lyricsPlusService;
         _lrclibService = lrclibService;
         _lyricsOrchestrator = lyricsOrchestrator;
+        _keptLyricsSidecarService = keptLyricsSidecarService;
         _scrobblingOrchestrator = scrobblingOrchestrator;
         _scrobblingHelper = scrobblingHelper;
         _odesliService = odesliService;
@@ -817,9 +820,14 @@ public partial class JellyfinController : ControllerBase
     {
         try
         {
-            var (itemResult, statusCode) = await _proxyService.GetJsonAsyncInternal($"Items/{itemId}");
+            var (itemResult, statusCode) = await _proxyService.GetJsonAsync($"Items/{itemId}", null, Request.Headers);
             if (itemResult == null || statusCode != 200)
             {
+                _logger.LogDebug(
+                    "Skipping Jellyfin {ImageType} image tag resolution for Spotify playlist {PlaylistId}: upstream returned {StatusCode}",
+                    imageType,
+                    itemId,
+                    statusCode);
                 return null;
             }
 

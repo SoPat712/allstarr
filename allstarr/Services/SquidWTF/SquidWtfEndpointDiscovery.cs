@@ -6,9 +6,9 @@ public static class SquidWtfEndpointDiscovery
 {
     public static readonly IReadOnlyList<string> SourceUrls = new[]
     {
+        "https://tidal-uptime.geeked.wtf/",
         "https://tidal-uptime.jiffy-puffs-1j.workers.dev/",
-        "https://tidal-uptime.props-76styles.workers.dev/",
-        "https://tidal-uptime.geeked.wtf/"
+        "https://tidal-uptime.props-76styles.workers.dev/"
     };
 
     public static async Task<SquidWtfEndpointCatalog> DiscoverAsync(CancellationToken cancellationToken = default)
@@ -24,8 +24,12 @@ public static class SquidWtfEndpointDiscovery
         {
             try
             {
+                Console.WriteLine($"Loading SquidWTF uptime feed: {sourceUrl}");
                 var json = await httpClient.GetStringAsync(sourceUrl, cancellationToken);
-                feeds.Add(ParseFeed(json));
+                var feed = ParseFeed(json);
+                feeds.Add(feed);
+                Console.WriteLine(
+                    $"Loaded SquidWTF uptime feed {sourceUrl}: api={feed.ApiUrls.Count}, streaming={feed.StreamingUrls.Count}, down={feed.DownUrls.Count}, lastUpdated={feed.LastUpdated:O}");
             }
             catch (Exception ex)
             {
@@ -35,7 +39,9 @@ public static class SquidWtfEndpointDiscovery
 
         if (feeds.Count == 0)
         {
-            throw new InvalidOperationException("Could not load SquidWTF endpoint feeds from any source URL.");
+            Console.WriteLine(
+                "⚠️ No SquidWTF uptime feeds could be loaded. Starting with SquidWTF external features unavailable; local Jellyfin content will still work.");
+            return new SquidWtfEndpointCatalog(new List<string>(), new List<string>());
         }
 
         var orderedFeeds = feeds
@@ -61,12 +67,12 @@ public static class SquidWtfEndpointDiscovery
 
         if (apiUrls.Count == 0)
         {
-            throw new InvalidOperationException("SquidWTF endpoint feed returned zero API endpoints.");
+            Console.WriteLine("⚠️ SquidWTF uptime feeds returned zero API endpoints.");
         }
 
         if (streamingUrls.Count == 0)
         {
-            throw new InvalidOperationException("SquidWTF endpoint feed returned zero streaming endpoints.");
+            Console.WriteLine("⚠️ SquidWTF uptime feeds returned zero streaming endpoints.");
         }
 
         Console.WriteLine($"Loaded SquidWTF endpoints from uptime feeds: api={apiUrls.Count}, streaming={streamingUrls.Count}");

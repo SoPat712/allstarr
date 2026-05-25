@@ -22,9 +22,10 @@ public class LastFmScrobblingService : IScrobblingService
     private readonly ILogger<LastFmScrobblingService> _logger;
     
     public string ServiceName => "Last.fm";
-    public bool IsEnabled => _settings.Enabled && 
-                             !string.IsNullOrEmpty(_settings.ApiKey) && 
-                             !string.IsNullOrEmpty(_settings.SharedSecret) && 
+    public bool IsEnabled => _settings.Enabled &&
+                             !string.IsNullOrEmpty(_settings.ApiKey) &&
+                             !string.IsNullOrEmpty(_settings.SharedSecret) &&
+                             !LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.ApiKey) &&
                              !string.IsNullOrEmpty(_settings.SessionKey);
     
     public LastFmScrobblingService(
@@ -37,10 +38,31 @@ public class LastFmScrobblingService : IScrobblingService
         _httpClient = httpClientFactory.CreateClient("LastFm");
         _logger = logger;
         
-        if (IsEnabled)
+        if (_settings.Enabled)
         {
-            _logger.LogInformation("🎵 Last.fm scrobbling enabled for user: {Username}", 
-                _settings.Username ?? "Unknown");
+            if (LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.ApiKey))
+            {
+                _logger.LogError(
+                    "Last.fm is enabled but uses the suspended shared Jellyfin plugin API key. " +
+                    "Register your own app at https://www.last.fm/api/account/create, set " +
+                    "SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET, then re-authenticate in Admin → Scrobbling.");
+            }
+            else if (string.IsNullOrEmpty(_settings.ApiKey) || string.IsNullOrEmpty(_settings.SharedSecret))
+            {
+                _logger.LogError(
+                    "Last.fm is enabled but API credentials are missing. Set SCROBBLING_LASTFM_API_KEY and " +
+                    "SCROBBLING_LASTFM_SHARED_SECRET from https://www.last.fm/api/account/create");
+            }
+            else if (string.IsNullOrEmpty(_settings.SessionKey))
+            {
+                _logger.LogWarning(
+                    "Last.fm API credentials are set but SCROBBLING_LASTFM_SESSION_KEY is missing — authenticate in Admin → Scrobbling");
+            }
+            else
+            {
+                _logger.LogInformation("🎵 Last.fm scrobbling enabled for user: {Username}",
+                    _settings.Username ?? "Unknown");
+            }
         }
     }
     
@@ -340,7 +362,12 @@ public class LastFmScrobblingService : IScrobblingService
                 {
                     _logger.LogError("❌ Last.fm session key is invalid - please re-authenticate");
                 }
-                
+
+                if (IsSuspendedApiKeyError(errorMessage))
+                {
+                    LogSuspendedApiKeyGuidance();
+                }
+
                 return ScrobbleResult.CreateError(errorMessage, errorCode, shouldRetry);
             }
             
@@ -387,7 +414,12 @@ public class LastFmScrobblingService : IScrobblingService
                 var errorCode = int.Parse(errorElement?.Attribute("code")?.Value ?? "0");
                 var errorMessage = errorElement?.Value ?? "Unknown error";
                 var shouldRetry = errorCode == 11 || errorCode == 16;
-                
+
+                if (IsSuspendedApiKeyError(errorMessage))
+                {
+                    LogSuspendedApiKeyGuidance();
+                }
+
                 return Enumerable.Repeat(ScrobbleResult.CreateError(errorMessage, errorCode, shouldRetry), expectedCount).ToList();
             }
             
@@ -453,6 +485,18 @@ public class LastFmScrobblingService : IScrobblingService
         
         return result;
     }
-    
+
+    private static bool IsSuspendedApiKeyError(string errorMessage) =>
+        errorMessage.Contains("suspended", StringComparison.OrdinalIgnoreCase) ||
+        errorMessage.Contains("not allowed to make requests", StringComparison.OrdinalIgnoreCase);
+
+    private void LogSuspendedApiKeyGuidance()
+    {
+        _logger.LogError(
+            "Last.fm rejected requests because the API key is suspended. Register your own app at " +
+            "https://www.last.fm/api/account/create, set SCROBBLING_LASTFM_API_KEY and " +
+            "SCROBBLING_LASTFM_SHARED_SECRET, restart Allstarr, then re-authenticate in Admin → Scrobbling.");
+    }
+
     #endregion
 }

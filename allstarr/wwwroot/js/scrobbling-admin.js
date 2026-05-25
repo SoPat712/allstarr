@@ -58,7 +58,10 @@ function parseBoolean(value) {
 
 async function loadScrobblingConfig() {
   try {
-    const data = await API.fetchConfig();
+    const [data, status] = await Promise.all([
+      API.fetchConfig(),
+      API.fetchScrobblingStatus(),
+    ]);
 
     document.getElementById("scrobbling-enabled-value").textContent = data
       .scrobbling.enabled
@@ -118,10 +121,18 @@ async function loadScrobblingConfig() {
     const hasSessionKey =
       sessionKey && sessionKey !== "(not set)" && sessionKey.length > 0;
 
-    let status = "";
-    if (data.scrobbling.lastFm.enabled && hasSessionKey) {
-      status =
+    const lastFmStatus = status?.lastFm;
+    const usingLegacyKey = lastFmStatus?.usingHardcodedCredentials === true;
+    let statusHtml = "";
+    if (usingLegacyKey) {
+      statusHtml =
+        '<span style="color: var(--error);">✗ Suspended API key — set SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET in .env</span>';
+    } else if (data.scrobbling.lastFm.enabled && hasApiKey && hasSecret && hasSessionKey) {
+      statusHtml =
         '<span style="color: var(--success);">✓ Configured & Enabled</span>';
+    } else if (data.scrobbling.lastFm.enabled && hasSessionKey && (!hasApiKey || !hasSecret)) {
+      statusHtml =
+        '<span style="color: var(--error);">✗ Missing API key/secret in .env — add SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET</span>';
     } else if (
       hasApiKey &&
       hasSecret &&
@@ -129,18 +140,18 @@ async function loadScrobblingConfig() {
       hasPassword &&
       !hasSessionKey
     ) {
-      status =
+      statusHtml =
         '<span style="color: var(--warning);">⚠️ Ready to Authenticate</span>';
     } else if (hasApiKey && hasSecret && (!hasUsername || !hasPassword)) {
-      status =
+      statusHtml =
         '<span style="color: var(--warning);">⚠️ Needs Username & Password</span>';
     } else if (!hasApiKey || !hasSecret) {
-      status =
-        '<span style="color: var(--success);">✓ Using hardcoded credentials</span>';
+      statusHtml =
+        '<span style="color: var(--warning);">⚠️ Set SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET in .env</span>';
     } else {
-      status = '<span style="color: var(--muted);">○ Not Configured</span>';
+      statusHtml = '<span style="color: var(--muted);">○ Not Configured</span>';
     }
-    document.getElementById("lastfm-status-value").innerHTML = status;
+    document.getElementById("lastfm-status-value").innerHTML = statusHtml;
 
     document.getElementById("listenbrainz-enabled-value").textContent = data
       .scrobbling.listenBrainz.enabled

@@ -12,16 +12,13 @@ using allstarr.Services.Lyrics;
 using allstarr.Services.Scrobbling;
 using allstarr.Middleware;
 using allstarr.Filters;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Http;
 using System.Net;
+using System.IO;
 
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment, Console.Out);
-
-// Discover SquidWTF API and streaming endpoints from uptime feeds.
-var squidWtfEndpointCatalog = await SquidWtfEndpointDiscovery.DiscoverAsync();
-var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
-var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
 
 // Configure forwarded headers for reverse proxy support (nginx, etc.)
 // Trust should be explicit: set ForwardedHeaders__KnownProxies and/or
@@ -161,6 +158,7 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("SquidWTF");
 builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 {
     options.HttpMessageHandlerBuilderActions.Add(builder =>
@@ -198,6 +196,11 @@ builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
+var dataProtectionKeysDirectory = new DirectoryInfo("/app/cache/data-protection");
+dataProtectionKeysDirectory.Create();
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(dataProtectionKeysDirectory)
+    .SetApplicationName("allstarr-admin");
 
 // Exception handling
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
@@ -526,6 +529,13 @@ else
     enableExternalPlaylists = builder.Configuration.GetValue<bool>("Subsonic:EnableExternalPlaylists", true);
 }
 
+// Discover SquidWTF endpoints only when SquidWTF is selected as primary music service.
+var squidWtfEndpointCatalog = musicService == MusicService.SquidWTF
+    ? await SquidWtfEndpointDiscovery.DiscoverAsync()
+    : new SquidWtfEndpointCatalog(new List<string>(), new List<string>());
+var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
+var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
+
 // Business services - shared across backends
 builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<RedisCacheService>();
@@ -633,14 +643,17 @@ builder.Services.AddSingleton<EndpointBenchmarkService>();
 
 builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
 builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
-builder.Services.AddSingleton<IStartupValidator>(sp =>
-    new SquidWTFStartupValidator(
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-        sp.GetRequiredService<IHttpClientFactory>().CreateClient(),
-        squidWtfApiUrls,
-        squidWtfStreamingUrls,
-        sp.GetRequiredService<EndpointBenchmarkService>(),
-        sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
+if (musicService == MusicService.SquidWTF)
+{
+    builder.Services.AddSingleton<IStartupValidator>(sp =>
+        new SquidWTFStartupValidator(
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
+            squidWtfApiUrls,
+            squidWtfStreamingUrls,
+            sp.GetRequiredService<EndpointBenchmarkService>(),
+            sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
+}
 builder.Services.AddSingleton<IStartupValidator, LyricsStartupValidator>();
 
 // Register orchestrator as hosted service
@@ -712,6 +725,7 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 
 // Register Lyrics Orchestrator (manages priority-based lyrics fetching)
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
+builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService, allstarr.Services.Lyrics.KeptLyricsSidecarService>();
 
 // Register Spotify mapping service (global Spotify ID → Local/External mappings)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>();
@@ -945,7 +959,7 @@ app.UseMiddleware<BotProbeBlockMiddleware>();
 // Request logging middleware (when DEBUG_LOG_ALL_REQUESTS=true)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-app.UseExceptionHandler(_ => { }); // Global exception handler
+app.UseExceptionHandler(); // Use registered GlobalExceptionHandler
 
 // Enable response compression EARLY in the pipeline
 app.UseResponseCompression();

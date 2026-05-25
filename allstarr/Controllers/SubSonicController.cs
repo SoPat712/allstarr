@@ -173,8 +173,35 @@ public class SubsonicController : ControllerBase
         }
         catch (Exception ex)
         {
+            if (HttpContext.RequestAborted.IsCancellationRequested && ex is OperationCanceledException)
+            {
+                _logger.LogInformation("Client aborted external Subsonic stream request for {Id}", id);
+                return StatusCode(499);
+            }
+
+            if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+            {
+                var statusCode = httpRequestException.StatusCode == System.Net.HttpStatusCode.NotFound ? 404 : 503;
+                _logger.LogError(ex, "Failed to stream external Subsonic item {Id}: responding {StatusCode}; upstream returned {UpstreamStatus}",
+                    id, statusCode, (int)httpRequestException.StatusCode.Value);
+                return StatusCode(statusCode, new { error = statusCode == 404 ? "External track not found" : "External provider unavailable" });
+            }
+
+            if (ex is TimeoutException || ex is TaskCanceledException)
+            {
+                _logger.LogError(ex, "Timed out streaming external Subsonic item {Id}", id);
+                return StatusCode(504, new { error = "External provider timed out" });
+            }
+
+            if (ex is InvalidOperationException invalidOperationException &&
+                invalidOperationException.Message.Contains("endpoints", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError(ex, "No healthy endpoints available for external Subsonic item {Id}", id);
+                return StatusCode(503, new { error = "External provider has no healthy endpoints" });
+            }
+
             _logger.LogError(ex, "Failed to stream external Subsonic item {Id}", id);
-            return StatusCode(500, new { error = "Failed to stream" });
+            return StatusCode(502, new { error = "External stream failed" });
         }
     }
 

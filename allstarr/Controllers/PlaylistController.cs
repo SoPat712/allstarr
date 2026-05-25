@@ -9,6 +9,7 @@ using allstarr.Services.Admin;
 using allstarr.Services;
 using allstarr.Filters;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Controllers;
 
@@ -27,6 +28,7 @@ public class PlaylistController : ControllerBase
     private readonly HttpClient _jellyfinHttpClient;
     private readonly AdminHelperService _helperService;
     private readonly IServiceProvider _serviceProvider;
+    private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
 
     public PlaylistController(
@@ -37,6 +39,7 @@ public class PlaylistController : ControllerBase
         SpotifyMappingService mappingService,
         RedisCacheService cache,
         IHttpClientFactory httpClientFactory,
+        IConfiguration configuration,
         AdminHelperService helperService,
         IServiceProvider serviceProvider,
         SpotifyTrackMatchingService? matchingService = null)
@@ -49,6 +52,7 @@ public class PlaylistController : ControllerBase
         _mappingService = mappingService;
         _cache = cache;
         _jellyfinHttpClient = httpClientFactory.CreateClient();
+        _configuration = configuration;
         _helperService = helperService;
         _serviceProvider = serviceProvider;
     }
@@ -753,7 +757,7 @@ public class PlaylistController : ControllerBase
                             if (string.IsNullOrWhiteSpace(externalProvider) &&
                                 globalMappingExt?.TargetType == "external")
                             {
-                                externalProvider = NormalizeExternalProviderForDisplay(globalMappingExt.ExternalProvider);
+                                externalProvider = ResolvePreferredExternalProvider(globalMappingExt);
                             }
 
                             // Fallback 3: derive provider from external item ID prefix (ext-{provider}-...)
@@ -864,7 +868,7 @@ public class PlaylistController : ControllerBase
                         else if (globalMapping.TargetType == "external")
                         {
                             isLocal = false;
-                            externalProvider = NormalizeExternalProviderForDisplay(globalMapping.ExternalProvider);
+                            externalProvider = ResolvePreferredExternalProvider(globalMapping);
                             isManualMapping = true;
                             manualMappingType = "external";
                             manualMappingId = globalMapping.ExternalId;
@@ -1764,6 +1768,33 @@ public class PlaylistController : ControllerBase
         }
 
         return trimmed;
+    }
+
+    private string? ResolvePreferredExternalProvider(SpotifyTrackMapping mapping)
+    {
+        var preferredProvider = GetCurrentMusicServiceProvider();
+        if (mapping.TryGetExternalTarget(preferredProvider, out var provider, out _))
+        {
+            return NormalizeExternalProviderForDisplay(provider);
+        }
+
+        return NormalizeExternalProviderForDisplay(mapping.ExternalProvider);
+    }
+
+    private string? GetCurrentMusicServiceProvider()
+    {
+        var backendType = _configuration.GetValue<BackendType>("Backend:Type");
+        var musicService = backendType == BackendType.Jellyfin
+            ? _configuration.GetValue<MusicService>("Jellyfin:MusicService")
+            : _configuration.GetValue<MusicService>("Subsonic:MusicService");
+
+        return musicService switch
+        {
+            MusicService.Deezer => "deezer",
+            MusicService.Qobuz => "qobuz",
+            MusicService.SquidWTF => "squidwtf",
+            _ => null
+        };
     }
 
     /// <summary>

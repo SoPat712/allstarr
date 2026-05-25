@@ -19,16 +19,6 @@ public sealed class SquidWtfEndpointCatalog
             throw new ArgumentNullException(nameof(streamingUrls));
         }
 
-        if (apiUrls.Count == 0)
-        {
-            throw new ArgumentException("API URL list cannot be empty.", nameof(apiUrls));
-        }
-
-        if (streamingUrls.Count == 0)
-        {
-            throw new ArgumentException("Streaming URL list cannot be empty.", nameof(streamingUrls));
-        }
-
         ApiUrls = apiUrls;
         StreamingUrls = streamingUrls;
         LoadedAtUtc = DateTime.UtcNow;

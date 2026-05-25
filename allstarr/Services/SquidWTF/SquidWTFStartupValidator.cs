@@ -57,50 +57,79 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         WriteStatus("SquidWTF API Endpoints", _apiUrls.Count.ToString(), ConsoleColor.Cyan);
         WriteStatus("SquidWTF Streaming Endpoints", _streamingUrls.Count.ToString(), ConsoleColor.Cyan);
 
-        await BenchmarkEndpointPoolAsync("API", _apiUrls, _apiFallbackHelper, cancellationToken);
-        await BenchmarkEndpointPoolAsync("streaming", _streamingUrls, _streamingFallbackHelper, cancellationToken);
+        if (_apiUrls.Count == 0)
+        {
+            WriteStatus("SquidWTF API", "UNAVAILABLE", ConsoleColor.Yellow);
+            WriteDetail("No API endpoints were discovered from the uptime feeds");
+        }
+        else
+        {
+            await BenchmarkEndpointPoolAsync("API", _apiUrls, _apiFallbackHelper, cancellationToken);
+        }
+
+        if (_streamingUrls.Count == 0)
+        {
+            WriteStatus("SquidWTF Streaming", "UNAVAILABLE", ConsoleColor.Yellow);
+            WriteDetail("No streaming endpoints were discovered from the uptime feeds");
+        }
+        else
+        {
+            await BenchmarkEndpointPoolAsync("streaming", _streamingUrls, _streamingFallbackHelper, cancellationToken);
+        }
+
+        if (_apiUrls.Count == 0 && _streamingUrls.Count == 0)
+        {
+            return ValidationResult.Failure(
+                "UNAVAILABLE",
+                "SquidWTF uptime feeds did not return any usable endpoints",
+                ConsoleColor.Yellow);
+        }
 
         // Validate API endpoints and search functionality.
-        var apiResult = await _apiFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-        {
-            var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
+        var apiResult = _apiUrls.Count == 0
+            ? ValidationResult.Failure("-1", "No SquidWTF API endpoints are currently available", ConsoleColor.Yellow)
+            : await _apiFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
             {
-                WriteStatus("SquidWTF API", $"REACHABLE ({baseUrl})", ConsoleColor.Green);
-                WriteDetail("No authentication required - powered by Tidal");
-                
-                // Try a test search to verify functionality
-                await ValidateSearchFunctionality(baseUrl, cancellationToken);
-                
-                return ValidationResult.Success("SquidWTF validation completed");
-            }
-            else
-            {
-                throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
-            }
-        }, ValidationResult.Failure("-1", "All SquidWTF API endpoints failed"));
+                var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
-        if (!apiResult.IsValid)
+                if (response.IsSuccessStatusCode)
+                {
+                    WriteStatus("SquidWTF API", $"REACHABLE ({baseUrl})", ConsoleColor.Green);
+                    WriteDetail("No authentication required - powered by Tidal");
+
+                    // Try a test search to verify functionality
+                    await ValidateSearchFunctionality(baseUrl, cancellationToken);
+
+                    return ValidationResult.Success("SquidWTF validation completed");
+                }
+                else
+                {
+                    throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
+                }
+            }, ValidationResult.Failure("-1", "All SquidWTF API endpoints failed"));
+
+        if (_apiUrls.Count > 0 && !apiResult.IsValid)
         {
             return apiResult;
         }
 
         // Validate streaming endpoints independently to avoid API-only endpoints for streaming.
-        var streamingResult = await _streamingFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-        {
-            var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
+        var streamingResult = _streamingUrls.Count == 0
+            ? ValidationResult.Failure("-2", "No SquidWTF streaming endpoints are currently available", ConsoleColor.Yellow)
+            : await _streamingFallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
             {
-                WriteStatus("SquidWTF Streaming", $"REACHABLE ({baseUrl})", ConsoleColor.Green);
-                return ValidationResult.Success("SquidWTF streaming endpoint validation completed");
-            }
+                var response = await _httpClient.GetAsync(baseUrl, cancellationToken);
 
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
-        }, ValidationResult.Failure("-2", "All SquidWTF streaming endpoints failed"));
+                if (response.IsSuccessStatusCode)
+                {
+                    WriteStatus("SquidWTF Streaming", $"REACHABLE ({baseUrl})", ConsoleColor.Green);
+                    return ValidationResult.Success("SquidWTF streaming endpoint validation completed");
+                }
 
-        if (!streamingResult.IsValid)
+                throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
+            }, ValidationResult.Failure("-2", "All SquidWTF streaming endpoints failed"));
+
+        if (_streamingUrls.Count > 0 && !streamingResult.IsValid)
         {
             return streamingResult;
         }

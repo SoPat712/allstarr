@@ -62,7 +62,8 @@ public static class StreamQualityHelper
                 return StreamQuality.Original;
             }
 
-            return MapBitRateToQuality((int)(maxBitrate / 1000));
+            // MaxStreamingBitrate is reported in bits per second.
+            return MapBitRateToQuality((int)maxBitrate);
         }
 
         // Check for audioBitRate (lowercase variant used by some clients)

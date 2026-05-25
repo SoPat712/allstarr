@@ -73,7 +73,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         List<string> apiUrls)
         : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
-        _httpClient = httpClientFactory.CreateClient();
+        _httpClient = httpClientFactory.CreateClient("SquidWTF");
         _squidwtfSettings = SquidWTFSettings.Value;
         _odesliService = odesliService;
         _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
@@ -99,87 +99,96 @@ public class SquidWTFDownloadService : BaseDownloadService
 
     private async Task<string> RunDownloadWithFallbackAsync(string trackId, Song song, string quality, string basePath, CancellationToken cancellationToken)
     {
-        return await _fallbackHelper.TryWithFallbackAsync(async baseUrl =>
+        var songId = BuildTrackedSongId(trackId);
+        var raceCount = Math.Min(3, _fallbackHelper.EndpointCount);
+
+        if (raceCount > 1)
         {
-            var songId = BuildTrackedSongId(trackId);
-            var downloadInfo = await FetchTrackDownloadInfoAsync(baseUrl, trackId, quality, cancellationToken);
-            
             Logger.LogInformation(
-                "Track download info resolved via {Endpoint} (Format: {Format}, Quality: {Quality})",
-                downloadInfo.Endpoint, downloadInfo.MimeType, downloadInfo.AudioQuality);
-            Logger.LogDebug("Resolved SquidWTF CDN download URL: {Url}", downloadInfo.DownloadUrl);
+                "Racing top {EndpointCount} SquidWTF endpoints for track {TrackId} manifest resolution",
+                raceCount, trackId);
+        }
 
-            var extension = downloadInfo.MimeType?.ToLower() switch
-            {
-                "audio/flac" => ".flac", "audio/mpeg" => ".mp3", "audio/mp4" => ".m4a", _ => ".flac"
-            };
+        var downloadInfo = await _fallbackHelper.RaceTopEndpointsAsync(
+            Math.Max(1, raceCount),
+            (baseUrl, ct) => FetchTrackDownloadInfoAsync(baseUrl, trackId, quality, ct),
+            cancellationToken);
 
-            var artistForPath = song.AlbumArtist ?? song.Artist;
-            var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "squidwtf", trackId);
-            
-            var albumFolder = Path.GetDirectoryName(outputPath)!;
-            EnsureDirectoryExists(albumFolder);
-            
-            if (basePath.EndsWith("transcoded") && IOFile.Exists(outputPath))
-            {
-                IOFile.SetLastWriteTime(outputPath, DateTime.UtcNow);
-                Logger.LogInformation("Quality override cache hit: {Path}", outputPath);
-                return outputPath;
-            }
-            
-            outputPath = PathHelper.ResolveUniquePath(outputPath);
+        Logger.LogInformation(
+            "Track download info resolved via {Endpoint} (Format: {Format}, Quality: {Quality})",
+            downloadInfo.Endpoint, downloadInfo.MimeType, downloadInfo.AudioQuality);
+        Logger.LogDebug("Resolved SquidWTF CDN download URL: {Url}", downloadInfo.DownloadUrl);
 
-            using var req = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
-            req.Headers.Add("User-Agent", "Mozilla/5.0");
-            req.Headers.Add("Accept", "*/*");
-            var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            res.EnsureSuccessStatusCode();
+        var extension = downloadInfo.MimeType?.ToLower() switch
+        {
+            "audio/flac" => ".flac", "audio/mpeg" => ".mp3", "audio/mp4" => ".m4a", _ => ".flac"
+        };
 
-            await using var responseStream = await res.Content.ReadAsStreamAsync(cancellationToken);
-            await using var outputFile = IOFile.Create(outputPath);
-            var totalBytes = res.Content.Headers.ContentLength;
-            var buffer = new byte[81920];
-            long totalBytesRead = 0;
+        var artistForPath = song.AlbumArtist ?? song.Artist;
+        var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "squidwtf", trackId);
 
-            while (true)
-            {
-                var bytesRead = await responseStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-                if (bytesRead <= 0)
-                {
-                    break;
-                }
+        var albumFolder = Path.GetDirectoryName(outputPath)!;
+        EnsureDirectoryExists(albumFolder);
 
-                await outputFile.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
-                totalBytesRead += bytesRead;
-
-                if (totalBytes.HasValue && totalBytes.Value > 0)
-                {
-                    SetDownloadProgress(songId, (double)totalBytesRead / totalBytes.Value);
-                }
-            }
-
-            await outputFile.DisposeAsync();
-            SetDownloadProgress(songId, 1.0);
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var spotifyId = await _odesliService.ConvertTidalToSpotifyIdAsync(trackId, CancellationToken.None);
-                    if (!string.IsNullOrEmpty(spotifyId))
-                    {
-                        Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", trackId, spotifyId);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogDebug(ex, "Background Spotify ID conversion failed for Tidal/{TrackId}", trackId);
-                }
-            });
-
-            await WriteMetadataAsync(outputPath, song, cancellationToken);
+        if (basePath.EndsWith("transcoded") && IOFile.Exists(outputPath))
+        {
+            IOFile.SetLastWriteTime(outputPath, DateTime.UtcNow);
+            Logger.LogInformation("Quality override cache hit: {Path}", outputPath);
             return outputPath;
+        }
+
+        outputPath = PathHelper.ResolveUniquePath(outputPath);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
+        req.Headers.Add("User-Agent", "Mozilla/5.0");
+        req.Headers.Add("Accept", "*/*");
+        var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        res.EnsureSuccessStatusCode();
+
+        await using var responseStream = await res.Content.ReadAsStreamAsync(cancellationToken);
+        await using var outputFile = IOFile.Create(outputPath);
+        var totalBytes = res.Content.Headers.ContentLength;
+        var buffer = new byte[81920];
+        long totalBytesRead = 0;
+
+        while (true)
+        {
+            var bytesRead = await responseStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (bytesRead <= 0)
+            {
+                break;
+            }
+
+            await outputFile.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            totalBytesRead += bytesRead;
+
+            if (totalBytes.HasValue && totalBytes.Value > 0)
+            {
+                SetDownloadProgress(songId, (double)totalBytesRead / totalBytes.Value);
+            }
+        }
+
+        await outputFile.DisposeAsync();
+        SetDownloadProgress(songId, 1.0);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var spotifyId = await _odesliService.ConvertTidalToSpotifyIdAsync(trackId, CancellationToken.None);
+                if (!string.IsNullOrEmpty(spotifyId))
+                {
+                    Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", trackId, spotifyId);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Background Spotify ID conversion failed for Tidal/{TrackId}", trackId);
+            }
         });
+
+        await WriteMetadataAsync(outputPath, song, cancellationToken);
+        return outputPath;
     }
 
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
@@ -315,7 +324,9 @@ public class SquidWTFDownloadService : BaseDownloadService
     {
         var url = $"{baseUrl}/track/?id={trackId}&quality={quality}";
 
-        Logger.LogDebug("Fetching track download info from: {Url}", url);
+        Logger.LogInformation("Requesting SquidWTF track manifest for track {TrackId} from {Endpoint} at quality {Quality}",
+            trackId, baseUrl, quality);
+        Logger.LogDebug("Fetching SquidWTF track download info from: {Url}", url);
 
         using var response = await _httpClient.GetAsync(url, cancellationToken);
         
@@ -356,7 +367,10 @@ public class SquidWTFDownloadService : BaseDownloadService
         var audioQuality = data.TryGetProperty("audioQuality", out var audioQualityEl)
             ? audioQualityEl.GetString()
             : quality;
-        
+
+        Logger.LogInformation("SquidWTF track manifest resolved for track {TrackId} via {Endpoint} (mimeType={MimeType}, audioQuality={AudioQuality})",
+            trackId, baseUrl, mimeType ?? "audio/flac", audioQuality ?? quality);
+
         return new DownloadResult
         {
             Endpoint = baseUrl,

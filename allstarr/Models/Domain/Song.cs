@@ -107,7 +107,7 @@ public class Song
     
     /// <summary>
     /// Deezer explicit content lyrics value
-    /// 0 = Naturally clean, 1 = Explicit, 2 = Not applicable, 3 = Clean/edited version, 6/7 = Unknown
+    /// 0 = Naturally clean, 1 = Explicit, 2 = Unknown, 3 = Clean/edited version, 6/7 = No advice
     /// </summary>
     public int? ExplicitContentLyrics { get; set; }
     

@@ -28,6 +28,12 @@
                 <label for="auth-password">Password</label>
                 <input id="auth-password" type="password" required>
 
+                <label class="auth-checkbox" for="auth-remember-me">
+                    <input id="auth-remember-me" type="checkbox">
+                    <span>Keep me signed in for 30 days on this browser</span>
+                </label>
+                <small class="auth-note">Use only on a device you trust.</small>
+
                 <button class="primary" type="submit">Sign In</button>
                 <div class="auth-error" id="auth-error" role="alert"></div>
             </form>
@@ -65,16 +71,27 @@
         <div class="app-shell">
             <aside class="sidebar" aria-label="Admin navigation">
                 <div class="sidebar-brand">
-                    <div class="sidebar-title">Allstarr</div>
+                    <div class="sidebar-title">
+                        <a class="title-link" href="https://github.com/SoPat712/allstarr" target="_blank"
+                            rel="noopener noreferrer">Allstarr</a>
+                    </div>
                     <div class="sidebar-subtitle" id="sidebar-version">Loading...</div>
+                    <div class="sidebar-status" id="status-indicator">
+                        <span class="status-badge" id="spotify-status">
+                            <span class="status-dot"></span>
+                            <span>Loading...</span>
+                        </span>
+                    </div>
                 </div>
                 <nav class="sidebar-nav">
                     <button class="sidebar-link active" type="button" data-tab="dashboard">Dashboard</button>
                     <button class="sidebar-link" type="button" data-tab="jellyfin-playlists">Link Playlists</button>
                     <button class="sidebar-link" type="button" data-tab="playlists">Injected Playlists</button>
+                    <button class="sidebar-link" type="button" data-tab="song-migration">Song Migration</button>
                     <button class="sidebar-link" type="button" data-tab="kept">Kept Downloads</button>
                     <button class="sidebar-link" type="button" data-tab="scrobbling">Scrobbling</button>
                     <button class="sidebar-link" type="button" data-tab="config">Configuration</button>
+                    <button class="sidebar-link" type="button" data-tab="report-issues">Report Issues</button>
                     <button class="sidebar-link" type="button" data-tab="endpoints">API Analytics</button>
                 </nav>
                 <div class="sidebar-footer">
@@ -86,27 +103,15 @@
             </aside>
 
             <main class="app-main">
-                <header class="app-header">
-                    <h1>
-                        Allstarr <span class="version" id="version">Loading...</span>
-                    </h1>
-                    <div class="header-actions">
-                        <div id="status-indicator">
-                            <span class="status-badge" id="spotify-status">
-                                <span class="status-dot"></span>
-                                <span>Loading...</span>
-                            </span>
-                        </div>
-                    </div>
-                </header>
-
                 <div class="tabs top-tabs" aria-hidden="true">
                     <div class="tab active" data-tab="dashboard">Dashboard</div>
                     <div class="tab" data-tab="jellyfin-playlists">Link Playlists</div>
                     <div class="tab" data-tab="playlists">Injected Playlists</div>
+                    <div class="tab" data-tab="song-migration">Song Migration</div>
                     <div class="tab" data-tab="kept">Kept Downloads</div>
                     <div class="tab" data-tab="scrobbling">Scrobbling</div>
                     <div class="tab" data-tab="config">Configuration</div>
+                    <div class="tab" data-tab="report-issues">Report Issues</div>
                     <div class="tab" data-tab="endpoints">API Analytics</div>
                 </div>
 
@@ -316,7 +321,7 @@
                             <th>Playlist</th>
                             <th>Spotify ID</th>
                             <th>Type</th>
-                            <th>Target</th>
+                            <th>Target IDs</th>
                             <th>Created</th>
                             <th>Actions</th>
                         </tr>
@@ -368,6 +373,63 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- Song Migration Tab -->
+        <div class="tab-content" id="tab-song-migration">
+            <div class="card">
+                <h2>
+                    Song Migration
+                    <div class="actions">
+                        <button class="primary" data-action="downloadSongMigrationCsv"
+                            title="Download all non-Jellyfin tracks (external + missing) across all injected playlists as CSV">Download CSV (All)</button>
+                        <button data-action="fetchSongMigration">Refresh</button>
+                    </div>
+                </h2>
+                <p class="text-secondary mb-12">
+                    Tracks from your injected Spotify playlists that are <strong>not</strong> in your Jellyfin library.
+                    This includes tracks matched through external providers (SquidWTF, Deezer, Qobuz) and tracks that
+                    are still missing. Use the CSV export to download these tracks with your preferred tool.
+                </p>
+                <div id="song-migration-guidance" class="guidance-stack"></div>
+                <div id="song-migration-summary" class="summary-box">
+                    <div>
+                        <span class="summary-label">Playlists:</span>
+                        <span class="summary-value accent" id="song-migration-playlist-count">0</span>
+                    </div>
+                    <div>
+                        <span class="summary-label">External:</span>
+                        <span class="summary-value success" id="song-migration-external-count">0</span>
+                    </div>
+                    <div>
+                        <span class="summary-label">Missing:</span>
+                        <span class="summary-value warning" id="song-migration-missing-count">0</span>
+                    </div>
+                    <div>
+                        <span class="summary-label">Total to Migrate:</span>
+                        <span class="summary-value accent" id="song-migration-total-count">0</span>
+                    </div>
+                </div>
+                <div class="table-scroll song-migration-table-scroll">
+                    <table class="playlist-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Non-Local Tracks</th>
+                            <th>Status</th>
+                            <th>...</th>
+                        </tr>
+                    </thead>
+                    <tbody id="song-migration-table-body">
+                        <tr>
+                            <td colspan="4" class="loading">
+                                <span class="spinner"></span> Loading playlists...
+                            </td>
+                        </tr>
+                    </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -456,7 +518,7 @@
             <div class="card">
                 <h2>Last.fm</h2>
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                    Scrobble to Last.fm. Enter your Last.fm username and password below, then click "Authenticate & Save" to generate a session key.
+                    Scrobble to Last.fm. Set <code>SCROBBLING_LASTFM_API_KEY</code> and <code>SCROBBLING_LASTFM_SHARED_SECRET</code> in your .env (from <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener" style="color: var(--accent);">last.fm/api/account/create</a>), restart, then enter username/password and click "Authenticate & Save".
                 </p>
 
                 <div class="config-section" style="margin-bottom: 24px;">
@@ -896,6 +958,82 @@
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                     <button class="danger" onclick="clearCache()">Clear All Cache</button>
                     <button class="danger" onclick="restartContainer()">Restart Allstarr</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Issues Tab -->
+        <div class="tab-content" id="tab-report-issues">
+            <div class="card">
+                <h2>Report Issues</h2>
+                <div class="guidance-banner info mb-16">
+                    <span>ℹ️</span>
+                    <div class="guidance-content">
+                        <div class="guidance-title">Draft a GitHub issue from inside Allstarr.</div>
+                        <div class="guidance-detail">Allstarr includes only safe diagnostics here. Sensitive values stay redacted, and the final submit still happens on GitHub.</div>
+                    </div>
+                </div>
+
+                <div class="report-issue-layout">
+                    <div class="report-issue-panel">
+                        <div class="form-group">
+                            <label for="issue-report-type">Report Type</label>
+                            <select id="issue-report-type">
+                                <option value="bug">Bug Report</option>
+                                <option value="feature">Feature Request</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-title">Title</label>
+                            <input type="text" id="issue-report-title" placeholder="Short summary of the issue">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-primary" id="issue-report-primary-label">Describe the bug</label>
+                            <textarea id="issue-report-primary" rows="5"
+                                placeholder="What happened? What looked wrong?"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-secondary" id="issue-report-secondary-label">To Reproduce</label>
+                            <textarea id="issue-report-secondary" rows="5"
+                                placeholder="List the steps needed to reproduce the issue"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-tertiary" id="issue-report-tertiary-label">Expected behavior</label>
+                            <textarea id="issue-report-tertiary" rows="4"
+                                placeholder="What did you expect to happen instead?"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-context" id="issue-report-context-label">Additional context</label>
+                            <textarea id="issue-report-context" rows="4"
+                                placeholder="Anything else that might help, including screenshots or surrounding context"></textarea>
+                        </div>
+
+                        <div class="card-actions-row">
+                            <button class="primary" type="button" id="open-github-issue-btn">Open Bug Report on GitHub</button>
+                            <button type="button" id="copy-issue-report-btn">Copy Report</button>
+                            <button type="button" id="clear-issue-report-btn">Clear Report</button>
+                        </div>
+                    </div>
+
+                    <div class="report-preview-panel">
+                        <div class="guidance-banner compact">
+                            Safe diagnostics only: version, runtime config, service state, and a concise client summary. Sensitive values stay redacted.
+                        </div>
+
+                        <div class="form-group">
+                            <label for="issue-report-preview">GitHub Issue Preview</label>
+                            <textarea id="issue-report-preview" rows="22" readonly></textarea>
+                        </div>
+
+                        <div class="report-preview-help" id="issue-report-preview-help">
+                            GitHub drafts that exceed the URL size limit will open with a shorter body. The full report will also be copied to your clipboard.
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
