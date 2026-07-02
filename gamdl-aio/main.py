@@ -48,6 +48,10 @@ DATA_DIR.mkdir(exist_ok=True)
 # Environment settings
 HTTP_PORT = int(os.getenv("HTTP_PORT", "8080"))
 TARGET_ARCH = os.getenv("TARGET_ARCH", "arm64-v8a")
+if TARGET_ARCH == "amd64" or TARGET_ARCH == "x86_64":
+    TARGET_ARCH = "x86_64"
+else:
+    TARGET_ARCH = "arm64-v8a"
 
 class LoginRequest(BaseModel):
     username: str

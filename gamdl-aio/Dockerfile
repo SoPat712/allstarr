@@ -1,15 +1,11 @@
-# Multi-stage Dockerfile for gamdl-aio
-ARG RUNTIME_PLATFORM=linux/arm64
-ARG BUILD_PLATFORM=linux/amd64
+# Multi-stage Dockerfile for gamdl-aio supporting both amd64 and arm64 natively
+FROM debian:13.2 AS build
 
-# -----------------------------------------------------------------------------
-# Build Stage (always amd64 for Android NDK toolchain)
-# -----------------------------------------------------------------------------
-FROM --platform=linux/amd64 debian:13.2 AS build
-
-ARG TARGET_ARCH=arm64-v8a
+ARG TARGETPLATFORM
+ARG TARGETARCH
 ARG CMAKE_BUILD_TYPE=Release
 ARG NDK_VERSION=23
+
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -23,7 +19,7 @@ RUN apt-get update && \
         jq \
         ninja-build \
         unzip \
-    && if [[ "$TARGET_ARCH" == "arm64-v8a" ]]; then \
+    && if [[ "$TARGETARCH" == "arm64" ]]; then \
          apt-get install -y --no-install-recommends \
            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu; \
        fi \
@@ -38,19 +34,26 @@ ENV ANDROID_NDK_HOME=/opt/android-ndk-r${NDK_VERSION}b
 WORKDIR /app/wrapper-v2
 COPY wrapper-v2/ /app/wrapper-v2
 
-# Run system staging inside the build image to get linker64 & standard libs
-RUN bash tools/stage-system.sh --arch "${TARGET_ARCH}"
+# Map TARGETARCH to Android NDK target arch
+RUN target_ndk_arch="arm64-v8a"; \
+    if [[ "$TARGETARCH" == "amd64" ]]; then \
+      target_ndk_arch="x86_64"; \
+    fi && \
+    bash tools/stage-system.sh --arch "$target_ndk_arch"
 
 # Compile daemon and wrapper launcher
 RUN host_cc=(); \
-    if [[ "$TARGET_ARCH" == "arm64-v8a" ]]; then \
+    target_ndk_arch="arm64-v8a"; \
+    if [[ "$TARGETARCH" == "amd64" ]]; then \
+      target_ndk_arch="x86_64"; \
+    elif [[ "$TARGETARCH" == "arm64" && "$(uname -m)" != "aarch64" ]]; then \
       host_cc=( \
         -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
         -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
       ); \
     fi && \
     cmake -S . -B build -G Ninja \
-        -DTARGET_ARCH="${TARGET_ARCH}" \
+        -DTARGET_ARCH="$target_ndk_arch" \
         "${host_cc[@]}" \
         -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" && \
     cmake --build build -j
@@ -58,7 +61,9 @@ RUN host_cc=(); \
 # -----------------------------------------------------------------------------
 # Runtime Stage (FastAPI Server + Decryption Wrapper + Transcoder)
 # -----------------------------------------------------------------------------
-FROM --platform=${RUNTIME_PLATFORM} python:3.10-slim-bookworm
+FROM python:3.10-slim-bookworm
+
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -93,7 +98,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 
 # Set environment
-ENV TARGET_ARCH=arm64-v8a
+ENV TARGET_ARCH=${TARGETARCH}
 ENV HTTP_PORT=18080
 
 CMD ["python", "main.py"]
