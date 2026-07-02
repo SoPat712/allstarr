@@ -39,7 +39,9 @@ RUN target_ndk_arch="arm64-v8a"; \
     if [[ "$TARGETARCH" == "amd64" ]]; then \
       target_ndk_arch="x86_64"; \
     fi && \
-    bash tools/stage-system.sh --arch "$target_ndk_arch"
+    bash tools/stage-system.sh --arch "$target_ndk_arch" && \
+    mkdir -p rootfs/system/lib64 && \
+    cp "/opt/android-ndk-r${NDK_VERSION}b/sources/cxx-stl/llvm-libc++/libs/${target_ndk_arch}/libc++_shared.so" "rootfs/system/lib64/"
 
 # Compile daemon and wrapper launcher
 RUN host_cc=(); \
