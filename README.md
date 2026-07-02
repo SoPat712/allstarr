@@ -32,11 +32,28 @@ docker-compose ps
 docker-compose logs -f
 ```
 
-The proxy will be available at `http://localhost:5274`.
+The media-client proxy will be available at `http://localhost:5274`.
+
+Port `5274` maps to the container's proxy port (`8080`). It does not serve the
+Allstarr dashboard. The dashboard uses the separate admin port (`5275`).
 
 ## Web Dashboard
 
-Allstarr includes a web UI for easy configuration and playlist management, accessible at `http://localhost:5275`
+Allstarr includes a web UI for easy configuration and playlist management,
+accessible at `http://localhost:5275`.
+
+The admin listener is localhost-only by default. When Allstarr runs in Docker,
+set the following values in `.env` before accessing it through a host port,
+LAN address, or reverse proxy:
+
+```dotenv
+ADMIN_BIND_ANY_IP=true
+ADMIN_TRUSTED_SUBNETS=192.168.1.0/24
+```
+
+Replace the example CIDR with the network that should be allowed. For a reverse
+proxy on a Docker network, include that Docker network's CIDR instead. Keep the
+dashboard behind a private network, VPN, or an authenticated access proxy.
 <img width="1664" height="1101" alt="image" src="https://github.com/user-attachments/assets/9159100b-7e11-449e-8530-517d336d6bd2" />
 
 ### Features
@@ -80,6 +97,11 @@ There's an environment variable to modify this.
 ### Nginx Proxy Setup (Optional)
 
 This service only exposes ports internally. You can use nginx to proxy to it, however PLEASE take significant precautions before exposing this! Everyone decides their own level of risk, but this is currently untested, potentially dangerous software, with almost unfettered access to your Jellyfin server. My recommendation is use Tailscale or something similar!
+
+The example below targets port `8080` and is for Jellyfin/Subsonic client
+traffic. It does not expose the Allstarr dashboard. To proxy the dashboard,
+create a separate protected virtual host targeting port `5275`, and configure
+`ADMIN_BIND_ANY_IP` and `ADMIN_TRUSTED_SUBNETS` as described above.
 
 ```nginx
 server {

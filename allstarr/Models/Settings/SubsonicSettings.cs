@@ -91,7 +91,12 @@ public enum MusicService
 	/// <summary>
 	/// SquidWTF music service
 	/// </summary>
-	SquidWTF
+	SquidWTF,
+
+	/// <summary>
+	/// Apple Music via gamdl-aio sidecar
+	/// </summary>
+	AppleMusic
 }
 
 public class SubsonicSettings

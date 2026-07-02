@@ -1279,7 +1279,7 @@ public class PlaylistController : ControllerBase
         }
 
         var normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalizedProvider != "squidwtf" && normalizedProvider != "deezer" && normalizedProvider != "qobuz")
+        if (normalizedProvider != "squidwtf" && normalizedProvider != "deezer" && normalizedProvider != "qobuz" && normalizedProvider != "applemusic")
         {
             return BadRequest(new { error = "Unsupported provider" });
         }
@@ -1666,6 +1666,7 @@ public class PlaylistController : ControllerBase
             "squidwtf" or "squid-wtf" or "squid_wtf" or "tidal" => "squidwtf",
             "deezer" => "deezer",
             "qobuz" => "qobuz",
+            "applemusic" or "apple-music" or "apple_music" => "applemusic",
             _ => null
         };
     }
@@ -1728,6 +1729,7 @@ public class PlaylistController : ControllerBase
             "squidwtf" => $"https://www.tidal.com/track/{externalId}",
             "deezer" => $"https://www.deezer.com/track/{externalId}",
             "qobuz" => $"https://open.qobuz.com/track/{externalId}",
+            "applemusic" => $"https://music.apple.com/us/song/{externalId}",
             _ => externalId
         };
     }
@@ -1793,6 +1795,7 @@ public class PlaylistController : ControllerBase
             MusicService.Deezer => "deezer",
             MusicService.Qobuz => "qobuz",
             MusicService.SquidWTF => "squidwtf",
+            MusicService.AppleMusic => "applemusic",
             _ => null
         };
     }

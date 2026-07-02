@@ -138,6 +138,7 @@ public class ConfigControllerAuthorizationTests
             Options.Create(new DeezerSettings()),
             Options.Create(new QobuzSettings()),
             Options.Create(new SquidWTFSettings()),
+            Options.Create(new AppleMusicSettings()),
             Options.Create(new MusicBrainzSettings()),
             Options.Create(new SpotifyImportSettings()),
             Options.Create(new ScrobblingSettings()),

@@ -24,6 +24,7 @@ public class ConfigController : ControllerBase
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWTFSettings _squidWtfSettings;
+    private readonly AppleMusicSettings _appleMusicSettings;
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
@@ -41,6 +42,7 @@ public class ConfigController : ControllerBase
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
         IOptions<SquidWTFSettings> squidWtfSettings,
+        IOptions<AppleMusicSettings> appleMusicSettings,
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
@@ -56,6 +58,7 @@ public class ConfigController : ControllerBase
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
         _squidWtfSettings = squidWtfSettings.Value;
+        _appleMusicSettings = appleMusicSettings.Value;
         _musicBrainzSettings = musicBrainzSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
@@ -212,6 +215,11 @@ public class ConfigController : ControllerBase
             {
                 quality = GetEnvString(envVars, "SQUIDWTF_QUALITY", _squidWtfSettings.Quality ?? "LOSSLESS"),
                 minRequestIntervalMs = GetEnvInt(envVars, "SQUIDWTF_MIN_REQUEST_INTERVAL_MS", _squidWtfSettings.MinRequestIntervalMs)
+            },
+            appleMusic = new
+            {
+                baseUrl = GetEnvString(envVars, "APPLE_MUSIC_AIO_URL", _appleMusicSettings.BaseUrl ?? "http://gamdl-aio:8000"),
+                quality = GetEnvString(envVars, "APPLE_MUSIC_QUALITY", _appleMusicSettings.Quality ?? "alac-16-44")
             },
             musicBrainz = new
             {

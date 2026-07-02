@@ -3,6 +3,7 @@ using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
@@ -189,7 +190,8 @@ public class JellyfinSessionManagerTests
             Options.Create(settings),
             httpContextAccessor,
             NullLogger<JellyfinProxyService>.Instance,
-            cache);
+            cache,
+            new ConfigurationBuilder().Build());
     }
 
     private sealed class TestHttpClientFactory : IHttpClientFactory

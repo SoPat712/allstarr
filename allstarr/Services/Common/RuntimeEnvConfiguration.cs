@@ -81,6 +81,9 @@ public static class RuntimeEnvConfiguration
             ["SQUIDWTF_QUALITY"] = ["SquidWTF:Quality"],
             ["SQUIDWTF_MIN_REQUEST_INTERVAL_MS"] = ["SquidWTF:MinRequestIntervalMs"],
 
+            ["APPLE_MUSIC_AIO_URL"] = ["AppleMusic:BaseUrl"],
+            ["APPLE_MUSIC_QUALITY"] = ["AppleMusic:Quality"],
+
             ["MUSICBRAINZ_ENABLED"] = ["MusicBrainz:Enabled"],
             ["MUSICBRAINZ_USERNAME"] = ["MusicBrainz:Username"],
             ["MUSICBRAINZ_PASSWORD"] = ["MusicBrainz:Password"],

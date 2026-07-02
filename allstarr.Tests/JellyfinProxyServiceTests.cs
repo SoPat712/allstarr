@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using Moq.Protected;
 using allstarr.Models.Settings;
@@ -59,7 +60,8 @@ public class JellyfinProxyServiceTests
             Options.Create(_settings),
             httpContextAccessor,
             mockLogger.Object,
-            _cache);
+            _cache,
+            new ConfigurationBuilder().Build());
     }
 
     [Fact]
@@ -337,6 +339,35 @@ public class JellyfinProxyServiceTests
         Assert.Contains("Fields=DateCreated", query);
         Assert.Contains("Fields=MediaSources", query);
         Assert.Contains("UserId=user-abc", query);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetPassthroughResponseAsync_WithPlaylistSortParams_PreservesSortQuery()
+    {
+        // Arrange
+        HttpRequestMessage? captured = null;
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, ct) => captured = req)
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"Items\":[]}")
+            });
+
+        // Act
+        var response = await _service.GetPassthroughResponseAsync(
+            "Playlists/playlist-123/Items?Fields=SortName&UserId=user-abc&StartIndex=0&Limit=100&SortBy=Album&SortOrder=Descending");
+
+        // Assert
+        Assert.NotNull(captured);
+        var query = captured!.RequestUri!.Query;
+        Assert.Contains("SortBy=Album", query);
+        Assert.Contains("SortOrder=Descending", query);
+        Assert.Contains("StartIndex=0", query);
+        Assert.Contains("Limit=100", query);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -636,7 +667,8 @@ public class JellyfinProxyServiceTests
             Options.Create(_settings),
             httpContextAccessor,
             mockLogger.Object,
-            cache);
+            cache,
+            new ConfigurationBuilder().Build());
 
         // Act
         var result = await service.StreamAudioAsync("song-123", CancellationToken.None);

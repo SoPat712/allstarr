@@ -89,7 +89,7 @@
                     <button class="sidebar-link" type="button" data-tab="playlists">Injected Playlists</button>
                     <button class="sidebar-link" type="button" data-tab="song-migration">Song Migration</button>
                     <button class="sidebar-link" type="button" data-tab="kept">Kept Downloads</button>
-                    <button class="sidebar-link" type="button" data-tab="scrobbling">Scrobbling</button>
+                    <button class="sidebar-link" type="button" data-tab="services">Services</button>
                     <button class="sidebar-link" type="button" data-tab="config">Configuration</button>
                     <button class="sidebar-link" type="button" data-tab="report-issues">Report Issues</button>
                     <button class="sidebar-link" type="button" data-tab="endpoints">API Analytics</button>
@@ -109,7 +109,7 @@
                     <div class="tab" data-tab="playlists">Injected Playlists</div>
                     <div class="tab" data-tab="song-migration">Song Migration</div>
                     <div class="tab" data-tab="kept">Kept Downloads</div>
-                    <div class="tab" data-tab="scrobbling">Scrobbling</div>
+                    <div class="tab" data-tab="services">Services</div>
                     <div class="tab" data-tab="config">Configuration</div>
                     <div class="tab" data-tab="report-issues">Report Issues</div>
                     <div class="tab" data-tab="endpoints">API Analytics</div>
@@ -117,6 +117,45 @@
 
         <!-- Dashboard Tab -->
         <div class="tab-content active" id="tab-dashboard">
+            <!-- Interactive Setup Wizard -->
+            <div class="setup-wizard-card" id="allstarr-setup-wizard">
+                <h2>Allstarr Setup Guide</h2>
+                <p class="wizard-intro">Welcome! Let's configure your local server backend and connect your streaming accounts step-by-step.</p>
+                
+                <div class="setup-stepper">
+                    <div class="setup-stepper-progress" id="wizard-progress-bar"></div>
+                    
+                    <div class="setup-step active" onclick="jumpToWizardStep(1)">
+                        <div class="setup-step-circle">1</div>
+                        <div class="setup-step-label">Backend Link</div>
+                    </div>
+                    <div class="setup-step" onclick="jumpToWizardStep(2)">
+                        <div class="setup-step-circle">2</div>
+                        <div class="setup-step-label">Music Provider</div>
+                    </div>
+                    <div class="setup-step" onclick="jumpToWizardStep(3)">
+                        <div class="setup-step-circle">3</div>
+                        <div class="setup-step-label">Spotify API</div>
+                    </div>
+                    <div class="setup-step" onclick="jumpToWizardStep(4)">
+                        <div class="setup-step-circle">4</div>
+                        <div class="setup-step-label">Confirm</div>
+                    </div>
+                </div>
+
+                <div class="setup-wizard-content" id="wizard-step-container">
+                    <!-- Injected by JavaScript -->
+                </div>
+
+                <div class="setup-wizard-actions">
+                    <button id="wizard-back-btn" onclick="prevWizardStep()" style="visibility: hidden;">&larr; Back</button>
+                    <div class="right-buttons">
+                        <button id="wizard-skip-btn" onclick="skipWizardStep()" class="secondary">Skip Step</button>
+                        <button id="wizard-next-btn" onclick="nextWizardStep()" class="primary">Next Step &rarr;</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="grid">
                 <div class="card">
                     <h2>Spotify API</h2>
@@ -480,8 +519,200 @@
             </div>
         </div>
 
-        <!-- Scrobbling Tab -->
-        <div class="tab-content" id="tab-scrobbling">
+        <!-- Services Tab -->
+        <div class="tab-content" id="tab-services">
+            <h1 class="mb-16">Streaming Services</h1>
+            <p class="text-secondary mb-24">Configure external music streaming platforms for playback integration and on-the-fly decryption.</p>
+
+            <div class="card">
+                <h2>Spotify API Settings</h2>
+                <div
+                    style="background: rgba(248, 81, 73, 0.15); border: 1px solid var(--error); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-primary);">
+                    ⚠️ For active playlists and link functionality to work, sp_dc session cookie must be set!
+                </div>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">API Enabled</span>
+                        <span class="value" id="config-spotify-enabled">-</span>
+                        <button
+                            onclick="openEditSetting('SPOTIFY_API_ENABLED', 'Spotify API Enabled', 'toggle')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Session Cookie (sp_dc) <span style="color: var(--error);">*</span></span>
+                        <span class="value" id="config-spotify-cookie">-</span>
+                        <button
+                            onclick="openEditSetting('SPOTIFY_API_SESSION_COOKIE', 'Spotify Session Cookie', 'password', 'Get from browser dev tools while logged into Spotify. Cookie typically lasts ~1 year.')">Update</button>
+                    </div>
+                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
+                        <span class="label">Cookie Age</span>
+                        <span class="value" id="config-cookie-age">-</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Cache Duration</span>
+                        <span class="value" id="config-cache-duration">-</span>
+                        <button
+                            onclick="openEditSetting('SPOTIFY_API_CACHE_DURATION_MINUTES', 'Cache Duration (minutes)', 'number')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">ISRC Matching</span>
+                        <span class="value" id="config-isrc-matching">-</span>
+                        <button
+                            onclick="openEditSetting('SPOTIFY_API_PREFER_ISRC_MATCHING', 'Prefer ISRC Matching', 'toggle')">Edit</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>SquidWTF / Tidal Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Quality</span>
+                        <span class="value" id="config-squid-quality">-</span>
+                        <button
+                            onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', 'HI_RES_LOSSLESS: 24-bit/192kHz FLAC (highest)\\nLOSSLESS: 16-bit/44.1kHz FLAC (default)\\nHIGH: 320kbps AAC\\nLOW: 96kbps AAC', ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Request Interval</span>
+                        <span class="value" id="config-squid-ratelimit">200 ms</span>
+                        <button
+                            onclick="openEditSetting('SQUIDWTF_MIN_REQUEST_INTERVAL_MS', 'SquidWTF Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Deezer Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">ARL Token</span>
+                        <span class="value" id="config-deezer-arl">-</span>
+                        <button
+                            onclick="openEditSetting('DEEZER_ARL', 'Deezer ARL Token', 'password', 'Get from browser cookies while logged into Deezer')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Quality</span>
+                        <span class="value" id="config-deezer-quality">-</span>
+                        <button
+                            onclick="openEditSetting('DEEZER_QUALITY', 'Deezer Quality', 'select', '', ['FLAC', 'MP3_320', 'MP3_128'])">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Request Interval</span>
+                        <span class="value" id="config-deezer-ratelimit">200 ms</span>
+                        <button
+                            onclick="openEditSetting('DEEZER_MIN_REQUEST_INTERVAL_MS', 'Deezer Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Qobuz Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">User Auth Token</span>
+                        <span class="value" id="config-qobuz-token">-</span>
+                        <button
+                            onclick="openEditSetting('QOBUZ_USER_AUTH_TOKEN', 'Qobuz User Auth Token', 'password', 'Get from browser while logged into Qobuz')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Preferred Quality</span>
+                        <span class="value" id="config-qobuz-quality">-</span>
+                        <button
+                            onclick="openEditSetting('QOBUZ_QUALITY', 'Qobuz Quality', 'select', 'Default: FLAC', ['FLAC', 'FLAC_24_HIGH', 'FLAC_24_LOW', 'FLAC_16', 'MP3_320'])">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Request Interval</span>
+                        <span class="value" id="config-qobuz-ratelimit">200 ms</span>
+                        <button
+                            onclick="openEditSetting('QOBUZ_MIN_REQUEST_INTERVAL_MS', 'Qobuz Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Apple Music Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">gamdl-aio Sidecar URL</span>
+                        <span class="value" id="config-applemusic-baseurl">-</span>
+                        <button
+                            onclick="openEditSetting('APPLE_MUSIC_AIO_URL', 'gamdl-aio Sidecar URL', 'text', 'Base URL of the gamdl-aio sidecar container (default: http://gamdl-aio:8000)')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Preferred Quality</span>
+                        <span class="value" id="config-applemusic-quality">-</span>
+                        <button
+                            onclick="openEditSetting('APPLE_MUSIC_QUALITY', 'Apple Music Quality', 'select', 'Select preferred audio codec tier', ['alac-16-44', 'alac-24-96', 'alac-24-192', 'aac-320', 'aac-96'])">Edit</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" id="applemusic-manager-card">
+                <h2>Apple Music (gamdl-aio) Manager</h2>
+                <p class="text-secondary mb-16">
+                    Verify container status, upload a compatible package to stage the native decryption library, and authorize your Apple Music subscription.
+                </p>
+                
+                <div class="config-section">
+                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
+                        <span class="label">Native Libs Staged</span>
+                        <span class="value" id="am-staged-status"><span class="status-indicator red"></span> Offline</span>
+                    </div>
+                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
+                        <span class="label">Decryption Daemon</span>
+                        <span class="value" id="am-daemon-status"><span class="status-indicator red"></span> Offline</span>
+                    </div>
+                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
+                        <span class="label">Subscription Authorized</span>
+                        <span class="value" id="am-auth-status"><span class="status-indicator red"></span> Offline</span>
+                    </div>
+                </div>
+
+                <!-- Section A: Upload APK -->
+                <div id="am-upload-section" class="mt-16" style="border-top: 1px solid var(--border); padding-top: 16px; display: none;">
+                    <h3>1. Upload Apple Music APK/APKM</h3>
+                    <p class="text-secondary mb-8">
+                        To enable FairPlay decryption, the system requires staging native library binaries from a compatible media client application package (specifically targeting version 3.6.0-beta, build 1109, typically distributed as an APK or APKM). By choosing to upload this package, you verify that you possess a licensed copy of the application and are staging it exclusively for private, personal backup emulation.
+                    </p>
+                    <input type="file" id="am-apk-input" accept=".apk,.apkm" style="display: none;">
+                    <button class="primary" onclick="document.getElementById('am-apk-input').click()">Browse & Upload APK/APKM</button>
+                    <div id="am-upload-progress-container" style="display: none; margin-top: 8px;">
+                        <div style="background: var(--bg-secondary); border-radius: 4px; height: 16px; overflow: hidden; position: relative;">
+                            <div id="am-upload-progress-bar" style="background: var(--accent); width: 0%; height: 100%;"></div>
+                        </div>
+                        <span id="am-upload-progress-text" style="font-size: 0.85rem;" class="text-secondary">0%</span>
+                    </div>
+                </div>
+
+                <!-- Section B: Login -->
+                <div id="am-login-section" class="mt-16" style="border-top: 1px solid var(--border); padding-top: 16px; display: none;">
+                    <h3>2. Apple Music Login</h3>
+                    <p class="text-secondary mb-8">Enter your real Apple ID email and password to login via the decryption daemon.</p>
+                    <div class="form-group mb-8">
+                        <label class="text-secondary">Apple ID (Email)</label>
+                        <input type="email" id="am-username-input" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);">
+                    </div>
+                    <div class="form-group mb-12">
+                        <label class="text-secondary">Password</label>
+                        <input type="password" id="am-password-input" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);">
+                    </div>
+                    <button class="primary" onclick="submitAppleMusicLogin()">Log In</button>
+                </div>
+
+                <!-- Section C: 2FA -->
+                <div id="am-tfa-section" class="mt-16" style="border-top: 1px solid var(--border); padding-top: 16px; display: none;">
+                    <h3>3. Two-Factor Authentication</h3>
+                    <p class="text-secondary mb-8">Enter the 6-digit verification code sent to your Apple devices.</p>
+                    <div class="form-group mb-12">
+                        <label class="text-secondary">2FA Verification Code</label>
+                        <input type="text" id="am-tfa-input" placeholder="123456" pattern="\d{6}" maxlength="6" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);">
+                    </div>
+                    <button class="primary" onclick="submitAppleMusic2fa()">Verify Code</button>
+                </div>
+            </div>
+
+            <h1 class="mt-32 mb-16">Scrobblers & Metadata</h1>
+            <p class="text-secondary mb-24">Configure scrobbling connections and metadata enrichment databases.</p>
+
             <div class="card">
                 <h2>Scrobbling Configuration</h2>
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
@@ -582,6 +813,30 @@
                     <button onclick="testListenBrainzConnection()">Test Connection</button>
                 </div>
             </div>
+
+            <div class="card">
+                <h2>MusicBrainz Settings</h2>
+                <div class="config-section">
+                    <div class="config-item">
+                        <span class="label">Enabled</span>
+                        <span class="value" id="config-musicbrainz-enabled">-</span>
+                        <button
+                            onclick="openEditSetting('MUSICBRAINZ_ENABLED', 'MusicBrainz Enabled', 'toggle')">Edit</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Username</span>
+                        <span class="value" id="config-musicbrainz-username">-</span>
+                        <button
+                            onclick="openEditSetting('MUSICBRAINZ_USERNAME', 'MusicBrainz Username', 'text', 'Your MusicBrainz username')">Update</button>
+                    </div>
+                    <div class="config-item">
+                        <span class="label">Password</span>
+                        <span class="value" id="config-musicbrainz-password">-</span>
+                        <button
+                            onclick="openEditSetting('MUSICBRAINZ_PASSWORD', 'MusicBrainz Password', 'password', 'Your MusicBrainz password')">Update</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Configuration Tab -->
@@ -599,7 +854,7 @@
                         <span class="label">Music Service <span style="color: var(--error);">*</span></span>
                         <span class="value" id="config-music-service">-</span>
                         <button
-                            onclick="openEditSetting('MUSIC_SERVICE', 'Music Service', 'select', 'Choose your music download provider', ['SquidWTF', 'Deezer', 'Qobuz'])">Edit</button>
+                            onclick="openEditSetting('MUSIC_SERVICE', 'Music Service', 'select', 'Choose your music download provider', ['SquidWTF', 'Deezer', 'Qobuz', 'AppleMusic'])">Edit</button>
                     </div>
                     <div class="config-item">
                         <span class="label">Storage Mode</span>
@@ -684,134 +939,8 @@
                 </details>
             </div>
 
-            <div class="card">
-                <h2>Spotify API Settings</h2>
-                <div
-                    style="background: rgba(248, 81, 73, 0.15); border: 1px solid var(--error); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-primary);">
-                    ⚠️ For active playlists and link functionality to work, sp_dc session cookie must be set!
-                </div>
-                <div class="config-section">
-                    <div class="config-item">
-                        <span class="label">API Enabled</span>
-                        <span class="value" id="config-spotify-enabled">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_ENABLED', 'Spotify API Enabled', 'toggle')">Edit</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Session Cookie (sp_dc) <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-spotify-cookie">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_SESSION_COOKIE', 'Spotify Session Cookie', 'password', 'Get from browser dev tools while logged into Spotify. Cookie typically lasts ~1 year.')">Update</button>
-                    </div>
-                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
-                        <span class="label">Cookie Age</span>
-                        <span class="value" id="config-cookie-age">-</span>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Cache Duration</span>
-                        <span class="value" id="config-cache-duration">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_CACHE_DURATION_MINUTES', 'Cache Duration (minutes)', 'number')">Edit</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">ISRC Matching</span>
-                        <span class="value" id="config-isrc-matching">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_PREFER_ISRC_MATCHING', 'Prefer ISRC Matching', 'toggle')">Edit</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Deezer Settings</h2>
-                <div class="config-section">
-                    <div class="config-item">
-                        <span class="label">ARL Token</span>
-                        <span class="value" id="config-deezer-arl">-</span>
-                        <button
-                            onclick="openEditSetting('DEEZER_ARL', 'Deezer ARL Token', 'password', 'Get from browser cookies while logged into Deezer')">Update</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Quality</span>
-                        <span class="value" id="config-deezer-quality">-</span>
-                        <button
-                            onclick="openEditSetting('DEEZER_QUALITY', 'Deezer Quality', 'select', '', ['FLAC', 'MP3_320', 'MP3_128'])">Edit</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Request Interval</span>
-                        <span class="value" id="config-deezer-ratelimit">200 ms</span>
-                        <button
-                            onclick="openEditSetting('DEEZER_MIN_REQUEST_INTERVAL_MS', 'Deezer Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>SquidWTF / Tidal Settings</h2>
-                <div class="config-section">
-                    <div class="config-item">
-                        <span class="label">Quality</span>
-                        <span class="value" id="config-squid-quality">-</span>
-                        <button
-                            onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', 'HI_RES_LOSSLESS: 24-bit/192kHz FLAC (highest)\\nLOSSLESS: 16-bit/44.1kHz FLAC (default)\\nHIGH: 320kbps AAC\\nLOW: 96kbps AAC', ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Request Interval</span>
-                        <span class="value" id="config-squid-ratelimit">200 ms</span>
-                        <button
-                            onclick="openEditSetting('SQUIDWTF_MIN_REQUEST_INTERVAL_MS', 'SquidWTF Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>MusicBrainz Settings</h2>
-                <div class="config-section">
-                    <div class="config-item">
-                        <span class="label">Enabled</span>
-                        <span class="value" id="config-musicbrainz-enabled">-</span>
-                        <button
-                            onclick="openEditSetting('MUSICBRAINZ_ENABLED', 'MusicBrainz Enabled', 'toggle')">Edit</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Username</span>
-                        <span class="value" id="config-musicbrainz-username">-</span>
-                        <button
-                            onclick="openEditSetting('MUSICBRAINZ_USERNAME', 'MusicBrainz Username', 'text', 'Your MusicBrainz username')">Update</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Password</span>
-                        <span class="value" id="config-musicbrainz-password">-</span>
-                        <button
-                            onclick="openEditSetting('MUSICBRAINZ_PASSWORD', 'MusicBrainz Password', 'password', 'Your MusicBrainz password')">Update</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Qobuz Settings</h2>
-                <div class="config-section">
-                    <div class="config-item">
-                        <span class="label">User Auth Token</span>
-                        <span class="value" id="config-qobuz-token">-</span>
-                        <button
-                            onclick="openEditSetting('QOBUZ_USER_AUTH_TOKEN', 'Qobuz User Auth Token', 'password', 'Get from browser while logged into Qobuz')">Update</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Preferred Quality</span>
-                        <span class="value" id="config-qobuz-quality">-</span>
-                        <button
-                            onclick="openEditSetting('QOBUZ_QUALITY', 'Qobuz Quality', 'select', 'Default: FLAC', ['FLAC', 'FLAC_24_HIGH', 'FLAC_24_LOW', 'FLAC_16', 'MP3_320'])">Edit</button>
-                    </div>
-                    <div class="config-item">
-                        <span class="label">Request Interval</span>
-                        <span class="value" id="config-qobuz-ratelimit">200 ms</span>
-                        <button
-                            onclick="openEditSetting('QOBUZ_MIN_REQUEST_INTERVAL_MS', 'Qobuz Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
-                    </div>
-                </div>
-            </div>
-
+            <!-- External services settings moved to Services tab -->
+            
             <div class="card">
                 <h2>Jellyfin Settings</h2>
                 <div class="config-section">
@@ -1238,6 +1367,7 @@
                         <option value="SquidWTF">SquidWTF</option>
                         <option value="Deezer">Deezer</option>
                         <option value="Qobuz">Qobuz</option>
+                        <option value="AppleMusic">Apple Music</option>
                     </select>
                 </div>
                 <div class="form-group">

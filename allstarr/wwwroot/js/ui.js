@@ -860,6 +860,10 @@ export function updateDownloadsUI(data) {
 }
 
 export function updateConfigUI(data) {
+  window.lastConfigData = data;
+  if (typeof currentWizardStep !== 'undefined') {
+    renderWizardStep(currentWizardStep);
+  }
   document.getElementById("config-backend-type").textContent =
     data.backendType || "Jellyfin";
   document.getElementById("config-music-service").textContent =
@@ -912,6 +916,10 @@ export function updateConfigUI(data) {
     data.squidWtf.quality;
   document.getElementById("config-squid-ratelimit").textContent =
     (data.squidWtf.minRequestIntervalMs || 200) + " ms";
+  document.getElementById("config-applemusic-baseurl").textContent =
+    data.appleMusic.baseUrl || "http://gamdl-aio:8000";
+  document.getElementById("config-applemusic-quality").textContent =
+    data.appleMusic.quality || "alac-16-44";
   document.getElementById("config-musicbrainz-enabled").textContent = data
     .musicBrainz.enabled
     ? "Yes"
@@ -1207,3 +1215,702 @@ export function showPlaylistRebuildingIndicator(playlistName) {
     }
   }
 }
+
+// --- Apple Music Sidecar Manager Logic ---
+
+// Poll status of Apple Music container
+async function pollAppleMusicStatus() {
+  const card = document.getElementById("applemusic-manager-card");
+  if (!card) return;
+
+  // Only poll if AppleMusic is the active provider or if we are looking at configuration
+  const currentTab = document.querySelector(".sidebar-link.active")?.getAttribute("data-tab");
+  if (currentTab !== "config") return;
+
+  try {
+    const res = await fetch("/api/admin/applemusic/status");
+    if (!res.ok) {
+      throw new Error("Sidecar returned error status");
+    }
+    const data = await res.json();
+
+    updateAmIndicator("am-staged-status", data.staged);
+    updateAmIndicator("am-daemon-status", data.daemon_running);
+    updateAmIndicator("am-auth-status", data.logged_in);
+
+    // Conditionally show setup, login, 2fa forms
+    if (!data.staged) {
+      document.getElementById("am-upload-section").style.display = "block";
+      document.getElementById("am-login-section").style.display = "none";
+      document.getElementById("am-tfa-section").style.display = "none";
+    } else if (!data.logged_in) {
+      document.getElementById("am-upload-section").style.display = "none";
+      if (document.getElementById("am-tfa-section").style.display !== "block") {
+        document.getElementById("am-login-section").style.display = "block";
+      }
+    } else {
+      document.getElementById("am-upload-section").style.display = "none";
+      document.getElementById("am-login-section").style.display = "none";
+      document.getElementById("am-tfa-section").style.display = "none";
+    }
+  } catch (error) {
+    updateAmIndicator("am-staged-status", false);
+    updateAmIndicator("am-daemon-status", false);
+    updateAmIndicator("am-auth-status", false);
+    document.getElementById("am-upload-section").style.display = "none";
+    document.getElementById("am-login-section").style.display = "none";
+    document.getElementById("am-tfa-section").style.display = "none";
+  }
+}
+
+function updateAmIndicator(id, active) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (active) {
+    el.innerHTML = '<span class="status-indicator green"></span> Active / Yes';
+  } else {
+    el.innerHTML = '<span class="status-indicator red"></span> Offline / No';
+  }
+}
+
+// Upload APK
+document.addEventListener("DOMContentLoaded", () => {
+  const apkInput = document.getElementById("am-apk-input");
+  if (apkInput) {
+    apkInput.addEventListener("change", (e) => {
+      if (e.target.files.length > 0) {
+        uploadAppleMusicApk(e.target.files[0]);
+      }
+    });
+  }
+  
+  // Start polling status
+  setInterval(pollAppleMusicStatus, 3500);
+  
+  // Also poll once immediately after tab load or startup
+  setTimeout(pollAppleMusicStatus, 1000);
+});
+
+async function uploadAppleMusicApk(file) {
+  const progressContainer = document.getElementById("am-upload-progress-container");
+  const progressBar = document.getElementById("am-upload-progress-bar");
+  const progressText = document.getElementById("am-upload-progress-text");
+  
+  progressContainer.style.display = "block";
+  progressBar.style.width = "0%";
+  progressText.textContent = "Uploading... 0%";
+
+  const xhr = new XMLHttpRequest();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  xhr.open("POST", "/api/admin/applemusic/setup", true);
+
+  xhr.upload.addEventListener("progress", (e) => {
+    if (e.lengthComputable) {
+      const percentComplete = Math.round((e.loaded / e.total) * 100);
+      progressBar.style.width = percentComplete + "%";
+      progressText.textContent = `Uploading... ${percentComplete}%`;
+    }
+  });
+
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      progressText.textContent = "Staging libraries on sidecar... Please wait";
+      setTimeout(() => {
+        progressContainer.style.display = "none";
+        pollAppleMusicStatus();
+      }, 5000);
+    } else {
+      progressContainer.style.display = "none";
+      alert("Staging failed: " + xhr.responseText);
+    }
+  };
+
+  xhr.onerror = function() {
+    progressContainer.style.display = "none";
+    alert("Connection error occurred during upload.");
+  };
+
+  xhr.send(formData);
+}
+
+// Login
+async function submitAppleMusicLogin() {
+  const username = document.getElementById("am-username-input").value.trim();
+  const password = document.getElementById("am-password-input").value;
+  
+  if (!username || !password) {
+    alert("Please enter both Apple ID and password.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/admin/applemusic/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    
+    if (res.status === 200) {
+      alert("Login successful!");
+      pollAppleMusicStatus();
+    } else if (res.status === 202) {
+      // 2FA required
+      document.getElementById("am-login-section").style.display = "none";
+      document.getElementById("am-tfa-section").style.display = "block";
+    } else {
+      const text = await res.text();
+      alert("Login failed: " + text);
+    }
+  } catch (err) {
+    alert("Error logging in: " + err.message);
+  }
+}
+
+    } else {
+      const text = await res.text();
+      alert("Verification failed: " + text);
+    }
+  } catch (err) {
+    alert("Error verifying code: " + err.message);
+  }
+}
+
+// --- Interactive Setup Wizard Logic ---
+
+let currentWizardStep = 1;
+
+function initSetupWizard() {
+  const container = document.getElementById("wizard-step-container");
+  if (!container) return;
+  
+  // Render step 1 immediately
+  renderWizardStep(1);
+}
+
+function renderWizardStep(step) {
+  currentWizardStep = step;
+  const container = document.getElementById("wizard-step-container");
+  if (!container) return;
+
+  // Update Stepper indicators
+  const steps = document.querySelectorAll(".setup-step");
+  steps.forEach((el, index) => {
+    const stepNum = index + 1;
+    el.classList.remove("active", "completed");
+    if (stepNum === step) {
+      el.classList.add("active");
+    } else if (stepNum < step) {
+      el.classList.add("completed");
+    }
+  });
+
+  // Update Stepper Line Progress Bar
+  const progressBar = document.getElementById("wizard-progress-bar");
+  if (progressBar) {
+    progressBar.style.width = ((step - 1) / 3) * 100 + "%";
+  }
+
+  // Update actions buttons visibility/text
+  const backBtn = document.getElementById("wizard-back-btn");
+  const skipBtn = document.getElementById("wizard-skip-btn");
+  const nextBtn = document.getElementById("wizard-next-btn");
+
+  if (backBtn) {
+    backBtn.style.visibility = step === 1 ? "hidden" : "visible";
+  }
+  if (skipBtn) {
+    skipBtn.style.display = step === 4 ? "none" : "inline-block";
+  }
+  if (nextBtn) {
+    nextBtn.textContent = step === 4 ? "Restart Allstarr" : "Next Step →";
+    nextBtn.className = step === 4 ? "primary success" : "primary";
+    if (step === 4) {
+      nextBtn.onclick = completeWizardSetup;
+    } else {
+      nextBtn.onclick = nextWizardStep;
+    }
+  }
+
+  // Inject Step Contents HTML
+  const config = window.lastConfigData || {};
+
+  if (step === 1) {
+    container.innerHTML = `
+      <h3>🔌 Step 1: Connect your media server backend</h3>
+      <p class="step-desc">Allstarr syncs local playlists and streams audio files through your server. Let's link it now.</p>
+      
+      <div class="form-group mb-12">
+          <label class="text-secondary" style="display:block; margin-bottom:6px;">Backend Type</label>
+          <select id="wizard-backend-type" onchange="toggleWizardBackendFields()" style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+              <option value="Jellyfin" ${config.backendType === "Jellyfin" ? "selected" : ""}>Jellyfin (Recommended)</option>
+              <option value="Subsonic" ${config.backendType === "Subsonic" ? "selected" : ""}>Subsonic (Navidrome, Gonic, Airsonic)</option>
+          </select>
+      </div>
+      
+      <div class="form-group mb-12">
+          <label class="text-secondary" style="display:block; margin-bottom:6px;">Server URL</label>
+          <input type="text" id="wizard-backend-url" value="${config.backendType === "Subsonic" ? (config.subsonic?.url || "") : (config.jellyfin?.url || "")}" placeholder="e.g. http://192.168.1.100:8096" style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+      </div>
+
+      <div id="wizard-jellyfin-fields" style="display: ${config.backendType === "Subsonic" ? "none" : "block"};">
+          <div class="form-group mb-12">
+              <label class="text-secondary" style="display:block; margin-bottom:6px;">API Key</label>
+              <input type="password" id="wizard-jellyfin-api-key" value="${config.jellyfin?.apiKey || ""}" placeholder="Enter Jellyfin API key..." style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+          </div>
+          <div class="form-group mb-12">
+              <label class="text-secondary" style="display:block; margin-bottom:6px;">User ID (optional)</label>
+              <input type="text" id="wizard-jellyfin-user-id" value="${config.jellyfin?.userId || ""}" placeholder="Optional. Required to sync playlists." style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+          </div>
+      </div>
+
+      <div id="wizard-subsonic-fields" style="display: ${config.backendType === "Subsonic" ? "block" : "none"};">
+          <p class="text-secondary" style="font-size:0.85rem; margin-top:8px;">Subsonic auth handles token generation automatically from settings after save.</p>
+      </div>
+    `;
+  } else if (step === 2) {
+    container.innerHTML = `
+      <h3>🎵 Step 2: Choose and authorize your music provider</h3>
+      <p class="step-desc">Allstarr uses a streaming provider to search and fetch decryptable audio files.</p>
+      
+      <div class="form-group mb-16">
+          <label class="text-secondary" style="display:block; margin-bottom:6px;">Music Service Provider</label>
+          <select id="wizard-music-service" onchange="toggleWizardServiceFields()" style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+              <option value="SquidWTF" ${config.musicService === "SquidWTF" ? "selected" : ""}>SquidWTF (Tidal)</option>
+              <option value="Deezer" ${config.musicService === "Deezer" ? "selected" : ""}>Deezer</option>
+              <option value="Qobuz" ${config.musicService === "Qobuz" ? "selected" : ""}>Qobuz</option>
+              <option value="AppleMusic" ${config.musicService === "AppleMusic" ? "selected" : ""}>Apple Music (gamdl-aio sidecar)</option>
+          </select>
+      </div>
+
+      <!-- Deezer Form -->
+      <div id="wizard-deezer-fields" style="display: ${config.musicService === "Deezer" ? "block" : "none"};">
+          <div class="form-group mb-12">
+              <label class="text-secondary" style="display:block; margin-bottom:6px;">ARL Token</label>
+              <input type="password" id="wizard-deezer-arl" placeholder="Paste your Deezer ARL cookie token..." style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+          </div>
+      </div>
+
+      <!-- Qobuz Form -->
+      <div id="wizard-qobuz-fields" style="display: ${config.musicService === "Qobuz" ? "block" : "none"};">
+          <div class="form-group mb-12">
+              <label class="text-secondary" style="display:block; margin-bottom:6px;">Qobuz Auth Token</label>
+              <input type="password" id="wizard-qobuz-token" value="${config.qobuz?.userAuthToken || ""}" placeholder="Paste Qobuz Auth Token..." style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+          </div>
+      </div>
+
+      <!-- Apple Music Form -->
+      <div id="wizard-applemusic-fields" style="display: ${config.musicService === "AppleMusic" ? "block" : "none"};">
+          <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+              <h4 style="margin-bottom: 8px;">gamdl-aio Sidecar Setup</h4>
+              
+              <div class="config-section" style="margin-bottom:12px; display:grid; gap:8px;">
+                  <div class="config-item" style="grid-template-columns: 200px 1fr; border:none; padding:0;">
+                      <span class="label">Native Libs Staged:</span>
+                      <span class="value" id="wizard-am-staged"><span class="status-indicator red"></span> Offline</span>
+                  </div>
+                  <div class="config-item" style="grid-template-columns: 200px 1fr; border:none; padding:0;">
+                      <span class="label">Subscription Authorized:</span>
+                      <span class="value" id="wizard-am-auth"><span class="status-indicator red"></span> Offline</span>
+                  </div>
+              </div>
+
+              <!-- Stage APK -->
+              <div id="wizard-am-apk-section" style="display:none; border-top: 1px solid var(--border); padding-top:12px; margin-top:12px;">
+                  <p class="text-secondary" style="font-size:0.85rem; margin-bottom:8px;">
+                      Staging native FairPlay binaries required. Browse and upload a compatible client APK/APKM (version 3.6.0-beta, build 1109):
+                  </p>
+                  <input type="file" id="wizard-am-apk-input" accept=".apk,.apkm" style="display:none;">
+                  <button type="button" class="primary" onclick="document.getElementById('wizard-am-apk-input').click()">Browse & Upload APK/APKM</button>
+                  <div id="wizard-am-progress-container" style="display:none; margin-top:8px;">
+                      <div style="background: var(--bg-secondary); border-radius:4px; height:8px; overflow:hidden; position:relative; margin-bottom:4px;">
+                          <div id="wizard-am-progress-bar" style="background: var(--accent); width:0%; height:100%;"></div>
+                      </div>
+                      <span id="wizard-am-progress-text" style="font-size:0.75rem;" class="text-secondary">0%</span>
+                  </div>
+              </div>
+
+              <!-- Login credentials -->
+              <div id="wizard-am-login-section" style="display:none; border-top: 1px solid var(--border); padding-top:12px; margin-top:12px;">
+                  <p class="text-secondary" style="font-size:0.85rem; margin-bottom:8px;">Enter Apple Music credentials to login:</p>
+                  <div class="form-group mb-8">
+                      <input type="email" id="wizard-am-user" placeholder="Apple ID Email" style="width:100%; padding:8px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+                  </div>
+                  <div class="form-group mb-12">
+                      <input type="password" id="wizard-am-pass" placeholder="Password" style="width:100%; padding:8px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+                  </div>
+                  <button type="button" class="primary" onclick="submitWizardAmLogin()">Authorize Login</button>
+              </div>
+
+              <!-- 2FA -->
+              <div id="wizard-am-tfa-section" style="display:none; border-top: 1px solid var(--border); padding-top:12px; margin-top:12px;">
+                  <p class="text-secondary" style="font-size:0.85rem; margin-bottom:8px;">Enter the 6-digit verification code sent to your devices:</p>
+                  <input type="text" id="wizard-am-tfa" placeholder="123456" maxlength="6" style="width:100%; padding:8px; margin-bottom:12px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary); text-align:center; font-size:1.2rem; letter-spacing:4px;">
+                  <button type="button" class="primary" onclick="submitWizardAmTfa()">Verify Code</button>
+              </div>
+          </div>
+      </div>
+    `;
+
+    // Start polling status if Apple Music is active
+    if (document.getElementById("wizard-music-service").value === "AppleMusic") {
+      pollWizardAmStatus();
+      setupWizardApkListener();
+    }
+  } else if (step === 3) {
+    container.innerHTML = `
+      <h3>🔑 Step 3: Link Spotify API (Recommended)</h3>
+      <p class="step-desc">Allows Allstarr to import active Spotify playlists, map ISRCs, and fetch lyrics on the fly.</p>
+      
+      <div class="form-group mb-16" style="display:flex; align-items:center; gap:10px;">
+          <input type="checkbox" id="wizard-spotify-enabled" ${config.spotifyApi?.enabled ? "checked" : ""} onchange="toggleWizardSpotifyFields()" style="width:20px; height:20px; cursor:pointer;">
+          <label for="wizard-spotify-enabled" style="font-weight:600; cursor:pointer;">Enable Spotify Playlist Sync & Matching</label>
+      </div>
+
+      <div id="wizard-spotify-fields" style="display: ${config.spotifyApi?.enabled ? "block" : "none"};">
+          <div class="form-group mb-12">
+              <label class="text-secondary" style="display:block; margin-bottom:6px;">Spotify Session Cookie (<code>sp_dc</code>)</label>
+              <input type="password" id="wizard-spotify-cookie" value="${config.spotifyApi?.sessionCookie || ""}" placeholder="Paste your Spotify sp_dc session cookie..." style="width:100%; padding:10px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary);">
+              <small class="text-secondary" style="margin-top:4px; display:block; line-height:1.4;">
+                  Get this from browser dev tools (Application tab -> Cookies) while logged into spotify.com. Key typically lasts ~1 year.
+              </small>
+          </div>
+      </div>
+    `;
+  } else if (step === 4) {
+    const backend = config.backendType || "Jellyfin";
+    const service = config.musicService || "SquidWTF";
+    const spotifyActive = config.spotifyApi?.enabled;
+
+    container.innerHTML = `
+      <h3>🎉 Guided Setup Complete!</h3>
+      <p class="step-desc">Your basic configuration is ready. Apply and restart the service to initialize all components.</p>
+      
+      <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid var(--success); border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+          <h4 style="color:var(--success); margin-bottom:12px; font-weight:600;">Configuration Checklist:</h4>
+          <ul style="list-style:none; padding:0; display:grid; gap:8px;">
+              <li>✔️ Backend server set to <strong>${backend}</strong></li>
+              <li>✔️ Music downloader set to <strong>${service}</strong></li>
+              <li>${spotifyActive ? "✔️ Spotify integration configured" : "❌ Spotify integration skipped (optional)"}</li>
+          </ul>
+      </div>
+      <p class="text-secondary" style="font-size:0.9rem; margin-bottom:12px;">Clicking "Restart Allstarr" will write all configuration properties to your environment and reboot the proxy server.</p>
+    `;
+  }
+}
+
+function toggleWizardBackendFields() {
+  const type = document.getElementById("wizard-backend-type").value;
+  document.getElementById("wizard-jellyfin-fields").style.display = type === "Jellyfin" ? "block" : "none";
+  document.getElementById("wizard-subsonic-fields").style.display = type === "Subsonic" ? "block" : "none";
+}
+
+function toggleWizardServiceFields() {
+  const val = document.getElementById("wizard-music-service").value;
+  document.getElementById("wizard-deezer-fields").style.display = val === "Deezer" ? "block" : "none";
+  document.getElementById("wizard-qobuz-fields").style.display = val === "Qobuz" ? "block" : "none";
+  document.getElementById("wizard-applemusic-fields").style.display = val === "AppleMusic" ? "block" : "none";
+
+  if (val === "AppleMusic") {
+    pollWizardAmStatus();
+    setupWizardApkListener();
+  }
+}
+
+function toggleWizardSpotifyFields() {
+  const chk = document.getElementById("wizard-spotify-enabled").checked;
+  document.getElementById("wizard-spotify-fields").style.display = chk ? "block" : "none";
+}
+
+// Staging Listeners
+function setupWizardApkListener() {
+  setTimeout(() => {
+    const input = document.getElementById("wizard-am-apk-input");
+    if (input && !input.dataset.hasListener) {
+      input.dataset.hasListener = "true";
+      input.addEventListener("change", (e) => {
+        if (e.target.files.length > 0) {
+          uploadWizardAmApk(e.target.files[0]);
+        }
+      });
+    }
+  }, 100);
+}
+
+// Upload Wizard APK
+async function uploadWizardAmApk(file) {
+  const progressContainer = document.getElementById("wizard-am-progress-container");
+  const progressBar = document.getElementById("wizard-am-progress-bar");
+  const progressText = document.getElementById("wizard-am-progress-text");
+  
+  if (!progressContainer) return;
+  progressContainer.style.display = "block";
+  progressBar.style.width = "0%";
+  progressText.textContent = "Uploading... 0%";
+
+  const xhr = new XMLHttpRequest();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  xhr.open("POST", "/api/admin/applemusic/setup", true);
+
+  xhr.upload.addEventListener("progress", (e) => {
+    if (e.lengthComputable) {
+      const percentComplete = Math.round((e.loaded / e.total) * 100);
+      progressBar.style.width = percentComplete + "%";
+      progressText.textContent = `Uploading... ${percentComplete}%`;
+    }
+  });
+
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      progressText.textContent = "Staging libraries on sidecar... Please wait";
+      setTimeout(() => {
+        progressContainer.style.display = "none";
+        pollWizardAmStatus();
+      }, 5000);
+    } else {
+      progressContainer.style.display = "none";
+      alert("Staging failed: " + xhr.responseText);
+    }
+  };
+
+  xhr.send(formData);
+}
+
+// Poll Apple Music status in Wizard
+async function pollWizardAmStatus() {
+  if (currentWizardStep !== 2) return;
+  const service = document.getElementById("wizard-music-service")?.value;
+  if (service !== "AppleMusic") return;
+
+  try {
+    const res = await fetch("/api/admin/applemusic/status");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const stagedVal = document.getElementById("wizard-am-staged");
+    const authVal = document.getElementById("wizard-am-auth");
+
+    if (stagedVal) {
+      stagedVal.innerHTML = data.staged 
+        ? '<span class="status-indicator green"></span> Active / Yes'
+        : '<span class="status-indicator red"></span> Offline / No';
+    }
+    if (authVal) {
+      authVal.innerHTML = data.logged_in
+        ? '<span class="status-indicator green"></span> Active / Yes'
+        : '<span class="status-indicator red"></span> Offline / No';
+    }
+
+    // Sections visibility
+    const apkSec = document.getElementById("wizard-am-apk-section");
+    const loginSec = document.getElementById("wizard-am-login-section");
+    const tfaSec = document.getElementById("wizard-am-tfa-section");
+
+    if (!data.staged) {
+      if (apkSec) apkSec.style.display = "block";
+      if (loginSec) loginSec.style.display = "none";
+      if (tfaSec) tfaSec.style.display = "none";
+    } else if (!data.logged_in) {
+      if (apkSec) apkSec.style.display = "none";
+      if (tfaSec && tfaSec.style.display !== "block") {
+        if (loginSec) loginSec.style.display = "block";
+      }
+    } else {
+      if (apkSec) apkSec.style.display = "none";
+      if (loginSec) loginSec.style.display = "none";
+      if (tfaSec) tfaSec.style.display = "none";
+    }
+  } catch (e) {
+    // Silent fail
+  }
+}
+
+// Authorize Login in Wizard
+async function submitWizardAmLogin() {
+  const username = document.getElementById("wizard-am-user").value.trim();
+  const password = document.getElementById("wizard-am-pass").value;
+  if (!username || !password) {
+    alert("Please enter both Apple ID email and password.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/admin/applemusic/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+
+    if (res.status === 200) {
+      alert("Apple Music Login Successful!");
+      pollWizardAmStatus();
+    } else if (res.status === 202) {
+      document.getElementById("wizard-am-login-section").style.display = "none";
+      document.getElementById("wizard-am-tfa-section").style.display = "block";
+    } else {
+      const text = await res.text();
+      alert("Login failed: " + text);
+    }
+  } catch (err) {
+    alert("Error logging in: " + err.message);
+  }
+}
+
+// 2FA in Wizard
+async function submitWizardAmTfa() {
+  const code = document.getElementById("wizard-am-tfa").value.trim();
+  if (!code || code.length !== 6) {
+    alert("Please enter the 6-digit code.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/admin/applemusic/login/2fa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+
+    if (res.ok) {
+      alert("2FA Verification Successful! Logged In.");
+      pollWizardAmStatus();
+    } else {
+      const text = await res.text();
+      alert("Verification failed: " + text);
+    }
+  } catch (e) {
+    alert("Error verifying code: " + e.message);
+  }
+}
+
+// Save config on step navigation
+async function saveWizardStepData(step) {
+  const updates = {};
+
+  if (step === 1) {
+    const type = document.getElementById("wizard-backend-type").value;
+    const url = document.getElementById("wizard-backend-url").value.trim();
+    updates["BACKEND_TYPE"] = type;
+    if (type === "Jellyfin") {
+      updates["JELLYFIN_URL"] = url;
+      updates["JELLYFIN_API_KEY"] = document.getElementById("wizard-jellyfin-api-key").value.trim();
+      updates["JELLYFIN_USER_ID"] = document.getElementById("wizard-jellyfin-user-id").value.trim();
+    } else {
+      updates["SUBSONIC_URL"] = url;
+    }
+  } else if (step === 2) {
+    const service = document.getElementById("wizard-music-service").value;
+    updates["MUSIC_SERVICE"] = service;
+    if (service === "Deezer") {
+      updates["DEEZER_ARL"] = document.getElementById("wizard-deezer-arl").value.trim();
+    } else if (service === "Qobuz") {
+      updates["QOBUZ_USER_AUTH_TOKEN"] = document.getElementById("wizard-qobuz-token").value.trim();
+    }
+  } else if (step === 3) {
+    const spotifyEnabled = document.getElementById("wizard-spotify-enabled").checked;
+    updates["SPOTIFY_API_ENABLED"] = spotifyEnabled ? "true" : "false";
+    if (spotifyEnabled) {
+      updates["SPOTIFY_API_SESSION_COOKIE"] = document.getElementById("wizard-spotify-cookie").value.trim();
+    }
+  }
+
+  try {
+    const res = await fetch("/api/admin/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates })
+    });
+    if (!res.ok) {
+      throw new Error("Failed to save step settings");
+    }
+    // Update local lastConfigData properties
+    if (!window.lastConfigData) window.lastConfigData = {};
+    Object.assign(window.lastConfigData, updates);
+  } catch (e) {
+    console.error(e);
+    alert("Warning: Failed to auto-save step configuration to server: " + e.message);
+  }
+}
+
+// Navigation Triggers
+async function nextWizardStep() {
+  await saveWizardStepData(currentWizardStep);
+  if (currentWizardStep < 4) {
+    renderWizardStep(currentWizardStep + 1);
+  }
+}
+
+function prevWizardStep() {
+  if (currentWizardStep > 1) {
+    renderWizardStep(currentWizardStep - 1);
+  }
+}
+
+function skipWizardStep() {
+  if (currentWizardStep < 4) {
+    renderWizardStep(currentWizardStep + 1);
+  }
+}
+
+function jumpToWizardStep(step) {
+  if (step >= 1 && step <= 4) {
+    renderWizardStep(step);
+  }
+}
+
+// Final Save & Restart
+async function completeWizardSetup() {
+  if (confirm("Configuration properties saved. Restart Allstarr container now?")) {
+    try {
+      const res = await fetch("/api/admin/config/restart", { method: "POST" });
+      if (res.ok) {
+        alert("Server is restarting. Please wait 10-15 seconds and refresh this page.");
+      } else {
+        alert("Restart command sent. Please refresh the page in a few moments.");
+      }
+    } catch (e) {
+      alert("Restart requested. Reconnecting shortly.");
+    }
+  }
+}
+
+// Expose functions globally for HTML triggers
+window.initSetupWizard = initSetupWizard;
+window.renderWizardStep = renderWizardStep;
+window.toggleWizardBackendFields = toggleWizardBackendFields;
+window.toggleWizardServiceFields = toggleWizardServiceFields;
+window.toggleWizardSpotifyFields = toggleWizardSpotifyFields;
+window.nextWizardStep = nextWizardStep;
+window.prevWizardStep = prevWizardStep;
+window.skipWizardStep = skipWizardStep;
+window.jumpToWizardStep = jumpToWizardStep;
+window.pollWizardAmStatus = pollWizardAmStatus;
+window.submitWizardAmLogin = submitWizardAmLogin;
+window.submitWizardAmTfa = submitWizardAmTfa;
+window.completeWizardSetup = completeWizardSetup;
+
+// Upload APK
+document.addEventListener("DOMContentLoaded", () => {
+  const apkInput = document.getElementById("am-apk-input");
+  if (apkInput) {
+    apkInput.addEventListener("change", (e) => {
+      if (e.target.files.length > 0) {
+        uploadAppleMusicApk(e.target.files[0]);
+      }
+    });
+  }
+  
+  // Start polling status
+  setInterval(pollAppleMusicStatus, 3500);
+  
+  // Also poll once immediately after tab load or startup
+  setTimeout(pollAppleMusicStatus, 1000);
+
+  // Initialize Guided Setup Wizard
+  setTimeout(() => {
+    initSetupWizard();
+  }, 500);
+});

@@ -26,6 +26,7 @@ public class JellyfinProxyService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<JellyfinProxyService> _logger;
     private readonly RedisCacheService _cache;
+    private readonly IConfiguration _configuration;
     private string? _cachedMusicLibraryId;
     private bool _libraryIdDetected = false;
 
@@ -37,13 +38,15 @@ public class JellyfinProxyService
         IOptions<JellyfinSettings> settings,
         IHttpContextAccessor httpContextAccessor,
         ILogger<JellyfinProxyService> logger,
-        RedisCacheService cache)
+        RedisCacheService cache,
+        IConfiguration configuration)
     {
         _httpClient = httpClientFactory.CreateClient(HttpClientName);
         _settings = settings.Value;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
         _cache = cache;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -174,6 +177,8 @@ public class JellyfinProxyService
         using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
         ForwardPassthroughRequestHeaders(clientHeaders, request);
 
+        LogOutboundRequest(HttpMethod.Get, url);
+
         var response = await _httpClient.SendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead,
@@ -190,6 +195,8 @@ public class JellyfinProxyService
     private async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string url, IHeaderDictionary? clientHeaders)
     {
         using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
+
+        LogOutboundRequest(HttpMethod.Get, url);
 
         var response = await _httpClient.SendAsync(request);
 
@@ -395,6 +402,8 @@ public class JellyfinProxyService
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
+        LogOutboundRequest(method, url);
+
         if (isAuthEndpoint)
         {
             _logger.LogDebug("{Method} to Jellyfin: {Url} (auth request - body not logged)", method, url);
@@ -462,6 +471,8 @@ public class JellyfinProxyService
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("Authorization", GetAuthorizationHeader());
 
+        LogOutboundRequest(HttpMethod.Get, url);
+
         var response = await _httpClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
 
@@ -486,6 +497,8 @@ public class JellyfinProxyService
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Add("Authorization", GetAuthorizationHeader());
+
+        LogOutboundRequest(HttpMethod.Get, url);
 
         var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
@@ -747,6 +760,8 @@ public class JellyfinProxyService
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Authorization", GetAuthorizationHeader());
 
+            LogOutboundRequest(HttpMethod.Get, url);
+
             // Forward Range headers for progressive streaming
             if (incomingRequest.Headers.TryGetValue("Range", out var range))
             {
@@ -945,6 +960,60 @@ public class JellyfinProxyService
         return url;
     }
 
+    private void LogOutboundRequest(HttpMethod method, string url)
+    {
+        if (!_configuration.GetValue<bool>("Debug:LogAllRequests"))
+        {
+            return;
+        }
+
+        var urlForLog = _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false)
+            ? MaskSensitiveUrl(url)
+            : url;
+
+        _logger.LogInformation("➡️ Jellyfin {Method} {Url}", method.Method, urlForLog);
+    }
+
+    private static string MaskSensitiveUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Query))
+        {
+            return url;
+        }
+
+        var query = uri.Query.TrimStart('?');
+        var parts = query
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part =>
+            {
+                var kv = part.Split('=', 2);
+                var key = Uri.UnescapeDataString(kv[0]);
+                return IsSensitiveQueryKey(key)
+                    ? $"{kv[0]}=<redacted>"
+                    : part;
+            })
+            .ToArray();
+
+        if (parts.Length == 0)
+        {
+            return url;
+        }
+
+        return $"{uri.GetLeftPart(UriPartial.Path)}?{string.Join("&", parts)}{uri.Fragment}";
+    }
+
+    private static bool IsSensitiveQueryKey(string key)
+    {
+        return string.Equals(key, "api_key", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(key, "token", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(key, "auth", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(key, "authorization", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(key, "x-emby-token", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(key, "x-emby-authorization", StringComparison.OrdinalIgnoreCase) ||
+               key.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+               key.Contains("auth", StringComparison.OrdinalIgnoreCase);
+    }
+
     private void LogUpstreamFailure(HttpMethod method, HttpStatusCode statusCode, string url, string? responseBody = null)
     {
         if (statusCode == HttpStatusCode.Unauthorized)
@@ -1016,6 +1085,8 @@ public class JellyfinProxyService
         request.Headers.TryAddWithoutValidation("X-Emby-Authorization", authHeader);
 
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        LogOutboundRequest(HttpMethod.Get, url);
 
         var response = await _httpClient.SendAsync(request);
         var statusCode = (int)response.StatusCode;

@@ -15,13 +15,13 @@ export function initScrobblingView({
     }
   }
 
-  const scrobblingTab = document.querySelector('.tab[data-tab="scrobbling"]');
+  const scrobblingTab = document.querySelector('.tab[data-tab="services"]');
   if (scrobblingTab) {
     scrobblingTab.addEventListener("click", onActivateScrobbling);
   }
 
   const scrobblingSidebar = document.querySelector(
-    '.sidebar-link[data-tab="scrobbling"]',
+    '.sidebar-link[data-tab="services"]',
   );
   if (scrobblingSidebar) {
     scrobblingSidebar.addEventListener("click", onActivateScrobbling);

@@ -59,7 +59,8 @@ public class RequestLoggingMiddleware
 
         // Log request details
         var requestLog = new StringBuilder();
-        requestLog.AppendLine($"📥 HTTP {request.Method} {request.Path}{queryStringForLog}");
+        var requestUrlForLog = $"{request.Scheme}://{request.Host}{request.Path}{queryStringForLog}";
+        requestLog.AppendLine($"📥 HTTP {request.Method} {requestUrlForLog}");
         requestLog.AppendLine($"   Host: {request.Host}");
         requestLog.AppendLine($"   Content-Type: {request.ContentType ?? "(none)"}");
         requestLog.AppendLine($"   Content-Length: {request.ContentLength?.ToString() ?? "(none)"}");
@@ -106,9 +107,9 @@ public class RequestLoggingMiddleware
 
             // Log response
             _logger.LogInformation(
-                "📤 HTTP {Method} {Path} → {StatusCode} ({ElapsedMs}ms)",
+                "📤 HTTP {Method} {Url} → {StatusCode} ({ElapsedMs}ms)",
                 request.Method,
-                request.Path,
+                requestUrlForLog,
                 context.Response.StatusCode,
                 stopwatch.ElapsedMilliseconds);
         }
@@ -116,9 +117,9 @@ public class RequestLoggingMiddleware
         {
             stopwatch.Stop();
             _logger.LogError(ex,
-                "❌ HTTP {Method} {Path} → EXCEPTION ({ElapsedMs}ms)",
+                "❌ HTTP {Method} {Url} → EXCEPTION ({ElapsedMs}ms)",
                 request.Method,
-                request.Path,
+                requestUrlForLog,
                 stopwatch.ElapsedMilliseconds);
             throw;
         }

@@ -231,6 +231,18 @@ const SETTINGS_REGISTRY = {
     },
     200,
   ),
+  APPLE_MUSIC_AIO_URL: textBinding(
+    (config) => config?.appleMusic?.baseUrl ?? "http://gamdl-aio:8000",
+    (config, value) => {
+      ensureConfigSection(config, "appleMusic").baseUrl = value;
+    },
+  ),
+  APPLE_MUSIC_QUALITY: textBinding(
+    (config) => config?.appleMusic?.quality ?? "alac-16-44",
+    (config, value) => {
+      ensureConfigSection(config, "appleMusic").quality = value;
+    },
+  ),
   MUSICBRAINZ_ENABLED: toggleBinding(
     (config) => config?.musicBrainz?.enabled ?? false,
     (config, value) => {

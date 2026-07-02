@@ -3,6 +3,7 @@ using allstarr.Services;
 using allstarr.Services.Deezer;
 using allstarr.Services.Qobuz;
 using allstarr.Services.SquidWTF;
+using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
 using allstarr.Services.Validation;
 using allstarr.Services.Subsonic;
@@ -159,6 +160,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("SquidWTF");
+builder.Services.AddHttpClient("AppleMusic");
 builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 {
     options.HttpMessageHandlerBuilderActions.Add(builder =>
@@ -224,6 +226,8 @@ builder.Services.Configure<QobuzSettings>(
     builder.Configuration.GetSection("Qobuz"));
 builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
+builder.Services.Configure<AppleMusicSettings>(
+    builder.Configuration.GetSection("AppleMusic"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
 builder.Services.Configure<CacheSettings>(
@@ -623,6 +627,11 @@ else if (musicService == MusicService.SquidWTF)
             sp.GetRequiredService<ILogger<SquidWTFDownloadService>>(),
             sp.GetRequiredService<OdesliService>(),
             squidWtfStreamingUrls));
+}
+else if (musicService == MusicService.AppleMusic)
+{
+    builder.Services.AddSingleton<IMusicMetadataService, AppleMusicMetadataService>();
+    builder.Services.AddSingleton<IDownloadService, AppleMusicDownloadService>();
 }
 
 // Register ParallelMetadataService to race all registered providers for faster searches

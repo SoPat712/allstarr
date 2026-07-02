@@ -4,6 +4,30 @@ This document provides detailed configuration options for Allstarr.
 
 ## Advanced Configuration
 
+### Admin Dashboard Network Access
+
+The media-client proxy and the admin dashboard use different ports:
+
+| Port | Purpose |
+|------|---------|
+| `8080` (host port `5274` in the provided Compose file) | Jellyfin/Subsonic proxy traffic |
+| `5275` | Allstarr admin dashboard and admin API |
+
+Opening port `8080` in a browser does not open the Allstarr dashboard. For
+Docker, LAN, or reverse-proxy access to the dashboard, configure:
+
+```dotenv
+ADMIN_BIND_ANY_IP=true
+ADMIN_TRUSTED_SUBNETS=192.168.1.0/24
+```
+
+`ADMIN_TRUSTED_SUBNETS` is a comma-separated CIDR allowlist. If a reverse proxy
+connects over a Docker network, allow that Docker network's CIDR and route the
+dashboard service to container port `5275`, not `8080`.
+
+Do not publish the dashboard without an additional private-network or
+authenticated-access boundary.
+
 ### Backend Selection
 
 | Setting | Description |

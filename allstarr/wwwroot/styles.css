@@ -1,15 +1,19 @@
 :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #21262d;
-    --text-primary: #f0f6fc;
-    --text-secondary: #8b949e;
-    --accent: #58a6ff;
-    --accent-hover: #79c0ff;
-    --success: #3fb950;
-    --warning: #d29922;
-    --error: #f85149;
-    --border: #30363d;
+    --bg-primary: #080c14;
+    --bg-secondary: #0f1524;
+    --bg-tertiary: #1b2336;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --border: #1e293b;
+    --border-hover: #334155;
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
 }
 
 * {
@@ -337,15 +341,21 @@ h1 {
 .card {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
+    border-radius: var(--radius-md);
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    border-color: var(--border-hover);
 }
 
 .card h2 {
-    font-size: 1.1rem;
+    font-size: 1.15rem;
     font-weight: 600;
-    margin-bottom: 16px;
+    margin-bottom: 18px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -358,14 +368,14 @@ h1 {
 
 .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 24px;
 }
 
 .stat-row {
     display: flex;
     justify-content: space-between;
-    padding: 8px 0;
+    padding: 10px 0;
     border-bottom: 1px solid var(--border);
 }
 
@@ -404,15 +414,22 @@ button {
     background: var(--bg-tertiary);
     color: var(--text-primary);
     border: 1px solid var(--border);
-    padding: 8px 16px;
-    border-radius: 6px;
+    padding: 10px 20px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 0.9rem;
-    transition: all 0.2s;
+    font-weight: 500;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 button:hover {
-    background: var(--border);
+    background: var(--border-hover);
+    border-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+}
+
+button:active {
+    transform: translateY(0);
 }
 
 button.primary {
@@ -423,6 +440,7 @@ button.primary {
 
 button.primary:hover {
     background: var(--accent-hover);
+    border-color: var(--accent-hover);
 }
 
 button.secondary {
@@ -431,13 +449,13 @@ button.secondary {
 }
 
 button.danger {
-    background: rgba(248, 81, 73, 0.15);
+    background: rgba(239, 68, 68, 0.12);
     border-color: var(--error);
     color: var(--error);
 }
 
 button.danger:hover {
-    background: rgba(248, 81, 73, 0.3);
+    background: rgba(239, 68, 68, 0.25);
 }
 
 .map-action-btn {
@@ -1588,4 +1606,154 @@ textarea {
     font-style: italic;
     padding: 12px;
     text-align: center;
+}
+
+/* --- Setup Wizard / Guided Stepper Styling --- */
+.setup-wizard-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+
+.setup-wizard-card h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.setup-wizard-card .wizard-intro {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin-bottom: 24px;
+}
+
+.setup-stepper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    margin-bottom: 32px;
+    padding: 0 10px;
+}
+
+.setup-stepper::before {
+    content: '';
+    position: absolute;
+    top: 20px;
+    left: 40px;
+    right: 40px;
+    height: 3px;
+    background: var(--border);
+    z-index: 1;
+}
+
+.setup-stepper-progress {
+    position: absolute;
+    top: 20px;
+    left: 40px;
+    width: 0%; /* Dynamic width based on current step */
+    height: 3px;
+    background: var(--accent);
+    z-index: 2;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.setup-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    z-index: 3;
+    cursor: pointer;
+    flex: 1;
+}
+
+.setup-step-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    border: 3px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    transition: all 0.3s;
+}
+
+.setup-step:hover .setup-step-circle {
+    border-color: var(--border-hover);
+    color: var(--text-primary);
+}
+
+.setup-step.active .setup-step-circle {
+    border-color: var(--accent);
+    background: var(--bg-primary);
+    color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+}
+
+.setup-step.completed .setup-step-circle {
+    border-color: var(--success);
+    background: var(--success);
+    color: #ffffff;
+}
+
+.setup-step-label {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: center;
+    transition: color 0.3s;
+}
+
+.setup-step.active .setup-step-label {
+    color: var(--text-primary);
+}
+
+.setup-step.completed .setup-step-label {
+    color: var(--success);
+}
+
+.setup-wizard-content {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    margin-bottom: 24px;
+    min-height: 200px;
+}
+
+.setup-wizard-content h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.setup-wizard-content p.step-desc {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
+
+.setup-wizard-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.setup-wizard-actions .right-buttons {
+    display: flex;
+    gap: 12px;
 }

@@ -383,6 +383,27 @@ function normalizeExternalIdForProvider(externalId, provider) {
     return "";
   }
 
+  if (normalizedProvider === "applemusic") {
+    if (/^\d+$/.test(trimmedId)) {
+      return trimmedId;
+    }
+    try {
+      const url = new URL(trimmedId);
+      const queryId = url.searchParams.get("i")?.trim();
+      if (queryId && /^\d+$/.test(queryId)) {
+        return queryId;
+      }
+      const pathSegments = url.pathname.split("/").filter(Boolean);
+      const lastSegment = pathSegments[pathSegments.length - 1] || "";
+      if (/^\d+$/.test(lastSegment)) {
+        return lastSegment;
+      }
+    } catch {
+      return trimmedId;
+    }
+    return trimmedId;
+  }
+
   if (normalizedProvider !== "squidwtf") {
     return trimmedId;
   }
@@ -432,7 +453,9 @@ export function selectExternalTrack(
         ? "Deezer"
         : normalizedProvider === "qobuz"
           ? "Qobuz"
-          : providerSelect.value;
+          : normalizedProvider === "applemusic" || normalizedProvider === "apple-music"
+            ? "AppleMusic"
+            : providerSelect.value;
 
   providerSelect.value = providerOptionValue;
   const selectedProvider = providerOptionValue.toLowerCase();
@@ -593,6 +616,11 @@ export function validateExternalMapping(externalId, provider) {
   } else if (provider === "qobuz") {
     if (!externalId.includes("/") && !/^\d+$/.test(externalId)) {
       showToast("Qobuz ID format appears invalid", "error");
+      valid = false;
+    }
+  } else if (provider === "applemusic") {
+    if (!/^\d+$/.test(externalId) && !externalId.startsWith("http")) {
+      showToast("Apple Music ID should be numeric or a full URL", "error");
       valid = false;
     }
   }

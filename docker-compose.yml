@@ -168,6 +168,9 @@ services:
       - MusicBrainz__Enabled=${MUSICBRAINZ_ENABLED:-true}
       - MusicBrainz__Username=${MUSICBRAINZ_USERNAME:-}
       - MusicBrainz__Password=${MUSICBRAINZ_PASSWORD:-}
+      # ===== APPLE MUSIC =====
+      - AppleMusic__BaseUrl=${APPLE_MUSIC_AIO_URL:-http://gamdl-aio:8000}
+      - AppleMusic__Quality=${APPLE_MUSIC_QUALITY:-alac-16-44}
     volumes:
       - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
       - ${KEPT_PATH:-./kept}:/app/kept
@@ -176,6 +179,23 @@ services:
       - ./.env:/app/.env
       # Docker socket for self-restart capability (admin UI only)
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  gamdl-aio:
+    build:
+      context: ../gamdl-aio
+      args:
+        TARGET_ARCH: arm64-v8a
+        RUNTIME_PLATFORM: linux/arm64
+    container_name: gamdl-aio
+    restart: unless-stopped
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./gamdl-data:/app/data
+    networks:
+      - allstarr-network
 
 networks:
   allstarr-network:
