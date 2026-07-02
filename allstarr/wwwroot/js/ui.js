@@ -1367,7 +1367,24 @@ async function submitAppleMusicLogin() {
     alert("Error logging in: " + err.message);
   }
 }
+// 2FA
+async function submitAppleMusic2fa() {
+  const code = document.getElementById("am-tfa-input").value.trim();
+  if (!code || code.length !== 6) {
+    alert("Please enter a valid 6-digit code.");
+    return;
+  }
 
+  try {
+    const res = await fetch("/api/admin/applemusic/login/2fa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+
+    if (res.ok) {
+      alert("2FA Verification successful! You are now logged in.");
+      pollAppleMusicStatus();
     } else {
       const text = await res.text();
       alert("Verification failed: " + text);
