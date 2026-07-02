@@ -182,7 +182,7 @@ services:
 
   gamdl-aio:
     build:
-      context: ../gamdl-aio
+      context: ./gamdl-aio
       args:
         TARGET_ARCH: arm64-v8a
         RUNTIME_PLATFORM: linux/arm64

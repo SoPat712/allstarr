@@ -1,0 +1,17 @@
+.git/
+.github/
+.tmp/
+.cache/
+build/
+build-*/
+cmake-build-*/
+
+*.apk
+*.apkm
+*.md
+!README.md
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
