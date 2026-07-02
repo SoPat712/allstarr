@@ -1,6 +1,7 @@
 import { showToast } from "./utils.js";
 import * as API from "./api.js";
 import { runAction } from "./operations.js";
+import { updateConfigUI } from "./ui.js";
 
 let showRestartBanner = () => {};
 
@@ -63,50 +64,11 @@ async function loadScrobblingConfig() {
       API.fetchScrobblingStatus(),
     ]);
 
-    document.getElementById("scrobbling-enabled-value").textContent = data
-      .scrobbling.enabled
-      ? "Enabled"
-      : "Disabled";
-
-    document.getElementById("local-tracks-enabled-value").textContent = data
-      .scrobbling.localTracksEnabled
-      ? "Enabled"
-      : "Disabled";
-
-    document.getElementById(
-      "synthetic-local-played-signal-enabled-value",
-    ).textContent = data.scrobbling.syntheticLocalPlayedSignalEnabled
-      ? "Enabled"
-      : "Disabled";
-
-    document.getElementById("lastfm-enabled-value").textContent = data
-      .scrobbling.lastFm.enabled
-      ? "Enabled"
-      : "Disabled";
+    updateConfigUI(data);
 
     const username = data.scrobbling.lastFm.username;
-    document.getElementById("lastfm-username-value").textContent =
-      username && username !== "(not set)" ? username : "Not Set";
-
     const password = data.scrobbling.lastFm.password;
-    document.getElementById("lastfm-password-value").textContent =
-      password && password !== "(not set)" ? "••••••••" : "Not Set";
-
     const sessionKey = data.scrobbling.lastFm.sessionKey;
-    if (
-      sessionKey &&
-      sessionKey !== "(not set)" &&
-      !sessionKey.startsWith("••••")
-    ) {
-      document.getElementById("lastfm-session-key-value").textContent =
-        sessionKey.substring(0, 32) + "...";
-    } else if (sessionKey && sessionKey.startsWith("••••")) {
-      document.getElementById("lastfm-session-key-value").textContent =
-        sessionKey;
-    } else {
-      document.getElementById("lastfm-session-key-value").textContent =
-        "Not Set";
-    }
 
     const hasApiKey =
       data.scrobbling.lastFm.apiKey &&
@@ -153,17 +115,9 @@ async function loadScrobblingConfig() {
     }
     document.getElementById("lastfm-status-value").innerHTML = statusHtml;
 
-    document.getElementById("listenbrainz-enabled-value").textContent = data
-      .scrobbling.listenBrainz.enabled
-      ? "Enabled"
-      : "Disabled";
-
     const hasToken =
       data.scrobbling.listenBrainz.userToken &&
       data.scrobbling.listenBrainz.userToken !== "(not set)";
-    document.getElementById("listenbrainz-token-value").textContent = hasToken
-      ? "••••••••"
-      : "Not Set";
 
     let lbStatus = "";
     if (data.scrobbling.listenBrainz.enabled && hasToken) {
@@ -297,6 +251,15 @@ async function editListenBrainzToken() {
 }
 
 async function authenticateLastFm() {
+  try {
+    if (window.saveAllSettings) {
+      await window.saveAllSettings('tab-services', { silent: true });
+    }
+  } catch (err) {
+    showToast("Failed to save credentials before authentication", "error");
+    return;
+  }
+
   await runScrobblingAction({
     before: async () => {
       showToast("Authenticating with Last.fm...", "info");
@@ -321,10 +284,32 @@ async function testLastFmConnection() {
 }
 
 async function validateListenBrainzToken() {
-  const token = prompt(
-    "Enter your ListenBrainz User Token:\n\nGet from https://listenbrainz.org/settings/",
-  );
+  const token = document.getElementById("listenbrainz-token-value")?.value?.trim() || "";
   if (!token) {
+    showToast("Please enter a ListenBrainz token", "error");
+    return;
+  }
+
+  if (token === "••••••••") {
+    // Validate currently saved token
+    await runScrobblingAction({
+      before: async () => {
+        showToast("Validating ListenBrainz token...", "info");
+      },
+      task: () => API.validateListenBrainzToken(),
+      success: (data) =>
+        `✓ Token validated! User: ${data.username}.`,
+      error: (error) => "Validation failed: " + error.message,
+    });
+    return;
+  }
+
+  try {
+    if (window.saveAllSettings) {
+      await window.saveAllSettings('tab-services', { silent: true });
+    }
+  } catch (err) {
+    showToast("Failed to save token before validation", "error");
     return;
   }
 
@@ -332,7 +317,7 @@ async function validateListenBrainzToken() {
     before: async () => {
       showToast("Validating ListenBrainz token...", "info");
     },
-    task: () => API.validateListenBrainzToken(token.trim()),
+    task: () => API.validateListenBrainzToken(token),
     success: (data) =>
       `✓ Token validated! User: ${data.username}. Please restart the container.`,
     error: (error) => "Validation failed: " + error.message,

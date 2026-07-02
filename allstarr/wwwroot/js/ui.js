@@ -859,6 +859,20 @@ export function updateDownloadsUI(data) {
     .join("");
 }
 
+function setInputValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.value = value;
+  }
+}
+
+function setCheckboxChecked(id, checked) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.checked = Boolean(checked);
+  }
+}
+
 export function updateConfigUI(data) {
   window.lastConfigData = data;
   
@@ -877,110 +891,169 @@ export function updateConfigUI(data) {
   if (typeof currentWizardStep !== 'undefined') {
     renderWizardStep(currentWizardStep);
   }
-  document.getElementById("config-backend-type").textContent =
-    data.backendType || "Jellyfin";
-  document.getElementById("config-music-service").textContent =
-    data.musicService || "SquidWTF";
-  document.getElementById("config-storage-mode").textContent =
-    data.library?.storageMode || "Cache";
-  document.getElementById("config-cache-duration-hours").textContent =
-    data.library?.cacheDurationHours || "24";
-  document.getElementById("config-download-mode").textContent =
-    data.library?.downloadMode || "Track";
-  document.getElementById("config-explicit-filter").textContent =
-    data.explicitFilter || "All";
-  document.getElementById("config-enable-external-playlists").textContent =
-    data.enableExternalPlaylists ? "Yes" : "No";
-  document.getElementById("config-playlists-directory").textContent =
-    data.playlistsDirectory || "(not set)";
-  document.getElementById("config-redis-enabled").textContent =
-    data.redisEnabled ? "Yes" : "No";
-  document.getElementById("config-debug-log-requests").textContent = data.debug
-    ?.logAllRequests
-    ? "Enabled"
-    : "Disabled";
-  document.getElementById("config-admin-bind-any-ip").textContent = data.admin
-    ?.bindAnyIp
-    ? "Enabled"
-    : "Disabled";
-  document.getElementById("config-admin-trusted-subnets").textContent =
-    data.admin?.trustedSubnets?.trim() || "(localhost only)";
 
-  document.getElementById("config-spotify-enabled").textContent = data
-    .spotifyApi.enabled
-    ? "Yes"
-    : "No";
-  document.getElementById("config-spotify-cookie").textContent =
-    data.spotifyApi.sessionCookie;
-  document.getElementById("config-cache-duration").textContent =
-    data.spotifyApi.cacheDurationMinutes + " minutes";
-  document.getElementById("config-isrc-matching").textContent = data.spotifyApi
-    .preferIsrcMatching
-    ? "Enabled"
-    : "Disabled";
-
-  document.getElementById("config-deezer-arl").textContent =
-    data.deezer.arl || "(not set)";
-  document.getElementById("config-deezer-quality").textContent =
-    data.deezer.quality;
-  document.getElementById("config-deezer-ratelimit").textContent =
-    (data.deezer.minRequestIntervalMs || 200) + " ms";
-  document.getElementById("config-squid-quality").textContent =
-    data.squidWtf.quality;
-  document.getElementById("config-squid-ratelimit").textContent =
-    (data.squidWtf.minRequestIntervalMs || 200) + " ms";
-  document.getElementById("config-applemusic-baseurl").textContent =
-    data.appleMusic.baseUrl || "http://gamdl-aio:8000";
-  document.getElementById("config-applemusic-quality").textContent =
-    data.appleMusic.quality || "alac-16-44";
-  document.getElementById("config-musicbrainz-enabled").textContent = data
-    .musicBrainz.enabled
-    ? "Yes"
-    : "No";
-  document.getElementById("config-qobuz-token").textContent =
-    data.qobuz.userAuthToken || "(not set)";
-  document.getElementById("config-qobuz-quality").textContent =
-    data.qobuz.quality || "FLAC";
-  document.getElementById("config-qobuz-ratelimit").textContent =
-    (data.qobuz.minRequestIntervalMs || 200) + " ms";
-  document.getElementById("config-jellyfin-url").textContent =
-    data.jellyfin.url || "-";
-  document.getElementById("config-jellyfin-api-key").textContent =
-    data.jellyfin.apiKey;
-  document.getElementById("config-jellyfin-user-id").textContent =
-    data.jellyfin.userId || "(not set)";
-  document.getElementById("config-jellyfin-library-id").textContent =
-    data.jellyfin.libraryId || "-";
-  document.getElementById("config-download-path").textContent =
-    data.library?.downloadPath || "./downloads";
-  document.getElementById("config-kept-path").textContent =
-    data.library?.keptPath || "/app/kept";
-  document.getElementById("config-spotify-import-enabled").textContent = data
-    .spotifyImport?.enabled
-    ? "Yes"
-    : "No";
-  document.getElementById("config-matching-interval").textContent =
-    (data.spotifyImport?.matchingIntervalHours || 24) + " hours";
+  // Set form inputs in tab-config
+  setInputValue("config-backend-type", data.backendType || "Jellyfin");
+  setInputValue("config-music-service", data.musicService || "SquidWTF");
+  setInputValue("config-storage-mode", data.library?.storageMode || "Cache");
+  setInputValue("config-cache-duration-hours", data.library?.cacheDurationHours || 24);
+  setInputValue("config-download-mode", data.library?.downloadMode || "Track");
+  setInputValue("config-explicit-filter", data.explicitFilter || "All");
+  setCheckboxChecked("config-enable-external-playlists", data.enableExternalPlaylists);
+  setInputValue("config-playlists-directory", data.playlistsDirectory || "");
+  setCheckboxChecked("config-redis-enabled", data.redisEnabled);
+  
+  setCheckboxChecked("config-admin-bind-any-ip", data.admin?.bindAnyIp);
+  setInputValue("config-admin-trusted-subnets", data.admin?.trustedSubnets || "");
+  setCheckboxChecked("config-debug-log-requests", data.debug?.logAllRequests);
+  
+  setInputValue("config-jellyfin-url", data.jellyfin?.url || "");
+  setInputValue("config-jellyfin-api-key", data.jellyfin?.apiKey ? "••••••••" : "");
+  setInputValue("config-jellyfin-user-id", data.jellyfin?.userId || "");
+  
+  setInputValue("config-download-path", data.library?.downloadPath || "./downloads");
+  setInputValue("config-kept-path", data.library?.keptPath || "/app/kept");
+  
+  setCheckboxChecked("config-spotify-import-enabled", data.spotifyImport?.enabled);
+  setInputValue("config-matching-interval", data.spotifyImport?.matchingIntervalHours || 24);
 
   if (data.cache) {
-    document.getElementById("config-cache-playlist-images").textContent =
-      data.cache.playlistImagesHours || "168";
-    document.getElementById("config-cache-spotify-items").textContent =
-      data.cache.spotifyPlaylistItemsHours || "168";
-    document.getElementById("config-cache-matched-tracks").textContent =
-      data.cache.spotifyMatchedTracksDays || "30";
-    document.getElementById("config-cache-lyrics").textContent =
-      data.cache.lyricsDays || "14";
-    document.getElementById("config-cache-genres").textContent =
-      data.cache.genreDays || "30";
-    document.getElementById("config-cache-metadata").textContent =
-      data.cache.metadataDays || "7";
-    document.getElementById("config-cache-odesli").textContent =
-      data.cache.odesliLookupDays || "60";
-    document.getElementById("config-cache-proxy-images").textContent =
-      data.cache.proxyImagesDays || "14";
+    setInputValue("config-cache-search", data.cache.searchResultsMinutes || "360");
+    setInputValue("config-cache-playlist-images", data.cache.playlistImagesHours || "168");
+    setInputValue("config-cache-spotify-items", data.cache.spotifyPlaylistItemsHours || "168");
+    setInputValue("config-cache-matched-tracks", data.cache.spotifyMatchedTracksDays || "30");
+    setInputValue("config-cache-lyrics", data.cache.lyricsDays || "14");
+    setInputValue("config-cache-genres", data.cache.genreDays || "30");
+    setInputValue("config-cache-metadata", data.cache.metadataDays || "30");
+    setInputValue("config-cache-odesli", data.cache.odesliLookupDays || "30");
+    setInputValue("config-cache-proxy-images", data.cache.proxyImagesDays || "30");
+  }
+
+  // Set form inputs in tab-services
+  setCheckboxChecked("config-spotify-enabled", data.spotifyApi?.enabled);
+  setInputValue("config-spotify-cookie", data.spotifyApi?.sessionCookie ? "••••••••" : "");
+  setInputValue("config-cache-duration", data.spotifyApi?.cacheDurationMinutes || 360);
+  setCheckboxChecked("config-isrc-matching", data.spotifyApi?.preferIsrcMatching);
+  
+  setInputValue("config-squid-quality", data.squidWtf?.quality || "LOSSLESS");
+  setInputValue("config-squid-ratelimit", data.squidWtf?.minRequestIntervalMs || 200);
+  
+  setInputValue("config-deezer-arl", data.deezer?.arl ? "••••••••" : "");
+  setInputValue("config-deezer-quality", data.deezer?.quality || "FLAC");
+  setInputValue("config-deezer-ratelimit", data.deezer?.minRequestIntervalMs || 200);
+  
+  setInputValue("config-qobuz-token", data.qobuz?.userAuthToken ? "••••••••" : "");
+  setInputValue("config-qobuz-quality", data.qobuz?.quality || "FLAC");
+  setInputValue("config-qobuz-ratelimit", data.qobuz?.minRequestIntervalMs || 200);
+  
+  setInputValue("config-applemusic-baseurl", data.appleMusic?.baseUrl || "http://gamdl-aio:8000");
+  setInputValue("config-applemusic-quality", data.appleMusic?.quality || "alac-16-44");
+
+  // Scrobbling values
+  if (data.scrobbling) {
+    setCheckboxChecked("scrobbling-enabled-value", data.scrobbling.enabled);
+    setCheckboxChecked("local-tracks-enabled-value", data.scrobbling.localTracksEnabled);
+    setCheckboxChecked("synthetic-local-played-signal-enabled-value", data.scrobbling.syntheticLocalPlayedSignalEnabled);
+    
+    setCheckboxChecked("lastfm-enabled-value", data.scrobbling.lastFm?.enabled);
+    setInputValue("lastfm-username-value", data.scrobbling.lastFm?.username && data.scrobbling.lastFm.username !== "(not set)" ? data.scrobbling.lastFm.username : "");
+    setInputValue("lastfm-password-value", data.scrobbling.lastFm?.password && data.scrobbling.lastFm.password !== "(not set)" ? "••••••••" : "");
+    
+    const sessionKey = data.scrobbling.lastFm?.sessionKey;
+    let sessionKeyDisplay = "Not Set";
+    if (sessionKey && sessionKey !== "(not set)" && !sessionKey.startsWith("••••")) {
+      sessionKeyDisplay = sessionKey.substring(0, 32) + "...";
+    } else if (sessionKey && sessionKey.startsWith("••••")) {
+      sessionKeyDisplay = sessionKey;
+    }
+    document.getElementById("lastfm-session-key-value").textContent = sessionKeyDisplay;
+
+    setCheckboxChecked("listenbrainz-enabled-value", data.scrobbling.listenBrainz?.enabled);
+    setInputValue("listenbrainz-token-value", data.scrobbling.listenBrainz?.userToken && data.scrobbling.listenBrainz.userToken !== "(not set)" ? "••••••••" : "");
+  }
+
+  if (data.musicBrainz) {
+    setCheckboxChecked("config-musicbrainz-enabled", data.musicBrainz.enabled);
+    setInputValue("config-musicbrainz-username", data.musicBrainz.username && data.musicBrainz.username !== "(not set)" ? data.musicBrainz.username : "");
+    setInputValue("config-musicbrainz-password", data.musicBrainz.password && data.musicBrainz.password !== "(not set)" ? "••••••••" : "");
   }
 }
+
+export async function saveAllSettings(tabId, options = {}) {
+  const tab = document.getElementById(tabId);
+  if (!tab) return;
+
+  const inputs = tab.querySelectorAll(".config-input");
+  const updates = {};
+
+  inputs.forEach(input => {
+    const key = input.getAttribute("data-env-key");
+    if (!key) return;
+
+    let value = "";
+    if (input.type === "checkbox") {
+      value = input.checked ? "true" : "false";
+    } else {
+      value = input.value.trim();
+    }
+
+    // Skip placeholder password masks
+    if (value === "••••••••") {
+      return;
+    }
+
+    updates[key] = value;
+  });
+
+  if (Object.keys(updates).length === 0) {
+    if (!options.silent) {
+      showToast("No changes to save", "info");
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/admin/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(errText || "Failed to update configuration");
+    }
+
+    if (!options.silent) {
+      showToast("Configuration saved successfully", "success");
+    }
+
+    // Check if any updated key requires restart
+    let needsRestart = false;
+    for (const key in updates) {
+      if (key !== "SPOTIFY_API_SESSION_COOKIE") {
+        needsRestart = true;
+      }
+    }
+
+    if (needsRestart) {
+      window.showRestartBanner?.();
+    }
+
+    // Refresh config
+    if (window.fetchConfig) {
+      await window.fetchConfig();
+    }
+  } catch (error) {
+    console.error("Save error:", error);
+    if (!options.silent) {
+      showToast(error.message || "Failed to save configuration", "error");
+    }
+    throw error;
+  }
+}
+
+window.saveAllSettings = saveAllSettings;
 
 export function updateJellyfinPlaylistsUI(data) {
   const tbody = document.getElementById("jellyfin-playlist-table-body");

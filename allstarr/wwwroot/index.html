@@ -527,38 +527,25 @@
 
             <div class="card">
                 <h2>Spotify API Settings</h2>
-                <div
-                    style="background: rgba(248, 81, 73, 0.15); border: 1px solid var(--error); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-primary);">
+                <div style="background: rgba(248, 81, 73, 0.15); border: 1px solid var(--error); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-primary);">
                     ⚠️ For active playlists and link functionality to work, sp_dc session cookie must be set!
                 </div>
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">API Enabled</span>
-                        <span class="value" id="config-spotify-enabled">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_ENABLED', 'Spotify API Enabled', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-spotify-enabled" data-env-key="SPOTIFY_API_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Session Cookie (sp_dc) <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-spotify-cookie">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_SESSION_COOKIE', 'Spotify Session Cookie', 'password', 'Get from browser dev tools while logged into Spotify. Cookie typically lasts ~1 year.')">Update</button>
-                    </div>
-                    <div class="config-item" style="grid-template-columns: 200px 1fr;">
-                        <span class="label">Cookie Age</span>
-                        <span class="value" id="config-cookie-age">-</span>
+                        <input type="password" id="config-spotify-cookie" data-env-key="SPOTIFY_API_SESSION_COOKIE" class="config-input" placeholder="Enter sp_dc cookie">
                     </div>
                     <div class="config-item">
-                        <span class="label">Cache Duration</span>
-                        <span class="value" id="config-cache-duration">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_CACHE_DURATION_MINUTES', 'Cache Duration (minutes)', 'number')">Edit</button>
+                        <span class="label">Cache Duration (mins)</span>
+                        <input type="number" id="config-cache-duration" data-env-key="SPOTIFY_API_CACHE_DURATION_MINUTES" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">ISRC Matching</span>
-                        <span class="value" id="config-isrc-matching">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_API_PREFER_ISRC_MATCHING', 'Prefer ISRC Matching', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-isrc-matching" data-env-key="SPOTIFY_API_PREFER_ISRC_MATCHING" class="config-input">
                     </div>
                 </div>
             </div>
@@ -568,15 +555,16 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Quality</span>
-                        <span class="value" id="config-squid-quality">-</span>
-                        <button
-                            onclick="openEditSetting('SQUIDWTF_QUALITY', 'SquidWTF Quality', 'select', 'HI_RES_LOSSLESS: 24-bit/192kHz FLAC (highest)\\nLOSSLESS: 16-bit/44.1kHz FLAC (default)\\nHIGH: 320kbps AAC\\nLOW: 96kbps AAC', ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW'])">Edit</button>
+                        <select id="config-squid-quality" data-env-key="SQUIDWTF_QUALITY" class="config-input">
+                            <option value="HI_RES_LOSSLESS">HI_RES_LOSSLESS (24-bit/192kHz FLAC)</option>
+                            <option value="LOSSLESS">LOSSLESS (16-bit/44.1kHz FLAC)</option>
+                            <option value="HIGH">HIGH (320kbps AAC)</option>
+                            <option value="LOW">LOW (96kbps AAC)</option>
+                        </select>
                     </div>
                     <div class="config-item">
-                        <span class="label">Request Interval</span>
-                        <span class="value" id="config-squid-ratelimit">200 ms</span>
-                        <button
-                            onclick="openEditSetting('SQUIDWTF_MIN_REQUEST_INTERVAL_MS', 'SquidWTF Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                        <span class="label">Request Interval (ms)</span>
+                        <input type="number" id="config-squid-ratelimit" data-env-key="SQUIDWTF_MIN_REQUEST_INTERVAL_MS" class="config-input" min="0">
                     </div>
                 </div>
             </div>
@@ -586,21 +574,19 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">ARL Token</span>
-                        <span class="value" id="config-deezer-arl">-</span>
-                        <button
-                            onclick="openEditSetting('DEEZER_ARL', 'Deezer ARL Token', 'password', 'Get from browser cookies while logged into Deezer')">Update</button>
+                        <input type="password" id="config-deezer-arl" data-env-key="DEEZER_ARL" class="config-input" placeholder="Enter Deezer ARL token">
                     </div>
                     <div class="config-item">
                         <span class="label">Quality</span>
-                        <span class="value" id="config-deezer-quality">-</span>
-                        <button
-                            onclick="openEditSetting('DEEZER_QUALITY', 'Deezer Quality', 'select', '', ['FLAC', 'MP3_320', 'MP3_128'])">Edit</button>
+                        <select id="config-deezer-quality" data-env-key="DEEZER_QUALITY" class="config-input">
+                            <option value="FLAC">FLAC</option>
+                            <option value="MP3_320">MP3_320</option>
+                            <option value="MP3_128">MP3_128</option>
+                        </select>
                     </div>
                     <div class="config-item">
-                        <span class="label">Request Interval</span>
-                        <span class="value" id="config-deezer-ratelimit">200 ms</span>
-                        <button
-                            onclick="openEditSetting('DEEZER_MIN_REQUEST_INTERVAL_MS', 'Deezer Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                        <span class="label">Request Interval (ms)</span>
+                        <input type="number" id="config-deezer-ratelimit" data-env-key="DEEZER_MIN_REQUEST_INTERVAL_MS" class="config-input" min="0">
                     </div>
                 </div>
             </div>
@@ -610,21 +596,21 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">User Auth Token</span>
-                        <span class="value" id="config-qobuz-token">-</span>
-                        <button
-                            onclick="openEditSetting('QOBUZ_USER_AUTH_TOKEN', 'Qobuz User Auth Token', 'password', 'Get from browser while logged into Qobuz')">Update</button>
+                        <input type="password" id="config-qobuz-token" data-env-key="QOBUZ_USER_AUTH_TOKEN" class="config-input" placeholder="Enter Qobuz user auth token">
                     </div>
                     <div class="config-item">
                         <span class="label">Preferred Quality</span>
-                        <span class="value" id="config-qobuz-quality">-</span>
-                        <button
-                            onclick="openEditSetting('QOBUZ_QUALITY', 'Qobuz Quality', 'select', 'Default: FLAC', ['FLAC', 'FLAC_24_HIGH', 'FLAC_24_LOW', 'FLAC_16', 'MP3_320'])">Edit</button>
+                        <select id="config-qobuz-quality" data-env-key="QOBUZ_QUALITY" class="config-input">
+                            <option value="FLAC">FLAC</option>
+                            <option value="FLAC_24_HIGH">FLAC_24_HIGH</option>
+                            <option value="FLAC_24_LOW">FLAC_24_LOW</option>
+                            <option value="FLAC_16">FLAC_16</option>
+                            <option value="MP3_320">MP3_320</option>
+                        </select>
                     </div>
                     <div class="config-item">
-                        <span class="label">Request Interval</span>
-                        <span class="value" id="config-qobuz-ratelimit">200 ms</span>
-                        <button
-                            onclick="openEditSetting('QOBUZ_MIN_REQUEST_INTERVAL_MS', 'Qobuz Request Interval', 'number', 'Minimum milliseconds between API requests (default: 200)')">Edit</button>
+                        <span class="label">Request Interval (ms)</span>
+                        <input type="number" id="config-qobuz-ratelimit" data-env-key="QOBUZ_MIN_REQUEST_INTERVAL_MS" class="config-input" min="0">
                     </div>
                 </div>
             </div>
@@ -634,15 +620,17 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">gamdl-aio Sidecar URL</span>
-                        <span class="value" id="config-applemusic-baseurl">-</span>
-                        <button
-                            onclick="openEditSetting('APPLE_MUSIC_AIO_URL', 'gamdl-aio Sidecar URL', 'text', 'Base URL of the gamdl-aio sidecar container (default: http://gamdl-aio:8000)')">Edit</button>
+                        <input type="text" id="config-applemusic-baseurl" data-env-key="APPLE_MUSIC_AIO_URL" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Preferred Quality</span>
-                        <span class="value" id="config-applemusic-quality">-</span>
-                        <button
-                            onclick="openEditSetting('APPLE_MUSIC_QUALITY', 'Apple Music Quality', 'select', 'Select preferred audio codec tier', ['alac-16-44', 'alac-24-96', 'alac-24-192', 'aac-320', 'aac-96'])">Edit</button>
+                        <select id="config-applemusic-quality" data-env-key="APPLE_MUSIC_QUALITY" class="config-input">
+                            <option value="alac-16-44">alac-16-44 (16-bit Lossless)</option>
+                            <option value="alac-24-96">alac-24-96 (24-bit Hi-Res Lossless)</option>
+                            <option value="alac-24-192">alac-24-192 (24-bit Hi-Res Lossless Max)</option>
+                            <option value="aac-320">aac-320 (High Quality AAC)</option>
+                            <option value="aac-96">aac-96 (Low Quality AAC)</option>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -723,18 +711,15 @@
                 <div class="config-section" style="margin-bottom: 24px;">
                     <div class="config-item">
                         <span class="label">Scrobbling Enabled</span>
-                        <span class="value" id="scrobbling-enabled-value">-</span>
-                        <button onclick="toggleScrobblingEnabled()">Toggle</button>
+                        <input type="checkbox" id="scrobbling-enabled-value" data-env-key="SCROBBLING_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Local Track Scrobbling</span>
-                        <span class="value" id="local-tracks-enabled-value">-</span>
-                        <button onclick="toggleLocalTracksEnabled()">Toggle</button>
+                        <input type="checkbox" id="local-tracks-enabled-value" data-env-key="SCROBBLING_LOCAL_TRACKS_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Synthetic Local Played Signal</span>
-                        <span class="value" id="synthetic-local-played-signal-enabled-value">-</span>
-                        <button onclick="toggleSyntheticLocalPlayedSignalEnabled()">Toggle</button>
+                        <input type="checkbox" id="synthetic-local-played-signal-enabled-value" data-env-key="SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED" class="config-input">
                     </div>
                 </div>
 
@@ -756,18 +741,15 @@
                 <div class="config-section" style="margin-bottom: 24px;">
                     <div class="config-item">
                         <span class="label">Last.fm Enabled</span>
-                        <span class="value" id="lastfm-enabled-value">-</span>
-                        <button onclick="toggleLastFmEnabled()">Toggle</button>
+                        <input type="checkbox" id="lastfm-enabled-value" data-env-key="SCROBBLING_LASTFM_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Username</span>
-                        <span class="value" id="lastfm-username-value">-</span>
-                        <button onclick="editLastFmUsername()">Edit</button>
+                        <input type="text" id="lastfm-username-value" data-env-key="SCROBBLING_LASTFM_USERNAME" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Password</span>
-                        <span class="value" id="lastfm-password-value">-</span>
-                        <button onclick="editLastFmPassword()">Edit</button>
+                        <input type="password" id="lastfm-password-value" data-env-key="SCROBBLING_LASTFM_PASSWORD" class="config-input" placeholder="Enter Last.fm password">
                     </div>
                     <div class="config-item" style="grid-template-columns: 200px 1fr;">
                         <span class="label">Session Key</span>
@@ -795,13 +777,11 @@
                 <div class="config-section" style="margin-bottom: 24px;">
                     <div class="config-item">
                         <span class="label">ListenBrainz Enabled</span>
-                        <span class="value" id="listenbrainz-enabled-value">-</span>
-                        <button onclick="toggleListenBrainzEnabled()">Toggle</button>
+                        <input type="checkbox" id="listenbrainz-enabled-value" data-env-key="SCROBBLING_LISTENBRAINZ_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">User Token</span>
-                        <span class="value" id="listenbrainz-token-value">-</span>
-                        <button onclick="editListenBrainzToken()">Edit</button>
+                        <input type="password" id="listenbrainz-token-value" data-env-key="SCROBBLING_LISTENBRAINZ_USER_TOKEN" class="config-input" placeholder="Enter ListenBrainz user token">
                     </div>
                     <div class="config-item" style="grid-template-columns: 200px 1fr;">
                         <span class="label">Status</span>
@@ -820,24 +800,23 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Enabled</span>
-                        <span class="value" id="config-musicbrainz-enabled">-</span>
-                        <button
-                            onclick="openEditSetting('MUSICBRAINZ_ENABLED', 'MusicBrainz Enabled', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-musicbrainz-enabled" data-env-key="MUSICBRAINZ_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Username</span>
-                        <span class="value" id="config-musicbrainz-username">-</span>
-                        <button
-                            onclick="openEditSetting('MUSICBRAINZ_USERNAME', 'MusicBrainz Username', 'text', 'Your MusicBrainz username')">Update</button>
+                        <input type="text" id="config-musicbrainz-username" data-env-key="MUSICBRAINZ_USERNAME" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Password</span>
-                        <span class="value" id="config-musicbrainz-password">-</span>
-                        <button
-                            onclick="openEditSetting('MUSICBRAINZ_PASSWORD', 'MusicBrainz Password', 'password', 'Your MusicBrainz password')">Update</button>
+                        <input type="password" id="config-musicbrainz-password" data-env-key="MUSICBRAINZ_PASSWORD" class="config-input" placeholder="Enter MusicBrainz password">
                     </div>
                 </div>
             </div>
+            
+            <div class="save-bar-sticky">
+                <button class="primary" onclick="saveAllSettings('tab-services')">💾 Save Services Settings</button>
+            </div>
+        </div>
         </div>
 
         <!-- Configuration Tab -->
@@ -847,77 +826,75 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Backend Type <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-backend-type">-</span>
-                        <button
-                            onclick="openEditSetting('BACKEND_TYPE', 'Backend Type', 'select', 'Choose your media server backend', ['Jellyfin', 'Subsonic'])">Edit</button>
+                        <select id="config-backend-type" data-env-key="BACKEND_TYPE" class="config-input">
+                            <option value="Jellyfin">Jellyfin</option>
+                            <option value="Subsonic">Subsonic</option>
+                        </select>
                     </div>
                     <div class="config-item">
                         <span class="label">Music Service <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-music-service">-</span>
-                        <button
-                            onclick="openEditSetting('MUSIC_SERVICE', 'Music Service', 'select', 'Choose your music download provider', ['SquidWTF', 'Deezer', 'Qobuz', 'AppleMusic'])">Edit</button>
+                        <select id="config-music-service" data-env-key="MUSIC_SERVICE" class="config-input">
+                            <option value="SquidWTF">SquidWTF (Tidal)</option>
+                            <option value="Deezer">Deezer</option>
+                            <option value="Qobuz">Qobuz</option>
+                            <option value="AppleMusic">Apple Music</option>
+                        </select>
                     </div>
                     <div class="config-item">
                         <span class="label">Storage Mode</span>
-                        <span class="value" id="config-storage-mode">-</span>
-                        <button
-                            onclick="openEditSetting('STORAGE_MODE', 'Storage Mode', 'select', 'Permanent keeps files forever, Cache auto-deletes after duration', ['Permanent', 'Cache'])">Edit</button>
+                        <select id="config-storage-mode" data-env-key="STORAGE_MODE" class="config-input">
+                            <option value="Permanent">Permanent</option>
+                            <option value="Cache">Cache</option>
+                        </select>
                     </div>
-                    <div class="config-item" id="cache-duration-row" style="display: none;">
+                    <div class="config-item" id="cache-duration-row">
                         <span class="label">Cache Duration (hours)</span>
-                        <span class="value" id="config-cache-duration-hours">-</span>
-                        <button
-                            onclick="openEditSetting('CACHE_DURATION_HOURS', 'Cache Duration (hours)', 'number', 'How long to keep cached files before deletion')">Edit</button>
+                        <input type="number" id="config-cache-duration-hours" data-env-key="CACHE_DURATION_HOURS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Download Mode</span>
-                        <span class="value" id="config-download-mode">-</span>
-                        <button
-                            onclick="openEditSetting('DOWNLOAD_MODE', 'Download Mode', 'select', 'Download individual tracks or full albums', ['Track', 'Album'])">Edit</button>
+                        <select id="config-download-mode" data-env-key="DOWNLOAD_MODE" class="config-input">
+                            <option value="Track">Track</option>
+                            <option value="Album">Album</option>
+                        </select>
                     </div>
                     <div class="config-item">
                         <span class="label">Explicit Filter</span>
-                        <span class="value" id="config-explicit-filter">-</span>
-                        <button
-                            onclick="openEditSetting('EXPLICIT_FILTER', 'Explicit Filter', 'select', 'Filter explicit content', ['All', 'ExplicitOnly', 'CleanOnly'])">Edit</button>
+                        <select id="config-explicit-filter" data-env-key="EXPLICIT_FILTER" class="config-input">
+                            <option value="All">All</option>
+                            <option value="ExplicitOnly">ExplicitOnly</option>
+                            <option value="CleanOnly">CleanOnly</option>
+                        </select>
                     </div>
                     <div class="config-item">
                         <span class="label">Enable External Playlists</span>
-                        <span class="value" id="config-enable-external-playlists">-</span>
-                        <button
-                            onclick="openEditSetting('ENABLE_EXTERNAL_PLAYLISTS', 'Enable External Playlists', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-enable-external-playlists" data-env-key="ENABLE_EXTERNAL_PLAYLISTS" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Playlists Directory</span>
-                        <span class="value" id="config-playlists-directory">-</span>
-                        <button
-                            onclick="openEditSetting('PLAYLISTS_DIRECTORY', 'Playlists Directory', 'text', 'Directory path for external playlists')">Edit</button>
+                        <input type="text" id="config-playlists-directory" data-env-key="PLAYLISTS_DIRECTORY" class="config-input" placeholder="e.g. /app/playlists">
                     </div>
                     <div class="config-item">
                         <span class="label">Redis Enabled</span>
-                        <span class="value" id="config-redis-enabled">-</span>
-                        <button onclick="openEditSetting('REDIS_ENABLED', 'Redis Enabled', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-redis-enabled" data-env-key="REDIS_ENABLED" class="config-input">
                     </div>
                 </div>
             </div>
 
             <div class="card">
                 <h2>Admin Network Settings</h2>
-                <div
-                    style="background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warning); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem;">
+                <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warning); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem;">
                     Keep admin UI on localhost by default. If you enable LAN bind, restrict access with trusted CIDR
                     subnets (for example: <code>192.168.1.0/24,10.0.0.0/8</code>).
                 </div>
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Bind Admin UI On LAN</span>
-                        <span class="value" id="config-admin-bind-any-ip">-</span>
-                        <button onclick="openEditSetting('ADMIN_BIND_ANY_IP', 'Bind Admin UI On LAN', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-admin-bind-any-ip" data-env-key="ADMIN_BIND_ANY_IP" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Trusted Subnets (CIDR)</span>
-                        <span class="value" id="config-admin-trusted-subnets">-</span>
-                        <button onclick="openEditSetting('ADMIN_TRUSTED_SUBNETS', 'Trusted Subnets (CIDR)', 'text', 'Comma-separated CIDRs allowed on admin port 5275. Example: 192.168.1.0/24,10.0.0.0/8')">Edit</button>
+                        <input type="text" id="config-admin-trusted-subnets" data-env-key="ADMIN_TRUSTED_SUBNETS" class="config-input" placeholder="e.g. 192.168.1.0/24, 10.0.0.0/8">
                     </div>
                 </div>
             </div>
@@ -925,12 +902,11 @@
             <div class="card">
                 <details class="advanced-section">
                     <summary>Advanced: Debug Settings</summary>
-                    <div class="advanced-section-content">
+                    <div class="advanced-section-content" style="padding-top: 12px;">
                         <div class="config-section">
                             <div class="config-item">
                                 <span class="label">Log All Requests</span>
-                                <span class="value" id="config-debug-log-requests">-</span>
-                                <button onclick="openEditSetting('DEBUG_LOG_ALL_REQUESTS', 'Log All Requests', 'toggle', 'Enable detailed logging of every HTTP request (useful for debugging client issues)')">Edit</button>
+                                <input type="checkbox" id="config-debug-log-requests" data-env-key="DEBUG_LOG_ALL_REQUESTS" class="config-input">
                             </div>
                             <div class="guidance-banner info compact" style="margin-top: 12px;">
                                 ℹ️ When enabled, logs every incoming request with method, path, headers, and response status. Auth tokens are automatically masked.
@@ -940,27 +916,20 @@
                 </details>
             </div>
 
-            <!-- External services settings moved to Services tab -->
-            
             <div class="card">
                 <h2>Jellyfin Settings</h2>
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">URL <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-jellyfin-url">-</span>
-                        <button onclick="openEditSetting('JELLYFIN_URL', 'Jellyfin URL', 'text')">Edit</button>
+                        <input type="text" id="config-jellyfin-url" data-env-key="JELLYFIN_URL" class="config-input" placeholder="http://192.168.1.100:8096">
                     </div>
                     <div class="config-item">
                         <span class="label">API Key <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-jellyfin-api-key">-</span>
-                        <button
-                            onclick="openEditSetting('JELLYFIN_API_KEY', 'Jellyfin API Key', 'password')">Update</button>
+                        <input type="password" id="config-jellyfin-api-key" data-env-key="JELLYFIN_API_KEY" class="config-input" placeholder="Enter Jellyfin API key">
                     </div>
                     <div class="config-item">
                         <span class="label">User ID <span style="color: var(--error);">*</span></span>
-                        <span class="value" id="config-jellyfin-user-id">-</span>
-                        <button
-                            onclick="openEditSetting('JELLYFIN_USER_ID', 'Jellyfin User ID', 'text', 'Required for playlist operations. Get from Jellyfin user profile URL: userId=...')">Edit</button>
+                        <input type="text" id="config-jellyfin-user-id" data-env-key="JELLYFIN_USER_ID" class="config-input" placeholder="Enter user profile ID">
                     </div>
                 </div>
             </div>
@@ -970,14 +939,11 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Download Path (Cache)</span>
-                        <span class="value" id="config-download-path">-</span>
-                        <button
-                            onclick="openEditSetting('LIBRARY_DOWNLOAD_PATH', 'Download Path', 'text')">Edit</button>
+                        <input type="text" id="config-download-path" data-env-key="LIBRARY_DOWNLOAD_PATH" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Kept Path (Favorited)</span>
-                        <span class="value" id="config-kept-path">-</span>
-                        <button onclick="openEditSetting('LIBRARY_KEPT_PATH', 'Kept Path', 'text')">Edit</button>
+                        <input type="text" id="config-kept-path" data-env-key="LIBRARY_KEPT_PATH" class="config-input">
                     </div>
                 </div>
             </div>
@@ -987,15 +953,11 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Spotify Import Enabled</span>
-                        <span class="value" id="config-spotify-import-enabled">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_IMPORT_ENABLED', 'Spotify Import Enabled', 'toggle')">Edit</button>
+                        <input type="checkbox" id="config-spotify-import-enabled" data-env-key="SPOTIFY_IMPORT_ENABLED" class="config-input">
                     </div>
                     <div class="config-item">
                         <span class="label">Matching Interval (hours)</span>
-                        <span class="value" id="config-matching-interval">-</span>
-                        <button
-                            onclick="openEditSetting('SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS', 'Matching Interval (hours)', 'number', 'How often to check for playlist updates')">Edit</button>
+                        <input type="number" id="config-matching-interval" data-env-key="SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS" class="config-input" min="1">
                     </div>
                 </div>
             </div>
@@ -1009,60 +971,47 @@
                 <div class="config-section">
                     <div class="config-item">
                         <span class="label">Search Results (minutes)</span>
-                        <span class="value" id="config-cache-search">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_SEARCH_RESULTS_MINUTES', 'Search Results Cache (minutes)', 'How long to cache search results')">Edit</button>
+                        <input type="number" id="config-cache-search" data-env-key="CACHE_SEARCH_RESULTS_MINUTES" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Playlist Images (hours)</span>
-                        <span class="value" id="config-cache-playlist-images">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_PLAYLIST_IMAGES_HOURS', 'Playlist Images Cache (hours)', 'How long to cache playlist cover images')">Edit</button>
+                        <input type="number" id="config-cache-playlist-images" data-env-key="CACHE_PLAYLIST_IMAGES_HOURS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Spotify Playlist Items (hours)</span>
-                        <span class="value" id="config-cache-spotify-items">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS', 'Spotify Playlist Items Cache (hours)', 'How long to cache Spotify playlist data')">Edit</button>
+                        <input type="number" id="config-cache-spotify-items" data-env-key="CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Spotify Matched Tracks (days)</span>
-                        <span class="value" id="config-cache-matched-tracks">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_SPOTIFY_MATCHED_TRACKS_DAYS', 'Matched Tracks Cache (days)', 'How long to cache Spotify ID to track mappings')">Edit</button>
+                        <input type="number" id="config-cache-matched-tracks" data-env-key="CACHE_SPOTIFY_MATCHED_TRACKS_DAYS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Lyrics (days)</span>
-                        <span class="value" id="config-cache-lyrics">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_LYRICS_DAYS', 'Lyrics Cache (days)', 'How long to cache fetched lyrics')">Edit</button>
+                        <input type="number" id="config-cache-lyrics" data-env-key="CACHE_LYRICS_DAYS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Genre Data (days)</span>
-                        <span class="value" id="config-cache-genres">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_GENRE_DAYS', 'Genre Cache (days)', 'How long to cache genre information')">Edit</button>
+                        <input type="number" id="config-cache-genres" data-env-key="CACHE_GENRE_DAYS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">External Metadata (days)</span>
-                        <span class="value" id="config-cache-metadata">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_METADATA_DAYS', 'Metadata Cache (days)', 'How long to cache SquidWTF/Deezer/Qobuz metadata')">Edit</button>
+                        <input type="number" id="config-cache-metadata" data-env-key="CACHE_METADATA_DAYS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Odesli Lookups (days)</span>
-                        <span class="value" id="config-cache-odesli">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_ODESLI_LOOKUP_DAYS', 'Odesli Lookup Cache (days)', 'How long to cache Odesli URL conversions')">Edit</button>
+                        <input type="number" id="config-cache-odesli" data-env-key="CACHE_ODESLI_LOOKUP_DAYS" class="config-input" min="1">
                     </div>
                     <div class="config-item">
                         <span class="label">Proxy Images (days)</span>
-                        <span class="value" id="config-cache-proxy-images">-</span>
-                        <button
-                            onclick="openEditCacheSetting('CACHE_PROXY_IMAGES_DAYS', 'Proxy Images Cache (days)', 'How long to cache proxied Jellyfin images')">Edit</button>
+                        <input type="number" id="config-cache-proxy-images" data-env-key="CACHE_PROXY_IMAGES_DAYS" class="config-input" min="1">
                     </div>
                 </div>
             </div>
+            
+            <div class="save-bar-sticky">
+                <button class="primary" onclick="saveAllSettings('tab-config')">💾 Save Configuration</button>
+            </div>
+        </div>
 
             <div class="card" id="config-backup-card">
                 <h2>Configuration Backup</h2>
