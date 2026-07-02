@@ -861,6 +861,19 @@ export function updateDownloadsUI(data) {
 
 export function updateConfigUI(data) {
   window.lastConfigData = data;
+  
+  // Hide setup wizard if backend connection and music service are already configured
+  const backendUrl = data.backendType === "Subsonic" ? data.subsonic?.url : data.jellyfin?.url;
+  const musicService = data.musicService;
+  const wizardCard = document.getElementById("allstarr-setup-wizard");
+  if (wizardCard) {
+    if (backendUrl && musicService) {
+      wizardCard.style.display = "none";
+    } else {
+      wizardCard.style.display = "block";
+    }
+  }
+
   if (typeof currentWizardStep !== 'undefined') {
     renderWizardStep(currentWizardStep);
   }
