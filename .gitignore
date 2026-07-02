@@ -95,3 +95,8 @@ sampleMissingPlaylists/
 
 # Migration guide (local only)
 MIGRATION.md
+
+# Prevent ignoring Android system vendor binaries
+!gamdl-aio/**/bin/
+!gamdl-aio/**/bin/*
+!gamdl-aio/**/bin/**/*
