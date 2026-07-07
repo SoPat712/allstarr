@@ -159,8 +159,9 @@ async def health_check():
 
 @app.get("/api/me")
 async def get_me():
-    if not wrapper_api:
-        return {"logged_in": False, "error": "Wrapper API not initialized"}
+    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    if not daemon_running:
+        return {"logged_in": False, "error": "Wrapper daemon is not running"}
         
     try:
         import httpx
@@ -172,8 +173,9 @@ async def get_me():
 
 @app.post("/api/login")
 async def login(req: LoginRequest):
-    if not wrapper_api:
-        raise HTTPException(status_code=503, detail="Wrapper API not ready")
+    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    if not daemon_running:
+        raise HTTPException(status_code=503, detail="Wrapper daemon is not running")
         
     try:
         import httpx
@@ -191,8 +193,9 @@ async def login(req: LoginRequest):
 
 @app.post("/api/login/2fa")
 async def login_2fa(req: Login2FARequest):
-    if not wrapper_api:
-        raise HTTPException(status_code=503, detail="Wrapper API not ready")
+    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    if not daemon_running:
+        raise HTTPException(status_code=503, detail="Wrapper daemon is not running")
         
     try:
         import httpx
