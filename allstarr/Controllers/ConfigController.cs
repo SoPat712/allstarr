@@ -145,6 +145,12 @@ public class ConfigController : ControllerBase
             enableExternalPlaylists = GetEnvBool(envVars, "ENABLE_EXTERNAL_PLAYLISTS", fallbackEnableExternalPlaylists),
             playlistsDirectory = GetEnvString(envVars, "PLAYLISTS_DIRECTORY", fallbackPlaylistsDirectory),
             redisEnabled = GetEnvBool(envVars, "REDIS_ENABLED", _configuration.GetValue<bool>("Redis:Enabled", false)),
+            providers = new
+            {
+                metadataOrder = GetEnvString(envVars, "MULTI_PROVIDER_METADATA_ORDER", "spotify,applemusic,deezer,qobuz,squidwtf"),
+                enabledSearch = GetEnvString(envVars, "MULTI_PROVIDER_ENABLED_SEARCH", "spotify,applemusic,deezer,qobuz,squidwtf"),
+                enabledPlaylist = GetEnvString(envVars, "MULTI_PROVIDER_ENABLED_PLAYLIST", "spotify"),
+            },
             debug = new
             {
                 logAllRequests = GetEnvBool(envVars, "DEBUG_LOG_ALL_REQUESTS", _configuration.GetValue<bool>("Debug:LogAllRequests", false)),
@@ -950,6 +956,47 @@ public class ConfigController : ControllerBase
         }
 
         return _configuration.GetValue<bool>("ADMIN_ENABLE_ENV_EXPORT");
+    }
+
+    [HttpGet("providers/status")]
+    public IActionResult GetProvidersStatus()
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("get providers status");
+        if (adminCheck != null)
+        {
+            return adminCheck;
+        }
+
+        var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
+        var statusCache = statusManager.GetStatusCache();
+        
+        var allProviders = new[] { "spotify", "applemusic", "deezer", "qobuz", "squidwtf" };
+        var results = allProviders.Select(p => {
+            var healthy = statusManager.IsProviderHealthy(p);
+            statusCache = statusManager.GetStatusCache(); 
+            var testedAt = statusCache.TryGetValue(p, out var info) ? info.TestedAt.ToString("o") : DateTime.UtcNow.ToString("o");
+            return new {
+                name = p,
+                healthy = healthy,
+                testedAt = testedAt
+            };
+        }).ToList();
+
+        return Ok(results);
+    }
+
+    [HttpPost("providers/test/{provider}")]
+    public async Task<IActionResult> TestProvider(string provider)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("test provider connection");
+        if (adminCheck != null)
+        {
+            return adminCheck;
+        }
+
+        var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
+        var healthy = await statusManager.TestProviderConnectionAsync(provider, HttpContext.RequestAborted);
+        return Ok(new { success = true, provider = provider, healthy = healthy });
     }
 
     /// <summary>

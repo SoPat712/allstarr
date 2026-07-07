@@ -880,6 +880,106 @@
                 </div>
             </div>
 
+            <style>
+                .priority-list {
+                    list-style-type: none;
+                    padding: 0;
+                    margin: 10px 0;
+                }
+                .priority-item {
+                    background: rgba(255, 255, 255, 0.03);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 6px;
+                    padding: 12px 16px;
+                    margin-bottom: 8px;
+                    cursor: grab;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    transition: background-color 0.2s, transform 0.2s, border-color 0.2s;
+                }
+                .priority-item:hover {
+                    background: rgba(255, 255, 255, 0.06);
+                    border-color: rgba(255, 255, 255, 0.15);
+                }
+                .priority-item:active {
+                    cursor: grabbing;
+                }
+                .priority-item.dragging {
+                    opacity: 0.4;
+                    background: rgba(255, 255, 255, 0.08);
+                    transform: scale(0.98);
+                }
+                .priority-item-left {
+                    display: flex;
+                    align-items: center;
+                }
+                .priority-item-drag-handle {
+                    margin-right: 12px;
+                    color: rgba(255, 255, 255, 0.3);
+                    font-size: 1.2rem;
+                    cursor: grab;
+                    user-select: none;
+                }
+                .status-indicator {
+                    display: inline-block;
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    margin-right: 6px;
+                }
+                .status-indicator.healthy {
+                    background-color: var(--success, #10b981);
+                    box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+                }
+                .status-indicator.unhealthy {
+                    background-color: var(--error, #ef4444);
+                    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+                }
+                .status-indicator.testing {
+                    background-color: var(--warning, #f59e0b);
+                    animation: pulse 1s infinite alternate;
+                }
+                @keyframes pulse {
+                    from { opacity: 0.5; }
+                    to { opacity: 1; }
+                }
+            </style>
+
+            <div class="card" id="multi-provider-card">
+                <input type="hidden" id="config-multi-provider-metadata-order" data-env-key="MULTI_PROVIDER_METADATA_ORDER" class="config-input">
+                <input type="hidden" id="config-multi-provider-enabled-search" data-env-key="MULTI_PROVIDER_ENABLED_SEARCH" class="config-input">
+                <input type="hidden" id="config-multi-provider-enabled-playlist" data-env-key="MULTI_PROVIDER_ENABLED_PLAYLIST" class="config-input">
+                <h2>Multi-Service Providers & Priority</h2>
+                <div class="description-text" style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem;">
+                    Configure and prioritize multiple streaming services. Drag and drop to change metadata ranking priority.
+                </div>
+                <div class="table-scroll" style="margin-bottom: 24px;">
+                    <table class="playlist-table" id="providers-table" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align: left; padding: 10px;">Service</th>
+                                <th style="text-align: center; padding: 10px;">Search & Metadata</th>
+                                <th style="text-align: center; padding: 10px;">Playlist Sync</th>
+                                <th style="text-align: center; padding: 10px;">Status</th>
+                                <th style="text-align: center; padding: 10px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="providers-tbody">
+                            <!-- Populated dynamically via JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>Metadata Search & Fallback Priority</h3>
+                <div class="description-text" style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem;">
+                    Drag and drop to rank search priorities (highest on top). Fallback downloads will proceed in this order.
+                </div>
+                <ul id="provider-priority-list" class="priority-list" style="list-style-type: none; padding: 0; margin: 10px 0;">
+                    <!-- Populated dynamically via JS -->
+                </ul>
+            </div>
+
             <div class="card">
                 <h2>Admin Network Settings</h2>
                 <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warning); border-radius: 6px; padding: 12px; margin-bottom: 16px; color: var(--text-secondary); font-size: 0.9rem;">

@@ -533,10 +533,8 @@ else
     enableExternalPlaylists = builder.Configuration.GetValue<bool>("Subsonic:EnableExternalPlaylists", true);
 }
 
-// Discover SquidWTF endpoints only when SquidWTF is selected as primary music service.
-var squidWtfEndpointCatalog = musicService == MusicService.SquidWTF
-    ? await SquidWtfEndpointDiscovery.DiscoverAsync()
-    : new SquidWtfEndpointCatalog(new List<string>(), new List<string>());
+// Discover SquidWTF endpoints for multi-provider usage
+var squidWtfEndpointCatalog = await SquidWtfEndpointDiscovery.DiscoverAsync();
 var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
 var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
 
@@ -570,71 +568,51 @@ else
     builder.Services.AddScoped<SubsonicProxyService>();
 }
 
-// Register music service based on configuration
-// IMPORTANT: Primary service MUST be registered LAST because ASP.NET Core DI
-// will use the last registered implementation when injecting IMusicMetadataService/IDownloadService
-if (musicService == MusicService.Qobuz)
-{
-    // If playlists enabled, register Deezer FIRST (secondary provider)
-    if (enableExternalPlaylists)
-    {
-        builder.Services.AddSingleton<IMusicMetadataService, DeezerMetadataService>();
-        builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
-        builder.Services.AddSingleton<PlaylistSyncService>();
-    }
+// ----------------------------------------------------
+// Multi-Provider & Concrete Service Registrations
+// ----------------------------------------------------
+builder.Services.AddSingleton<QobuzBundleService>();
 
-    // Qobuz services (primary) - registered LAST to be injected by default
-    builder.Services.AddSingleton<QobuzBundleService>();
-    builder.Services.AddSingleton<IMusicMetadataService, QobuzMetadataService>();
-    builder.Services.AddSingleton<IDownloadService, QobuzDownloadService>();
-}
-else if (musicService == MusicService.Deezer)
-{
-    // If playlists enabled, register Qobuz FIRST (secondary provider)
-    if (enableExternalPlaylists)
-    {
-        builder.Services.AddSingleton<QobuzBundleService>();
-        builder.Services.AddSingleton<IMusicMetadataService, QobuzMetadataService>();
-        builder.Services.AddSingleton<IDownloadService, QobuzDownloadService>();
-        builder.Services.AddSingleton<PlaylistSyncService>();
-    }
+// 1. Concrete Metadata Services
+builder.Services.AddSingleton<IMusicMetadataService, DeezerMetadataService>();
+builder.Services.AddSingleton<IMusicMetadataService, QobuzMetadataService>();
+builder.Services.AddSingleton<IMusicMetadataService, AppleMusicMetadataService>();
+builder.Services.AddSingleton<IMusicMetadataService>(sp =>
+    new SquidWTFMetadataService(
+        sp.GetRequiredService<IHttpClientFactory>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+        sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
+        sp.GetRequiredService<RedisCacheService>(),
+        squidWtfApiUrls,
+        sp.GetService<GenreEnrichmentService>()));
 
-    // Deezer services (primary, default) - registered LAST to be injected by default
-    builder.Services.AddSingleton<IMusicMetadataService, DeezerMetadataService>();
-    builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
-}
-else if (musicService == MusicService.SquidWTF)
-{
-    // SquidWTF services - pass decoded URLs with fallback support
-    builder.Services.AddSingleton<IMusicMetadataService>(sp =>
-        new SquidWTFMetadataService(
-            sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
-            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-            sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
-            sp.GetRequiredService<RedisCacheService>(),
-            squidWtfApiUrls,
-            sp.GetService<GenreEnrichmentService>()));
-    builder.Services.AddSingleton<IDownloadService>(sp =>
-        new SquidWTFDownloadService(
-            sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<ILocalLibraryService>(),
-            sp.GetRequiredService<IMusicMetadataService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
-            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-            sp,
-            sp.GetRequiredService<ILogger<SquidWTFDownloadService>>(),
-            sp.GetRequiredService<OdesliService>(),
-            squidWtfStreamingUrls));
-}
-else if (musicService == MusicService.AppleMusic)
-{
-    builder.Services.AddSingleton<IMusicMetadataService, AppleMusicMetadataService>();
-    builder.Services.AddSingleton<IDownloadService, AppleMusicDownloadService>();
-}
+// 2. Concrete Download Services
+builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
+builder.Services.AddSingleton<IDownloadService, QobuzDownloadService>();
+builder.Services.AddSingleton<IDownloadService, AppleMusicDownloadService>();
+builder.Services.AddSingleton<IDownloadService>(sp =>
+    new SquidWTFDownloadService(
+        sp.GetRequiredService<IHttpClientFactory>(),
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<ILocalLibraryService>(),
+        sp.GetRequiredService<IMusicMetadataService>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+        sp,
+        sp.GetRequiredService<ILogger<SquidWTFDownloadService>>(),
+        sp.GetRequiredService<OdesliService>(),
+        squidWtfStreamingUrls));
 
-// Register ParallelMetadataService to race all registered providers for faster searches
+// 3. Status Manager & Multi-Provider Orchestrators
+builder.Services.AddSingleton<ProviderStatusManager>();
+builder.Services.AddSingleton<IMusicMetadataService, MultiProviderMetadataService>();
+builder.Services.AddSingleton<IDownloadService, MultiProviderDownloadService>();
+
+// 4. Playlist Sync Service
+builder.Services.AddSingleton<PlaylistSyncService>();
+
+// 5. ParallelMetadataService Wrapper (delegates to MultiProviderMetadataService)
 builder.Services.AddSingleton<ParallelMetadataService>();
 
 // Startup validation - register validators based on backend

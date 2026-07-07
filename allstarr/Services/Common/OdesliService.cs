@@ -140,4 +140,101 @@ public class OdesliService
 
         return null;
     }
+
+    /// <summary>
+    /// Translates a track URL from a source provider to a target provider's track ID.
+    /// </summary>
+    public async Task<string?> TranslateTrackUrlAsync(string sourceUrl, string targetProvider, CancellationToken cancellationToken = default)
+    {
+        var targetPlatform = targetProvider.ToLowerInvariant() switch
+        {
+            "spotify" => "spotify",
+            "applemusic" => "appleMusic",
+            "deezer" => "deezer",
+            "qobuz" => "qobuz",
+            "squidwtf" => "tidal",
+            "tidal" => "tidal",
+            _ => null
+        };
+
+        if (targetPlatform == null) return null;
+
+        var cacheKey = $"odesli:translate:{sourceUrl}:{targetPlatform}";
+        var cached = await _cache.GetAsync<string>(cacheKey);
+        if (!string.IsNullOrEmpty(cached))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var odesliUrl = $"https://api.song.link/v1-alpha.1/links?url={Uri.EscapeDataString(sourceUrl)}&userCountry=US";
+            _logger.LogDebug("🔗 Odesli: Translating {Url} to platform {Platform}", sourceUrl, targetPlatform);
+
+            var response = await _httpClient.GetAsync(odesliUrl, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var doc = JsonDocument.Parse(json);
+
+                if (doc.RootElement.TryGetProperty("linksByPlatform", out var platforms) &&
+                    platforms.TryGetProperty(targetPlatform, out var platformObj) &&
+                    platformObj.TryGetProperty("url", out var urlEl))
+                {
+                    var targetUrl = urlEl.GetString();
+                    if (!string.IsNullOrEmpty(targetUrl))
+                    {
+                        var targetId = ExtractTrackIdFromUrl(targetUrl, targetPlatform);
+                        if (!string.IsNullOrEmpty(targetId))
+                        {
+                            await _cache.SetAsync(cacheKey, targetId, CacheExtensions.OdesliLookupTTL);
+                            return targetId;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to translate URL {Url} to {Platform} via Odesli", sourceUrl, targetPlatform);
+        }
+
+        return null;
+    }
+
+    private static string? ExtractTrackIdFromUrl(string url, string platform)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+
+        if (platform == "spotify")
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(url, @"spotify\.com/track/([a-zA-Z0-9]+)");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+        if (platform == "appleMusic")
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(url, @"[?&]i=([0-9]+)");
+            if (match.Success) return match.Groups[1].Value;
+            
+            match = System.Text.RegularExpressions.Regex.Match(url, @"/song/([0-9]+)");
+            if (match.Success) return match.Groups[1].Value;
+        }
+        if (platform == "deezer")
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(url, @"/track/([0-9]+)");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+        if (platform == "qobuz")
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(url, @"/track/([0-9]+)");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+        if (platform == "tidal")
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(url, @"/track/([0-9]+)");
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
+        return null;
+    }
 }

@@ -978,6 +978,8 @@ export function updateConfigUI(data) {
     setInputValue("config-musicbrainz-username", data.musicBrainz.username && data.musicBrainz.username !== "(not set)" ? data.musicBrainz.username : "");
     setInputValue("config-musicbrainz-password", data.musicBrainz.password && data.musicBrainz.password !== "(not set)" ? "••••••••" : "");
   }
+
+  renderMultiProviderSettings(data);
 }
 
 export async function saveAllSettings(tabId, options = {}) {
@@ -2043,3 +2045,183 @@ document.addEventListener("DOMContentLoaded", () => {
     initSetupWizard();
   }, 500);
 });
+
+// Multi-provider settings helpers
+function renderMultiProviderSettings(data) {
+  const providersData = data.providers || {
+    metadataOrder: "spotify,applemusic,deezer,qobuz,squidwtf",
+    enabledSearch: "spotify,applemusic,deezer,qobuz,squidwtf",
+    enabledPlaylist: "spotify"
+  };
+
+  setInputValue("config-multi-provider-metadata-order", providersData.metadataOrder);
+  setInputValue("config-multi-provider-enabled-search", providersData.enabledSearch);
+  setInputValue("config-multi-provider-enabled-playlist", providersData.enabledPlaylist);
+
+  const order = providersData.metadataOrder.split(',').map(s => s.trim().toLowerCase());
+  const enabledSearch = providersData.enabledSearch.split(',').map(s => s.trim().toLowerCase());
+  const enabledPlaylist = providersData.enabledPlaylist.split(',').map(s => s.trim().toLowerCase());
+
+  const tbody = document.getElementById("providers-tbody");
+  if (tbody) {
+    const providerNames = {
+      spotify: "Spotify",
+      applemusic: "Apple Music",
+      deezer: "Deezer",
+      qobuz: "Qobuz",
+      squidwtf: "SquidWTF (Tidal)"
+    };
+
+    fetch("/api/admin/providers/status")
+      .then(res => res.json())
+      .then(statuses => {
+        tbody.innerHTML = "";
+        order.forEach(p => {
+          const displayName = providerNames[p] || p;
+          const searchChecked = enabledSearch.includes(p) ? "checked" : "";
+          const playlistChecked = enabledPlaylist.includes(p) ? "checked" : "";
+          
+          const statusInfo = statuses.find(s => s.name === p) || { healthy: false };
+          const statusClass = statusInfo.healthy ? "healthy" : "unhealthy";
+          const statusText = statusInfo.healthy ? "Healthy" : "Not Configured / Unhealthy";
+
+          tbody.innerHTML += `
+            <tr data-provider="${p}">
+              <td style="padding: 10px; font-weight: 500;">${displayName}</td>
+              <td style="text-align: center; padding: 10px;">
+                <input type="checkbox" class="provider-search-checkbox config-input-stub" data-provider="${p}" ${searchChecked}>
+              </td>
+              <td style="text-align: center; padding: 10px;">
+                <input type="checkbox" class="provider-playlist-checkbox config-input-stub" data-provider="${p}" ${playlistChecked}>
+              </td>
+              <td style="text-align: center; padding: 10px; display: flex; align-items: center; justify-content: center; min-height: 40px;">
+                <span class="status-indicator ${statusClass}" id="status-dot-${p}"></span>
+                <span id="status-text-${p}" style="font-size: 0.85rem; color: var(--text-secondary);">${statusText}</span>
+              </td>
+              <td style="text-align: center; padding: 10px;">
+                <button type="button" class="btn btn-sm" onclick="testProviderConnection('${p}')" style="padding: 4px 8px; font-size: 0.8rem;">Test</button>
+              </td>
+            </tr>
+          `;
+        });
+
+        document.querySelectorAll(".provider-search-checkbox").forEach(cb => {
+          cb.addEventListener("change", updateProviderConfigInputs);
+        });
+        document.querySelectorAll(".provider-playlist-checkbox").forEach(cb => {
+          cb.addEventListener("change", updateProviderConfigInputs);
+        });
+      })
+      .catch(err => console.error("Error fetching provider status:", err));
+  }
+
+  const priorityList = document.getElementById("provider-priority-list");
+  if (priorityList) {
+    priorityList.innerHTML = "";
+    order.forEach(p => {
+      const displayName = p === "spotify" ? "Spotify" :
+                          p === "applemusic" ? "Apple Music" :
+                          p === "deezer" ? "Deezer" :
+                          p === "qobuz" ? "Qobuz" :
+                          p === "squidwtf" ? "SquidWTF (Tidal)" : p;
+
+      priorityList.innerHTML += `
+        <li class="priority-item" draggable="true" data-provider="${p}">
+          <div class="priority-item-left">
+            <span class="priority-item-drag-handle">☰</span>
+            <span>${displayName}</span>
+          </div>
+        </li>
+      `;
+    });
+
+    initDragAndDrop();
+  }
+}
+
+function updateProviderConfigInputs() {
+  const listItems = document.querySelectorAll("#provider-priority-list li");
+  const order = Array.from(listItems).map(item => item.getAttribute("data-provider"));
+  setInputValue("config-multi-provider-metadata-order", order.join(","));
+
+  const searchCbs = document.querySelectorAll(".provider-search-checkbox");
+  const enabledSearch = Array.from(searchCbs)
+    .filter(cb => cb.checked)
+    .map(cb => cb.getAttribute("data-provider"));
+  setInputValue("config-multi-provider-enabled-search", enabledSearch.join(","));
+
+  const playlistCbs = document.querySelectorAll(".provider-playlist-checkbox");
+  const enabledPlaylist = Array.from(playlistCbs)
+    .filter(cb => cb.checked)
+    .map(cb => cb.getAttribute("data-provider"));
+  setInputValue("config-multi-provider-enabled-playlist", enabledPlaylist.join(","));
+}
+
+function initDragAndDrop() {
+  const list = document.getElementById("provider-priority-list");
+  if (!list) return;
+
+  let dragEl = null;
+
+  list.addEventListener("dragstart", e => {
+    dragEl = e.target.closest("li");
+    if (dragEl) {
+      dragEl.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", dragEl.getAttribute("data-provider"));
+    }
+  });
+
+  list.addEventListener("dragend", () => {
+    if (dragEl) {
+      dragEl.classList.remove("dragging");
+      dragEl = null;
+      updateProviderConfigInputs();
+    }
+  });
+
+  list.addEventListener("dragover", e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    
+    const target = e.target.closest("li");
+    if (target && target !== dragEl) {
+      const rect = target.getBoundingClientRect();
+      const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+      list.insertBefore(dragEl, next ? target.nextSibling : target);
+    }
+  });
+}
+
+window.testProviderConnection = async function(provider) {
+  const dot = document.getElementById(`status-dot-${provider}`);
+  const txt = document.getElementById(`status-text-${provider}`);
+  if (dot) {
+    dot.className = "status-indicator testing";
+  }
+  if (txt) {
+    txt.textContent = "Testing...";
+  }
+
+  try {
+    const res = await fetch(`/api/admin/providers/test/${provider}`, { method: "POST" });
+    const data = await res.json();
+    if (dot) {
+      dot.className = data.healthy ? "status-indicator healthy" : "status-indicator unhealthy";
+    }
+    if (txt) {
+      txt.textContent = data.healthy ? "Healthy" : "Not Configured / Unhealthy";
+    }
+    showToast(`${provider} test completed: ${data.healthy ? "Successful" : "Failed"}`, data.healthy ? "success" : "error");
+  } catch (error) {
+    console.error("Test error:", error);
+    if (dot) {
+      dot.className = "status-indicator unhealthy";
+    }
+    if (txt) {
+      txt.textContent = "Error testing connection";
+    }
+    showToast(`Connection test failed for ${provider}`, "error");
+  }
+};
+
