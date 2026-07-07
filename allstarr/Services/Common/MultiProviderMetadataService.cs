@@ -9,23 +9,25 @@ public class MultiProviderMetadataService : IMusicMetadataService
 {
     private readonly IEnumerable<IMusicMetadataService> _allServices;
     private readonly ProviderStatusManager _statusManager;
+    private readonly ExtensionManager _extensionManager;
     private readonly ILogger<MultiProviderMetadataService> _logger;
 
     public MultiProviderMetadataService(
         IEnumerable<IMusicMetadataService> services,
         ProviderStatusManager statusManager,
+        ExtensionManager extensionManager,
         ILogger<MultiProviderMetadataService> logger)
     {
         _allServices = services.Where(s => s.GetType() != typeof(MultiProviderMetadataService)).ToList();
         _statusManager = statusManager;
+        _extensionManager = extensionManager;
         _logger = logger;
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledSearchProviders();
-        if (providers.Count == 0) return new List<Song>();
-
+        
         var tasks = providers.Select(async p =>
         {
             var service = GetMetadataServiceByName(p);
@@ -39,16 +41,33 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchSongsAsync failed for provider: {Provider}", p);
                 return new List<Song>();
             }
+        }).ToList();
+
+        var extensions = _extensionManager.GetActiveExtensions();
+        var extensionTasks = extensions.Select(async ext =>
+        {
+            try
+            {
+                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken);
+                return res.Songs;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SearchSongsAsync failed for extension: {ExtensionId}", ext.Id);
+                return new List<Song>();
+            }
         });
 
-        var results = await Task.WhenAll(tasks);
-        return InterleaveLists(results.ToList());
+        var providerResults = await Task.WhenAll(tasks);
+        var extensionResults = await Task.WhenAll(extensionTasks);
+
+        var allResultsList = providerResults.Concat(extensionResults).ToList();
+        return InterleaveLists(allResultsList);
     }
 
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledSearchProviders();
-        if (providers.Count == 0) return new List<Album>();
 
         var tasks = providers.Select(async p =>
         {
@@ -63,16 +82,33 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchAlbumsAsync failed for provider: {Provider}", p);
                 return new List<Album>();
             }
+        }).ToList();
+
+        var extensions = _extensionManager.GetActiveExtensions();
+        var extensionTasks = extensions.Select(async ext =>
+        {
+            try
+            {
+                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken);
+                return res.Albums;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SearchAlbumsAsync failed for extension: {ExtensionId}", ext.Id);
+                return new List<Album>();
+            }
         });
 
-        var results = await Task.WhenAll(tasks);
-        return InterleaveLists(results.ToList());
+        var providerResults = await Task.WhenAll(tasks);
+        var extensionResults = await Task.WhenAll(extensionTasks);
+
+        var allResultsList = providerResults.Concat(extensionResults).ToList();
+        return InterleaveLists(allResultsList);
     }
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledSearchProviders();
-        if (providers.Count == 0) return new List<Artist>();
 
         var tasks = providers.Select(async p =>
         {
@@ -87,16 +123,33 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchArtistsAsync failed for provider: {Provider}", p);
                 return new List<Artist>();
             }
+        }).ToList();
+
+        var extensions = _extensionManager.GetActiveExtensions();
+        var extensionTasks = extensions.Select(async ext =>
+        {
+            try
+            {
+                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken);
+                return res.Artists;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SearchArtistsAsync failed for extension: {ExtensionId}", ext.Id);
+                return new List<Artist>();
+            }
         });
 
-        var results = await Task.WhenAll(tasks);
-        return InterleaveLists(results.ToList());
+        var providerResults = await Task.WhenAll(tasks);
+        var extensionResults = await Task.WhenAll(extensionTasks);
+
+        var allResultsList = providerResults.Concat(extensionResults).ToList();
+        return InterleaveLists(allResultsList);
     }
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledSearchProviders();
-        if (providers.Count == 0) return new SearchResult();
 
         var tasks = providers.Select(async p =>
         {
@@ -111,21 +164,53 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchAllAsync failed for provider: {Provider}", p);
                 return null;
             }
+        }).ToList();
+
+        var extensions = _extensionManager.GetActiveExtensions();
+        var extensionTasks = extensions.Select(async ext =>
+        {
+            try
+            {
+                return await Task.Run(() => ext.Search(query, songLimit), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SearchAllAsync failed for extension: {ExtensionId}", ext.Id);
+                return new SearchResult();
+            }
         });
 
-        var results = await Task.WhenAll(tasks);
-        var validResults = results.Where(r => r != null).ToList();
+        var providerResults = await Task.WhenAll(tasks);
+        var extensionResults = await Task.WhenAll(extensionTasks);
+
+        var validProviderResults = providerResults.Where(r => r != null).ToList();
+        var validExtensionResults = extensionResults.Where(r => r != null).ToList();
+
+        var allSongsLists = validProviderResults.Select(r => r!.Songs)
+            .Concat(validExtensionResults.Select(r => r.Songs)).ToList();
+
+        var allAlbumsLists = validProviderResults.Select(r => r!.Albums)
+            .Concat(validExtensionResults.Select(r => r.Albums)).ToList();
+
+        var allArtistsLists = validProviderResults.Select(r => r!.Artists)
+            .Concat(validExtensionResults.Select(r => r.Artists)).ToList();
 
         return new SearchResult
         {
-            Songs = InterleaveLists(validResults.Select(r => r!.Songs).ToList()),
-            Albums = InterleaveLists(validResults.Select(r => r!.Albums).ToList()),
-            Artists = InterleaveLists(validResults.Select(r => r!.Artists).ToList())
+            Songs = InterleaveLists(allSongsLists),
+            Albums = InterleaveLists(allAlbumsLists),
+            Artists = InterleaveLists(allArtistsLists)
         };
     }
 
     public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
+        var ext = _extensionManager.GetExtension(externalProvider);
+        if (ext != null)
+        {
+            return await Task.Run(() => ext.GetSong(externalId), cancellationToken);
+        }
+
         var service = GetMetadataServiceByName(externalProvider);
         if (service == null) return null;
         return await service.GetSongAsync(externalProvider, externalId, cancellationToken);
@@ -133,10 +218,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
 
     public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
     {
-        // Try searching in parallel across all enabled search providers to find the first exact match
         var providers = _statusManager.GetEnabledSearchProviders();
-        if (providers.Count == 0) return null;
-
+        
         var tasks = providers.Select(async p =>
         {
             var service = GetMetadataServiceByName(p);
@@ -149,14 +232,36 @@ public class MultiProviderMetadataService : IMusicMetadataService
             {
                 return null;
             }
+        }).ToList();
+
+        var extensions = _extensionManager.GetActiveExtensions();
+        var extensionTasks = extensions.Select(async ext =>
+        {
+            try
+            {
+                var res = await Task.Run(() => ext.Search($"isrc:{isrc}", 1), cancellationToken);
+                return res.Songs.FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
         });
 
         var results = await Task.WhenAll(tasks);
-        return results.FirstOrDefault(s => s != null);
+        var extResults = await Task.WhenAll(extensionTasks);
+
+        return results.FirstOrDefault(s => s != null) ?? extResults.FirstOrDefault(s => s != null);
     }
 
     public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
+        var ext = _extensionManager.GetExtension(externalProvider);
+        if (ext != null)
+        {
+            return await Task.Run(() => ext.GetAlbum(externalId), cancellationToken);
+        }
+
         var service = GetMetadataServiceByName(externalProvider);
         if (service == null) return null;
         return await service.GetAlbumAsync(externalProvider, externalId, cancellationToken);
@@ -164,6 +269,12 @@ public class MultiProviderMetadataService : IMusicMetadataService
 
     public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
+        var ext = _extensionManager.GetExtension(externalProvider);
+        if (ext != null)
+        {
+            return await Task.Run(() => ext.GetArtist(externalId), cancellationToken);
+        }
+
         var service = GetMetadataServiceByName(externalProvider);
         if (service == null) return null;
         return await service.GetArtistAsync(externalProvider, externalId, cancellationToken);
@@ -171,6 +282,9 @@ public class MultiProviderMetadataService : IMusicMetadataService
 
     public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
+        var ext = _extensionManager.GetExtension(externalProvider);
+        if (ext != null) return new List<Album>(); // Extensions don't have separate artist-albums endpoint usually
+
         var service = GetMetadataServiceByName(externalProvider);
         if (service == null) return new List<Album>();
         return await service.GetArtistAlbumsAsync(externalProvider, externalId, cancellationToken);

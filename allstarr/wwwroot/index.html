@@ -111,6 +111,7 @@
                     <div class="tab" data-tab="kept">Kept Downloads</div>
                     <div class="tab" data-tab="services">Services</div>
                     <div class="tab" data-tab="config">Configuration</div>
+                    <div class="tab" data-tab="extensions">Extensions</div>
                     <div class="tab" data-tab="report-issues">Report Issues</div>
                     <div class="tab" data-tab="endpoints">API Analytics</div>
                 </div>
@@ -1136,6 +1137,54 @@
 
             <div class="save-bar-sticky">
                 <button class="primary" onclick="saveAllSettings('tab-config')">💾 Save Configuration</button>
+            </div>
+        </div>
+
+        <!-- Extensions Tab -->
+        <div class="tab-content" id="tab-extensions">
+            <input type="hidden" id="config-extension-repositories" data-env-key="EXTENSION_REPOSITORIES" class="config-input">
+            <div class="card">
+                <h2>Community Extensions (.spotiflac-ext)</h2>
+                <div class="description-text" style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem;">
+                    Natively load and run community-created SpotiFLAC extensions in a secure sandbox! These plugins extend Allstarr's search, lyrics, and metadata capabilities without requiring premium credentials.
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; margin-bottom: 20px; border-left: 3px solid var(--accent-color);">
+                    💡 <strong>Where to find extensions:</strong> You can enter any SpotiFLAC Extension Store registry link (such as the official repository <code>https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json</code>) to populate the store below.
+                </div>
+            </div>
+
+            <!-- Repository Configuration Card -->
+            <div class="card">
+                <h3>Extension Registries</h3>
+                <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                    <input type="text" id="new-repo-url" placeholder="https://raw.githubusercontent.com/.../registry.json" style="flex: 1; padding: 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.2); color: #fff;">
+                    <button class="primary" onclick="addExtensionRepo()" style="padding: 10px 16px;">Add Registry</button>
+                </div>
+                <ul id="configured-repos-list" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px;">
+                    <!-- Configured repos will be listed here -->
+                </ul>
+            </div>
+
+            <!-- Extension Store Card -->
+            <div class="card">
+                <h3>Extension Store</h3>
+                <div class="description-text" style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.85rem;">
+                    Browse and install community plugins from your registered registries.
+                </div>
+                <div id="store-extensions-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;">
+                    <!-- Extensions from store will be populated here -->
+                </div>
+            </div>
+
+            <!-- Installed Extensions Card -->
+            <div class="card">
+                <h3>Installed Extensions</h3>
+                <div class="description-text" style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.85rem;">
+                    Currently active and running JavaScript sandboxes.
+                </div>
+                <div id="installed-extensions-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;">
+                    <!-- Installed extensions will be listed here -->
+                </div>
             </div>
         </div>
 

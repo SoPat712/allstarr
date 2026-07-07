@@ -2225,3 +2225,227 @@ window.testProviderConnection = async function(provider) {
   }
 };
 
+// --- Community Extensions JavaScript API Loader ---
+window.loadExtensionsTab = async function() {
+  await Promise.all([
+    loadConfiguredRepos(),
+    loadInstalledExtensions(),
+    loadStoreExtensions()
+  ]);
+};
+
+async function loadConfiguredRepos() {
+  try {
+    const res = await fetch("/api/admin/extensions/repos");
+    if (!res.ok) return;
+    const repos = await res.json();
+    
+    // Update hidden input
+    setInputValue("config-extension-repositories", repos.join(","));
+
+    const list = document.getElementById("configured-repos-list");
+    if (list) {
+      list.innerHTML = "";
+      if (repos.length === 0) {
+        list.innerHTML = `<li style="color: var(--text-secondary); font-size: 0.9rem; font-style: italic; padding: 4px 0;">No registries configured.</li>`;
+      } else {
+        repos.forEach(url => {
+          list.innerHTML += `
+            <li style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.03); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+              <span style="font-family: monospace; font-size: 0.85rem; word-break: break-all; color: var(--text-secondary);">${url}</span>
+              <button class="btn btn-sm danger" onclick="removeExtensionRepo('${url}')" style="padding: 4px 8px; font-size: 0.8rem; margin-left: 12px;">Remove</button>
+            </li>
+          `;
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load repos:", err);
+  }
+}
+
+async function loadInstalledExtensions() {
+  try {
+    const res = await fetch("/api/admin/extensions/installed");
+    if (!res.ok) return;
+    const items = await res.json();
+
+    const list = document.getElementById("installed-extensions-list");
+    if (list) {
+      list.innerHTML = "";
+      if (items.length === 0) {
+        list.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; color: var(--text-secondary); font-style: italic; padding: 20px;">
+            No extensions installed. Browse the store below to install extensions.
+          </div>`;
+      } else {
+        items.forEach(ext => {
+          const typeLabels = ext.types.map(t => `<span class="badge" style="background: var(--accent-color); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; color: #fff;">${t}</span>`).join(" ");
+          list.innerHTML += `
+            <div class="card" style="margin: 0; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); padding: 16px; border-radius: 8px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;">
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                  <h4 style="margin: 0; font-size: 1.1rem; color: #fff;">${ext.displayName}</h4>
+                  <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">v${ext.version}</span>
+                </div>
+                <div style="margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap;">
+                  ${typeLabels}
+                </div>
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 10px 0 0 0; line-height: 1.4;">${ext.description}</p>
+              </div>
+              <div style="display: flex; justify-content: flex-end; margin-top: auto; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
+                <button class="btn btn-sm danger" onclick="uninstallExtension('${ext.id}')" style="font-size: 0.8rem; padding: 4px 10px;">Uninstall</button>
+              </div>
+            </div>
+          `;
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load installed extensions:", err);
+  }
+}
+
+async function loadStoreExtensions() {
+  try {
+    const res = await fetch("/api/admin/extensions/store");
+    if (!res.ok) return;
+    const items = await res.json();
+
+    const list = document.getElementById("store-extensions-list");
+    if (list) {
+      list.innerHTML = "";
+      if (items.length === 0) {
+        list.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; color: var(--text-secondary); font-style: italic; padding: 20px;">
+            No extensions available. Add an extension registry repository above.
+          </div>`;
+      } else {
+        items.forEach(ext => {
+          const actionBtn = ext.isInstalled 
+            ? `<button class="btn btn-sm" disabled style="background: rgba(255,255,255,0.08); color: var(--text-secondary); font-size: 0.8rem; padding: 4px 10px;">Installed</button>`
+            : `<button class="btn btn-sm primary" onclick="installExtension('${ext.downloadUrl}')" style="font-size: 0.8rem; padding: 4px 10px;">Install</button>`;
+
+          list.innerHTML += `
+            <div class="card" style="margin: 0; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); padding: 16px; border-radius: 8px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;">
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                  <h4 style="margin: 0; font-size: 1.1rem; color: #fff;">${ext.displayName}</h4>
+                  <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 500;">v${ext.version}</span>
+                </div>
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 8px 0 0 0; line-height: 1.4;">${ext.description}</p>
+                <div style="font-size: 0.75rem; color: var(--text-secondary); font-family: monospace; margin-top: 8px; word-break: break-all; opacity: 0.6;">
+                  Registry: ${new URL(ext.repoUrl).hostname}
+                </div>
+              </div>
+              <div style="display: flex; justify-content: flex-end; margin-top: auto; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 12px;">
+                ${actionBtn}
+              </div>
+            </div>
+          `;
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load store extensions:", err);
+  }
+}
+
+window.addExtensionRepo = async function() {
+  const input = document.getElementById("new-repo-url");
+  if (!input) return;
+  const url = input.value.trim();
+  if (!url) {
+    showToast("Please enter a registry URL", "error");
+    return;
+  }
+
+  const currentVal = document.getElementById("config-extension-repositories")?.value || "";
+  const repos = currentVal.split(",").map(r => r.trim()).filter(Boolean);
+  
+  if (repos.includes(url)) {
+    showToast("Registry is already added", "error");
+    return;
+  }
+
+  repos.push(url);
+  setInputValue("config-extension-repositories", repos.join(","));
+
+  input.value = "";
+  showToast("Adding registry...", "info");
+
+  try {
+    await saveAllSettings("tab-extensions", { quiet: true });
+    showToast("Registry added successfully. Reloading store...", "success");
+    await window.loadExtensionsTab();
+  } catch (e) {
+    showToast("Failed to save registry", "error");
+  }
+};
+
+window.removeExtensionRepo = async function(url) {
+  if (!confirm("Are you sure you want to remove this extension registry? Any extensions installed from it will remain installed, but they won't receive updates.")) return;
+
+  const currentVal = document.getElementById("config-extension-repositories")?.value || "";
+  const repos = currentVal.split(",").map(r => r.trim()).filter(Boolean);
+  
+  const idx = repos.indexOf(url);
+  if (idx > -1) {
+    repos.splice(idx, 1);
+    setInputValue("config-extension-repositories", repos.join(","));
+  }
+
+  showToast("Removing registry...", "info");
+
+  try {
+    await saveAllSettings("tab-extensions", { quiet: true });
+    showToast("Registry removed successfully", "success");
+    await window.loadExtensionsTab();
+  } catch (e) {
+    showToast("Failed to save configuration", "error");
+  }
+};
+
+window.installExtension = async function(downloadUrl) {
+  showToast("Installing extension... This may take a few seconds.", "info");
+  try {
+    const res = await fetch("/api/admin/extensions/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ downloadUrl })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast("Extension installed and loaded!", "success");
+      await window.loadExtensionsTab();
+      window.showRestartBanner();
+    } else {
+      showToast(data.message || "Installation failed", "error");
+    }
+  } catch (error) {
+    console.error("Installation error:", error);
+    showToast("Network error during installation", "error");
+  }
+};
+
+window.uninstallExtension = async function(id) {
+  if (!confirm(`Are you sure you want to uninstall extension "${id}"?`)) return;
+
+  showToast("Uninstalling extension...", "info");
+  try {
+    const res = await fetch(`/api/admin/extensions/uninstall/${id}`, { method: "DELETE" });
+    const data = await res.ok ? await res.json() : null;
+    if (res.ok && data && data.success) {
+      showToast("Extension uninstalled successfully", "success");
+      await window.loadExtensionsTab();
+      window.showRestartBanner();
+    } else {
+      showToast("Failed to uninstall extension", "error");
+    }
+  } catch (error) {
+    console.error("Uninstallation error:", error);
+    showToast("Network error during uninstallation", "error");
+  }
+};
+
+

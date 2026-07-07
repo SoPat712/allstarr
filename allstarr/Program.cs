@@ -605,6 +605,7 @@ builder.Services.AddSingleton<IDownloadService>(sp =>
         squidWtfStreamingUrls));
 
 // 3. Status Manager & Multi-Provider Orchestrators
+builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<IMusicMetadataService, MultiProviderMetadataService>();
 builder.Services.AddSingleton<IDownloadService, MultiProviderDownloadService>();

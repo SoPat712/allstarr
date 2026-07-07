@@ -84,6 +84,10 @@ window.switchTab = function (tabName) {
       window.fetchDownloads();
     }
 
+    if (tabName === "extensions" && typeof window.loadExtensionsTab === "function") {
+      window.loadExtensionsTab();
+    }
+
     if (
       tabName === "song-migration" &&
       typeof window.fetchSongMigration === "function"

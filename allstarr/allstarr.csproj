@@ -19,6 +19,7 @@
     <ItemGroup>
         <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
         <PackageReference Include="Cronos" Version="0.11.1" />
+        <PackageReference Include="Jint" Version="4.11.0" />
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
         <PackageReference Include="Otp.NET" Version="1.4.1" />
         <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
