@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Headers;
-using System.Text.Json;
 using allstarr.Models.Settings;
 using allstarr.Filters;
 
@@ -35,14 +34,13 @@ public class AppleMusicController : ControllerBase
         try
         {
             var res = await _httpClient.GetAsync("api/health");
+            var json = await res.Content.ReadAsStringAsync();
             if (!res.IsSuccessStatusCode)
             {
-                return StatusCode((int)res.StatusCode, await res.Content.ReadAsStringAsync());
+                return StatusCode((int)res.StatusCode, json);
             }
 
-            var json = await res.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-            return Ok(doc.RootElement);
+            return Content(json, "application/json");
         }
         catch (Exception ex)
         {
@@ -77,8 +75,7 @@ public class AppleMusicController : ControllerBase
                 return StatusCode((int)res.StatusCode, json);
             }
 
-            using var doc = JsonDocument.Parse(json);
-            return Ok(doc.RootElement);
+            return Content(json, "application/json");
         }
         catch (Exception ex)
         {
@@ -88,7 +85,7 @@ public class AppleMusicController : ControllerBase
     }
 
     [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] JsonElement credentials)
+    public async Task<IActionResult> Login([FromBody] System.Text.Json.JsonElement credentials)
     {
         try
         {
@@ -97,8 +94,12 @@ public class AppleMusicController : ControllerBase
             
             if (res.StatusCode == System.Net.HttpStatusCode.Accepted || res.StatusCode == System.Net.HttpStatusCode.OK)
             {
-                using var doc = JsonDocument.Parse(json);
-                return StatusCode((int)res.StatusCode, doc.RootElement);
+                return new ContentResult
+                {
+                    Content = json,
+                    ContentType = "application/json",
+                    StatusCode = (int)res.StatusCode
+                };
             }
 
             return StatusCode((int)res.StatusCode, json);
@@ -111,7 +112,7 @@ public class AppleMusicController : ControllerBase
     }
 
     [HttpPost("login/2fa")]
-    public async Task<IActionResult> Login2fa([FromBody] JsonElement code)
+    public async Task<IActionResult> Login2fa([FromBody] System.Text.Json.JsonElement code)
     {
         try
         {
@@ -120,8 +121,7 @@ public class AppleMusicController : ControllerBase
 
             if (res.IsSuccessStatusCode)
             {
-                using var doc = JsonDocument.Parse(json);
-                return Ok(doc.RootElement);
+                return Content(json, "application/json");
             }
 
             return StatusCode((int)res.StatusCode, json);
