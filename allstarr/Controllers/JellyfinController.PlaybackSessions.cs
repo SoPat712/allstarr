@@ -1529,11 +1529,7 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// Catch-all for any other session-related requests.
-    /// <summary>
-    /// Catch-all proxy for any other session-related endpoints we haven't explicitly implemented.
-    /// This ensures all session management calls get proxied to Jellyfin.
-    /// Examples: GET /Sessions, POST /Sessions/Logout, etc.
+    /// Proxy unhandled session-related endpoints to Jellyfin.
     /// </summary>
     [HttpGet("Sessions")]
     [HttpPost("Sessions")]

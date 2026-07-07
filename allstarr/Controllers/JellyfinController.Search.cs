@@ -48,18 +48,6 @@ public partial class JellyfinController
             searchTerm ?? string.Empty,
             includeItemTypes ?? string.Empty);
 
-        // ============================================================================
-        // REQUEST ROUTING LOGIC (Priority Order)
-        // ============================================================================
-        // 1. ArtistIds present (external) → Handle external artists (even with ParentId)
-        // 2. AlbumIds present (external) → Handle external albums (even with ParentId)
-        // 3. ParentId present → GetChildItems (handles external playlists/albums/artists OR proxies library items)
-        // 4. ArtistIds present (library) → Proxy to Jellyfin with artist filter
-        // 5. SearchTerm present → Integrated search (Jellyfin + external sources)
-        // 6. Otherwise → Proxy browse request transparently to Jellyfin
-        // ============================================================================
-
-        // PRIORITY 1: External artist filter - takes precedence over everything (including ParentId)
         if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
         {
             var artistId = effectiveArtistIds.Split(',')[0]; // Take first artist if multiple
@@ -87,7 +75,6 @@ public partial class JellyfinController
             // If library artist, fall through to handle with ParentId or proxy
         }
 
-        // PRIORITY 2: External album filter
         if (!string.IsNullOrWhiteSpace(albumIds))
         {
             var albumId = albumIds.Split(',')[0]; // Take first album if multiple
@@ -123,7 +110,6 @@ public partial class JellyfinController
             // If library album, fall through to handle with ParentId or proxy
         }
 
-        // PRIORITY 3: ParentId present - check if external first
         if (!string.IsNullOrWhiteSpace(parentId))
         {
             // Check if this is an external playlist
@@ -165,7 +151,6 @@ public partial class JellyfinController
             }
         }
 
-        // PRIORITY 4: Library artist filter (already checked for external above)
         if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
         {
             // Library artist - proxy transparently with full query string
@@ -177,7 +162,6 @@ public partial class JellyfinController
             return HandleProxyResponse(result, statusCode);
         }
 
-        // PRIORITY 5: Search term present - do integrated search (Jellyfin + external)
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
             // Check cache for search results (only cache pure searches, not filtered searches)
@@ -205,7 +189,6 @@ public partial class JellyfinController
 
             // Fall through to integrated search below
         }
-        // PRIORITY 6: No filters, no search - proxy browse request transparently
         else
         {
             _logger.LogDebug("Browse request with no filters, proxying to Jellyfin with full query string");

@@ -3,11 +3,13 @@ using allstarr.Models.Download;
 using allstarr.Services;
 using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Mvc;
+using allstarr.Filters;
 
 namespace allstarr.Controllers;
 
 [ApiController]
 [Route("api/admin/downloads")]
+[ServiceFilter(typeof(AdminPortFilter))]
 public class DownloadActivityController : ControllerBase
 {
     private readonly IEnumerable<IDownloadService> _downloadServices;

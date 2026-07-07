@@ -58,12 +58,6 @@ public class RedisPersistenceService : BackgroundService
             var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm-ss");
             var snapshotFile = Path.Combine(SnapshotDirectory, $"snapshot_{timestamp}.json");
 
-            // For now, we'll rely on Redis's built-in RDB + AOF persistence
-            // This service is a placeholder for future enhancements like:
-            // - Exporting specific key patterns to JSON
-            // - Creating human-readable backups
-            // - Syncing to external storage
-
             _logger.LogDebug("Redis snapshot service running (using Redis native persistence)");
 
             // Clean up old snapshots (keep last 10)

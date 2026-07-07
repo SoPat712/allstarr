@@ -7,16 +7,7 @@ using Cronos;
 namespace allstarr.Services.Spotify;
 
 /// <summary>
-/// Background service that fetches playlist tracks directly from Spotify's API.
-///
-/// This replaces the Jellyfin Spotify Import plugin dependency with key advantages:
-/// - Track ordering is preserved (critical for playlists like Release Radar)
-/// - ISRC codes available for exact matching
-/// - Real-time data without waiting for plugin sync schedules
-/// - Full track metadata (duration, release date, etc.)
-///
-/// CRON SCHEDULING: Playlists are fetched based on their cron schedules, not a global interval.
-/// Cache persists until next cron run to prevent excess Spotify API calls.
+/// Background service that fetches playlist tracks directly from Spotify on each playlist's cron schedule.
 /// </summary>
 public class SpotifyPlaylistFetcher : BackgroundService
 {

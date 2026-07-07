@@ -817,7 +817,6 @@
                 <button class="primary" onclick="saveAllSettings('tab-services')">💾 Save Services Settings</button>
             </div>
         </div>
-        </div>
 
         <!-- Configuration Tab -->
         <div class="tab-content" id="tab-config">
@@ -1008,11 +1007,6 @@
                 </div>
             </div>
             
-            <div class="save-bar-sticky">
-                <button class="primary" onclick="saveAllSettings('tab-config')">💾 Save Configuration</button>
-            </div>
-        </div>
-
             <div class="card" id="config-backup-card">
                 <h2>Configuration Backup</h2>
                 <p style="color: var(--text-secondary); margin-bottom: 16px;" id="config-backup-description">
@@ -1038,6 +1032,10 @@
                     <button class="danger" onclick="clearCache()">Clear All Cache</button>
                     <button class="danger" onclick="restartContainer()">Restart Allstarr</button>
                 </div>
+            </div>
+
+            <div class="save-bar-sticky">
+                <button class="primary" onclick="saveAllSettings('tab-config')">💾 Save Configuration</button>
             </div>
         </div>
 

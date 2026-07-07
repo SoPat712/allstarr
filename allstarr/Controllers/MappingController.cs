@@ -266,9 +266,4 @@ public class MappingController : ControllerBase
         await System.IO.File.WriteAllTextAsync(filePath, updatedJson);
         _logger.LogInformation("🗑️ Deleted mapping: {Playlist} - {SpotifyId}", playlist, spotifyId);
     }
-    
-    /// <summary>
-    /// Test Spotify lyrics API by fetching lyrics for a specific Spotify track ID
-    /// Example: GET /api/admin/lyrics/spotify/test?trackId=3yII7UwgLF6K5zW3xad3MP
-    /// </summary>
 }

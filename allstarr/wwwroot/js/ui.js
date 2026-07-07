@@ -1309,9 +1309,8 @@ async function pollAppleMusicStatus() {
   const card = document.getElementById("applemusic-manager-card");
   if (!card) return;
 
-  // Only poll if AppleMusic is the active provider or if we are looking at configuration
   const currentTab = document.querySelector(".sidebar-link.active")?.getAttribute("data-tab");
-  if (currentTab !== "config") return;
+  if (currentTab !== "services") return;
 
   try {
     const res = await fetch("/api/admin/applemusic/status");
@@ -1421,6 +1420,20 @@ async function uploadAppleMusicApk(file) {
   xhr.send(formData);
 }
 
+async function readAppleMusicError(response, fallbackMessage) {
+  const rawText = await response.text();
+  if (!rawText) {
+    return fallbackMessage;
+  }
+
+  try {
+    const payload = JSON.parse(rawText);
+    return payload.detail || payload.error || rawText;
+  } catch {
+    return rawText;
+  }
+}
+
 // Login
 async function submitAppleMusicLogin() {
   const username = document.getElementById("am-username-input").value.trim();
@@ -1440,14 +1453,16 @@ async function submitAppleMusicLogin() {
     
     if (res.status === 200) {
       alert("Login successful!");
+      document.getElementById("am-password-input").value = "";
+      document.getElementById("am-tfa-input").value = "";
       pollAppleMusicStatus();
     } else if (res.status === 202) {
-      // 2FA required
       document.getElementById("am-login-section").style.display = "none";
       document.getElementById("am-tfa-section").style.display = "block";
+      document.getElementById("am-tfa-input").focus();
     } else {
-      const text = await res.text();
-      alert("Login failed: " + text);
+      const message = await readAppleMusicError(res, "Login failed.");
+      alert("Login failed: " + message);
     }
   } catch (err) {
     alert("Error logging in: " + err.message);
@@ -1470,10 +1485,13 @@ async function submitAppleMusic2fa() {
 
     if (res.ok) {
       alert("2FA Verification successful! You are now logged in.");
+      document.getElementById("am-password-input").value = "";
+      document.getElementById("am-tfa-input").value = "";
+      document.getElementById("am-tfa-section").style.display = "none";
       pollAppleMusicStatus();
     } else {
-      const text = await res.text();
-      alert("Verification failed: " + text);
+      const message = await readAppleMusicError(res, "Verification failed.");
+      alert("Verification failed: " + message);
     }
   } catch (err) {
     alert("Error verifying code: " + err.message);

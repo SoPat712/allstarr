@@ -1,39 +1,3 @@
-// wrapper-v2 daemon entry point.
-//
-// The daemon starts in LoggedOut state, expects credentials via HTTP,
-// and drives Apple's AuthenticateFlow under the hood:
-//
-//   GET    /health
-//   GET    /me
-//   POST   /login         body: { "apple_id": "...", "password": "..." }
-//   POST   /login/2fa     body: { "code": "123456" }
-//   DELETE /login
-//
-// Persistence: mount WRAPPER_BASE_DIR so Apple keeps mpl_db across
-// restarts. After a prior POST /login (or first-time -L style login),
-// startup may restore tokens from that session without password
-// (WRAPPER_RESTORE_SESSION=1, default).
-//
-// Configuration is environment-only. Optional argv: --help. All knobs
-// use the WRAPPER_ prefix:
-//
-//   WRAPPER_HOST          Bind address (default 0.0.0.0)
-//   WRAPPER_PORT          Bind port    (default 80)
-//   WRAPPER_MODE          supervisor (default) or worker
-//   WRAPPER_WORKER_PORT   Private supervisor->worker port (default 18080)
-//   WRAPPER_BASE_DIR      Apple-lib working dir (default
-//                         /data/data/com.apple.android.music/files)
-//   WRAPPER_DEVICE_INFO   9-tuple device identifier
-//   WRAPPER_APPLE_INIT    "0" to skip Apple lib init at startup
-//                         (useful for /health-only smoke tests).
-//   WRAPPER_RESTORE_SESSION  "0" skips on-disk session restore after init.
-//   WRAPPER_APPLE_ID      Optional label for GET /me apple_id after restore
-//                         (not sent to Apple).
-//   WRAPPER_USERNAME      With WRAPPER_PASSWORD, run password sign-in at
-//                         startup if not already authenticated (same as
-//                         POST /login username field — Apple ID email).
-//   WRAPPER_PASSWORD      App-specific password for WRAPPER_USERNAME auto-login.
-
 #include <atomic>
 #include <chrono>
 #include <csignal>

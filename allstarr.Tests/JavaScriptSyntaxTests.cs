@@ -98,7 +98,6 @@ public class JavaScriptSyntaxTests
         var filePath = Path.Combine(_wwwrootPath, "app.js");
         var content = File.ReadAllText(filePath);
 
-        // Check that the file is now just a deprecation notice
         Assert.Contains("DEPRECATED", content);
         Assert.Contains("main.js", content);
     }
@@ -150,8 +149,6 @@ public class JavaScriptSyntaxTests
     [Fact]
     public void AppJs_ShouldHaveBalancedBraces()
     {
-        // app.js is now deprecated and just contains comments
-        // Skip this test or check main.js instead
         var filePath = Path.Combine(_wwwrootPath, "js", "main.js");
         var content = File.ReadAllText(filePath);
 
@@ -164,12 +161,9 @@ public class JavaScriptSyntaxTests
     [Fact]
     public void AppJs_ShouldHaveBalancedParentheses()
     {
-        // app.js is now deprecated and just contains comments
-        // Skip this test or check main.js instead
         var filePath = Path.Combine(_wwwrootPath, "js", "main.js");
 
-        // Use Node.js to validate syntax instead of counting parentheses
-        // This is more reliable than regex-based string/comment removal
+        // Validate syntax with Node.js instead of counting parentheses.
         string error;
         var isValid = ValidateJavaScriptSyntax(filePath, out error);
 

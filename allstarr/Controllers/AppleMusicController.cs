@@ -3,11 +3,13 @@ using Microsoft.Extensions.Options;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using allstarr.Models.Settings;
+using allstarr.Filters;
 
 namespace allstarr.Controllers;
 
 [ApiController]
 [Route("api/admin/applemusic")]
+[ServiceFilter(typeof(AdminPortFilter))]
 public class AppleMusicController : ControllerBase
 {
     private readonly HttpClient _httpClient;

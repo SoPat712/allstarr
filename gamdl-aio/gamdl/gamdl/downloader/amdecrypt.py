@@ -2531,7 +2531,6 @@ def _clean_stsd_content(
     version_flags = stsd_content[:4]
     entry_count = struct.unpack(">I", stsd_content[4:8])[0]
 
-    # Parse and clean each sample entry.
     cleaned_entries = []
     offset = 8
 
@@ -2547,9 +2546,7 @@ def _clean_stsd_content(
 
         entry_data = stsd_content[offset : offset + entry_size]
 
-        # Check if this is an encrypted entry
         if entry_type in (b"enca", b"encv", b"encs", b"encm"):
-            # Clean the encrypted entry
             cleaned_entry = _clean_encrypted_sample_entry(entry_data)
             cleaned_entries.append(cleaned_entry)
         else:
@@ -2568,7 +2565,6 @@ def _clean_stsd_content(
         else:
             cleaned_entries = [cleaned_entries[0]]
 
-    # Rebuild stsd content
     result = version_flags + struct.pack(">I", len(cleaned_entries))
     for entry in cleaned_entries:
         result += entry
@@ -2614,7 +2610,6 @@ def _clean_encrypted_sample_entry(entry_data: bytes) -> bytes:
     if len(entry_data) < sample_entry_header_size:
         return entry_data
 
-    # Find the original format from sinf/frma
     original_format = _find_original_format(entry_data)
     if not original_format:
         # If we can't find frma, try common mappings
@@ -2681,7 +2676,6 @@ def _find_original_format(entry_data: bytes) -> Optional[bytes]:
     if frma_size != 12:  # frma is always 12 bytes: size(4) + type(4) + format(4)
         return None
 
-    # Extract the original format
     return sinf_data[frma_idx + 4 : frma_idx + 8]
 
 
@@ -2696,11 +2690,9 @@ def _remove_sinf_from_entry(entry_data: bytes) -> bytes:
     if len(entry_data) < sample_entry_header_size:
         return entry_data
 
-    # Check if sinf exists
     if b"sinf" not in entry_data:
         return entry_data
 
-    # Rebuild entry without sinf
     new_entry = entry_data[:sample_entry_header_size]
 
     child_offset = sample_entry_header_size
@@ -2725,12 +2717,10 @@ def _remove_sinf_from_entry(entry_data: bytes) -> bytes:
 
 def _extract_alac_config(data: bytes) -> Optional[bytes]:
     """Extract ALAC configuration from moov/stsd box (for backwards compatibility)."""
-    # Simple search for 'alac' box in data
     idx = data.find(b"alac")
     if idx < 4:
         return None
 
-    # Check if it's inside stsd (look for full structure)
     # The 'alac' cookie box follows the sample entry
     alac_idx = idx
     while alac_idx < len(data) - 100:

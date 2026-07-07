@@ -12,15 +12,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("gamdl-aio")
 
-# Add gamdl to sys.path
 PROJECT_ROOT = Path(__file__).parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT / "gamdl"))
 
-# Import gamdl modules
 try:
     from gamdl.api import AppleMusicApi
     from gamdl.api.wrapper import WrapperApi
@@ -65,7 +62,6 @@ class Login2FARequest(BaseModel):
 async def start_wrapper_daemon():
     global wrapper_proc, wrapper_api, apple_music_api
     
-    # Check if native libraries are staged
     sentinel = SYSTEM_LIBS_DIR / "libandroidappmusic.so"
     if not sentinel.exists():
         logger.warning(f"Native Apple libraries not staged at {sentinel}. Wrapper daemon cannot start yet.")
@@ -73,7 +69,6 @@ async def start_wrapper_daemon():
         
     logger.info("Starting wrapper-v2 daemon...")
     
-    # Configure env for wrapper launcher
     env = os.environ.copy()
     env["HTTP_PORT"] = str(HTTP_PORT)
     env["TARGET_ARCH"] = TARGET_ARCH
@@ -88,7 +83,6 @@ async def start_wrapper_daemon():
         return False
         
     try:
-        # Start wrapper daemon as supervisor
         wrapper_proc = subprocess.Popen(
             [str(wrapper_bin)],
             cwd=str(WRAPPER_DIR),
@@ -98,11 +92,9 @@ async def start_wrapper_daemon():
             text=True
         )
         
-        # Monitor startup output
         await asyncio.sleep(2)
         logger.info("wrapper-v2 daemon started successfully.")
         
-        # Initialize Wrapper API and Apple Music API
         await init_apple_music_api()
         return True
     except Exception as e:
@@ -217,7 +209,6 @@ async def login_2fa(req: Login2FARequest):
 
 @app.post("/api/setup")
 async def upload_apk(file: UploadFile = File(...)):
-    # Save uploaded file
     temp_apk = DATA_DIR / file.filename
     try:
         with open(temp_apk, "wb") as buffer:
@@ -225,14 +216,12 @@ async def upload_apk(file: UploadFile = File(...)):
             
         logger.info(f"Received APK file: {temp_apk.name}. Extracting libraries...")
         
-        # Run stage system libraries first
         stage_cmd = ["bash", "tools/stage-system.sh", "--arch", TARGET_ARCH]
         stage_res = subprocess.run(stage_cmd, cwd=str(WRAPPER_DIR), capture_output=True, text=True)
         if stage_res.returncode != 0:
             logger.error(f"stage-system failed: {stage_res.stderr}")
             raise HTTPException(status_code=500, detail=f"Failed to stage system libs: {stage_res.stderr}")
             
-        # Run extract libraries
         extract_cmd = [
             "bash", "tools/extract-libs.sh",
             "--bundle", str(temp_apk),
@@ -244,10 +233,8 @@ async def upload_apk(file: UploadFile = File(...)):
             logger.error(f"extract-libs failed: {extract_res.stderr}")
             raise HTTPException(status_code=500, detail=f"Failed to extract Apple libs: {extract_res.stderr}")
             
-        # Clean up uploaded APK file to save disk space
         temp_apk.unlink()
         
-        # Start/Restart the daemon
         global wrapper_proc
         if wrapper_proc:
             wrapper_proc.terminate()
@@ -266,7 +253,6 @@ async def search(q: str, type: str = "song", limit: int = 20):
         raise HTTPException(status_code=401, detail="Apple Music subscription not authenticated")
         
     try:
-        # Map types
         results = []
         if type == "song":
             res = await apple_music_api.get_search_results(q, limit=limit, types="songs")
@@ -324,7 +310,6 @@ async def get_song(track_id: str):
         s = song_data[0]
         attrs = s["attributes"]
         
-        # Extract metadata
         return {
             "id": s["id"],
             "title": attrs["name"],
@@ -348,12 +333,10 @@ async def stream_audio(track_id: str, quality: str = "alac-16-44"):
     if not apple_music_api or not apple_music_api.active_subscription:
         raise HTTPException(status_code=401, detail="Apple Music subscription not authenticated")
         
-    # Setup temporary directory for download/transcode
     temp_dir = DATA_DIR / f"temp_{track_id}"
     temp_dir.mkdir(exist_ok=True)
     
     try:
-        # Determine codec matching the requested quality
         codec_priority = [SongCodec.ALAC]
         if quality == "alac-16-44":
             codec_priority = [SongCodec.ALAC_16_44]
@@ -368,7 +351,6 @@ async def stream_audio(track_id: str, quality: str = "alac-16-44"):
             
         logger.info(f"Downloading stream for track {track_id} with codec {codec_priority[0].value}")
         
-        # Instantiate gamdl interfaces programmatically
         base_interface = await AppleMusicBaseInterface.create(
             apple_music_api=apple_music_api,
             cover_format=CoverFormat.JPG,
@@ -403,7 +385,6 @@ async def stream_audio(track_id: str, quality: str = "alac-16-44"):
             no_synced_lyrics=True,
         )
         
-        # Get download items and execute
         url = f"https://music.apple.com/us/song/{track_id}"
         download_queue = []
         async for item in downloader.get_download_item_from_url(url):
@@ -415,12 +396,10 @@ async def stream_audio(track_id: str, quality: str = "alac-16-44"):
         item = download_queue[0]
         await downloader.download(item)
         
-        # Find the decrypted M4A file
         m4a_path = Path(item.staged_path)
         if not m4a_path.exists():
             raise FileNotFoundError("M4A download file was not generated.")
             
-        # Transcode on-the-fly to FLAC
         flac_path = temp_dir / f"{track_id}.flac"
         logger.info(f"Transcoding {m4a_path.name} to FLAC...")
         
@@ -439,8 +418,6 @@ async def stream_audio(track_id: str, quality: str = "alac-16-44"):
             logger.error(f"FFmpeg failed: {res.stderr.decode('utf-8')}")
             raise Exception("FFmpeg transcode failed")
             
-        # Return streaming file response
-        # Background task cleans up files AFTER response is sent
         def cleanup():
             try:
                 shutil.rmtree(temp_dir)
@@ -461,7 +438,6 @@ async def stream_audio(track_id: str, quality: str = "alac-16-44"):
             shutil.rmtree(temp_dir)
         raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
 
-# Serve API status on root
 @app.get("/")
 async def root():
     return {"name": "Gamdl All-in-One", "status": "online"}

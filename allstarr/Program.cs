@@ -1028,9 +1028,7 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
 
-        // All admin controllers should always be registered (for admin UI)
-        // This includes: AdminController, ConfigController, DiagnosticsController, DownloadsController,
-        // PlaylistController, JellyfinAdminController, SpotifyAdminController, LyricsController, MappingController, ScrobblingAdminController
+        // All admin controllers should always be registered for the admin UI.
         if (typeInfo.Name == "AdminController" ||
             typeInfo.Name == "AdminAuthController" ||
             typeInfo.Name == "ConfigController" ||

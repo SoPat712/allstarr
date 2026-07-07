@@ -470,7 +470,6 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// <summary>
     /// Copies an external track to the kept folder when favorited.
     /// </summary>
     private async Task CopyExternalTrackToKeptAsync(string itemId, string provider, string externalId)
@@ -961,11 +960,7 @@ public partial class JellyfinController
     #endregion
 
     /// <summary>
-    /// Loads missing tracks from file cache as fallback when Redis is empty.
-    /// <summary>
-    /// Gets a signature (hash) of the Jellyfin playlist to detect changes.
-    /// This is a cheap operation compared to re-matching all tracks.
-    /// Signature includes: track count + concatenated track IDs.
+    /// Gets a signature of the Jellyfin playlist to detect changes.
     /// </summary>
     private async Task<string> GetJellyfinPlaylistSignatureAsync(string playlistId)
     {

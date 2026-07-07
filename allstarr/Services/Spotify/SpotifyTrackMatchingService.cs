@@ -1100,13 +1100,7 @@ public class SpotifyTrackMatchingService : BackgroundService
     }
 
     /// <summary>
-    /// Returns multiple candidate matches with scores for greedy assignment.
-    /// FOLLOWS OPTIMAL ORDER:
-    /// 1. Strip decorators (done in FuzzyMatcher)
-    /// <summary>
-    /// Attempts to match a track by title and artist using fuzzy matching.
-    /// SEARCHES LOCAL FIRST, then external if no local match found.
-    /// Returns multiple candidates for greedy assignment.
+    /// Attempts to match a track by title and artist and returns scored candidates.
     /// </summary>
     private async Task<List<(Song Song, double Score)>> TryMatchByFuzzyMultipleAsync(
         string title,

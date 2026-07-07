@@ -286,10 +286,6 @@ Server::Server(httplib::Server& svr,
     : svr_(svr), rt_(rt), loader_(loader), account_(account), info_(std::move(info)) {}
 
 void Server::mount() {
-    // ---- GET /health ----
-    // Liveness + runtime debug info. Always returns 200 if the
-    // process is up; consumers should treat runtime.initialized==false
-    // as a soft failure (auth/decrypt endpoints won't work) rather than a hard one.
     svr_.Get("/health", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("GET", req);
         json runtime = {
@@ -312,11 +308,6 @@ void Server::mount() {
         });
     });
 
-    // ---- GET /me ----
-    // Combined daemon snapshot: version, runtime probe (same facts as
-    // /health.runtime), and auth (Apple ID state + harvested tokens after
-    // a successful POST /login). iTunes account-token / X-Token are NOT
-    // exposed — only dev_token, music_user_token, storefront, dsid.
     svr_.Get("/me", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("GET", req);
         if (rt_.initialized() && restore_session_enabled()) {
@@ -330,17 +321,6 @@ void Server::mount() {
         respond_json(res, 200, std::move(body));
     });
 
-    // ---- POST /login ----
-    // Body: { "username": "...", "password": "..." }
-    //    or { "apple_id": "...", "password": "..." } (synonyms)
-    // Returns:
-    //   200 if AuthenticateFlow completed (state=authenticated, tokens present)
-    //   202 if Apple asked for HSA2 (state=awaiting_2fa) - follow up with
-    //       POST /login/2fa
-    //   401 if Apple rejected credentials (state=failed)
-    //   409 if a login is already in progress
-    //   503 if the runtime is not initialized
-    //   504 if the flow has not produced any state inside kLoginTimeout
     svr_.Post("/login", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("POST", req);
         if (!rt_.initialized()) {
@@ -415,9 +395,6 @@ void Server::mount() {
         respond_json(res, http_status_for(state), snapshot_to_json(account_.public_snapshot()));
     });
 
-    // ---- POST /login/2fa ----
-    // Body: { "code": "123456" }
-    // Returns 200 / 401 / 409 / 504 with the same shape as /login.
     svr_.Post("/login/2fa", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("POST", req);
         json body;
@@ -456,15 +433,6 @@ void Server::mount() {
         respond_json(res, http_status_for(state), snapshot_to_json(account_.public_snapshot()));
     });
 
-    // ---- GET /playback ----
-    // Returns Apple's full MZ-protocol playback dispatch as native JSON
-    // (the CFDictionary plist tree walked into nlohmann::json: dict ->
-    // object, array -> array, string/number/bool -> matching JSON types,
-    // CFData -> base64 string, CFDate -> ISO 8601). Driven by
-    // storeservicescore::PurchaseRequest with urlBagKey="subDownload"
-    // (matching upstream wrapper's get_m3u8_method_download). Unlike
-    // upstream which extracts just the last asset's URL, we hand back
-    // every flavor / key URI / metadata field Apple included.
     svr_.Get("/playback", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("GET", req);
         if (!rt_.initialized()) {
@@ -522,15 +490,6 @@ void Server::mount() {
         respond_json(res, 200, std::move(pr.body));
     });
 
-    // ---- POST /decrypt ----
-    // FairPlay sample decrypt. Binary request:
-    //   u32be adam_id_len, u32be uri_len, u32be sample_count,
-    //   u32be sample_len[sample_count], adam_id bytes, uri bytes,
-    //   concatenated ciphertext samples.
-    // Binary response:
-    //   u32be sample_count, u32be sample_len[sample_count],
-    //   concatenated plaintext samples.
-    // Requires authenticated + playback_ready.
     svr_.Post("/decrypt", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("POST", req);
         if (!rt_.initialized()) {
@@ -593,10 +552,6 @@ void Server::mount() {
         res.set_content(response_body, "application/octet-stream");
     });
 
-    // ---- DELETE /login ----
-    // Clears in-memory tokens and (if a flow is running) signals the
-    // worker thread to abort. Apple's kvs.sqlitedb cache is NOT
-    // touched; the next POST /login will reuse it if still valid.
     svr_.Delete("/login", [this](const httplib::Request& req, httplib::Response& res) {
         access_log("DELETE", req);
         auto prev = account_.state();
@@ -607,7 +562,6 @@ void Server::mount() {
         });
     });
 
-    // ---- exception fallback ----
     svr_.set_exception_handler([](const httplib::Request& req, httplib::Response& res,
                                   std::exception_ptr ep) {
         std::string what = "unknown";

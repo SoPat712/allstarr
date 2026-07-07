@@ -554,10 +554,6 @@ public class PlaylistController : ControllerBase
             }
             else
             {
-                // This else block is reached when:
-                // 1. JellyfinId is empty, OR
-                // 2. totalPlayable > 0 (modern path already worked), OR
-                // 3. spotifyTrackCount == 0
                 // Only log if JellyfinId is actually missing
                 if (string.IsNullOrEmpty(config.JellyfinId))
                 {
