@@ -10,6 +10,7 @@ let rowMenuHandlersBound = false;
 let tableRowHandlersBound = false;
 const expandedInjectedPlaylistDetails = new Set();
 let openInjectedPlaylistMenuKey = null;
+let isAmUploading = false;
 
 function bindRowMenuHandlers() {
   if (rowMenuHandlersBound) {
@@ -1306,6 +1307,7 @@ export function showPlaylistRebuildingIndicator(playlistName) {
 
 // Poll status of Apple Music container
 async function pollAppleMusicStatus() {
+  if (isAmUploading) return;
   const card = document.getElementById("applemusic-manager-card");
   if (!card) return;
 
@@ -1377,6 +1379,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function uploadAppleMusicApk(file) {
+  isAmUploading = true;
   const progressContainer = document.getElementById("am-upload-progress-container");
   const progressBar = document.getElementById("am-upload-progress-bar");
   const progressText = document.getElementById("am-upload-progress-text");
@@ -1400,6 +1403,7 @@ async function uploadAppleMusicApk(file) {
   });
 
   xhr.onload = function() {
+    isAmUploading = false;
     if (xhr.status === 200) {
       progressText.textContent = "Staging libraries on sidecar... Please wait";
       setTimeout(() => {
@@ -1413,6 +1417,7 @@ async function uploadAppleMusicApk(file) {
   };
 
   xhr.onerror = function() {
+    isAmUploading = false;
     progressContainer.style.display = "none";
     alert("Connection error occurred during upload.");
   };
@@ -1646,7 +1651,7 @@ function renderWizardStep(step) {
                   <button type="button" class="primary" onclick="document.getElementById('wizard-am-apk-input').click()">Browse & Upload APK/APKM</button>
                   <div id="wizard-am-progress-container" style="display:none; margin-top:8px;">
                       <div style="background: var(--bg-secondary); border-radius:4px; height:8px; overflow:hidden; position:relative; margin-bottom:4px;">
-                          <div id="wizard-am-progress-bar" style="background: var(--accent); width:0%; height:100%;"></div>
+                          <div id="wizard-am-progress-bar" style="background: var(--accent); width:0%; height:100%; transition: width 0.3s ease;"></div>
                       </div>
                       <span id="wizard-am-progress-text" style="font-size:0.75rem;" class="text-secondary">0%</span>
                   </div>
@@ -1802,6 +1807,7 @@ async function uploadWizardAmApk(file) {
 
 // Poll Apple Music status in Wizard
 async function pollWizardAmStatus() {
+  if (isAmUploading) return;
   if (currentWizardStep !== 2) return;
   const service = document.getElementById("wizard-music-service")?.value;
   if (service !== "AppleMusic") return;
@@ -2012,6 +2018,8 @@ window.pollWizardAmStatus = pollWizardAmStatus;
 window.submitWizardAmLogin = submitWizardAmLogin;
 window.submitWizardAmTfa = submitWizardAmTfa;
 window.completeWizardSetup = completeWizardSetup;
+window.submitAppleMusicLogin = submitAppleMusicLogin;
+window.submitAppleMusic2fa = submitAppleMusic2fa;
 
 // Upload APK
 document.addEventListener("DOMContentLoaded", () => {
