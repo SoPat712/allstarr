@@ -17,3 +17,6 @@ pillow>=10.0.0
 construct==2.8.8
 anyio>=3.7.1
 httpx-retries>=0.4.2
+async-lru>=2.0.5
+dataclass-click>=1.0.4
+
