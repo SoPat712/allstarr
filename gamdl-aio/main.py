@@ -42,10 +42,15 @@ SYSTEM_LIBS_DIR = ROOTFS_DIR / "system" / "lib64"
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
+import platform
+
 # Environment settings
 HTTP_PORT = int(os.getenv("HTTP_PORT", "8080"))
-TARGET_ARCH = os.getenv("TARGET_ARCH", "arm64-v8a")
-if TARGET_ARCH == "amd64" or TARGET_ARCH == "x86_64":
+arch_env = os.getenv("TARGET_ARCH")
+if not arch_env:
+    arch_env = platform.machine().lower()
+
+if "x86_64" in arch_env or "amd64" in arch_env:
     TARGET_ARCH = "x86_64"
 else:
     TARGET_ARCH = "arm64-v8a"
