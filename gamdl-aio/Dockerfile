@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for gamdl-aio supporting both amd64 and arm64 natively
-FROM debian:13.2 AS build
+FROM debian:12.9 AS build
 
 ARG TARGETPLATFORM
 ARG TARGETARCH
