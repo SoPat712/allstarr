@@ -86,10 +86,7 @@ async def start_wrapper_daemon():
         wrapper_proc = subprocess.Popen(
             [str(wrapper_bin)],
             cwd=str(WRAPPER_DIR),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
+            env=env
         )
         
         await asyncio.sleep(2)
@@ -133,10 +130,20 @@ def shutdown_event():
         wrapper_proc.wait()
         logger.info("wrapper-v2 daemon stopped.")
 
+def check_daemon_status():
+    global wrapper_proc
+    if wrapper_proc is not None:
+        poll_val = wrapper_proc.poll()
+        if poll_val is not None:
+            logger.error(f"Wrapper daemon process exited with code: {poll_val}")
+            return False
+        return True
+    return False
+
 @app.get("/api/health")
 async def health_check():
     staged = (SYSTEM_LIBS_DIR / "libandroidappmusic.so").exists()
-    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    daemon_running = check_daemon_status()
     
     wrapper_healthy = False
     if daemon_running:
@@ -159,7 +166,7 @@ async def health_check():
 
 @app.get("/api/me")
 async def get_me():
-    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    daemon_running = check_daemon_status()
     if not daemon_running:
         return {"logged_in": False, "error": "Wrapper daemon is not running"}
         
@@ -173,7 +180,7 @@ async def get_me():
 
 @app.post("/api/login")
 async def login(req: LoginRequest):
-    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    daemon_running = check_daemon_status()
     if not daemon_running:
         raise HTTPException(status_code=503, detail="Wrapper daemon is not running")
         
@@ -193,7 +200,7 @@ async def login(req: LoginRequest):
 
 @app.post("/api/login/2fa")
 async def login_2fa(req: Login2FARequest):
-    daemon_running = wrapper_proc is not None and wrapper_proc.poll() is None
+    daemon_running = check_daemon_status()
     if not daemon_running:
         raise HTTPException(status_code=503, detail="Wrapper daemon is not running")
         
