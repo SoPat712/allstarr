@@ -12,7 +12,7 @@ namespace allstarr.Services.Deezer;
 /// <summary>
 /// Metadata service implementation using the Deezer API (free, no key required)
 /// </summary>
-public class DeezerMetadataService : TrackParserBase, IMusicMetadataService
+public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;

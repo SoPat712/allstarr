@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace allstarr.Services.AppleMusic;
 
-public class AppleMusicMetadataService : IMusicMetadataService
+public class AppleMusicMetadataService : IConcreteMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly AppleMusicSettings _settings;

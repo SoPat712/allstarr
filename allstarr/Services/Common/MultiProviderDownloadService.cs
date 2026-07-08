@@ -11,7 +11,7 @@ public class MultiProviderDownloadService : IDownloadService
     private readonly ProviderStatusManager _statusManager;
     private readonly OdesliService _odesliService;
     private readonly ILogger<MultiProviderDownloadService> _logger;
-    private readonly IEnumerable<IMusicMetadataService> _allMetadataServices;
+    private readonly IEnumerable<IConcreteMetadataService> _allMetadataServices;
 
     public async Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
@@ -196,14 +196,14 @@ public class MultiProviderDownloadService : IDownloadService
 
     public MultiProviderDownloadService(
         IEnumerable<IDownloadService> services,
-        IEnumerable<IMusicMetadataService> metadataServices,
+        IEnumerable<IConcreteMetadataService> metadataServices,
         IMusicMetadataService metadataService,
         ProviderStatusManager statusManager,
         OdesliService odesliService,
         ILogger<MultiProviderDownloadService> logger)
     {
         _allServices = services.Where(s => s.GetType() != typeof(MultiProviderDownloadService)).ToList();
-        _allMetadataServices = metadataServices.Where(s => s.GetType() != typeof(MultiProviderMetadataService)).ToList();
+        _allMetadataServices = metadataServices.ToList();
         _metadataService = metadataService;
         _statusManager = statusManager;
         _odesliService = odesliService;

@@ -93,3 +93,10 @@ public interface IMusicMetadataService
     /// <returns>List of songs in the playlist</returns>
     Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Marker interface to distinguish concrete metadata services from orchestrator services.
+/// </summary>
+public interface IConcreteMetadataService : IMusicMetadataService
+{
+}

@@ -7,18 +7,18 @@ namespace allstarr.Services.Common;
 
 public class MultiProviderMetadataService : IMusicMetadataService
 {
-    private readonly IEnumerable<IMusicMetadataService> _allServices;
+    private readonly IEnumerable<IConcreteMetadataService> _allServices;
     private readonly ProviderStatusManager _statusManager;
     private readonly ExtensionManager _extensionManager;
     private readonly ILogger<MultiProviderMetadataService> _logger;
 
     public MultiProviderMetadataService(
-        IEnumerable<IMusicMetadataService> services,
+        IEnumerable<IConcreteMetadataService> services,
         ProviderStatusManager statusManager,
         ExtensionManager extensionManager,
         ILogger<MultiProviderMetadataService> logger)
     {
-        _allServices = services.Where(s => s.GetType() != typeof(MultiProviderMetadataService)).ToList();
+        _allServices = services.ToList();
         _statusManager = statusManager;
         _extensionManager = extensionManager;
         _logger = logger;

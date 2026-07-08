@@ -13,7 +13,7 @@ namespace allstarr.Services.Qobuz;
 /// Metadata service implementation using the Qobuz API
 /// Uses user authentication token instead of email/password
 /// </summary>
-public class QobuzMetadataService : TrackParserBase, IMusicMetadataService
+public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
 {
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;

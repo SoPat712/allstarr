@@ -14,8 +14,8 @@ namespace allstarr.Services.Subsonic;
 /// </summary>
 public class PlaylistSyncService
 {
-    private readonly IMusicMetadataService _deezerMetadataService;
-    private readonly IMusicMetadataService _qobuzMetadataService;
+    private readonly IConcreteMetadataService _deezerMetadataService;
+    private readonly IConcreteMetadataService _qobuzMetadataService;
     private readonly IEnumerable<IDownloadService> _downloadServices;
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
@@ -35,7 +35,7 @@ public class PlaylistSyncService
     private readonly Task _cleanupTask;
     
     public PlaylistSyncService(
-        IEnumerable<IMusicMetadataService> metadataServices,
+        IEnumerable<IConcreteMetadataService> metadataServices,
         IEnumerable<IDownloadService> downloadServices,
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,

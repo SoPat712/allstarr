@@ -52,7 +52,7 @@ namespace allstarr.Services.SquidWTF;
 /// - Parallel Spotify ID conversion via Odesli for lyrics matching
 /// </summary>
 
-public class SquidWTFMetadataService : TrackParserBase, IMusicMetadataService
+public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
 {
     private const int RemoteSearchMinLimit = 1;
     private const int RemoteSearchMaxLimit = 500;

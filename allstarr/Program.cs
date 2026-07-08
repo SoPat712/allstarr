@@ -574,10 +574,10 @@ else
 builder.Services.AddSingleton<QobuzBundleService>();
 
 // 1. Concrete Metadata Services
-builder.Services.AddSingleton<IMusicMetadataService, DeezerMetadataService>();
-builder.Services.AddSingleton<IMusicMetadataService, QobuzMetadataService>();
-builder.Services.AddSingleton<IMusicMetadataService, AppleMusicMetadataService>();
-builder.Services.AddSingleton<IMusicMetadataService>(sp =>
+builder.Services.AddSingleton<IConcreteMetadataService, DeezerMetadataService>();
+builder.Services.AddSingleton<IConcreteMetadataService, QobuzMetadataService>();
+builder.Services.AddSingleton<IConcreteMetadataService, AppleMusicMetadataService>();
+builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
     new SquidWTFMetadataService(
         sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
