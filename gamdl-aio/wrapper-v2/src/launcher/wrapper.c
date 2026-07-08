@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 
 extern char** environ;
@@ -109,16 +110,28 @@ int main(int argc, char* argv[], char* envp[]) {
 
     if (ensure_dir(ROOTFS "/dev", 0755) != 0) return 1;
 
-    int fd = open(ROOTFS "/dev/urandom", O_CREAT | O_RDWR, 0666);
-    if (fd < 0) {
-        fprintf(stderr, "wrapper: open %s/dev/urandom: %s\n", ROOTFS, strerror(errno));
-        return 1;
+    struct stat st;
+    if (stat(ROOTFS "/dev/urandom", &st) == 0) {
+        if (!S_ISCHR(st.st_mode)) {
+            unlink(ROOTFS "/dev/urandom");
+        }
     }
-    close(fd);
 
-    if (mount("/dev/urandom", ROOTFS "/dev/urandom", NULL, MS_BIND, NULL) != 0) {
-        fprintf(stderr, "wrapper: bind-mount /dev/urandom: %s\n", strerror(errno));
-        return 1;
+    if (stat(ROOTFS "/dev/urandom", &st) != 0) {
+        if (mknod(ROOTFS "/dev/urandom", S_IFCHR | 0666, makedev(1, 9)) != 0) {
+            fprintf(stderr, "wrapper: mknod /dev/urandom failed: %s, trying bind-mount\n", strerror(errno));
+            int fd = open(ROOTFS "/dev/urandom", O_CREAT | O_RDWR, 0666);
+            if (fd < 0) {
+                fprintf(stderr, "wrapper: open %s/dev/urandom: %s\n", ROOTFS, strerror(errno));
+                return 1;
+            }
+            close(fd);
+
+            if (mount("/dev/urandom", ROOTFS "/dev/urandom", NULL, MS_BIND, NULL) != 0) {
+                fprintf(stderr, "wrapper: bind-mount /dev/urandom: %s\n", strerror(errno));
+                return 1;
+            }
+        }
     }
 
     if (chdir(ROOTFS) != 0) {
