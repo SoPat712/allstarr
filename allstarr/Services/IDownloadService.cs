@@ -64,3 +64,10 @@ public interface IDownloadService
     /// </summary>
     Task<bool> IsAvailableAsync();
 }
+
+/// <summary>
+/// Marker interface to distinguish concrete download services from orchestrator services.
+/// </summary>
+public interface IConcreteDownloadService : IDownloadService
+{
+}

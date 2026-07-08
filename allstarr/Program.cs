@@ -588,10 +588,10 @@ builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
         sp.GetService<GenreEnrichmentService>()));
 
 // 2. Concrete Download Services
-builder.Services.AddSingleton<IDownloadService, DeezerDownloadService>();
-builder.Services.AddSingleton<IDownloadService, QobuzDownloadService>();
-builder.Services.AddSingleton<IDownloadService, AppleMusicDownloadService>();
-builder.Services.AddSingleton<IDownloadService>(sp =>
+builder.Services.AddSingleton<IConcreteDownloadService, DeezerDownloadService>();
+builder.Services.AddSingleton<IConcreteDownloadService, QobuzDownloadService>();
+builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();
+builder.Services.AddSingleton<IConcreteDownloadService>(sp =>
     new SquidWTFDownloadService(
         sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<IConfiguration>(),

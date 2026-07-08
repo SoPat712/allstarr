@@ -16,7 +16,7 @@ namespace allstarr.Services.Common;
 /// Implements common download logic, tracking, and metadata writing.
 /// Subclasses implement provider-specific download and authentication logic.
 /// </summary>
-public abstract class BaseDownloadService : IDownloadService
+public abstract class BaseDownloadService : IConcreteDownloadService
 {
     protected readonly IConfiguration Configuration;
     protected readonly ILocalLibraryService LocalLibraryService;

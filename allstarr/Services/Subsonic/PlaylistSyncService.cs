@@ -16,7 +16,7 @@ public class PlaylistSyncService
 {
     private readonly IConcreteMetadataService _deezerMetadataService;
     private readonly IConcreteMetadataService _qobuzMetadataService;
-    private readonly IEnumerable<IDownloadService> _downloadServices;
+    private readonly IEnumerable<IConcreteDownloadService> _downloadServices;
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly ILogger<PlaylistSyncService> _logger;
@@ -36,7 +36,7 @@ public class PlaylistSyncService
     
     public PlaylistSyncService(
         IEnumerable<IConcreteMetadataService> metadataServices,
-        IEnumerable<IDownloadService> downloadServices,
+        IEnumerable<IConcreteDownloadService> downloadServices,
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,
         ILogger<PlaylistSyncService> logger)

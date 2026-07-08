@@ -6,7 +6,7 @@ namespace allstarr.Services.Common;
 
 public class MultiProviderDownloadService : IDownloadService
 {
-    private readonly IEnumerable<IDownloadService> _allServices;
+    private readonly IEnumerable<IConcreteDownloadService> _allServices;
     private readonly IMusicMetadataService _metadataService;
     private readonly ProviderStatusManager _statusManager;
     private readonly OdesliService _odesliService;
@@ -195,14 +195,14 @@ public class MultiProviderDownloadService : IDownloadService
 
 
     public MultiProviderDownloadService(
-        IEnumerable<IDownloadService> services,
+        IEnumerable<IConcreteDownloadService> services,
         IEnumerable<IConcreteMetadataService> metadataServices,
         IMusicMetadataService metadataService,
         ProviderStatusManager statusManager,
         OdesliService odesliService,
         ILogger<MultiProviderDownloadService> logger)
     {
-        _allServices = services.Where(s => s.GetType() != typeof(MultiProviderDownloadService)).ToList();
+        _allServices = services.ToList();
         _allMetadataServices = metadataServices.ToList();
         _metadataService = metadataService;
         _statusManager = statusManager;
