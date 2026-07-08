@@ -949,6 +949,9 @@
 
             <div class="card" id="multi-provider-card">
                 <input type="hidden" id="config-multi-provider-metadata-order" data-env-key="MULTI_PROVIDER_METADATA_ORDER" class="config-input">
+                <input type="hidden" id="config-multi-provider-download-order" data-env-key="MULTI_PROVIDER_DOWNLOAD_ORDER" class="config-input">
+                <input type="hidden" id="config-multi-provider-playlist-order" data-env-key="MULTI_PROVIDER_PLAYLIST_ORDER" class="config-input">
+                <input type="hidden" id="config-multi-provider-lyrics-order" data-env-key="MULTI_PROVIDER_LYRICS_ORDER" class="config-input">
                 <input type="hidden" id="config-multi-provider-enabled-search" data-env-key="MULTI_PROVIDER_ENABLED_SEARCH" class="config-input">
                 <input type="hidden" id="config-multi-provider-enabled-playlist" data-env-key="MULTI_PROVIDER_ENABLED_PLAYLIST" class="config-input">
                 <h2>Multi-Service Providers & Priority</h2>
@@ -972,13 +975,47 @@
                     </table>
                 </div>
 
-                <h3>Metadata Search & Fallback Priority</h3>
-                <div class="description-text" style="color: var(--text-secondary); margin-bottom: 16px; font-size: 0.9rem;">
-                    Drag and drop to rank search priorities (highest on top). Fallback downloads will proceed in this order.
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-top: 20px;">
+                    <div>
+                        <h4 style="margin: 0 0 8px 0; color: #fff;">1. Metadata Search Priority</h4>
+                        <div class="description-text" style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.8rem; line-height: 1.3;">
+                            Priority for search results.
+                        </div>
+                        <ul id="provider-priority-list" class="priority-list" style="list-style-type: none; padding: 0; margin: 0;">
+                            <!-- Populated dynamically via JS -->
+                        </ul>
+                    </div>
+
+                    <div>
+                        <h4 style="margin: 0 0 8px 0; color: #fff;">2. Download & Playback Priority</h4>
+                        <div class="description-text" style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.8rem; line-height: 1.3;">
+                            Priority for downloads/streaming.
+                        </div>
+                        <ul id="download-priority-list" class="priority-list" style="list-style-type: none; padding: 0; margin: 0;">
+                            <!-- Populated dynamically via JS -->
+                        </ul>
+                    </div>
+
+                    <div>
+                        <h4 style="margin: 0 0 8px 0; color: #fff;">3. Playlist Sync Priority</h4>
+                        <div class="description-text" style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.8rem; line-height: 1.3;">
+                            Priority for playlist matching.
+                        </div>
+                        <ul id="playlist-priority-list" class="priority-list" style="list-style-type: none; padding: 0; margin: 0;">
+                            <!-- Populated dynamically via JS -->
+                        </ul>
+                    </div>
+
+                    <div>
+                        <h4 style="margin: 0 0 8px 0; color: #fff;">4. Lyrics Sourcing Priority</h4>
+                        <div class="description-text" style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.8rem; line-height: 1.3;">
+                            Priority for lyrics fetchers.
+                        </div>
+                        <ul id="lyrics-priority-list" class="priority-list" style="list-style-type: none; padding: 0; margin: 0;">
+                            <!-- Populated dynamically via JS -->
+                        </ul>
+                    </div>
                 </div>
-                <ul id="provider-priority-list" class="priority-list" style="list-style-type: none; padding: 0; margin: 10px 0;">
-                    <!-- Populated dynamically via JS -->
-                </ul>
             </div>
 
             <div class="card">

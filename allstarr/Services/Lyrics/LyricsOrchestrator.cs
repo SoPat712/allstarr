@@ -1,12 +1,13 @@
 using allstarr.Models.Lyrics;
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Lyrics;
 
 /// <summary>
 /// Orchestrates lyrics fetching from multiple sources with priority-based fallback.
-/// Priority order: Spotify → LyricsPlus → LRCLib
 /// Note: Jellyfin local lyrics are handled by the controller before calling this orchestrator.
 /// </summary>
 public class LyricsOrchestrator
@@ -15,6 +16,7 @@ public class LyricsOrchestrator
     private readonly LyricsPlusService _lyricsPlus;
     private readonly LrclibService _lrclib;
     private readonly SpotifyApiSettings _spotifySettings;
+    private readonly ProviderStatusManager _statusManager;
     private readonly ILogger<LyricsOrchestrator> _logger;
 
     public LyricsOrchestrator(
@@ -22,12 +24,14 @@ public class LyricsOrchestrator
         LyricsPlusService lyricsPlus,
         LrclibService lrclib,
         IOptions<SpotifyApiSettings> spotifySettings,
+        ProviderStatusManager statusManager,
         ILogger<LyricsOrchestrator> logger)
     {
         _spotifyLyrics = spotifyLyrics;
         _lyricsPlus = lyricsPlus;
         _lrclib = lrclib;
         _spotifySettings = spotifySettings.Value;
+        _statusManager = statusManager;
         _logger = logger;
     }
 
@@ -49,31 +53,37 @@ public class LyricsOrchestrator
         string? spotifyTrackId = null)
     {
         var artistName = string.Join(", ", artistNames);
-        
         _logger.LogInformation("🎵 Fetching lyrics for: {Artist} - {Track}", artistName, trackName);
 
-        // 1. Try Spotify lyrics (if Spotify ID provided)
-        if (!string.IsNullOrEmpty(spotifyTrackId))
+        var order = _statusManager.GetEnabledLyricsProviders();
+
+        foreach (var source in order)
         {
-            var spotifyLyrics = await TrySpotifyLyrics(spotifyTrackId, artistName, trackName);
-            if (spotifyLyrics != null)
+            try
             {
-                return spotifyLyrics;
+                if (source.Equals("spotify", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrEmpty(spotifyTrackId))
+                    {
+                        var spotifyLyrics = await TrySpotifyLyrics(spotifyTrackId, artistName, trackName);
+                        if (spotifyLyrics != null) return spotifyLyrics;
+                    }
+                }
+                else if (source.Equals("lyricsplus", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lyricsPlusLyrics = await TryLyricsPlusLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
+                    if (lyricsPlusLyrics != null) return lyricsPlusLyrics;
+                }
+                else if (source.Equals("lrclib", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lrclibLyrics = await TryLrclibLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
+                    if (lrclibLyrics != null) return lrclibLyrics;
+                }
             }
-        }
-
-        // 2. Try LyricsPlus
-        var lyricsPlusLyrics = await TryLyricsPlusLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
-        if (lyricsPlusLyrics != null)
-        {
-            return lyricsPlusLyrics;
-        }
-
-        // 3. Try LRCLib
-        var lrclibLyrics = await TryLrclibLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
-        if (lrclibLyrics != null)
-        {
-            return lrclibLyrics;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed fetching lyrics from source: {Source}", source);
+            }
         }
 
         _logger.LogInformation("❌ No lyrics found for: {Artist} - {Track}", artistName, trackName);
@@ -92,36 +102,38 @@ public class LyricsOrchestrator
         string? spotifyTrackId = null)
     {
         var artistName = string.Join(", ", artistNames);
-        
         _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Track} (Spotify ID: {SpotifyId})", 
             artistName, trackName, spotifyTrackId ?? "none");
 
-        // 1. Try Spotify lyrics (if Spotify ID provided)
-        if (!string.IsNullOrEmpty(spotifyTrackId))
+        var order = _statusManager.GetEnabledLyricsProviders();
+
+        foreach (var source in order)
         {
-            var spotifyLyrics = await TrySpotifyLyrics(spotifyTrackId, artistName, trackName);
-            if (spotifyLyrics != null)
+            try
             {
-                return true;
+                if (source.Equals("spotify", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!string.IsNullOrEmpty(spotifyTrackId))
+                    {
+                        var spotifyLyrics = await TrySpotifyLyrics(spotifyTrackId, artistName, trackName);
+                        if (spotifyLyrics != null) return true;
+                    }
+                }
+                else if (source.Equals("lyricsplus", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lyricsPlusLyrics = await TryLyricsPlusLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
+                    if (lyricsPlusLyrics != null) return true;
+                }
+                else if (source.Equals("lrclib", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lrclibLyrics = await TryLrclibLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
+                    if (lrclibLyrics != null) return true;
+                }
             }
-        }
-        else
-        {
-            _logger.LogDebug("No Spotify ID available for prefetch, skipping Spotify lyrics");
-        }
-
-        // 2. Try LyricsPlus
-        var lyricsPlusLyrics = await TryLyricsPlusLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
-        if (lyricsPlusLyrics != null)
-        {
-            return true;
-        }
-
-        // 3. Try LRCLib
-        var lrclibLyrics = await TryLrclibLyrics(trackName, artistNames, albumName, durationSeconds, artistName);
-        if (lrclibLyrics != null)
-        {
-            return true;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed prefetching lyrics from source: {Source}", source);
+            }
         }
 
         _logger.LogDebug("No lyrics found for prefetch: {Artist} - {Track}", artistName, trackName);

@@ -2050,15 +2050,25 @@ document.addEventListener("DOMContentLoaded", () => {
 function renderMultiProviderSettings(data) {
   const providersData = data.providers || {
     metadataOrder: "spotify,applemusic,deezer,qobuz,squidwtf",
+    downloadOrder: "applemusic,deezer,qobuz,squidwtf",
+    playlistOrder: "spotify,applemusic,deezer,qobuz,squidwtf",
+    lyricsOrder: "spotify,lyricsplus,lrclib",
     enabledSearch: "spotify,applemusic,deezer,qobuz,squidwtf",
     enabledPlaylist: "spotify"
   };
 
   setInputValue("config-multi-provider-metadata-order", providersData.metadataOrder);
+  setInputValue("config-multi-provider-download-order", providersData.downloadOrder || "applemusic,deezer,qobuz,squidwtf");
+  setInputValue("config-multi-provider-playlist-order", providersData.playlistOrder || "spotify,applemusic,deezer,qobuz,squidwtf");
+  setInputValue("config-multi-provider-lyrics-order", providersData.lyricsOrder || "spotify,lyricsplus,lrclib");
   setInputValue("config-multi-provider-enabled-search", providersData.enabledSearch);
   setInputValue("config-multi-provider-enabled-playlist", providersData.enabledPlaylist);
 
   const order = providersData.metadataOrder.split(',').map(s => s.trim().toLowerCase());
+  const downloadOrder = (providersData.downloadOrder || "applemusic,deezer,qobuz,squidwtf").split(',').map(s => s.trim().toLowerCase());
+  const playlistOrder = (providersData.playlistOrder || "spotify,applemusic,deezer,qobuz,squidwtf").split(',').map(s => s.trim().toLowerCase());
+  const lyricsOrder = (providersData.lyricsOrder || "spotify,lyricsplus,lrclib").split(',').map(s => s.trim().toLowerCase());
+
   const enabledSearch = providersData.enabledSearch.split(',').map(s => s.trim().toLowerCase());
   const enabledPlaylist = providersData.enabledPlaylist.split(',').map(s => s.trim().toLowerCase());
 
@@ -2115,17 +2125,20 @@ function renderMultiProviderSettings(data) {
       .catch(err => console.error("Error fetching provider status:", err));
   }
 
-  const priorityList = document.getElementById("provider-priority-list");
-  if (priorityList) {
-    priorityList.innerHTML = "";
-    order.forEach(p => {
+  const renderListItems = (listId, orderArray) => {
+    const list = document.getElementById(listId);
+    if (!list) return;
+    list.innerHTML = "";
+    orderArray.forEach(p => {
       const displayName = p === "spotify" ? "Spotify" :
                           p === "applemusic" ? "Apple Music" :
                           p === "deezer" ? "Deezer" :
                           p === "qobuz" ? "Qobuz" :
-                          p === "squidwtf" ? "SquidWTF (Tidal)" : p;
+                          p === "squidwtf" ? "SquidWTF (Tidal)" :
+                          p === "lyricsplus" ? "LyricsPlus" :
+                          p === "lrclib" ? "LRCLib" : p;
 
-      priorityList.innerHTML += `
+      list.innerHTML += `
         <li class="priority-item" draggable="true" data-provider="${p}">
           <div class="priority-item-left">
             <span class="priority-item-drag-handle">☰</span>
@@ -2134,15 +2147,29 @@ function renderMultiProviderSettings(data) {
         </li>
       `;
     });
+  };
 
-    initDragAndDrop();
-  }
+  renderListItems("provider-priority-list", order);
+  renderListItems("download-priority-list", downloadOrder);
+  renderListItems("playlist-priority-list", playlistOrder);
+  renderListItems("lyrics-priority-list", lyricsOrder);
+
+  initDragAndDrop("provider-priority-list", updateProviderConfigInputs);
+  initDragAndDrop("download-priority-list", updateProviderConfigInputs);
+  initDragAndDrop("playlist-priority-list", updateProviderConfigInputs);
+  initDragAndDrop("lyrics-priority-list", updateProviderConfigInputs);
 }
 
 function updateProviderConfigInputs() {
-  const listItems = document.querySelectorAll("#provider-priority-list li");
-  const order = Array.from(listItems).map(item => item.getAttribute("data-provider"));
-  setInputValue("config-multi-provider-metadata-order", order.join(","));
+  const getListOrder = (listId) => {
+    const listItems = document.querySelectorAll(`#${listId} li`);
+    return Array.from(listItems).map(item => item.getAttribute("data-provider"));
+  };
+
+  setInputValue("config-multi-provider-metadata-order", getListOrder("provider-priority-list").join(","));
+  setInputValue("config-multi-provider-download-order", getListOrder("download-priority-list").join(","));
+  setInputValue("config-multi-provider-playlist-order", getListOrder("playlist-priority-list").join(","));
+  setInputValue("config-multi-provider-lyrics-order", getListOrder("lyrics-priority-list").join(","));
 
   const searchCbs = document.querySelectorAll(".provider-search-checkbox");
   const enabledSearch = Array.from(searchCbs)
@@ -2157,8 +2184,8 @@ function updateProviderConfigInputs() {
   setInputValue("config-multi-provider-enabled-playlist", enabledPlaylist.join(","));
 }
 
-function initDragAndDrop() {
-  const list = document.getElementById("provider-priority-list");
+function initDragAndDrop(listId, onUpdate) {
+  const list = document.getElementById(listId);
   if (!list) return;
 
   let dragEl = null;
@@ -2176,7 +2203,7 @@ function initDragAndDrop() {
     if (dragEl) {
       dragEl.classList.remove("dragging");
       dragEl = null;
-      updateProviderConfigInputs();
+      onUpdate();
     }
   });
 

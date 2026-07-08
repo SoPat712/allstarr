@@ -169,9 +169,7 @@ public class MultiProviderDownloadService : IDownloadService
 
     private IReadOnlyList<string> GetPrioritizedDownloadProviders()
     {
-        return _statusManager.GetEnabledSearchProviders()
-            .Where(p => p != "spotify")
-            .ToList();
+        return _statusManager.GetEnabledDownloadProviders();
     }
 
     private IDownloadService? GetDownloadServiceByName(string name)

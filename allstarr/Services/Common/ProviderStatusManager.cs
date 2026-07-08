@@ -56,12 +56,25 @@ public class ProviderStatusManager
 
     public IReadOnlyList<string> GetEnabledPlaylistProviders()
     {
-        var order = GetMetadataOrder();
+        var order = GetPlaylistOrder();
         var enabled = GetEnabledPlaylistRaw();
 
         return order
             .Where(p => enabled.Contains(p) && IsProviderHealthy(p))
             .ToList();
+    }
+
+    public IReadOnlyList<string> GetEnabledDownloadProviders()
+    {
+        var order = GetDownloadOrder();
+        return order
+            .Where(p => IsProviderHealthy(p))
+            .ToList();
+    }
+
+    public IReadOnlyList<string> GetEnabledLyricsProviders()
+    {
+        return GetLyricsOrder();
     }
 
     public bool IsProviderHealthy(string provider)
@@ -122,6 +135,30 @@ public class ProviderStatusManager
     private List<string> GetMetadataOrder()
     {
         var val = _configuration["MULTI_PROVIDER_METADATA_ORDER"] ?? "spotify,applemusic,deezer,qobuz,squidwtf";
+        return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => s.ToLowerInvariant())
+            .ToList();
+    }
+
+    private List<string> GetDownloadOrder()
+    {
+        var val = _configuration["MULTI_PROVIDER_DOWNLOAD_ORDER"] ?? "applemusic,deezer,qobuz,squidwtf";
+        return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => s.ToLowerInvariant())
+            .ToList();
+    }
+
+    private List<string> GetPlaylistOrder()
+    {
+        var val = _configuration["MULTI_PROVIDER_PLAYLIST_ORDER"] ?? "spotify,applemusic,deezer,qobuz,squidwtf";
+        return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => s.ToLowerInvariant())
+            .ToList();
+    }
+
+    private List<string> GetLyricsOrder()
+    {
+        var val = _configuration["MULTI_PROVIDER_LYRICS_ORDER"] ?? "spotify,lyricsplus,lrclib";
         return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(s => s.ToLowerInvariant())
             .ToList();

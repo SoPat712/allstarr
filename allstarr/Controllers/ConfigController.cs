@@ -148,6 +148,9 @@ public class ConfigController : ControllerBase
             providers = new
             {
                 metadataOrder = GetEnvString(envVars, "MULTI_PROVIDER_METADATA_ORDER", "spotify,applemusic,deezer,qobuz,squidwtf"),
+                downloadOrder = GetEnvString(envVars, "MULTI_PROVIDER_DOWNLOAD_ORDER", "applemusic,deezer,qobuz,squidwtf"),
+                playlistOrder = GetEnvString(envVars, "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,applemusic,deezer,qobuz,squidwtf"),
+                lyricsOrder = GetEnvString(envVars, "MULTI_PROVIDER_LYRICS_ORDER", "spotify,lyricsplus,lrclib"),
                 enabledSearch = GetEnvString(envVars, "MULTI_PROVIDER_ENABLED_SEARCH", "spotify,applemusic,deezer,qobuz,squidwtf"),
                 enabledPlaylist = GetEnvString(envVars, "MULTI_PROVIDER_ENABLED_PLAYLIST", "spotify"),
             },
