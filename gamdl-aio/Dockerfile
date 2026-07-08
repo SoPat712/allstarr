@@ -35,8 +35,12 @@ WORKDIR /app/wrapper-v2
 COPY wrapper-v2/ /app/wrapper-v2
 
 # Map TARGETARCH to Android NDK target arch
-RUN target_ndk_arch="arm64-v8a"; \
-    if [[ "$TARGETARCH" == "amd64" ]]; then \
+RUN host_arch="${TARGETARCH}"; \
+    if [[ -z "$host_arch" ]]; then \
+      host_arch=$(uname -m); \
+    fi; \
+    target_ndk_arch="arm64-v8a"; \
+    if [[ "$host_arch" == "amd64" || "$host_arch" == "x86_64" ]]; then \
       target_ndk_arch="x86_64"; \
     fi && \
     bash tools/stage-system.sh --arch "$target_ndk_arch" && \
@@ -45,10 +49,14 @@ RUN target_ndk_arch="arm64-v8a"; \
 
 # Compile daemon and wrapper launcher
 RUN host_cc=(); \
+    host_arch="${TARGETARCH}"; \
+    if [[ -z "$host_arch" ]]; then \
+      host_arch=$(uname -m); \
+    fi; \
     target_ndk_arch="arm64-v8a"; \
-    if [[ "$TARGETARCH" == "amd64" ]]; then \
+    if [[ "$host_arch" == "amd64" || "$host_arch" == "x86_64" ]]; then \
       target_ndk_arch="x86_64"; \
-    elif [[ "$TARGETARCH" == "arm64" && "$(uname -m)" != "aarch64" ]]; then \
+    elif [[ "$host_arch" == "arm64" && "$(uname -m)" != "aarch64" ]]; then \
       host_cc=( \
         -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
         -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
