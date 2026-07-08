@@ -50,7 +50,11 @@ public class ExtensionManager
 
     public List<string> GetConfiguredRepositories()
     {
-        var repos = _configuration["EXTENSION_REPOSITORIES"] ?? "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json";
+        var repos = _configuration["EXTENSION_REPOSITORIES"];
+        if (string.IsNullOrWhiteSpace(repos))
+        {
+            repos = "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json";
+        }
         return repos.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 

@@ -118,6 +118,15 @@ async def init_apple_music_api():
 
 @app.on_event("startup")
 async def startup_event():
+    # Restore persistent staged libraries if they exist
+    persisted_libs_dir = DATA_DIR / "apple_libs"
+    if persisted_libs_dir.exists():
+        logger.info("Restoring staged Apple native libraries from persistent data...")
+        SYSTEM_LIBS_DIR.mkdir(exist_ok=True, parents=True)
+        for f in persisted_libs_dir.glob("*.so"):
+            shutil.copy2(f, SYSTEM_LIBS_DIR / f.name)
+            logger.info(f"Restored library: {f.name}")
+            
     # Attempt to start the wrapper daemon on startup
     await start_wrapper_daemon()
 
@@ -245,6 +254,14 @@ async def upload_apk(file: UploadFile = File(...)):
             
         temp_apk.unlink()
         
+        # Back up extracted libraries to persistent storage
+        persisted_libs_dir = DATA_DIR / "apple_libs"
+        persisted_libs_dir.mkdir(exist_ok=True, parents=True)
+        if SYSTEM_LIBS_DIR.exists():
+            for f in SYSTEM_LIBS_DIR.glob("*.so"):
+                shutil.copy2(f, persisted_libs_dir / f.name)
+            logger.info("Backed up staged Apple native libraries to persistent storage.")
+
         global wrapper_proc
         if wrapper_proc:
             wrapper_proc.terminate()
