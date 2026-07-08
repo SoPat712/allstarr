@@ -173,8 +173,7 @@ int main(int argc, char* argv[], char* envp[]) {
     }
 
     if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
-        fprintf(stderr, "wrapper: mount proc: %s\n", strerror(errno));
-        return 1;
+        fprintf(stderr, "wrapper: mount proc warning: %s\n", strerror(errno));
     }
 
     const char* base_dir = getenv("WRAPPER_BASE_DIR");
