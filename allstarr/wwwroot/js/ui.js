@@ -1362,24 +1362,6 @@ function updateAmIndicator(id, active) {
   }
 }
 
-// Upload APK
-document.addEventListener("DOMContentLoaded", () => {
-  const apkInput = document.getElementById("am-apk-input");
-  if (apkInput) {
-    apkInput.addEventListener("change", (e) => {
-      if (e.target.files.length > 0) {
-        uploadAppleMusicApk(e.target.files[0]);
-      }
-    });
-  }
-  
-  // Start polling status
-  setInterval(pollAppleMusicStatus, 3500);
-  
-  // Also poll once immediately after tab load or startup
-  setTimeout(pollAppleMusicStatus, 1000);
-});
-
 async function uploadAppleMusicApk(file) {
   isAmUploading = true;
   const progressContainer = document.getElementById("am-upload-progress-container");
