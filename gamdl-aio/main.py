@@ -5,6 +5,7 @@ import subprocess
 import shutil
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException, BackgroundTasks
@@ -28,8 +29,6 @@ except ImportError as e:
     logger.error(f"Failed to import gamdl modules: {e}")
     # We will let the app start so the user can use the WebUI to troubleshoot if needed.
 
-app = FastAPI(title="Gamdl All-in-One", version="1.0.0")
-
 # Global states
 wrapper_proc: Optional[subprocess.Popen] = None
 wrapper_api: Optional[WrapperApi] = None
@@ -45,7 +44,8 @@ DATA_DIR.mkdir(exist_ok=True)
 import platform
 
 # Environment settings
-HTTP_PORT = int(os.getenv("HTTP_PORT", "8080"))
+WRAPPER_API_PORT = int(os.getenv("WRAPPER_API_PORT", os.getenv("WRAPPER_PORT", "80")))
+WRAPPER_WORKER_PORT = int(os.getenv("WRAPPER_WORKER_PORT", os.getenv("HTTP_PORT", "18080")))
 arch_env = os.getenv("TARGET_ARCH")
 if not arch_env:
     arch_env = platform.machine().lower()
@@ -75,7 +75,8 @@ async def start_wrapper_daemon():
     logger.info("Starting wrapper-v2 daemon...")
     
     env = os.environ.copy()
-    env["HTTP_PORT"] = str(HTTP_PORT)
+    env["WRAPPER_PORT"] = str(WRAPPER_API_PORT)
+    env["WRAPPER_WORKER_PORT"] = str(WRAPPER_WORKER_PORT)
     env["TARGET_ARCH"] = TARGET_ARCH
     env["WRAPPER_BASE_DIR"] = str(DATA_DIR / "mpl_db")
     
@@ -107,7 +108,7 @@ async def init_apple_music_api():
     global wrapper_api, apple_music_api
     try:
         wrapper_api = await WrapperApi.create(
-            base_url=f"http://127.0.0.1:{HTTP_PORT}",
+            base_url=f"http://127.0.0.1:{WRAPPER_API_PORT}",
             get_credentials_func=None,
             get_2fa_code=None,
         )
@@ -119,10 +120,8 @@ async def init_apple_music_api():
     except Exception as e:
         logger.warning(f"Could not initialize AppleMusicApi (likely not logged in yet): {e}")
 
-# --- API Endpoints ---
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     # Restore persistent staged libraries if they exist
     persisted_libs_dir = DATA_DIR / "apple_libs"
     if persisted_libs_dir.exists():
@@ -135,14 +134,20 @@ async def startup_event():
     # Attempt to start the wrapper daemon on startup
     await start_wrapper_daemon()
 
-@app.on_event("shutdown")
-def shutdown_event():
-    global wrapper_proc
-    if wrapper_proc:
-        logger.info("Stopping wrapper-v2 daemon...")
-        wrapper_proc.terminate()
-        wrapper_proc.wait()
-        logger.info("wrapper-v2 daemon stopped.")
+    try:
+        yield
+    finally:
+        global wrapper_proc
+        if wrapper_proc:
+            logger.info("Stopping wrapper-v2 daemon...")
+            wrapper_proc.terminate()
+            wrapper_proc.wait()
+            logger.info("wrapper-v2 daemon stopped.")
+
+
+app = FastAPI(title="Gamdl All-in-One", version="1.0.0", lifespan=lifespan)
+
+# --- API Endpoints ---
 
 def check_daemon_status():
     global wrapper_proc
@@ -164,7 +169,7 @@ async def health_check():
         try:
             import httpx
             async with httpx.AsyncClient() as client:
-                res = await client.get(f"http://127.0.0.1:{HTTP_PORT}/health", timeout=2.0)
+                res = await client.get(f"http://127.0.0.1:{WRAPPER_API_PORT}/health", timeout=2.0)
                 if res.status_code == 200:
                     wrapper_healthy = True
         except Exception:
@@ -187,7 +192,7 @@ async def get_me():
     try:
         import httpx
         async with httpx.AsyncClient() as client:
-            res = await client.get(f"http://127.0.0.1:{HTTP_PORT}/me")
+            res = await client.get(f"http://127.0.0.1:{WRAPPER_API_PORT}/me")
             return res.json()
     except Exception as e:
         return {"logged_in": False, "error": str(e)}
@@ -202,7 +207,7 @@ async def login(req: LoginRequest):
         import httpx
         async with httpx.AsyncClient() as client:
             res = await client.post(
-                f"http://127.0.0.1:{HTTP_PORT}/login",
+                f"http://127.0.0.1:{WRAPPER_API_PORT}/login",
                 json={"username": req.username, "password": req.password}
             )
             # Re-initialize API if login successful immediately (no 2FA)
@@ -222,7 +227,7 @@ async def login_2fa(req: Login2FARequest):
         import httpx
         async with httpx.AsyncClient() as client:
             res = await client.post(
-                f"http://127.0.0.1:{HTTP_PORT}/login/2fa",
+                f"http://127.0.0.1:{WRAPPER_API_PORT}/login/2fa",
                 json={"code": req.code}
             )
             if res.status_code == 200:

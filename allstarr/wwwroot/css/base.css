@@ -188,6 +188,7 @@ a {
 .actions,
 .row-actions {
     display: flex;
+    align-items: center;
     gap: var(--space-2);
 }
 
@@ -757,7 +758,17 @@ tr:last-child td {
 .capability-list,
 .provider-enabled-list {
     flex-wrap: wrap;
+    align-items: flex-start;
+    align-self: start;
     min-width: 0;
+}
+
+.capability-pill {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    height: 24px;
+    min-height: 24px;
+    line-height: 1;
 }
 
 .scrobble-actions {
