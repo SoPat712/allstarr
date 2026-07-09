@@ -6,6 +6,7 @@ import shutil
 import json
 import logging
 from contextlib import asynccontextmanager
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException, BackgroundTasks
@@ -120,6 +121,18 @@ async def init_apple_music_api():
     except Exception as e:
         logger.warning(f"Could not initialize AppleMusicApi (likely not logged in yet): {e}")
 
+def sidecar_response(res):
+    try:
+        return JSONResponse(status_code=res.status_code, content=res.json())
+    except JSONDecodeError:
+        return JSONResponse(
+            status_code=res.status_code,
+            content={
+                "error": "non_json_wrapper_response",
+                "detail": res.text,
+            },
+        )
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Restore persistent staged libraries if they exist
@@ -205,7 +218,7 @@ async def login(req: LoginRequest):
         
     try:
         import httpx
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0)) as client:
             res = await client.post(
                 f"http://127.0.0.1:{WRAPPER_API_PORT}/login",
                 json={"username": req.username, "password": req.password}
@@ -213,8 +226,11 @@ async def login(req: LoginRequest):
             # Re-initialize API if login successful immediately (no 2FA)
             if res.status_code == 200:
                 await init_apple_music_api()
-            return JSONResponse(status_code=res.status_code, content=res.json())
+            return sidecar_response(res)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Apple Music wrapper login timed out.")
     except Exception as e:
+        logger.exception("Apple Music login proxy failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/login/2fa")
@@ -225,15 +241,18 @@ async def login_2fa(req: Login2FARequest):
         
     try:
         import httpx
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(75.0)) as client:
             res = await client.post(
                 f"http://127.0.0.1:{WRAPPER_API_PORT}/login/2fa",
                 json={"code": req.code}
             )
             if res.status_code == 200:
                 await init_apple_music_api()
-            return JSONResponse(status_code=res.status_code, content=res.json())
+            return sidecar_response(res)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Apple Music wrapper 2FA timed out.")
     except Exception as e:
+        logger.exception("Apple Music 2FA proxy failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/setup")
