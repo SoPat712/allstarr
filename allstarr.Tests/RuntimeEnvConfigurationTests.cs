@@ -49,6 +49,7 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     [Theory]
     [InlineData("MULTI_PROVIDER_METADATA_ORDER")]
     [InlineData("MULTI_PROVIDER_DOWNLOAD_ORDER")]
+    [InlineData("MULTI_PROVIDER_STREAMING_ORDER")]
     [InlineData("MULTI_PROVIDER_PLAYLIST_ORDER")]
     [InlineData("MULTI_PROVIDER_LYRICS_ORDER")]
     [InlineData("MULTI_PROVIDER_ENABLED_SEARCH")]

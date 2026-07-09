@@ -516,8 +516,8 @@ tr:last-child td {
     display: inline-grid;
     place-items: center;
     flex: 0 0 auto;
-    min-width: 72px;
-    height: 32px;
+    width: 76px;
+    height: 34px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-elevated);
@@ -527,27 +527,31 @@ tr:last-child td {
     padding: 0 8px;
 }
 
+.provider-logo img {
+    display: block;
+    max-width: 58px;
+    max-height: 20px;
+    object-fit: contain;
+}
+
 .provider-spotify {
-    color: #062b15;
-    background: #1ed760;
-    border-color: #1ed760;
+    background: #0d1f15;
+    border-color: rgba(30, 215, 96, 0.35);
 }
 
 .provider-applemusic {
-    color: #fff;
-    background: linear-gradient(135deg, #fa233b, #fb5c74);
-    border-color: #fb5c74;
+    background: #241416;
+    border-color: rgba(250, 36, 60, 0.36);
 }
 
 .provider-deezer {
-    color: #fff;
-    background: linear-gradient(135deg, #ff0092, #ffed00 55%, #00c7f2);
-    border-color: transparent;
+    background: #20131d;
+    border-color: rgba(255, 0, 146, 0.36);
 }
 
 .provider-qobuz {
-    color: #fff;
     background: #141414;
+    border-color: rgba(255, 255, 255, 0.18);
 }
 
 .provider-squidwtf {

@@ -72,6 +72,14 @@ public class ProviderStatusManager
             .ToList();
     }
 
+    public IReadOnlyList<string> GetEnabledStreamingProviders()
+    {
+        var order = GetStreamingOrder();
+        return order
+            .Where(p => IsProviderHealthy(p))
+            .ToList();
+    }
+
     public IReadOnlyList<string> GetEnabledLyricsProviders()
     {
         return GetLyricsOrder();
@@ -142,23 +150,27 @@ public class ProviderStatusManager
 
     private List<string> GetDownloadOrder()
     {
-        var val = _configuration["MULTI_PROVIDER_DOWNLOAD_ORDER"] ?? "applemusic,deezer,qobuz,squidwtf";
-        return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(s => s.ToLowerInvariant())
-            .ToList();
+        return GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "applemusic,deezer,qobuz,squidwtf");
+    }
+
+    private List<string> GetStreamingOrder()
+    {
+        return GetProviderOrder("MULTI_PROVIDER_STREAMING_ORDER", "applemusic,deezer,qobuz,squidwtf");
     }
 
     private List<string> GetPlaylistOrder()
     {
-        var val = _configuration["MULTI_PROVIDER_PLAYLIST_ORDER"] ?? "spotify,applemusic,deezer,qobuz,squidwtf";
-        return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(s => s.ToLowerInvariant())
-            .ToList();
+        return GetProviderOrder("MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,applemusic,deezer,qobuz,squidwtf");
     }
 
     private List<string> GetLyricsOrder()
     {
-        var val = _configuration["MULTI_PROVIDER_LYRICS_ORDER"] ?? "spotify,lyricsplus,lrclib";
+        return GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,lyricsplus,lrclib");
+    }
+
+    private List<string> GetProviderOrder(string key, string fallback)
+    {
+        var val = _configuration[key] ?? fallback;
         return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(s => s.ToLowerInvariant())
             .ToList();

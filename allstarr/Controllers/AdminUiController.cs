@@ -166,7 +166,7 @@ public class AdminUiController : ControllerBase
             Name = "Apple Music",
             Icon = "applemusic",
             Status = string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "needs_login",
-            Categories = ["metadata", "download", "playlist"],
+            Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
                 Field("APPLE_MUSIC_AIO_URL", "Sidecar URL", "url", "appleMusic.baseUrl"),
@@ -179,7 +179,7 @@ public class AdminUiController : ControllerBase
             Name = "Deezer",
             Icon = "deezer",
             Status = string.IsNullOrWhiteSpace(_deezerSettings.Arl) ? "needs_config" : "configured",
-            Categories = ["metadata", "download", "playlist"],
+            Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
                 Field("DEEZER_ARL", "ARL cookie", "password", "deezer.arl", sensitive: true),
@@ -194,7 +194,7 @@ public class AdminUiController : ControllerBase
             Name = "Qobuz",
             Icon = "qobuz",
             Status = string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured",
-            Categories = ["metadata", "download", "playlist"],
+            Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
                 Field("QOBUZ_USER_AUTH_TOKEN", "User auth token", "password", "qobuz.userAuthToken", sensitive: true),
@@ -209,7 +209,7 @@ public class AdminUiController : ControllerBase
             Name = "SquidWTF",
             Icon = "squidwtf",
             Status = string.IsNullOrWhiteSpace(_squidWtfSettings.Quality) ? "unknown" : "configured",
-            Categories = ["metadata", "download", "playlist"],
+            Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
                 Field("SQUIDWTF_QUALITY", "Quality", "select", "squidWtf.quality", ["LOW", "HIGH", "LOSSLESS"]),
@@ -263,6 +263,8 @@ public class AdminUiController : ControllerBase
         Priority("metadata", "Metadata search priority", "MULTI_PROVIDER_METADATA_ORDER", "MULTI_PROVIDER_ENABLED_SEARCH",
             "spotify,applemusic,deezer,qobuz,squidwtf"),
         Priority("download", "Download priority", "MULTI_PROVIDER_DOWNLOAD_ORDER", null,
+            "applemusic,deezer,qobuz,squidwtf"),
+        Priority("streaming", "Streaming priority", "MULTI_PROVIDER_STREAMING_ORDER", null,
             "applemusic,deezer,qobuz,squidwtf"),
         Priority("playlist", "Playlist discovery priority", "MULTI_PROVIDER_PLAYLIST_ORDER", "MULTI_PROVIDER_ENABLED_PLAYLIST",
             "spotify,applemusic,deezer,qobuz,squidwtf"),

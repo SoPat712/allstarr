@@ -123,6 +123,12 @@ function providerMark(provider) {
   return marks[id] || titleCase(provider?.name || provider?.Name || id);
 }
 
+function providerLogoUrl(provider) {
+  const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
+  const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz"]);
+  return logos.has(id) ? `/images/providers/${id}.svg` : "";
+}
+
 function isAwaitingApple2fa(value) {
   const state = String(value?.state || value?.login_state || value?.account?.state || "").toLowerCase();
   return state === "awaiting_2fa";
@@ -1500,11 +1506,16 @@ class AllstarrApp extends LitElement {
     const status = provider.id === "applemusic" && this.appleMusicStatus
       ? (this.appleMusicStatus.logged_in || this.appleMusicStatus.account?.state === "authenticated" ? "configured" : "needs_config")
       : provider.status;
+    const logoUrl = providerLogoUrl(provider);
     return html`
       <div class="card provider-card">
         <div class="provider-head">
           <div class="provider-brand">
-            <span class="provider-logo provider-${provider.id}">${providerMark(provider)}</span>
+            <span class="provider-logo provider-${provider.id}">
+              ${logoUrl
+                ? html`<img src="${logoUrl}" alt="${provider.name} logo">`
+                : providerMark(provider)}
+            </span>
             <div class="provider-title">
               <strong>${provider.name}</strong>
               <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
