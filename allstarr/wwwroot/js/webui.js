@@ -734,7 +734,8 @@ class AllstarrApp extends LitElement {
 
   async submitAppleSetup(event) {
     event.preventDefault();
-    const file = event.currentTarget.querySelector("input[type='file']")?.files?.[0];
+    const form = event.currentTarget;
+    const file = form.querySelector("input[type='file']")?.files?.[0];
     if (!file) {
       this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: "Select an APK or APKM first." } };
       return;
@@ -754,7 +755,8 @@ class AllstarrApp extends LitElement {
 
   async submitAppleLogin(event) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     this.serviceResults = { ...this.serviceResults, applemusic: { state: "running", message: "Starting Apple Music login..." } };
     try {
       const result = await API.appleMusicLogin(data.get("username"), data.get("password"));
@@ -766,7 +768,7 @@ class AllstarrApp extends LitElement {
           message: isAwaitingApple2fa(result) ? "Apple Music needs a 2FA code." : "Apple Music login completed.",
         },
       };
-      event.currentTarget.reset();
+      form.reset();
       await this.loadAppleMusicStatus();
     } catch (error) {
       this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
@@ -775,13 +777,14 @@ class AllstarrApp extends LitElement {
 
   async submitApple2fa(event) {
     event.preventDefault();
-    const code = new FormData(event.currentTarget).get("code");
+    const form = event.currentTarget;
+    const code = new FormData(form).get("code");
     this.serviceResults = { ...this.serviceResults, applemusic: { state: "running", message: "Submitting Apple Music 2FA..." } };
     try {
       const result = await API.appleMusic2fa(code);
       this.appleMusicStatus = { ...(this.appleMusicStatus || {}), account: result, login_state: result.state, logged_in: result.state === "authenticated" };
       this.serviceResults = { ...this.serviceResults, applemusic: { state: "success", message: "Apple Music 2FA accepted." } };
-      event.currentTarget.reset();
+      form.reset();
       await this.loadAppleMusicStatus();
     } catch (error) {
       this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
@@ -1173,9 +1176,10 @@ class AllstarrApp extends LitElement {
 
   addInjectedPlaylist = async (event) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     await API.addPlaylist(data.get("name"), data.get("spotifyId"));
-    event.currentTarget.reset();
+    form.reset();
     await this.loadPlaylists(true);
     this.restartKeys = new Set([...this.restartKeys, "SPOTIFY_IMPORT_PLAYLISTS"]);
     this.toast("Playlist added");
@@ -1288,7 +1292,8 @@ class AllstarrApp extends LitElement {
 
   saveManualMapping = async (event) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const data = new FormData(form);
     const targetType = data.get("targetType");
     const payload = {
       spotifyId: data.get("spotifyId"),
@@ -1298,7 +1303,7 @@ class AllstarrApp extends LitElement {
       externalId: data.get("externalId") || null,
     };
     await API.saveMapping(payload);
-    event.currentTarget.reset();
+    form.reset();
     await this.loadMappings();
     this.toast("Mapping saved");
   };
