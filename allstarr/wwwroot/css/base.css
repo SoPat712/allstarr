@@ -194,17 +194,21 @@ a {
 
 .nav-list {
     flex-direction: column;
+    align-items: stretch;
 }
 
 .nav-link {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    min-height: 40px;
+    width: 100%;
+    min-height: 48px;
     border-radius: var(--radius);
     color: var(--text-secondary);
     text-decoration: none;
-    padding: 9px 10px;
+    padding: 11px 14px;
+    font-size: 0.98rem;
+    font-weight: 700;
 }
 
 .nav-link.active,
@@ -400,6 +404,13 @@ button.chip {
     color: var(--error);
     background: color-mix(in srgb, var(--error), transparent 88%);
     border-color: color-mix(in srgb, var(--error), transparent 58%);
+}
+
+.status-chip.disabled,
+.chip.disabled {
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--text-muted), transparent 90%);
+    border-color: color-mix(in srgb, var(--text-muted), transparent 64%);
 }
 
 .chip.muted-chip {
@@ -627,6 +638,36 @@ tr:last-child td {
 .priority-item button {
     min-height: 26px;
     padding: 2px 7px;
+}
+
+.provider-token {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    font-size: 0.84rem;
+    font-weight: 750;
+}
+
+.provider-token-logo {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-card);
+    color: var(--text-primary);
+    font-size: 0.62rem;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.provider-token-logo img {
+    display: block;
+    max-width: 16px;
+    max-height: 16px;
+    object-fit: contain;
 }
 
 .activity-list {

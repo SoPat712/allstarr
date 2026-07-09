@@ -17,6 +17,8 @@ namespace allstarr.Services.Common;
 
 public class ExtensionManager
 {
+    private const string DisabledMarkerFile = ".disabled";
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ExtensionManager> _logger;
     private readonly IConfiguration _configuration;
@@ -48,9 +50,24 @@ public class ExtensionManager
 
     public IReadOnlyCollection<ExtensionSandbox> GetActiveExtensions() => _activeExtensions.Values.ToList();
 
+    public IReadOnlyCollection<InstalledExtensionInfo> GetInstalledExtensions()
+    {
+        if (!Directory.Exists(_extensionsDir))
+        {
+            return [];
+        }
+
+        return Directory.GetDirectories(_extensionsDir)
+            .Select(ReadInstalledExtensionInfo)
+            .Where(item => item != null)
+            .Select(item => item!)
+            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public ExtensionSandbox? GetExtension(string id)
     {
-        return _activeExtensions.TryGetValue(id.ToLowerInvariant(), out var sandbox) ? sandbox : null;
+        return _activeExtensions.TryGetValue(NormalizeExtensionId(id), out var sandbox) ? sandbox : null;
     }
 
     public List<string> GetConfiguredRepositories()
@@ -121,7 +138,8 @@ public class ExtensionManager
                 var parsedItems = ParseStoreRegistry(json, repo);
                 foreach (var item in parsedItems)
                 {
-                    item.IsInstalled = _activeExtensions.ContainsKey(item.Id.ToLowerInvariant());
+                    item.IsInstalled = IsExtensionInstalled(item.Id);
+                    item.IsEnabled = _activeExtensions.ContainsKey(item.Id.ToLowerInvariant());
                     catalog.Items.Add(item);
                 }
             }
@@ -205,23 +223,57 @@ public class ExtensionManager
     public bool UninstallExtension(string id)
     {
         var normId = id.ToLowerInvariant();
-        if (_activeExtensions.TryRemove(normId, out _))
+        _activeExtensions.TryRemove(normId, out _);
+
+        var folder = Path.Combine(_extensionsDir, normId);
+        if (Directory.Exists(folder))
         {
-            var folder = Path.Combine(_extensionsDir, normId);
-            if (Directory.Exists(folder))
+            try
             {
-                try
-                {
-                    Directory.Delete(folder, true);
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to delete extension directory {Path}", folder);
-                }
+                Directory.Delete(folder, true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete extension directory {Path}", folder);
             }
         }
+
         return false;
+    }
+
+    public bool DisableExtension(string id)
+    {
+        var normId = id.ToLowerInvariant();
+        var folder = Path.Combine(_extensionsDir, normId);
+        if (!Directory.Exists(folder))
+        {
+            return false;
+        }
+
+        _activeExtensions.TryRemove(normId, out _);
+        File.WriteAllText(Path.Combine(folder, DisabledMarkerFile), DateTime.UtcNow.ToString("O"));
+        _logger.LogInformation("Disabled extension {ExtensionId}", normId);
+        return true;
+    }
+
+    public async Task<bool> EnableExtensionAsync(string id)
+    {
+        var normId = id.ToLowerInvariant();
+        var folder = Path.Combine(_extensionsDir, normId);
+        if (!Directory.Exists(folder))
+        {
+            return false;
+        }
+
+        var disabledMarker = Path.Combine(folder, DisabledMarkerFile);
+        if (File.Exists(disabledMarker))
+        {
+            File.Delete(disabledMarker);
+        }
+
+        await BootExtensionAsync(folder);
+        return _activeExtensions.ContainsKey(normId);
     }
 
     private async Task BootInstalledExtensions()
@@ -231,6 +283,12 @@ public class ExtensionManager
             var dirs = Directory.GetDirectories(_extensionsDir);
             foreach (var dir in dirs)
             {
+                if (IsExtensionDisabled(dir))
+                {
+                    _logger.LogInformation("Skipping disabled extension folder {Path}", dir);
+                    continue;
+                }
+
                 await BootExtensionAsync(dir);
             }
         }
@@ -244,6 +302,11 @@ public class ExtensionManager
     {
         try
         {
+            if (IsExtensionDisabled(folderPath))
+            {
+                return;
+            }
+
             var manifestPath = Path.Combine(folderPath, "manifest.json");
             var indexJsPath = Path.Combine(folderPath, "index.js");
 
@@ -253,12 +316,68 @@ public class ExtensionManager
             var indexJs = await File.ReadAllTextAsync(indexJsPath);
 
             var sandbox = new ExtensionSandbox(folderPath, manifestJson, indexJs, _httpClientFactory, _logger);
-            _activeExtensions[sandbox.Id.ToLowerInvariant()] = sandbox;
+            _activeExtensions[NormalizeExtensionId(sandbox.Id)] = sandbox;
             _logger.LogInformation("Loaded extension successfully: {DisplayName} ({Id}) v{Version}", sandbox.DisplayName, sandbox.Id, sandbox.Version);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to boot extension in folder {Path}", folderPath);
+        }
+    }
+
+    private bool IsExtensionInstalled(string id)
+    {
+        var normId = id.ToLowerInvariant();
+        return Directory.Exists(Path.Combine(_extensionsDir, normId));
+    }
+
+    private static bool IsExtensionDisabled(string folderPath)
+    {
+        return File.Exists(Path.Combine(folderPath, DisabledMarkerFile));
+    }
+
+    private InstalledExtensionInfo? ReadInstalledExtensionInfo(string folderPath)
+    {
+        try
+        {
+            var manifestPath = Path.Combine(folderPath, "manifest.json");
+            if (!File.Exists(manifestPath))
+            {
+                return null;
+            }
+
+            var manifestJson = File.ReadAllText(manifestPath);
+            using var doc = JsonDocument.Parse(manifestJson);
+            var root = doc.RootElement;
+            var id = NormalizeExtensionId(ReadString(root, "id", "name"));
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                id = Path.GetFileName(folderPath).ToLowerInvariant();
+            }
+
+            var active = _activeExtensions.TryGetValue(id, out var sandbox);
+            var displayName = sandbox?.DisplayName ?? ReadString(root, "displayName", "display_name", "title", "name");
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                displayName = id;
+            }
+
+            var version = sandbox?.Version ?? ReadString(root, "version");
+            return new InstalledExtensionInfo
+            {
+                Id = id,
+                Name = sandbox?.Name ?? ReadString(root, "name", "id"),
+                DisplayName = displayName,
+                Description = sandbox?.Description ?? ReadString(root, "description", "summary"),
+                Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
+                Types = sandbox?.Types.ToList() ?? ReadStringList(root, "types", "type", "capabilities", "capability"),
+                Enabled = active && !IsExtensionDisabled(folderPath)
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read installed extension manifest from {Path}", folderPath);
+            return null;
         }
     }
 
@@ -463,8 +582,20 @@ public class StoreExtensionItem
     public string DownloadUrl { get; set; } = "";
     public string Version { get; set; } = "";
     public bool IsInstalled { get; set; }
+    public bool IsEnabled { get; set; }
     public string RepoUrl { get; set; } = "";
     public string HomepageUrl { get; set; } = "";
+    public List<string> Types { get; set; } = [];
+}
+
+public class InstalledExtensionInfo
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Version { get; set; } = "";
+    public bool Enabled { get; set; }
     public List<string> Types { get; set; } = [];
 }
 

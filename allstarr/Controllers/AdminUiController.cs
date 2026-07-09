@@ -46,7 +46,7 @@ public class AdminUiController : ControllerBase
     {
         var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
         var repositories = _extensionManager.GetConfiguredRepositories();
-        var installedExtensionCount = _extensionManager.GetActiveExtensions().Count;
+        var installedExtensionCount = _extensionManager.GetInstalledExtensions().Count;
 
         var schema = new AdminUiSchemaResponse
         {

@@ -129,6 +129,12 @@ function providerLogoUrl(provider) {
   return logos.has(id) ? `/images/providers/${id}.svg` : "";
 }
 
+function providerDisplayName(providerId, providers = []) {
+  const provider = asArray(providers).find((item) =>
+    String(item?.id || item?.Id || "").toLowerCase() === String(providerId).toLowerCase());
+  return provider?.name || provider?.Name || providerMark({ id: providerId });
+}
+
 function isAwaitingApple2fa(value) {
   const state = String(value?.state || value?.login_state || value?.account?.state || "").toLowerCase();
   return state === "awaiting_2fa";
@@ -260,6 +266,10 @@ const API = {
   installedExtensions: () => requestJson("/api/admin/extensions/installed", {}, "Failed to load installed extensions"),
   installExtension: (item) =>
     requestJson("/api/admin/extensions/install", jsonBody({ id: item.id || item.Id, downloadUrl: item.downloadUrl || item.DownloadUrl || "" }), "Failed to install extension"),
+  enableExtension: (id) =>
+    requestJson(`/api/admin/extensions/enable/${encodeURIComponent(id)}`, { method: "POST" }, "Failed to enable extension"),
+  disableExtension: (id) =>
+    requestJson(`/api/admin/extensions/disable/${encodeURIComponent(id)}`, { method: "POST" }, "Failed to disable extension"),
   uninstallExtension: (id) =>
     requestJson(`/api/admin/extensions/uninstall/${encodeURIComponent(id)}`, { method: "DELETE" }, "Failed to uninstall extension"),
   scrobblingStatus: () => requestJson("/api/admin/scrobbling/status", {}, "Failed to load scrobbling"),
@@ -649,11 +659,51 @@ class AllstarrApp extends LitElement {
     this.extensionActions = { ...this.extensionActions, [key]: "Installing" };
     try {
       await API.installExtension(item);
-      await Promise.all([this.loadInstalledExtensions(), this.loadExtensionStore()]);
+      await Promise.all([this.loadInstalledExtensions(), this.loadExtensionStore(), this.loadSchema()]);
       this.toast("Extension installed");
     } finally {
       const nextActions = { ...this.extensionActions };
       delete nextActions[key];
+      this.extensionActions = nextActions;
+    }
+  }
+
+  async setExtensionEnabled(item, enabled) {
+    const id = item.id || item.Id;
+    if (!id) {
+      return;
+    }
+
+    this.extensionActions = { ...this.extensionActions, [id]: enabled ? "Enabling" : "Disabling" };
+    try {
+      if (enabled) {
+        await API.enableExtension(id);
+      } else {
+        await API.disableExtension(id);
+      }
+      await Promise.all([this.loadInstalledExtensions(), this.loadExtensionStore(), this.loadSchema()]);
+      this.toast(`Extension ${enabled ? "enabled" : "disabled"}`);
+    } finally {
+      const nextActions = { ...this.extensionActions };
+      delete nextActions[id];
+      this.extensionActions = nextActions;
+    }
+  }
+
+  async uninstallExtension(item) {
+    const id = item.id || item.Id;
+    if (!id) {
+      return;
+    }
+
+    this.extensionActions = { ...this.extensionActions, [id]: "Uninstalling" };
+    try {
+      await API.uninstallExtension(id);
+      await Promise.all([this.loadInstalledExtensions(), this.loadExtensionStore(), this.loadSchema()]);
+      this.toast("Extension uninstalled");
+    } finally {
+      const nextActions = { ...this.extensionActions };
+      delete nextActions[id];
       this.extensionActions = nextActions;
     }
   }
@@ -1585,6 +1635,7 @@ class AllstarrApp extends LitElement {
   }
 
   renderPriorityGroups() {
+    const providers = asArray(this.schema?.providers);
     return html`
       <div class="panel">
         <h3>Provider priority</h3>
@@ -1595,7 +1646,7 @@ class AllstarrApp extends LitElement {
               <div class="priority-list">
                 ${asArray(group.providers).map((provider, index) => html`
                   <span class="priority-item">
-                    <span>${provider}</span>
+                    ${this.renderProviderToken(provider, providers)}
                     <button ?disabled=${index === 0} @click=${() => this.movePriority(group, index, -1)}>Up</button>
                     <button ?disabled=${index === group.providers.length - 1} @click=${() => this.movePriority(group, index, 1)}>Down</button>
                   </span>
@@ -1603,13 +1654,26 @@ class AllstarrApp extends LitElement {
               </div>
               ${group.enabledEnvKey ? html`
                 <div class="chip-list provider-enabled-list">
-                  ${this.capabilityProviders(group.id).map((provider) => html`<span class="chip success">${provider}</span>`)}
+                  ${this.capabilityProviders(group.id).map((provider) => html`<span class="chip success">${this.renderProviderToken(provider, providers)}</span>`)}
                 </div>
               ` : nothing}
             </div>
           `)}
         </div>
       </div>
+    `;
+  }
+
+  renderProviderToken(providerId, providers = asArray(this.schema?.providers)) {
+    const label = providerDisplayName(providerId, providers);
+    const logoUrl = providerLogoUrl({ id: providerId, name: label });
+    return html`
+      <span class="provider-token">
+        <span class="provider-token-logo provider-${providerId}">
+          ${logoUrl ? html`<img src="${logoUrl}" alt="">` : providerMark({ id: providerId, name: label }).slice(0, 2)}
+        </span>
+        <span>${label}</span>
+      </span>
     `;
   }
 
@@ -1650,17 +1714,25 @@ class AllstarrApp extends LitElement {
         <div class="panel">
           <h3>Installed extensions</h3>
           <div class="activity-list">
-            ${installed.length ? installed.map((item) => html`
-              <div class="activity-item">
-                <strong>${item.displayName || item.DisplayName || item.name || item.Name}</strong>
-                <span class="muted">${display(item.description || item.Description)}</span>
-                <div class="row-actions">
-                  ${asArray(item.types || item.Types).map((type) => html`<span class="chip success">${titleCase(type)}</span>`)}
-                  ${asArray(item.capabilities || item.Capabilities).map((type) => html`<span class="chip">${titleCase(type)}</span>`)}
-                  <button class="danger" @click=${async () => { await API.uninstallExtension(item.id || item.Id); await this.loadInstalledExtensions(); this.toast("Extension uninstalled"); }}>Uninstall</button>
+            ${installed.length ? installed.map((item) => {
+              const id = item.id || item.Id;
+              const action = this.extensionActions[id];
+              const enabled = item.enabled ?? item.Enabled ?? true;
+              return html`
+                <div class="activity-item">
+                  <strong>${item.displayName || item.DisplayName || item.name || item.Name}</strong>
+                  <span class="muted">${display(item.description || item.Description)}</span>
+                  <div class="row-actions">
+                    <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
+                    ${asArray(item.types || item.Types).map((type) => html`<span class="chip success">${titleCase(type)}</span>`)}
+                    ${asArray(item.capabilities || item.Capabilities).map((type) => html`<span class="chip">${titleCase(type)}</span>`)}
+                    <button ?disabled=${Boolean(action)} @click=${() => this.setExtensionEnabled(item, !enabled)}>${enabled ? "Disable" : "Enable"}</button>
+                    <button class="danger" ?disabled=${Boolean(action)} @click=${() => this.uninstallExtension(item)}>Uninstall</button>
+                  </div>
+                  ${action ? html`<div class="progress indeterminate"><span></span></div>` : nothing}
                 </div>
-              </div>
-            `) : html`<div class="empty">No extensions installed.</div>`}
+              `;
+            }) : html`<div class="empty">No extensions installed.</div>`}
           </div>
         </div>
         <div class="panel">
@@ -1670,12 +1742,14 @@ class AllstarrApp extends LitElement {
               const key = item.id || item.Id || item.displayName || item.DisplayName;
               const action = this.extensionActions[key];
               const installedItem = Boolean(item.isInstalled || item.IsInstalled);
+              const enabled = item.isEnabled ?? item.IsEnabled ?? false;
               return html`
                 <div class="activity-item">
                   <strong>${item.displayName || item.DisplayName}</strong>
                   <span class="muted">${display(item.description || item.Description)}</span>
                   <div class="row-actions">
                     <span class="chip">${display(item.version || item.Version)}</span>
+                    ${installedItem ? html`<span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>` : nothing}
                     <button class="primary" ?disabled=${installedItem || Boolean(action)} @click=${() => this.installExtension(item)}>
                       ${installedItem ? "Installed" : action || "Install"}
                     </button>

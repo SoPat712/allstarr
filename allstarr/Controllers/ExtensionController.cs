@@ -34,7 +34,7 @@ public class ExtensionController : ControllerBase
     [HttpGet("installed")]
     public IActionResult GetInstalledExtensions()
     {
-        var items = _extensionManager.GetActiveExtensions()
+        var items = _extensionManager.GetInstalledExtensions()
             .Select(e => new
             {
                 e.Id,
@@ -42,7 +42,8 @@ public class ExtensionController : ControllerBase
                 e.DisplayName,
                 e.Description,
                 e.Version,
-                e.Types
+                e.Types,
+                e.Enabled
             })
             .ToList();
         return Ok(items);
@@ -88,6 +89,30 @@ public class ExtensionController : ControllerBase
         {
             return NotFound(new { success = false, message = "Extension not found or failed to delete." });
         }
+    }
+
+    [HttpPost("disable/{id}")]
+    public IActionResult DisableExtension(string id)
+    {
+        var success = _extensionManager.DisableExtension(id);
+        if (success)
+        {
+            return Ok(new { success = true, message = "Extension disabled successfully." });
+        }
+
+        return NotFound(new { success = false, message = "Extension not found." });
+    }
+
+    [HttpPost("enable/{id}")]
+    public async Task<IActionResult> EnableExtension(string id)
+    {
+        var success = await _extensionManager.EnableExtensionAsync(id);
+        if (success)
+        {
+            return Ok(new { success = true, message = "Extension enabled successfully." });
+        }
+
+        return NotFound(new { success = false, message = "Extension not found or failed to load." });
     }
 }
 
