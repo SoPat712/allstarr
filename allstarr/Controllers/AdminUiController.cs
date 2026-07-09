@@ -165,7 +165,7 @@ public class AdminUiController : ControllerBase
             Id = "applemusic",
             Name = "Apple Music",
             Icon = "applemusic",
-            Status = string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "configured",
+            Status = string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "needs_login",
             Categories = ["metadata", "download", "playlist"],
             ConfigSchema =
             [
@@ -219,10 +219,11 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "musicbrainz",
-            Name = "MusicBrainz",
+            Name = "MusicBrainz enrichment",
             Icon = "musicbrainz",
             Status = _musicBrainzSettings.Enabled ? "configured" : "disabled",
             Categories = ["metadata"],
+            Notes = ["Genres only", "Optional enrichment"],
             ConfigSchema =
             [
                 Field("MUSICBRAINZ_ENABLED", "Enabled", "toggle", "musicBrainz.enabled"),

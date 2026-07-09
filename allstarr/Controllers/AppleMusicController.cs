@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Headers;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Models.Settings;
 using allstarr.Filters;
 
@@ -33,14 +35,44 @@ public class AppleMusicController : ControllerBase
     {
         try
         {
-            var res = await _httpClient.GetAsync("api/health");
-            var json = await res.Content.ReadAsStringAsync();
-            if (!res.IsSuccessStatusCode)
+            var healthResponse = await _httpClient.GetAsync("api/health");
+            var healthJson = await healthResponse.Content.ReadAsStringAsync();
+            if (!healthResponse.IsSuccessStatusCode)
             {
-                return StatusCode((int)res.StatusCode, json);
+                return StatusCode((int)healthResponse.StatusCode, healthJson);
             }
 
-            return Content(json, "application/json");
+            var status = TryParseObject(healthJson) ?? new JsonObject();
+            var daemonRunning = GetBoolean(status, "daemon_running") == true;
+            if (daemonRunning)
+            {
+                try
+                {
+                    var meResponse = await _httpClient.GetAsync("api/me");
+                    var meJson = await meResponse.Content.ReadAsStringAsync();
+                    if (TryParseObject(meJson) is { } me)
+                    {
+                        status["account"] = me;
+                        var state = me["state"]?.GetValue<string>();
+                        if (!string.IsNullOrWhiteSpace(state))
+                        {
+                            status["login_state"] = state;
+                            status["logged_in"] = string.Equals(state, "authenticated", StringComparison.OrdinalIgnoreCase);
+                        }
+                        else if (GetBoolean(me, "logged_in") is { } loggedIn)
+                        {
+                            status["logged_in"] = loggedIn;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Apple Music /api/me status probe failed");
+                    status["account_error"] = "Unable to read wrapper account state.";
+                }
+            }
+
+            return Content(status.ToJsonString(), "application/json");
         }
         catch (Exception ex)
         {
@@ -130,6 +162,30 @@ public class AppleMusicController : ControllerBase
         {
             _logger.LogError(ex, "2FA verification proxy call failed");
             return StatusCode(500, new { error = ex.Message });
+        }
+    }
+
+    private static JsonObject? TryParseObject(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(json) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool? GetBoolean(JsonObject source, string key)
+    {
+        try
+        {
+            return source[key]?.GetValue<bool>();
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
         }
     }
 }

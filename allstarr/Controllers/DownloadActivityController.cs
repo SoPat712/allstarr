@@ -109,7 +109,7 @@ public class DownloadActivityController : ControllerBase
                 group => group.Key,
                 group => group.OrderByDescending(state => state.LastActivity).First());
 
-        return orderedDownloads
+        var entries = orderedDownloads
             .Select(download =>
             {
                 var normalizedSongId = NormalizeExternalItemId(download.SongId);
@@ -144,6 +144,40 @@ public class DownloadActivityController : ControllerBase
                 };
             })
             .ToList();
+
+        var knownIds = orderedDownloads
+            .Select(download => NormalizeExternalItemId(download.SongId))
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (itemId, playbackState) in playbackByItemId)
+        {
+            if (string.IsNullOrWhiteSpace(itemId) || knownIds.Contains(itemId))
+            {
+                continue;
+            }
+
+            entries.Add(new DownloadActivityEntry
+            {
+                SongId = itemId,
+                ExternalId = itemId,
+                ExternalProvider = ResolvePlaybackProvider(itemId),
+                Title = ResolvePlaybackTitle(itemId),
+                Artist = playbackState.DeviceId,
+                Status = DownloadStatus.Completed,
+                Progress = 1,
+                RequestedForStreaming = false,
+                StartedAt = playbackState.LastActivity,
+                IsPlaying = true,
+                PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond)
+            });
+        }
+
+        return entries
+            .OrderByDescending(entry => entry.IsPlaying)
+            .ThenByDescending(entry => entry.Status == DownloadStatus.InProgress)
+            .ThenByDescending(entry => entry.StartedAt)
+            .ToList();
     }
 
     private static string NormalizeExternalItemId(string itemId)
@@ -172,6 +206,30 @@ public class DownloadActivityController : ControllerBase
         }
 
         return $"ext-{parts[1]}-song-{string.Join("-", parts.Skip(2))}";
+    }
+
+    private static string ResolvePlaybackProvider(string itemId)
+    {
+        if (!itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+        {
+            return "jellyfin";
+        }
+
+        var parts = itemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 1 ? parts[1].ToLowerInvariant() : "external";
+    }
+
+    private static string ResolvePlaybackTitle(string itemId)
+    {
+        if (!itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Local Jellyfin track";
+        }
+
+        var parts = itemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 3
+            ? string.Join("-", parts.Skip(3))
+            : "External track";
     }
 
     private sealed class DownloadActivityEntry : DownloadInfo

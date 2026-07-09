@@ -89,12 +89,56 @@ function parseBoolValue(value) {
   return false;
 }
 
+function splitCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function joinCsv(values) {
+  return [...new Set(asArray(values).map((item) => String(item).trim().toLowerCase()).filter(Boolean))].join(",");
+}
+
+function normalizedFieldValue(field, value) {
+  if (field.type === "toggle") {
+    return parseBoolValue(value) ? "true" : "false";
+  }
+  return String(value ?? "");
+}
+
+function providerMark(provider) {
+  const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
+  const marks = {
+    spotify: "Spotify",
+    applemusic: "Apple Music",
+    deezer: "Deezer",
+    qobuz: "Qobuz",
+    squidwtf: "SquidWTF",
+    musicbrainz: "MusicBrainz",
+    lyricsplus: "Lyrics+",
+    lrclib: "LRCLib",
+    extensions: "Extensions",
+  };
+  return marks[id] || titleCase(provider?.name || provider?.Name || id);
+}
+
+function isAwaitingApple2fa(value) {
+  const state = String(value?.state || value?.login_state || value?.account?.state || "").toLowerCase();
+  return state === "awaiting_2fa";
+}
+
 async function readErrorMessage(response, fallback) {
   try {
-    const data = await response.json();
-    return data.error || data.message || fallback;
+    const data = await response.clone().json();
+    return data.detail || data.error || data.message || fallback;
   } catch {
-    return fallback;
+    try {
+      const text = await response.text();
+      return text || fallback;
+    } catch {
+      return fallback;
+    }
   }
 }
 
@@ -219,6 +263,38 @@ const API = {
   validateListenBrainz: (userToken) =>
     requestJson("/api/admin/scrobbling/listenbrainz/validate", jsonBody({ userToken }), "Failed to validate ListenBrainz"),
   testListenBrainz: () => requestJson("/api/admin/scrobbling/listenbrainz/test", { method: "POST" }, "Failed to test ListenBrainz"),
+  appleMusicStatus: () => requestJson("/api/admin/applemusic/status", { cache: "no-store" }, "Failed to load Apple Music status"),
+  appleMusicLogin: (username, password) =>
+    requestJson("/api/admin/applemusic/login", jsonBody({ username, password }), "Failed to start Apple Music login"),
+  appleMusic2fa: (code) =>
+    requestJson("/api/admin/applemusic/login/2fa", jsonBody({ code }), "Failed to submit Apple Music 2FA"),
+  appleMusicSetup: (file, onProgress) => new Promise((resolve, reject) => {
+    const data = new FormData();
+    data.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/admin/applemusic/setup");
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && typeof onProgress === "function") {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      let payload = {};
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        payload = { error: xhr.responseText };
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+      } else {
+        reject(new Error(payload.detail || payload.error || payload.message || "Apple Music setup failed"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Apple Music setup upload failed"));
+    xhr.send(data);
+  }),
 };
 
 class ThemeManager {
@@ -263,6 +339,10 @@ class AllstarrApp extends LitElement {
     extensionStore: { state: true },
     installedExtensions: { state: true },
     scrobbling: { state: true },
+    appleMusicStatus: { state: true },
+    appleMusicUploadProgress: { state: true },
+    serviceResults: { state: true },
+    extensionActions: { state: true },
   };
 
   constructor() {
@@ -292,6 +372,10 @@ class AllstarrApp extends LitElement {
     this.extensionStore = null;
     this.installedExtensions = null;
     this.scrobbling = null;
+    this.appleMusicStatus = null;
+    this.appleMusicUploadProgress = 0;
+    this.serviceResults = {};
+    this.extensionActions = {};
     this.linkSelections = new Map();
     this.mappingFilters = { page: 1, pageSize: 50, enrichMetadata: true, targetType: "all", source: "all", search: "" };
     this.externalPlaylistProvider = "deezer";
@@ -374,7 +458,7 @@ class AllstarrApp extends LitElement {
     const [zone, sub] = routeParts(this.route);
     try {
       if (zone === "library") {
-        if (sub === "link") {
+        if (!sub || sub === "link") {
           await this.loadLinkData();
         } else if (sub === "injected") {
           await this.loadPlaylists();
@@ -386,7 +470,12 @@ class AllstarrApp extends LitElement {
           await this.loadDownloads();
         }
       } else if (zone === "sources") {
-        await this.loadInstalledExtensions();
+        await Promise.all([
+          this.loadInstalledExtensions(),
+          this.loadAppleMusicStatus().catch((error) => {
+            this.appleMusicStatus = { error: error.message, logged_in: false };
+          }),
+        ]);
       } else if (zone === "activity") {
         await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue()]);
       }
@@ -459,6 +548,11 @@ class AllstarrApp extends LitElement {
 
   async saveField(field, value) {
     if (field.sensitive && !value) {
+      return;
+    }
+
+    const currentValue = getPathValue(this.config, field.valuePath, "");
+    if (!field.sensitive && normalizedFieldValue(field, currentValue) === normalizedFieldValue(field, value)) {
       return;
     }
 
@@ -540,6 +634,160 @@ class AllstarrApp extends LitElement {
     this.scrobbling = await API.scrobblingStatus();
   }
 
+  async loadAppleMusicStatus() {
+    this.appleMusicStatus = await API.appleMusicStatus();
+  }
+
+  async installExtension(item) {
+    const key = item.id || item.Id || item.displayName || item.DisplayName;
+    this.extensionActions = { ...this.extensionActions, [key]: "Installing" };
+    try {
+      await API.installExtension(item);
+      await Promise.all([this.loadInstalledExtensions(), this.loadExtensionStore()]);
+      this.toast("Extension installed");
+    } finally {
+      const nextActions = { ...this.extensionActions };
+      delete nextActions[key];
+      this.extensionActions = nextActions;
+    }
+  }
+
+  async runServiceAction(key, action) {
+    this.serviceResults = { ...this.serviceResults, [key]: { state: "running", message: "Testing..." } };
+    try {
+      const result = await action();
+      this.serviceResults = {
+        ...this.serviceResults,
+        [key]: { state: "success", message: result.message || result.Message || "Connection test completed." },
+      };
+    } catch (error) {
+      this.serviceResults = {
+        ...this.serviceResults,
+        [key]: { state: "error", message: error.message },
+      };
+    }
+  }
+
+  providerGroup(category) {
+    return asArray(this.schema?.priorityGroups).find((group) => group.id === category);
+  }
+
+  capabilityConfig(category) {
+    if (category === "metadata") {
+      return { envKey: "MULTI_PROVIDER_ENABLED_SEARCH", valuePath: "providers.enabledSearch" };
+    }
+    if (category === "playlist") {
+      return { envKey: "MULTI_PROVIDER_ENABLED_PLAYLIST", valuePath: "providers.enabledPlaylist" };
+    }
+    const group = this.providerGroup(category);
+    return group ? { envKey: group.envKey, valuePath: null, group } : null;
+  }
+
+  capabilityProviders(category) {
+    const config = this.capabilityConfig(category);
+    if (!config) {
+      return [];
+    }
+    if (config.valuePath) {
+      const configured = splitCsv(getPathValue(this.config, config.valuePath, ""));
+      return configured.length ? configured : asArray(this.providerGroup(category)?.providers);
+    }
+    return asArray(config.group?.providers);
+  }
+
+  providerCapabilityEnabled(provider, category) {
+    const providerId = String(provider.id || provider.Id || "").toLowerCase();
+    return this.capabilityProviders(category).includes(providerId);
+  }
+
+  async toggleProviderCapability(provider, category, enabled) {
+    const providerId = String(provider.id || provider.Id || "").toLowerCase();
+    const config = this.capabilityConfig(category);
+    if (!providerId || !config) {
+      return;
+    }
+
+    const providers = this.capabilityProviders(category);
+    const nextProviders = enabled
+      ? joinCsv([...providers, providerId])
+      : joinCsv(providers.filter((item) => item !== providerId));
+
+    await API.updateConfig(config.envKey, nextProviders);
+    if (config.valuePath) {
+      const nextConfig = structuredClone(this.config || {});
+      setPathValue(nextConfig, config.valuePath, nextProviders);
+      this.config = nextConfig;
+    }
+
+    if (config.group) {
+      this.schema = {
+        ...this.schema,
+        priorityGroups: this.schema.priorityGroups.map((group) =>
+          group.id === config.group.id ? { ...group, providers: splitCsv(nextProviders) } : group,
+        ),
+      };
+    }
+
+    this.restartKeys = new Set([...this.restartKeys, config.envKey]);
+    this.toast(`${provider.name || provider.Name} ${category} ${enabled ? "enabled" : "disabled"}`);
+  }
+
+  async submitAppleSetup(event) {
+    event.preventDefault();
+    const file = event.currentTarget.querySelector("input[type='file']")?.files?.[0];
+    if (!file) {
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: "Select an APK or APKM first." } };
+      return;
+    }
+    this.appleMusicUploadProgress = 1;
+    this.serviceResults = { ...this.serviceResults, applemusic: { state: "running", message: "Uploading Apple Music package..." } };
+    try {
+      await API.appleMusicSetup(file, (progress) => { this.appleMusicUploadProgress = progress; });
+      await this.loadAppleMusicStatus();
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "success", message: "Apple Music package staged." } };
+    } catch (error) {
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
+    } finally {
+      this.appleMusicUploadProgress = 0;
+    }
+  }
+
+  async submitAppleLogin(event) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    this.serviceResults = { ...this.serviceResults, applemusic: { state: "running", message: "Starting Apple Music login..." } };
+    try {
+      const result = await API.appleMusicLogin(data.get("username"), data.get("password"));
+      this.appleMusicStatus = { ...(this.appleMusicStatus || {}), account: result, login_state: result.state, logged_in: result.state === "authenticated" };
+      this.serviceResults = {
+        ...this.serviceResults,
+        applemusic: {
+          state: isAwaitingApple2fa(result) ? "warning" : "success",
+          message: isAwaitingApple2fa(result) ? "Apple Music needs a 2FA code." : "Apple Music login completed.",
+        },
+      };
+      event.currentTarget.reset();
+      await this.loadAppleMusicStatus();
+    } catch (error) {
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
+    }
+  }
+
+  async submitApple2fa(event) {
+    event.preventDefault();
+    const code = new FormData(event.currentTarget).get("code");
+    this.serviceResults = { ...this.serviceResults, applemusic: { state: "running", message: "Submitting Apple Music 2FA..." } };
+    try {
+      const result = await API.appleMusic2fa(code);
+      this.appleMusicStatus = { ...(this.appleMusicStatus || {}), account: result, login_state: result.state, logged_in: result.state === "authenticated" };
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "success", message: "Apple Music 2FA accepted." } };
+      event.currentTarget.reset();
+      await this.loadAppleMusicStatus();
+    } catch (error) {
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
+    }
+  }
+
   render() {
     if (this.loading) {
       return html`<div class="app-loading"><div class="chip">Loading Allstarr</div></div>`;
@@ -608,6 +856,12 @@ class AllstarrApp extends LitElement {
         </nav>
         <div class="sidebar-footer">
           <div>Signed in as <strong>${display(this.session?.name || this.session?.Name)}</strong></div>
+          <select aria-label="Theme" .value=${this.theme} @change=${(event) => this.setTheme(event.target.value)}>
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+          <button class="ghost" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig()]); this.toast("Status refreshed"); }}>Refresh</button>
           <button class="ghost" @click=${this.logout}>Logout</button>
         </div>
       </aside>
@@ -739,13 +993,13 @@ class AllstarrApp extends LitElement {
   }
 
   renderLibrary() {
-    const [, sub = "overview"] = routeParts(this.route);
+    const [, sub = "link"] = routeParts(this.route);
     return html`
       <section class="view-stack">
         <div class="view-header">
           <div>
             <h2>Library</h2>
-            <p>Backend playlists, injected playlists, mappings, missing tracks, and kept files.</p>
+            <p>Playlist linking, injected playlists, mappings, external discovery, and kept files.</p>
           </div>
         </div>
         ${this.renderLibraryNav(sub)}
@@ -756,21 +1010,18 @@ class AllstarrApp extends LitElement {
           sub === "migration" ? this.renderSongMigration() :
           sub === "kept" ? this.renderKeptDownloads() :
           sub === "external" ? this.renderExternalPlaylistExplorer() :
-          this.renderLibraryOverview()}
+          this.renderLinkPlaylists()}
       </section>
     `;
   }
 
   renderLibraryNav(active) {
     const items = [
-      ["overview", "Overview"],
       ["link", "Link playlists"],
       ["injected", "Injected"],
       ["mappings", "Mappings"],
-      ["missing", "Missing"],
-      ["migration", "Migration"],
-      ["kept", "Kept"],
       ["external", "External playlists"],
+      ["kept", "Kept"],
     ];
     return html`
       <nav class="subnav">
@@ -1241,21 +1492,78 @@ class AllstarrApp extends LitElement {
   }
 
   renderProviderCard(provider) {
+    const status = provider.id === "applemusic" && this.appleMusicStatus
+      ? (this.appleMusicStatus.logged_in || this.appleMusicStatus.account?.state === "authenticated" ? "configured" : "needs_config")
+      : provider.status;
     return html`
       <div class="card provider-card">
         <div class="provider-head">
-          <div class="provider-title">
-            <strong>${provider.name}</strong>
-            <span>${asArray(provider.categories).join(", ")}</span>
+          <div class="provider-brand">
+            <span class="provider-logo provider-${provider.id}">${providerMark(provider)}</span>
+            <div class="provider-title">
+              <strong>${provider.name}</strong>
+              <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
+            </div>
           </div>
-          <span class="status-chip ${provider.status}">${titleCase(provider.status)}</span>
+          <span class="status-chip ${status}">${titleCase(status)}</span>
         </div>
-        <div class="chip-list">
+        <div class="chip-list capability-list">
+          ${asArray(provider.categories).map((category) => this.renderCapabilityPill(provider, category))}
           ${asArray(provider.notes).map((note) => html`<span class="chip">${note}</span>`)}
         </div>
         <div class="config-grid">
           ${asArray(provider.configSchema).map((field) => this.renderConfigField(field))}
         </div>
+        ${provider.id === "applemusic" ? this.renderAppleMusicManager() : nothing}
+      </div>
+    `;
+  }
+
+  renderCapabilityPill(provider, category) {
+    const enabled = this.providerCapabilityEnabled(provider, category);
+    return html`
+      <button
+        class="chip capability-pill ${enabled ? "success" : "muted-chip"}"
+        title=${`${enabled ? "Disable" : "Enable"} ${provider.name} for ${category}`}
+        @click=${() => this.toggleProviderCapability(provider, category, !enabled)}>
+        ${titleCase(category)}
+      </button>
+    `;
+  }
+
+  renderAppleMusicManager() {
+    const status = this.appleMusicStatus || {};
+    const account = status.account || {};
+    const loginState = status.login_state || account.state || (status.logged_in ? "authenticated" : "logged_out");
+    const result = this.serviceResults.applemusic;
+    const uploadProgress = this.appleMusicUploadProgress;
+    return html`
+      <div class="inline-panel">
+        <div class="stat-list compact">
+          <div class="stat-row"><span>Native libs</span><span class="status-chip ${status.staged ? "configured" : "needs_config"}">${status.staged ? "Staged" : "Not staged"}</span></div>
+          <div class="stat-row"><span>Wrapper</span><span class="status-chip ${status.daemon_running ? "configured" : "needs_config"}">${status.daemon_running ? "Running" : "Offline"}</span></div>
+          <div class="stat-row"><span>Session</span><span class="status-chip ${status.logged_in || account.state === "authenticated" ? "configured" : "needs_config"}">${titleCase(loginState)}</span></div>
+        </div>
+        <form class="form-stack compact-form" @submit=${this.submitAppleSetup}>
+          <div class="form-row">
+            <label>Apple Music APK/APKM</label>
+            <input type="file" accept=".apk,.apkm,application/vnd.android.package-archive">
+          </div>
+          <button>Stage package</button>
+          ${uploadProgress ? html`<div class="progress indeterminate" style=${`--progress:${uploadProgress}%`}><span></span></div>` : nothing}
+        </form>
+        <form class="form-stack compact-form" @submit=${this.submitAppleLogin}>
+          <div class="form-row"><label>Apple ID</label><input name="username" autocomplete="username" required></div>
+          <div class="form-row"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
+          <button class="primary">Start login</button>
+        </form>
+        ${isAwaitingApple2fa({ ...status, state: loginState }) || result?.state === "warning" ? html`
+          <form class="form-stack compact-form" @submit=${this.submitApple2fa}>
+            <div class="form-row"><label>2FA code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required></div>
+            <button class="primary">Submit 2FA</button>
+          </form>
+        ` : nothing}
+        ${result ? html`<div class="callout ${result.state}">${result.message}</div>` : nothing}
       </div>
     `;
   }
@@ -1278,14 +1586,8 @@ class AllstarrApp extends LitElement {
                 `)}
               </div>
               ${group.enabledEnvKey ? html`
-                <div class="config-grid" style="margin-top: var(--space-4);">
-                  ${this.renderConfigField({
-                    key: group.enabledEnvKey,
-                    label: "Enabled providers",
-                    type: "text",
-                    valuePath: group.id === "metadata" ? "providers.enabledSearch" : "providers.enabledPlaylist",
-                    requiresRestart: true,
-                  })}
+                <div class="chip-list provider-enabled-list">
+                  ${this.capabilityProviders(group.id).map((provider) => html`<span class="chip success">${provider}</span>`)}
                 </div>
               ` : nothing}
             </div>
@@ -1337,7 +1639,8 @@ class AllstarrApp extends LitElement {
                 <strong>${item.displayName || item.DisplayName || item.name || item.Name}</strong>
                 <span class="muted">${display(item.description || item.Description)}</span>
                 <div class="row-actions">
-                  ${asArray(item.types || item.Types).map((type) => html`<span class="chip">${type}</span>`)}
+                  ${asArray(item.types || item.Types).map((type) => html`<span class="chip success">${titleCase(type)}</span>`)}
+                  ${asArray(item.capabilities || item.Capabilities).map((type) => html`<span class="chip">${titleCase(type)}</span>`)}
                   <button class="danger" @click=${async () => { await API.uninstallExtension(item.id || item.Id); await this.loadInstalledExtensions(); this.toast("Extension uninstalled"); }}>Uninstall</button>
                 </div>
               </div>
@@ -1347,18 +1650,24 @@ class AllstarrApp extends LitElement {
         <div class="panel">
           <h3>Store</h3>
           <div class="activity-list">
-            ${storeItems.length ? storeItems.map((item) => html`
-              <div class="activity-item">
-                <strong>${item.displayName || item.DisplayName}</strong>
-                <span class="muted">${display(item.description || item.Description)}</span>
-                <div class="row-actions">
-                  <span class="chip">${display(item.version || item.Version)}</span>
-                  <button class="primary" ?disabled=${Boolean(item.isInstalled || item.IsInstalled)} @click=${async () => { await API.installExtension(item); await this.loadInstalledExtensions(); await this.loadExtensionStore(); this.toast("Extension installed"); }}>
-                    ${item.isInstalled || item.IsInstalled ? "Installed" : "Install"}
-                  </button>
+            ${storeItems.length ? storeItems.map((item) => {
+              const key = item.id || item.Id || item.displayName || item.DisplayName;
+              const action = this.extensionActions[key];
+              const installedItem = Boolean(item.isInstalled || item.IsInstalled);
+              return html`
+                <div class="activity-item">
+                  <strong>${item.displayName || item.DisplayName}</strong>
+                  <span class="muted">${display(item.description || item.Description)}</span>
+                  <div class="row-actions">
+                    <span class="chip">${display(item.version || item.Version)}</span>
+                    <button class="primary" ?disabled=${installedItem || Boolean(action)} @click=${() => this.installExtension(item)}>
+                      ${installedItem ? "Installed" : action || "Install"}
+                    </button>
+                  </div>
+                  ${action ? html`<div class="progress indeterminate"><span></span></div>` : nothing}
                 </div>
-              </div>
-            `) : html`<div class="empty">Load the store to browse extensions.</div>`}
+              `;
+            }) : html`<div class="empty">Load the store to browse extensions.</div>`}
           </div>
         </div>
       </div>
@@ -1438,10 +1747,12 @@ class AllstarrApp extends LitElement {
         <div class="stat-row"><span>Runtime</span><span class="status-chip ${status.enabled || status.Enabled ? "configured" : "needs_config"}">${status.enabled || status.Enabled ? "Enabled" : "Disabled"}</span></div>
       </div>
       <div class="config-grid">${fields.map((field) => this.renderConfigField(field))}</div>
-      <div class="actions">
-        <button @click=${async () => { await API.testLastFm(); this.toast("Last.fm test completed"); }}>Test Last.fm</button>
-        <button @click=${async () => { await API.testListenBrainz(); this.toast("ListenBrainz test completed"); }}>Test ListenBrainz</button>
+      <div class="actions scrobble-actions">
+        <button @click=${() => this.runServiceAction("lastfm", API.testLastFm)}>Test Last.fm</button>
+        <button @click=${() => this.runServiceAction("listenbrainz", API.testListenBrainz)}>Test ListenBrainz</button>
       </div>
+      ${this.serviceResults.lastfm ? html`<div class="callout ${this.serviceResults.lastfm.state}">Last.fm: ${this.serviceResults.lastfm.message}</div>` : nothing}
+      ${this.serviceResults.listenbrainz ? html`<div class="callout ${this.serviceResults.listenbrainz.state}">ListenBrainz: ${this.serviceResults.listenbrainz.message}</div>` : nothing}
     `;
   }
 
@@ -1579,11 +1890,16 @@ class AllstarrApp extends LitElement {
   renderNowPlaying() {
     const current = this.activity.find((item) => item.isPlaying || item.IsPlaying) || this.activity[0];
     const progress = current ? percent(current.playbackProgress ?? current.PlaybackProgress ?? current.progress ?? current.Progress) : 0;
+    const title = current ? display(current.title || current.Title, "Active download") : "No active playback";
+    const artist = current ? display(current.artist || current.Artist) : "Queue is idle";
     return html`
       <footer class="now-playing">
-        <div>
-          <div class="now-title">${current ? display(current.title || current.Title, "Active download") : "No active playback"}</div>
-          <div class="now-meta">${current ? display(current.artist || current.Artist) : "Queue is idle"}</div>
+        <div class="now-track">
+          <img class="art" src="/placeholder.png" alt="">
+          <div>
+            <div class="now-title">${title}</div>
+            <div class="now-meta">${artist}</div>
+          </div>
         </div>
         <div class="progress" style=${`--progress:${progress}%`}><span></span></div>
       </footer>
