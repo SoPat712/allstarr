@@ -1316,6 +1316,139 @@ public class PlaylistController : ControllerBase
     }
 
     /// <summary>
+    /// Search a specific external provider for playlists for the admin UI.
+    /// </summary>
+    [HttpGet("external/playlists/search")]
+    public async Task<IActionResult> SearchExternalPlaylists(
+        [FromQuery] string query,
+        [FromQuery] string provider = "deezer",
+        [FromQuery] int limit = 20)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return BadRequest(new { error = "Query is required" });
+        }
+
+        var normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (!IsSupportedExternalPlaylistProvider(normalizedProvider))
+        {
+            return BadRequest(new { error = "Unsupported provider" });
+        }
+
+        try
+        {
+            var service = GetConcreteMetadataServiceByName(normalizedProvider);
+            if (service == null)
+            {
+                return BadRequest(new { error = $"Provider '{normalizedProvider}' is not registered" });
+            }
+
+            var playlists = await service.SearchPlaylistsAsync(
+                query.Trim(),
+                Math.Clamp(limit, 1, 50),
+                HttpContext.RequestAborted);
+
+            var results = playlists
+                .Where(p => !string.IsNullOrWhiteSpace(p.ExternalId))
+                .Select(p => new
+                {
+                    id = p.Id,
+                    externalId = p.ExternalId,
+                    externalProvider = string.IsNullOrWhiteSpace(p.Provider) ? normalizedProvider : p.Provider,
+                    name = p.Name,
+                    description = p.Description,
+                    curatorName = p.CuratorName,
+                    trackCount = p.TrackCount,
+                    duration = p.Duration,
+                    coverUrl = p.CoverUrl
+                })
+                .ToList();
+
+            return Ok(new { results });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search external playlists for provider {Provider}", provider);
+            return StatusCode(500, new { error = "Failed to search external playlists" });
+        }
+    }
+
+    /// <summary>
+    /// Preview tracks from a specific external provider playlist.
+    /// </summary>
+    [HttpGet("external/playlists/{provider}/{externalId}/tracks")]
+    public async Task<IActionResult> GetExternalPlaylistTracks(
+        string provider,
+        string externalId,
+        [FromQuery] int limit = 50)
+    {
+        var normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (!IsSupportedExternalPlaylistProvider(normalizedProvider))
+        {
+            return BadRequest(new { error = "Unsupported provider" });
+        }
+
+        if (string.IsNullOrWhiteSpace(externalId))
+        {
+            return BadRequest(new { error = "External playlist ID is required" });
+        }
+
+        try
+        {
+            var service = GetConcreteMetadataServiceByName(normalizedProvider);
+            if (service == null)
+            {
+                return BadRequest(new { error = $"Provider '{normalizedProvider}' is not registered" });
+            }
+
+            var tracks = await service.GetPlaylistTracksAsync(
+                normalizedProvider,
+                externalId.Trim(),
+                HttpContext.RequestAborted);
+
+            var results = tracks
+                .Take(Math.Clamp(limit, 1, 200))
+                .Select(song => new
+                {
+                    id = song.Id,
+                    externalId = song.ExternalId,
+                    externalProvider = song.ExternalProvider ?? normalizedProvider,
+                    title = song.Title,
+                    artist = song.Artist,
+                    album = song.Album,
+                    duration = song.Duration,
+                    isrc = song.Isrc
+                })
+                .ToList();
+
+            return Ok(new { results, count = results.Count });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to fetch tracks for external playlist {Provider}/{ExternalId}",
+                provider,
+                externalId);
+            return StatusCode(500, new { error = "Failed to fetch external playlist tracks" });
+        }
+    }
+
+    private static bool IsSupportedExternalPlaylistProvider(string provider) =>
+        provider is "deezer" or "qobuz" or "squidwtf" or "applemusic";
+
+    private IConcreteMetadataService? GetConcreteMetadataServiceByName(string provider)
+    {
+        var normalizedProvider = provider.ToLowerInvariant();
+        var services = HttpContext.RequestServices.GetServices<IConcreteMetadataService>();
+
+        return services.FirstOrDefault(s =>
+            s.GetType().Name.StartsWith(normalizedProvider, StringComparison.OrdinalIgnoreCase) ||
+            (normalizedProvider == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
+            (normalizedProvider == "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
     /// Get track details by Jellyfin ID (for URL-based mapping)
     /// </summary>
     [HttpGet("jellyfin/track/{id}")]

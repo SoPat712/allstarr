@@ -1020,6 +1020,8 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
             typeInfo.Name == "MappingController" ||
             typeInfo.Name == "ScrobblingAdminController" ||
             typeInfo.Name == "AppleMusicController" ||
+            typeInfo.Name == "ExtensionController" ||
+            typeInfo.Name == "AdminUiController" ||
             typeInfo.Name == "DownloadActivityController")
         {
             return true;

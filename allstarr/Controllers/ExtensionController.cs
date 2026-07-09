@@ -27,8 +27,8 @@ public class ExtensionController : ControllerBase
     [HttpGet("store")]
     public async Task<IActionResult> GetStoreExtensions(CancellationToken cancellationToken)
     {
-        var items = await _extensionManager.FetchStoreExtensionsAsync(cancellationToken);
-        return Ok(items);
+        var catalog = await _extensionManager.FetchStoreCatalogAsync(cancellationToken);
+        return Ok(catalog);
     }
 
     [HttpGet("installed")]
@@ -51,12 +51,21 @@ public class ExtensionController : ControllerBase
     [HttpPost("install")]
     public async Task<IActionResult> InstallExtension([FromBody] InstallRequest request, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(request.DownloadUrl))
+        var downloadUrl = request.DownloadUrl;
+        if (string.IsNullOrWhiteSpace(downloadUrl) && !string.IsNullOrWhiteSpace(request.Id))
         {
-            return BadRequest(new { success = false, message = "Download URL is required." });
+            var catalog = await _extensionManager.FetchStoreCatalogAsync(cancellationToken);
+            downloadUrl = catalog.Items
+                .FirstOrDefault(item => item.Id.Equals(request.Id, StringComparison.OrdinalIgnoreCase))
+                ?.DownloadUrl;
         }
 
-        var success = await _extensionManager.InstallExtensionAsync(request.DownloadUrl, cancellationToken);
+        if (string.IsNullOrEmpty(downloadUrl))
+        {
+            return BadRequest(new { success = false, message = "Download URL or store extension ID is required." });
+        }
+
+        var success = await _extensionManager.InstallExtensionAsync(downloadUrl, cancellationToken);
         if (success)
         {
             return Ok(new { success = true, message = "Extension installed and loaded successfully." });
@@ -84,5 +93,6 @@ public class ExtensionController : ControllerBase
 
 public class InstallRequest
 {
+    public string Id { get; set; } = "";
     public string DownloadUrl { get; set; } = "";
 }

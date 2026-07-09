@@ -3,10 +3,12 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Jint;
 using Jint.Native;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using allstarr.Services.Admin;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -18,6 +20,7 @@ public class ExtensionManager
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ExtensionManager> _logger;
     private readonly IConfiguration _configuration;
+    private readonly AdminHelperService _adminHelperService;
     private readonly string _extensionsDir;
 
     private readonly ConcurrentDictionary<string, ExtensionSandbox> _activeExtensions = new();
@@ -25,11 +28,13 @@ public class ExtensionManager
     public ExtensionManager(
         IHttpClientFactory httpClientFactory,
         ILogger<ExtensionManager> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        AdminHelperService adminHelperService)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _configuration = configuration;
+        _adminHelperService = adminHelperService;
         _extensionsDir = Path.Combine(Directory.GetCurrentDirectory(), "extensions");
         
         if (!Directory.Exists(_extensionsDir))
@@ -50,7 +55,7 @@ public class ExtensionManager
 
     public List<string> GetConfiguredRepositories()
     {
-        var repos = _configuration["EXTENSION_REPOSITORIES"];
+        var repos = ReadExtensionRepositoriesFromEnvFile() ?? _configuration["EXTENSION_REPOSITORIES"];
         if (string.IsNullOrWhiteSpace(repos))
         {
             repos = "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json";
@@ -58,10 +63,49 @@ public class ExtensionManager
         return repos.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 
+    private string? ReadExtensionRepositoriesFromEnvFile()
+    {
+        try
+        {
+            var envPath = _adminHelperService.GetEnvFilePath();
+            if (!File.Exists(envPath))
+            {
+                return null;
+            }
+
+            foreach (var line in File.ReadLines(envPath))
+            {
+                if (AdminHelperService.ShouldSkipEnvLine(line))
+                {
+                    continue;
+                }
+
+                var (key, value) = AdminHelperService.ParseEnvLine(line);
+                if (key.Equals("EXTENSION_REPOSITORIES", StringComparison.OrdinalIgnoreCase))
+                {
+                    return value;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read extension repositories from .env file");
+        }
+
+        return null;
+    }
+
     public async Task<List<StoreExtensionItem>> FetchStoreExtensionsAsync(CancellationToken cancellationToken = default)
     {
-        var items = new List<StoreExtensionItem>();
+        var catalog = await FetchStoreCatalogAsync(cancellationToken);
+        return catalog.Items;
+    }
+
+    public async Task<ExtensionStoreResponse> FetchStoreCatalogAsync(CancellationToken cancellationToken = default)
+    {
+        var catalog = new ExtensionStoreResponse();
         var repos = GetConfiguredRepositories();
+        catalog.Repositories.AddRange(repos);
 
         using var client = _httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(5);
@@ -74,41 +118,31 @@ public class ExtensionManager
                 if (!response.IsSuccessStatusCode) continue;
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("extensions", out var exts) && exts.ValueKind == JsonValueKind.Array)
+                var parsedItems = ParseStoreRegistry(json, repo);
+                foreach (var item in parsedItems)
                 {
-                    foreach (var ext in exts.EnumerateArray())
-                    {
-                        var id = ext.GetProperty("id").GetString() ?? "";
-                        var name = ext.GetProperty("name").GetString() ?? "";
-                        var displayName = ext.TryGetProperty("display_name", out var dn) ? dn.GetString() ?? name : name;
-                        var desc = ext.TryGetProperty("description", out var ds) ? ds.GetString() ?? "" : "";
-                        var downloadUrl = ext.GetProperty("download_url").GetString() ?? "";
-                        var version = ext.TryGetProperty("version", out var v) ? v.GetString() ?? "1.0.0" : "1.0.0";
-
-                        var isInstalled = _activeExtensions.ContainsKey(id.ToLowerInvariant());
-
-                        items.Add(new StoreExtensionItem
-                        {
-                            Id = id,
-                            Name = name,
-                            DisplayName = displayName,
-                            Description = desc,
-                            DownloadUrl = downloadUrl,
-                            Version = version,
-                            IsInstalled = isInstalled,
-                            RepoUrl = repo
-                        });
-                    }
+                    item.IsInstalled = _activeExtensions.ContainsKey(item.Id.ToLowerInvariant());
+                    catalog.Items.Add(item);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to fetch extension store registry from {Repo}", repo);
+                catalog.Errors.Add(new ExtensionStoreError
+                {
+                    Repository = repo,
+                    Message = ex.Message
+                });
             }
         }
 
-        return items;
+        catalog.Items = catalog.Items
+            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return catalog;
     }
 
     public async Task<bool> InstallExtensionAsync(string downloadUrl, CancellationToken cancellationToken = default)
@@ -127,8 +161,9 @@ public class ExtensionManager
             Directory.CreateDirectory(tempDir);
             ZipFile.ExtractToDirectory(tempFile, tempDir, overwriteFiles: true);
 
-            var manifestPath = Path.Combine(tempDir, "manifest.json");
-            var indexJsPath = Path.Combine(tempDir, "index.js");
+            var packageRoot = ResolveExtensionPackageRoot(tempDir);
+            var manifestPath = Path.Combine(packageRoot, "manifest.json");
+            var indexJsPath = Path.Combine(packageRoot, "index.js");
 
             if (!File.Exists(manifestPath) || !File.Exists(indexJsPath))
             {
@@ -137,11 +172,11 @@ public class ExtensionManager
 
             var manifestJson = await File.ReadAllTextAsync(manifestPath, cancellationToken);
             using var doc = JsonDocument.Parse(manifestJson);
-            var id = doc.RootElement.GetProperty("name").GetString()?.ToLowerInvariant() ?? "";
+            var id = NormalizeExtensionId(ReadString(doc.RootElement, "id", "name"));
 
             if (string.IsNullOrEmpty(id))
             {
-                throw new InvalidDataException("Invalid name in manifest.json.");
+                throw new InvalidDataException("Invalid id/name in manifest.json.");
             }
 
             var targetFolder = Path.Combine(_extensionsDir, id);
@@ -151,7 +186,7 @@ public class ExtensionManager
             }
             Directory.CreateDirectory(targetFolder);
 
-            ZipFile.ExtractToDirectory(tempFile, targetFolder, overwriteFiles: true);
+            CopyDirectory(packageRoot, targetFolder);
 
             File.Delete(tempFile);
             Directory.Delete(tempDir, true);
@@ -226,6 +261,197 @@ public class ExtensionManager
             _logger.LogError(ex, "Failed to boot extension in folder {Path}", folderPath);
         }
     }
+
+    public static List<StoreExtensionItem> ParseStoreRegistry(string json, string repoUrl = "")
+    {
+        var items = new List<StoreExtensionItem>();
+        using var doc = JsonDocument.Parse(json);
+
+        if (!TryGetRegistryItems(doc.RootElement, out var registryItems))
+        {
+            return items;
+        }
+
+        foreach (var ext in registryItems.EnumerateArray())
+        {
+            if (ext.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var id = NormalizeExtensionId(ReadString(ext, "id", "name", "slug"));
+            var name = ReadString(ext, "name", "id", "slug");
+            var displayName = ReadString(ext, "displayName", "display_name", "title", "label", "name");
+            var downloadUrl = ReadString(ext, "downloadUrl", "download_url", "zipUrl", "zip_url", "archiveUrl", "archive_url", "packageUrl", "package_url", "url");
+
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(downloadUrl))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = id;
+            }
+
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                displayName = name;
+            }
+
+            var version = ReadString(ext, "version");
+            items.Add(new StoreExtensionItem
+            {
+                Id = id,
+                Name = name,
+                DisplayName = displayName,
+                Description = ReadString(ext, "description", "summary"),
+                DownloadUrl = downloadUrl,
+                Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
+                RepoUrl = repoUrl,
+                HomepageUrl = ReadString(ext, "homepage", "homepageUrl", "homepage_url", "repository", "repoUrl", "repo_url"),
+                Types = ReadStringList(ext, "types", "type", "capabilities", "capability")
+            });
+        }
+
+        return items
+            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private static bool TryGetRegistryItems(JsonElement root, out JsonElement items)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            items = root;
+            return true;
+        }
+
+        foreach (var key in new[] { "extensions", "items", "plugins", "packages" })
+        {
+            if (root.TryGetProperty(key, out items) && items.ValueKind == JsonValueKind.Array)
+            {
+                return true;
+            }
+        }
+
+        items = default;
+        return false;
+    }
+
+    private static string ReadString(JsonElement element, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (element.TryGetProperty(key, out var value))
+            {
+                if (value.ValueKind == JsonValueKind.String)
+                {
+                    return value.GetString() ?? string.Empty;
+                }
+
+                if (value.ValueKind == JsonValueKind.Number ||
+                    value.ValueKind == JsonValueKind.True ||
+                    value.ValueKind == JsonValueKind.False)
+                {
+                    return value.ToString();
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static List<string> ReadStringList(JsonElement element, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!element.TryGetProperty(key, out var value))
+            {
+                continue;
+            }
+
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                return value.EnumerateArray()
+                    .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString())
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Select(item => item!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString()!
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+
+        return [];
+    }
+
+    private static string NormalizeExtensionId(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        return Regex.Replace(raw.Trim().ToLowerInvariant(), "[^a-z0-9._-]", "-");
+    }
+
+    private static string ResolveExtensionPackageRoot(string extractedDirectory)
+    {
+        if (File.Exists(Path.Combine(extractedDirectory, "manifest.json")) &&
+            File.Exists(Path.Combine(extractedDirectory, "index.js")))
+        {
+            return extractedDirectory;
+        }
+
+        var childDirectories = Directory.GetDirectories(extractedDirectory);
+        foreach (var childDirectory in childDirectories)
+        {
+            if (File.Exists(Path.Combine(childDirectory, "manifest.json")) &&
+                File.Exists(Path.Combine(childDirectory, "index.js")))
+            {
+                return childDirectory;
+            }
+        }
+
+        return extractedDirectory;
+    }
+
+    private static void CopyDirectory(string sourceDirectory, string targetDirectory)
+    {
+        foreach (var directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(directory.Replace(sourceDirectory, targetDirectory));
+        }
+
+        foreach (var file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var targetFile = file.Replace(sourceDirectory, targetDirectory);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+            File.Copy(file, targetFile, overwrite: true);
+        }
+    }
+}
+
+public class ExtensionStoreResponse
+{
+    public List<string> Repositories { get; set; } = [];
+    public List<StoreExtensionItem> Items { get; set; } = [];
+    public List<ExtensionStoreError> Errors { get; set; } = [];
+}
+
+public class ExtensionStoreError
+{
+    public string Repository { get; set; } = "";
+    public string Message { get; set; } = "";
 }
 
 public class StoreExtensionItem
@@ -238,6 +464,8 @@ public class StoreExtensionItem
     public string Version { get; set; } = "";
     public bool IsInstalled { get; set; }
     public string RepoUrl { get; set; } = "";
+    public string HomepageUrl { get; set; } = "";
+    public List<string> Types { get; set; } = [];
 }
 
 public class ExtensionSandbox
@@ -259,17 +487,37 @@ public class ExtensionSandbox
 
         using var doc = JsonDocument.Parse(manifestJson);
         var root = doc.RootElement;
-        Id = root.GetProperty("name").GetString() ?? "";
+        Id = ReadManifestString(root, "id", "name");
         Name = Id;
-        DisplayName = root.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? Id : Id;
-        Description = root.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "";
-        Version = root.TryGetProperty("version", out var v) ? v.GetString() ?? "1.0.0" : "1.0.0";
-
-        if (root.TryGetProperty("type", out var typeEl) && typeEl.ValueKind == JsonValueKind.Array)
+        DisplayName = ReadManifestString(root, "displayName", "display_name", "title", "name");
+        if (string.IsNullOrWhiteSpace(DisplayName))
         {
-            foreach (var t in typeEl.EnumerateArray())
+            DisplayName = Id;
+        }
+        Description = ReadManifestString(root, "description", "summary");
+        Version = ReadManifestString(root, "version");
+        if (string.IsNullOrWhiteSpace(Version))
+        {
+            Version = "1.0.0";
+        }
+
+        if (TryGetManifestProperty(root, out var typeEl, "types", "type", "capabilities", "capability"))
+        {
+            if (typeEl.ValueKind == JsonValueKind.Array)
             {
-                Types.Add(t.GetString() ?? "");
+                foreach (var t in typeEl.EnumerateArray())
+                {
+                    var type = t.ValueKind == JsonValueKind.String ? t.GetString() : t.ToString();
+                    if (!string.IsNullOrWhiteSpace(type))
+                    {
+                        Types.Add(type);
+                    }
+                }
+            }
+            else if (typeEl.ValueKind == JsonValueKind.String)
+            {
+                Types.AddRange(typeEl.GetString()!
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
             }
         }
 
@@ -543,6 +791,30 @@ public class ExtensionSandbox
         if (string.IsNullOrEmpty(str)) return null;
         if (str.Length >= 4 && int.TryParse(str.Substring(0, 4), out var yr)) return yr;
         return null;
+    }
+
+    private static string ReadManifestString(JsonElement element, params string[] keys)
+    {
+        if (!TryGetManifestProperty(element, out var value, keys))
+        {
+            return string.Empty;
+        }
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : value.ToString();
+    }
+
+    private static bool TryGetManifestProperty(JsonElement element, out JsonElement value, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (element.TryGetProperty(key, out value))
+            {
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 }
 

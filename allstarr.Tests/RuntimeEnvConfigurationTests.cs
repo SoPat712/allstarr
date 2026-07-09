@@ -46,6 +46,25 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
         Assert.Empty(mappings);
     }
 
+    [Theory]
+    [InlineData("MULTI_PROVIDER_METADATA_ORDER")]
+    [InlineData("MULTI_PROVIDER_DOWNLOAD_ORDER")]
+    [InlineData("MULTI_PROVIDER_PLAYLIST_ORDER")]
+    [InlineData("MULTI_PROVIDER_LYRICS_ORDER")]
+    [InlineData("MULTI_PROVIDER_ENABLED_SEARCH")]
+    [InlineData("MULTI_PROVIDER_ENABLED_PLAYLIST")]
+    [InlineData("EXTENSION_REPOSITORIES")]
+    public void MapEnvVarToConfiguration_MapsFlatPlatformKeys(string key)
+    {
+        var mappings = RuntimeEnvConfiguration
+            .MapEnvVarToConfiguration(key, "value")
+            .ToList();
+
+        var mapping = Assert.Single(mappings);
+        Assert.Equal(key, mapping.Key);
+        Assert.Equal("value", mapping.Value);
+    }
+
     [Fact]
     public void LoadDotEnvOverrides_StripsQuotesAndSupportsDoubleUnderscoreKeys()
     {

@@ -196,6 +196,10 @@ public class ConfigController : ControllerBase
                 userId = GetEnvString(envVars, "JELLYFIN_USER_ID", _jellyfinSettings.UserId ?? string.Empty),
                 libraryId = GetEnvString(envVars, "JELLYFIN_LIBRARY_ID", _jellyfinSettings.LibraryId ?? string.Empty)
             },
+            subsonic = new
+            {
+                url = GetEnvString(envVars, "SUBSONIC_URL", _subsonicSettings.Url ?? string.Empty)
+            },
             library = new
             {
                 downloadPath = isCacheStorageMode
@@ -250,6 +254,14 @@ public class ConfigController : ControllerBase
                 odesliLookupDays = GetEnvInt(envVars, "CACHE_ODESLI_LOOKUP_DAYS", _configuration.GetValue<int>("Cache:OdesliLookupDays", 60)),
                 proxyImagesDays = GetEnvInt(envVars, "CACHE_PROXY_IMAGES_DAYS", _configuration.GetValue<int>("Cache:ProxyImagesDays", 14)),
                 transcodeCacheMinutes = GetEnvInt(envVars, "CACHE_TRANSCODE_MINUTES", _configuration.GetValue<int>("Cache:TranscodeCacheMinutes", 60))
+            },
+            extensions = new
+            {
+                repositories = GetEnvString(
+                    envVars,
+                    "EXTENSION_REPOSITORIES",
+                    _configuration.GetValue<string>("EXTENSION_REPOSITORIES") ??
+                    "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json")
             },
             scrobbling = await GetScrobblingSettingsFromEnvAsync()
         });

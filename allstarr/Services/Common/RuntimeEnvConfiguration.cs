@@ -88,6 +88,14 @@ public static class RuntimeEnvConfiguration
             ["MUSICBRAINZ_USERNAME"] = ["MusicBrainz:Username"],
             ["MUSICBRAINZ_PASSWORD"] = ["MusicBrainz:Password"],
 
+            ["MULTI_PROVIDER_METADATA_ORDER"] = ["MULTI_PROVIDER_METADATA_ORDER"],
+            ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = ["MULTI_PROVIDER_DOWNLOAD_ORDER"],
+            ["MULTI_PROVIDER_PLAYLIST_ORDER"] = ["MULTI_PROVIDER_PLAYLIST_ORDER"],
+            ["MULTI_PROVIDER_LYRICS_ORDER"] = ["MULTI_PROVIDER_LYRICS_ORDER"],
+            ["MULTI_PROVIDER_ENABLED_SEARCH"] = ["MULTI_PROVIDER_ENABLED_SEARCH"],
+            ["MULTI_PROVIDER_ENABLED_PLAYLIST"] = ["MULTI_PROVIDER_ENABLED_PLAYLIST"],
+            ["EXTENSION_REPOSITORIES"] = ["EXTENSION_REPOSITORIES"],
+
             ["CACHE_SEARCH_RESULTS_MINUTES"] = ["Cache:SearchResultsMinutes"],
             ["CACHE_PLAYLIST_IMAGES_HOURS"] = ["Cache:PlaylistImagesHours"],
             ["CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS"] = ["Cache:SpotifyPlaylistItemsHours"],
