@@ -84,17 +84,17 @@ __pycache__/
 *.egg-info/
 
 # Downloaded music files
-downloads/
-!downloads/.gitkeep
+/downloads/
+!/downloads/.gitkeep
 
 # Kept music files (favorited external tracks)
-kept/
+/kept/
 
 # Cache files (Spotify missing tracks, etc.)
-cache/
+/cache/
 
 # Docker volumes
-valkey-data/
+/valkey-data/
 
 # Keep only the exact versioned OpenAPI artifact. Local feature notes, raw captures, cloned repositories,
 # ad-hoc scripts, and credentials under apis/ are intentionally ignored.
