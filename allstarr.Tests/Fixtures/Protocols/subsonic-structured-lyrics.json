@@ -1,0 +1,83 @@
+[
+  {
+    "name": "external-json-get",
+    "external": true,
+    "request": {
+      "method": "GET",
+      "path": "/rest/getLyricsBySongId.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id=ext-deezer-song-42"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json"
+    },
+    "lookup": {
+      "provider": "deezer",
+      "externalId": "42"
+    },
+    "format": "json"
+  },
+  {
+    "name": "external-xml-form-post",
+    "external": true,
+    "request": {
+      "method": "POST",
+      "path": "/rest/getLyricsBySongId.view?v=1.16.1&c=fixture&f=xml",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&t=hash&s=salt&id=ext-qobuz-song-99"
+    },
+    "verification": {
+      "method": "POST",
+      "pathAndQuery": "/rest/ping.view?v=1.16.1&c=fixture&f=xml",
+      "body": "u=fixture&t=hash&s=salt"
+    },
+    "lookup": {
+      "provider": "qobuz",
+      "externalId": "99"
+    },
+    "format": "xml"
+  },
+  {
+    "name": "local-xml-get-relay",
+    "external": false,
+    "request": {
+      "method": "GET",
+      "path": "/rest/getLyricsBySongId.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=xml&id=local-song&offset=1&offset=2"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=xml"
+    },
+    "relay": {
+      "method": "GET",
+      "pathAndQuery": "/rest/getLyricsBySongId?u=fixture&p=secret&v=1.16.1&c=fixture&f=xml&id=local-song&offset=1&offset=2",
+      "status": 206,
+      "contentType": "application/xml",
+      "responseBody": "<subsonic-response status=\"ok\" version=\"1.16.1\"><lyricsList /></subsonic-response>"
+    },
+    "format": "xml"
+  },
+  {
+    "name": "local-json-form-post-relay",
+    "external": false,
+    "request": {
+      "method": "POST",
+      "path": "/rest/getLyricsBySongId.view?v=1.16.1&c=fixture&f=json",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&p=secret&id=local-song&offset=1&offset=2"
+    },
+    "verification": {
+      "method": "POST",
+      "pathAndQuery": "/rest/ping.view?v=1.16.1&c=fixture&f=json",
+      "body": "u=fixture&p=secret"
+    },
+    "relay": {
+      "method": "POST",
+      "pathAndQuery": "/rest/getLyricsBySongId?v=1.16.1&c=fixture&f=json",
+      "requestBody": "u=fixture&p=secret&id=local-song&offset=1&offset=2",
+      "status": 202,
+      "contentType": "application/json",
+      "responseBody": "{\"subsonic-response\":{\"status\":\"ok\",\"version\":\"1.16.1\",\"lyricsList\":{}}}"
+    },
+    "format": "json"
+  }
+]

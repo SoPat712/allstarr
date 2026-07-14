@@ -6,8 +6,14 @@ using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Services.Spotify;
+using allstarr.Core.Secrets;
+using allstarr.Core.Storage;
+using allstarr.Core.Configuration;
+using allstarr.Core.Settings;
+using allstarr.Middleware;
 using System.Text.Json;
 using System.Net.Sockets;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
 
@@ -24,7 +30,7 @@ public class ConfigController : ControllerBase
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWTFSettings _squidWtfSettings;
-    private readonly AppleMusicSettings _appleMusicSettings;
+    private readonly AppleDownloadSettings _appleMusicSettings;
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
@@ -42,7 +48,7 @@ public class ConfigController : ControllerBase
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
         IOptions<SquidWTFSettings> squidWtfSettings,
-        IOptions<AppleMusicSettings> appleMusicSettings,
+        IOptions<AppleDownloadSettings> appleMusicSettings,
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
@@ -71,6 +77,20 @@ public class ConfigController : ControllerBase
     public async Task<IActionResult> GetConfig()
     {
         var envVars = await ReadEnvSettingsAsync();
+        IReadOnlyDictionary<string, EffectiveRuntimeSetting> runtimeSettings =
+            new Dictionary<string, EffectiveRuntimeSetting>(StringComparer.OrdinalIgnoreCase);
+        if (GetAdminSession()?.TenantId is { } tenantId &&
+            HttpContext.RequestServices.GetService<IDurableRuntimeSettings>() is { } settings)
+        {
+            runtimeSettings = await settings.GetManyAsync(tenantId, RuntimeSettingCatalog.Definitions.Keys);
+        }
+
+        string RuntimeString(string key, string fallback) =>
+            runtimeSettings.TryGetValue(key, out var setting) ? setting.NormalizedValue : fallback;
+        bool RuntimeBool(string key, bool fallback) =>
+            runtimeSettings.TryGetValue(key, out var setting) && setting.Value is bool value ? value : fallback;
+        int RuntimeInt(string key, int fallback) =>
+            runtimeSettings.TryGetValue(key, out var setting) && setting.Value is int value ? value : fallback;
 
         var backendType = GetEnvString(
             envVars,
@@ -78,9 +98,6 @@ public class ConfigController : ControllerBase
             _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin");
         var useJellyfinSettings = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase);
 
-        var fallbackMusicService = useJellyfinSettings
-            ? _jellyfinSettings.MusicService.ToString()
-            : _subsonicSettings.MusicService.ToString();
         var fallbackExplicitFilter = useJellyfinSettings
             ? _jellyfinSettings.ExplicitFilter.ToString()
             : _subsonicSettings.ExplicitFilter.ToString();
@@ -100,7 +117,7 @@ public class ConfigController : ControllerBase
             ? _jellyfinSettings.DownloadMode.ToString()
             : _subsonicSettings.DownloadMode.ToString();
 
-        var storageModeValue = GetEnvString(envVars, "STORAGE_MODE", fallbackStorageMode);
+        var storageModeValue = RuntimeString("Library:StorageMode", fallbackStorageMode);
         var isCacheStorageMode = storageModeValue.Equals(nameof(StorageMode.Cache), StringComparison.OrdinalIgnoreCase);
 
         var libraryDownloadRoot = GetEnvString(
@@ -140,28 +157,25 @@ public class ConfigController : ControllerBase
         return Ok(new
         {
             backendType,
-            musicService = GetEnvString(envVars, "MUSIC_SERVICE", fallbackMusicService),
-            explicitFilter = GetEnvString(envVars, "EXPLICIT_FILTER", fallbackExplicitFilter),
-            enableExternalPlaylists = GetEnvBool(envVars, "ENABLE_EXTERNAL_PLAYLISTS", fallbackEnableExternalPlaylists),
-            playlistsDirectory = GetEnvString(envVars, "PLAYLISTS_DIRECTORY", fallbackPlaylistsDirectory),
+            explicitFilter = RuntimeString("Library:ExplicitFilter", fallbackExplicitFilter),
+            enableExternalPlaylists = RuntimeBool("Library:EnableExternalPlaylists", fallbackEnableExternalPlaylists),
+            playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),
             redisEnabled = GetEnvBool(envVars, "REDIS_ENABLED", _configuration.GetValue<bool>("Redis:Enabled", false)),
             providers = new
             {
-                metadataOrder = GetEnvString(envVars, "MULTI_PROVIDER_METADATA_ORDER", "spotify,applemusic,deezer,qobuz,squidwtf"),
-                downloadOrder = GetEnvString(envVars, "MULTI_PROVIDER_DOWNLOAD_ORDER", "applemusic,deezer,qobuz,squidwtf"),
-                streamingOrder = GetEnvString(envVars, "MULTI_PROVIDER_STREAMING_ORDER", "applemusic,deezer,qobuz,squidwtf"),
-                playlistOrder = GetEnvString(envVars, "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,applemusic,deezer,qobuz,squidwtf"),
-                lyricsOrder = GetEnvString(envVars, "MULTI_PROVIDER_LYRICS_ORDER", "spotify,lyricsplus,lrclib"),
-                enabledSearch = GetEnvString(envVars, "MULTI_PROVIDER_ENABLED_SEARCH", "spotify,applemusic,deezer,qobuz,squidwtf"),
-                enabledPlaylist = GetEnvString(envVars, "MULTI_PROVIDER_ENABLED_PLAYLIST", "spotify"),
+                metadataOrder = RuntimeString("Providers:MetadataOrder", "deezer,qobuz,squidwtf"),
+                downloadOrder = RuntimeString("Providers:DownloadOrder", "deezer,qobuz"),
+                streamingOrder = RuntimeString("Providers:StreamingOrder", "deezer,qobuz"),
+                playlistOrder = RuntimeString("Providers:PlaylistOrder", "spotify,deezer,qobuz"),
+                lyricsOrder = RuntimeString("Providers:LyricsOrder", "spotify,lyricsplus,lrclib"),
+                enabledSearch = RuntimeString("Providers:EnabledSearch", "deezer,qobuz,squidwtf"),
+                enabledPlaylist = RuntimeString("Providers:EnabledPlaylist", "spotify"),
+                disabledProviders = RuntimeString("Providers:Disabled", string.Empty),
             },
             debug = new
             {
                 logAllRequests = GetEnvBool(envVars, "DEBUG_LOG_ALL_REQUESTS", _configuration.GetValue<bool>("Debug:LogAllRequests", false)),
-                redactSensitiveRequestValues = GetEnvBool(
-                    envVars,
-                    "DEBUG_REDACT_SENSITIVE_REQUEST_VALUES",
-                    _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false))
+                redactSensitiveRequestValues = true
             },
             admin = new
             {
@@ -171,18 +185,18 @@ public class ConfigController : ControllerBase
             },
             spotifyApi = new
             {
-                enabled = GetEnvBool(envVars, "SPOTIFY_API_ENABLED", _spotifyApiSettings.Enabled),
+                enabled = RuntimeBool("SpotifyApi:Enabled", _spotifyApiSettings.Enabled),
                 sessionCookie = AdminHelperService.MaskValue(effectiveSessionCookie, showLast: 8),
                 sessionCookieSetDate = effectiveCookieSetDate ?? string.Empty,
                 usingGlobalFallback = cookieStatus.UsingGlobalFallback,
-                cacheDurationMinutes = GetEnvInt(envVars, "SPOTIFY_API_CACHE_DURATION_MINUTES", _spotifyApiSettings.CacheDurationMinutes),
-                rateLimitDelayMs = _spotifyApiSettings.RateLimitDelayMs,
-                preferIsrcMatching = GetEnvBool(envVars, "SPOTIFY_API_PREFER_ISRC_MATCHING", _spotifyApiSettings.PreferIsrcMatching)
+                cacheDurationMinutes = RuntimeInt("SpotifyApi:CacheDurationMinutes", _spotifyApiSettings.CacheDurationMinutes),
+                rateLimitDelayMs = RuntimeInt("SpotifyApi:RateLimitDelayMs", _spotifyApiSettings.RateLimitDelayMs),
+                preferIsrcMatching = RuntimeBool("SpotifyApi:PreferIsrcMatching", _spotifyApiSettings.PreferIsrcMatching)
             },
             spotifyImport = new
             {
-                enabled = GetEnvBool(envVars, "SPOTIFY_IMPORT_ENABLED", _spotifyImportSettings.Enabled),
-                matchingIntervalHours = GetEnvInt(envVars, "SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS", _spotifyImportSettings.MatchingIntervalHours),
+                enabled = RuntimeBool("SpotifyImport:Enabled", _spotifyImportSettings.Enabled),
+                matchingIntervalHours = RuntimeInt("SpotifyImport:MatchingIntervalHours", _spotifyImportSettings.MatchingIntervalHours),
                 playlists = effectivePlaylists.Select(p => new
                 {
                     name = p.Name,
@@ -208,36 +222,36 @@ public class ConfigController : ControllerBase
                     : Path.Combine(libraryDownloadRoot, "permanent"),
                 keptPath = libraryKeptPath,
                 storageMode = storageModeValue,
-                cacheDurationHours = GetEnvInt(envVars, "CACHE_DURATION_HOURS", fallbackCacheDurationHours),
-                downloadMode = GetEnvString(envVars, "DOWNLOAD_MODE", fallbackDownloadMode)
+                cacheDurationHours = RuntimeInt("Library:CacheDurationHours", fallbackCacheDurationHours),
+                downloadMode = RuntimeString("Library:DownloadMode", fallbackDownloadMode)
             },
             deezer = new
             {
                 arl = AdminHelperService.MaskValue(GetEnvString(envVars, "DEEZER_ARL", _deezerSettings.Arl ?? string.Empty), showLast: 8),
                 arlFallback = AdminHelperService.MaskValue(GetEnvString(envVars, "DEEZER_ARL_FALLBACK", _deezerSettings.ArlFallback ?? string.Empty), showLast: 8),
-                quality = GetEnvString(envVars, "DEEZER_QUALITY", _deezerSettings.Quality ?? "FLAC"),
-                minRequestIntervalMs = GetEnvInt(envVars, "DEEZER_MIN_REQUEST_INTERVAL_MS", _deezerSettings.MinRequestIntervalMs)
+                quality = RuntimeString("Deezer:Quality", _deezerSettings.Quality ?? "FLAC"),
+                minRequestIntervalMs = RuntimeInt("Deezer:MinRequestIntervalMs", _deezerSettings.MinRequestIntervalMs)
             },
             qobuz = new
             {
                 userAuthToken = AdminHelperService.MaskValue(GetEnvString(envVars, "QOBUZ_USER_AUTH_TOKEN", _qobuzSettings.UserAuthToken ?? string.Empty), showLast: 8),
                 userId = GetEnvString(envVars, "QOBUZ_USER_ID", _qobuzSettings.UserId ?? string.Empty),
-                quality = GetEnvString(envVars, "QOBUZ_QUALITY", _qobuzSettings.Quality ?? "FLAC"),
-                minRequestIntervalMs = GetEnvInt(envVars, "QOBUZ_MIN_REQUEST_INTERVAL_MS", _qobuzSettings.MinRequestIntervalMs)
+                quality = RuntimeString("Qobuz:Quality", _qobuzSettings.Quality ?? "FLAC"),
+                minRequestIntervalMs = RuntimeInt("Qobuz:MinRequestIntervalMs", _qobuzSettings.MinRequestIntervalMs)
             },
             squidWtf = new
             {
-                quality = GetEnvString(envVars, "SQUIDWTF_QUALITY", _squidWtfSettings.Quality ?? "LOSSLESS"),
-                minRequestIntervalMs = GetEnvInt(envVars, "SQUIDWTF_MIN_REQUEST_INTERVAL_MS", _squidWtfSettings.MinRequestIntervalMs)
+                quality = RuntimeString("SquidWTF:Quality", _squidWtfSettings.Quality ?? "LOSSLESS"),
+                minRequestIntervalMs = RuntimeInt("SquidWTF:MinRequestIntervalMs", _squidWtfSettings.MinRequestIntervalMs)
             },
-            appleMusic = new
+            appleDownload = new
             {
-                baseUrl = GetEnvString(envVars, "APPLE_MUSIC_AIO_URL", _appleMusicSettings.BaseUrl ?? "http://gamdl-aio:8000"),
-                quality = GetEnvString(envVars, "APPLE_MUSIC_QUALITY", _appleMusicSettings.Quality ?? "alac-16-44")
+                baseUrl = RuntimeString("AppleDownload:BaseUrl", _appleMusicSettings.BaseUrl ?? string.Empty),
+                quality = RuntimeString("AppleDownload:Quality", _appleMusicSettings.Quality ?? "alac-16-44")
             },
             musicBrainz = new
             {
-                enabled = GetEnvBool(envVars, "MUSICBRAINZ_ENABLED", _musicBrainzSettings.Enabled),
+                enabled = RuntimeBool("MusicBrainz:Enabled", _musicBrainzSettings.Enabled),
                 username = GetEnvString(envVars, "MUSICBRAINZ_USERNAME", _musicBrainzSettings.Username ?? string.Empty),
                 password = AdminHelperService.MaskValue(GetEnvString(envVars, "MUSICBRAINZ_PASSWORD", _musicBrainzSettings.Password ?? string.Empty)),
                 baseUrl = _musicBrainzSettings.BaseUrl,
@@ -245,26 +259,46 @@ public class ConfigController : ControllerBase
             },
             cache = new
             {
-                searchResultsMinutes = GetEnvInt(envVars, "CACHE_SEARCH_RESULTS_MINUTES", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
-                playlistImagesHours = GetEnvInt(envVars, "CACHE_PLAYLIST_IMAGES_HOURS", _configuration.GetValue<int>("Cache:PlaylistImagesHours", 168)),
-                spotifyPlaylistItemsHours = GetEnvInt(envVars, "CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS", _configuration.GetValue<int>("Cache:SpotifyPlaylistItemsHours", 168)),
-                spotifyMatchedTracksDays = GetEnvInt(envVars, "CACHE_SPOTIFY_MATCHED_TRACKS_DAYS", _configuration.GetValue<int>("Cache:SpotifyMatchedTracksDays", 30)),
-                lyricsDays = GetEnvInt(envVars, "CACHE_LYRICS_DAYS", _configuration.GetValue<int>("Cache:LyricsDays", 14)),
-                genreDays = GetEnvInt(envVars, "CACHE_GENRE_DAYS", _configuration.GetValue<int>("Cache:GenreDays", 30)),
-                metadataDays = GetEnvInt(envVars, "CACHE_METADATA_DAYS", _configuration.GetValue<int>("Cache:MetadataDays", 7)),
-                odesliLookupDays = GetEnvInt(envVars, "CACHE_ODESLI_LOOKUP_DAYS", _configuration.GetValue<int>("Cache:OdesliLookupDays", 60)),
-                proxyImagesDays = GetEnvInt(envVars, "CACHE_PROXY_IMAGES_DAYS", _configuration.GetValue<int>("Cache:ProxyImagesDays", 14)),
-                transcodeCacheMinutes = GetEnvInt(envVars, "CACHE_TRANSCODE_MINUTES", _configuration.GetValue<int>("Cache:TranscodeCacheMinutes", 60))
+                searchResultsMinutes = RuntimeInt("Cache:SearchResultsMinutes", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
+                playlistImagesHours = RuntimeInt("Cache:PlaylistImagesHours", _configuration.GetValue<int>("Cache:PlaylistImagesHours", 168)),
+                spotifyPlaylistItemsHours = RuntimeInt("Cache:SpotifyPlaylistItemsHours", _configuration.GetValue<int>("Cache:SpotifyPlaylistItemsHours", 168)),
+                spotifyMatchedTracksDays = RuntimeInt("Cache:SpotifyMatchedTracksDays", _configuration.GetValue<int>("Cache:SpotifyMatchedTracksDays", 30)),
+                lyricsDays = RuntimeInt("Cache:LyricsDays", _configuration.GetValue<int>("Cache:LyricsDays", 14)),
+                genreDays = RuntimeInt("Cache:GenreDays", _configuration.GetValue<int>("Cache:GenreDays", 30)),
+                metadataDays = RuntimeInt("Cache:MetadataDays", _configuration.GetValue<int>("Cache:MetadataDays", 7)),
+                odesliLookupDays = RuntimeInt("Cache:OdesliLookupDays", _configuration.GetValue<int>("Cache:OdesliLookupDays", 60)),
+                proxyImagesDays = RuntimeInt("Cache:ProxyImagesDays", _configuration.GetValue<int>("Cache:ProxyImagesDays", 14)),
+                transcodeCacheMinutes = RuntimeInt("Cache:TranscodeCacheMinutes", _configuration.GetValue<int>("Cache:TranscodeCacheMinutes", 60))
             },
             extensions = new
             {
                 repositories = GetEnvString(
                     envVars,
                     "EXTENSION_REPOSITORIES",
-                    _configuration.GetValue<string>("EXTENSION_REPOSITORIES") ??
-                    "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json")
+                    _configuration.GetValue<string>("EXTENSION_REPOSITORIES") ?? string.Empty)
             },
-            scrobbling = await GetScrobblingSettingsFromEnvAsync()
+            scrobbling = new
+            {
+                enabled = RuntimeBool("Scrobbling:Enabled", _scrobblingSettings.Enabled),
+                localTracksEnabled = RuntimeBool("Scrobbling:LocalTracksEnabled", _scrobblingSettings.LocalTracksEnabled),
+                syntheticLocalPlayedSignalEnabled = RuntimeBool(
+                    "Scrobbling:SyntheticLocalPlayedSignalEnabled",
+                    _scrobblingSettings.SyntheticLocalPlayedSignalEnabled),
+                lastFm = new
+                {
+                    enabled = RuntimeBool("Scrobbling:LastFm:Enabled", _scrobblingSettings.LastFm.Enabled),
+                    apiKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
+                    sharedSecret = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
+                    sessionKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
+                    username = _scrobblingSettings.LastFm.Username ?? "(not set)",
+                    password = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
+                },
+                listenBrainz = new
+                {
+                    enabled = RuntimeBool("Scrobbling:ListenBrainz:Enabled", _scrobblingSettings.ListenBrainz.Enabled),
+                    userToken = AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
+                }
+            }
         });
     }
 
@@ -359,127 +393,7 @@ public class ConfigController : ControllerBase
         return int.TryParse(rawValue, out var parsed) ? parsed : fallback;
     }
 
-    /// <summary>
-    /// Read scrobbling settings directly from .env file for real-time updates
-    /// </summary>
-    private async Task<object> GetScrobblingSettingsFromEnvAsync()
-    {
-        try
-        {
-            var envPath = _helperService.GetEnvFilePath();
-            if (!System.IO.File.Exists(envPath))
-            {
-                // Fallback to IOptions if .env doesn't exist
-                return new
-                {
-                    enabled = _scrobblingSettings.Enabled,
-                    localTracksEnabled = _scrobblingSettings.LocalTracksEnabled,
-                    syntheticLocalPlayedSignalEnabled = _scrobblingSettings.SyntheticLocalPlayedSignalEnabled,
-                    lastFm = new
-                    {
-                        enabled = _scrobblingSettings.LastFm.Enabled,
-                        apiKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
-                        sharedSecret = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
-                        sessionKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
-                        username = _scrobblingSettings.LastFm.Username ?? "(not set)",
-                        password = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
-                    },
-                    listenBrainz = new
-                    {
-                        enabled = _scrobblingSettings.ListenBrainz.Enabled,
-                        userToken = AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
-                    }
-                };
-            }
-
-            var lines = await System.IO.File.ReadAllLinesAsync(envPath);
-            var envVars = new Dictionary<string, string>();
-
-            foreach (var line in lines)
-            {
-                if (AdminHelperService.ShouldSkipEnvLine(line))
-                    continue;
-
-                var (key, value) = AdminHelperService.ParseEnvLine(line);
-                if (!string.IsNullOrEmpty(key))
-                {
-                    envVars[key] = value;
-                }
-            }
-
-            return new
-            {
-                enabled = envVars.TryGetValue("SCROBBLING_ENABLED", out var scrobblingEnabled)
-                    ? scrobblingEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    : _scrobblingSettings.Enabled,
-                localTracksEnabled = envVars.TryGetValue("SCROBBLING_LOCAL_TRACKS_ENABLED", out var localTracksEnabled)
-                    ? localTracksEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    : _scrobblingSettings.LocalTracksEnabled,
-                syntheticLocalPlayedSignalEnabled = envVars.TryGetValue("SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED", out var syntheticPlayedSignalEnabled)
-                    ? syntheticPlayedSignalEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
-                    : _scrobblingSettings.SyntheticLocalPlayedSignalEnabled,
-                lastFm = new
-                {
-                    enabled = envVars.TryGetValue("SCROBBLING_LASTFM_ENABLED", out var lastFmEnabled)
-                        ? lastFmEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
-                        : _scrobblingSettings.LastFm.Enabled,
-                    apiKey = envVars.TryGetValue("SCROBBLING_LASTFM_API_KEY", out var apiKey)
-                        ? AdminHelperService.MaskValue(apiKey, showLast: 8)
-                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
-                    sharedSecret = envVars.TryGetValue("SCROBBLING_LASTFM_SHARED_SECRET", out var sharedSecret)
-                        ? AdminHelperService.MaskValue(sharedSecret, showLast: 8)
-                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
-                    sessionKey = envVars.TryGetValue("SCROBBLING_LASTFM_SESSION_KEY", out var sessionKey)
-                        ? AdminHelperService.MaskValue(sessionKey, showLast: 8)
-                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
-                    username = envVars.TryGetValue("SCROBBLING_LASTFM_USERNAME", out var username)
-                        ? (string.IsNullOrEmpty(username) ? "(not set)" : username)
-                        : (_scrobblingSettings.LastFm.Username ?? "(not set)"),
-                    password = envVars.TryGetValue("SCROBBLING_LASTFM_PASSWORD", out var password)
-                        ? AdminHelperService.MaskValue(password, showLast: 0)
-                        : AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
-                },
-                listenBrainz = new
-                {
-                    enabled = envVars.TryGetValue("SCROBBLING_LISTENBRAINZ_ENABLED", out var lbEnabled)
-                        ? lbEnabled.Equals("true", StringComparison.OrdinalIgnoreCase)
-                        : _scrobblingSettings.ListenBrainz.Enabled,
-                    userToken = envVars.TryGetValue("SCROBBLING_LISTENBRAINZ_USER_TOKEN", out var userToken)
-                        ? AdminHelperService.MaskValue(userToken, showLast: 8)
-                        : AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
-                }
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to read scrobbling settings from .env, falling back to IOptions");
-            // Fallback to IOptions
-            return new
-            {
-                enabled = _scrobblingSettings.Enabled,
-                localTracksEnabled = _scrobblingSettings.LocalTracksEnabled,
-                syntheticLocalPlayedSignalEnabled = _scrobblingSettings.SyntheticLocalPlayedSignalEnabled,
-                lastFm = new
-                {
-                    enabled = _scrobblingSettings.LastFm.Enabled,
-                    apiKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.ApiKey, showLast: 8),
-                    sharedSecret = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SharedSecret, showLast: 8),
-                    sessionKey = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.SessionKey, showLast: 8),
-                    username = _scrobblingSettings.LastFm.Username ?? "(not set)",
-                    password = AdminHelperService.MaskValue(_scrobblingSettings.LastFm.Password, showLast: 0)
-                },
-                listenBrainz = new
-                {
-                    enabled = _scrobblingSettings.ListenBrainz.Enabled,
-                    userToken = AdminHelperService.MaskValue(_scrobblingSettings.ListenBrainz.UserToken, showLast: 8)
-                }
-            };
-        }
-    }
-
-    /// <summary>
-    /// Update configuration by modifying .env file
-    /// </summary>
+    /// <summary>Update allowlisted tenant runtime settings in durable storage.</summary>
     [HttpPost("config")]
     public async Task<IActionResult> UpdateConfig([FromBody] ConfigUpdateRequest request)
     {
@@ -498,135 +412,70 @@ public class ConfigController : ControllerBase
 
         try
         {
-            // Check if .env file exists
-            if (!System.IO.File.Exists(_helperService.GetEnvFilePath()))
+            var session = GetAdminSession();
+            if (session?.TenantId is not { } tenantId)
             {
-                _logger.LogWarning(".env file not found at {Path}, creating new file", _helperService.GetEnvFilePath());
+                return Conflict(new
+                {
+                    error = "The administrator session is not linked to an Allstarr tenant.",
+                    code = "tenant_required"
+                });
             }
 
-            var envFilePath = _helperService.GetEnvFilePath();
-            var envLines = new List<string>();
-
-            if (System.IO.File.Exists(envFilePath))
+            var normalized = new List<(string LegacyKey, string DurableKey, string Value)>();
+            foreach (var (key, value) in request.Updates)
             {
-                envLines = (await System.IO.File.ReadAllLinesAsync(envFilePath)).ToList();
-            }
-            else
-            {
-                // Fallback to reading .env.example if .env doesn't exist to preserve structure
-                var examplePath = Path.Combine(Directory.GetCurrentDirectory(), ".env.example");
-                if (!System.IO.File.Exists(examplePath))
+                if (!LegacyEnvParser.TryGetDurableAlias(key, out var durableKey))
                 {
-                    examplePath = Path.Combine(Directory.GetParent(Directory.GetCurrentDirectory())?.FullName ?? "", ".env.example");
-                }
-                
-                if (System.IO.File.Exists(examplePath))
-                {
-                    _logger.LogInformation("Creating new .env from .env.example to preserve formatting");
-                    envLines = (await System.IO.File.ReadAllLinesAsync(examplePath)).ToList();
-                }
-            }
-
-            // Apply updates with validation
-            var appliedUpdates = new List<string>();
-            var updatesToProcess = new Dictionary<string, string>(request.Updates);
-
-            // Auto-set cookie date when Spotify session cookie is updated
-            if (updatesToProcess.TryGetValue("SPOTIFY_API_SESSION_COOKIE", out var cookieVal) && !string.IsNullOrEmpty(cookieVal))
-            {
-                updatesToProcess["SPOTIFY_API_SESSION_COOKIE_SET_DATE"] = DateTime.UtcNow.ToString("o");
-                _logger.LogInformation("Auto-setting SPOTIFY_API_SESSION_COOKIE_SET_DATE");
-            }
-
-            foreach (var (key, value) in updatesToProcess)
-            {
-                if (!AdminHelperService.IsValidEnvKey(key))
-                {
-                    _logger.LogWarning("Invalid env key rejected: {Key}", key);
-                    return BadRequest(new { error = $"Invalid environment variable key: {key}" });
-                }
-
-                appliedUpdates.Add(key);
-                
-                var maskedValue = key.Contains("COOKIE") || key.Contains("TOKEN") || key.Contains("KEY") || key.Contains("ARL") || key.Contains("PASSWORD")
-                    ? "***" + (value.Length > 8 ? value[^8..] : "")
-                    : value;
-                _logger.LogInformation("  Setting {Key} = {Value}", key, maskedValue);
-
-                var keyPrefix = $"{key}=";
-                var found = false;
-
-                // 1. Look for active exact key
-                for (int i = 0; i < envLines.Count; i++)
-                {
-                    var trimmedLine = envLines[i].TrimStart();
-                    if (trimmedLine.StartsWith(keyPrefix, StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(new
                     {
-                        envLines[i] = $"{key}={value}";
-                        found = true;
-                        break;
-                    }
+                        error = $"{key} is deployment-owned, secret, deprecated, or unsupported and cannot be changed through runtime settings.",
+                        code = "deployment_setting_read_only",
+                        key,
+                        message = "Change bootstrap values in the deployment configuration. Manage provider credentials through provider accounts."
+                    });
                 }
 
-                // 2. Look for commented out key
-                if (!found)
-                {
-                    var commentedPrefix1 = $"# {key}=";
-                    var commentedPrefix2 = $"#{key}=";
-                    
-                    for (int i = 0; i < envLines.Count; i++)
-                    {
-                        var trimmedLine = envLines[i].TrimStart();
-                        if (trimmedLine.StartsWith(commentedPrefix1, StringComparison.OrdinalIgnoreCase) || 
-                            trimmedLine.StartsWith(commentedPrefix2, StringComparison.OrdinalIgnoreCase))
-                        {
-                            envLines[i] = $"{key}={value}";
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-
-                // 3. Append to end of file if entirely missing
-                if (!found)
-                {
-                    if (envLines.Count > 0 && !string.IsNullOrWhiteSpace(envLines.Last()))
-                    {
-                        envLines.Add("");
-                    }
-                    envLines.Add($"{key}={value}");
-                }
+                normalized.Add((key, durableKey, value));
             }
 
-            await System.IO.File.WriteAllLinesAsync(envFilePath, envLines);
-
-            _logger.LogDebug("Config file updated successfully at {Path}", _helperService.GetEnvFilePath());
-
-            // Invalidate playlist summary cache if playlists were updated
-            if (appliedUpdates.Contains("SPOTIFY_IMPORT_PLAYLISTS"))
+            var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+            var current = await settings.GetManyAsync(tenantId, normalized.Select(item => item.DurableKey));
+            var writes = normalized.Select(item =>
             {
-                _helperService.InvalidatePlaylistSummaryCache();
-            }
+                var existing = current[item.DurableKey];
+                return new RuntimeSettingWrite(
+                    item.DurableKey,
+                    item.Value,
+                    existing.Origin == RuntimeSettingOrigin.Durable ? existing.Revision : null);
+            }).ToArray();
+            var result = await settings.ApplyBatchAsync(
+                tenantId,
+                writes,
+                "admin-ui",
+                session.AllstarrUserId,
+                HttpContext.RequestAborted);
 
             return Ok(new
             {
-                message = "Configuration updated. Restart Allstarr to apply changes.",
-                updatedKeys = appliedUpdates,
-                requiresRestart = true,
-                envFilePath = _helperService.GetEnvFilePath()
+                message = "Runtime configuration updated.",
+                updatedKeys = normalized.Select(item => item.LegacyKey).ToArray(),
+                requiresRestart = false,
+                changeVersion = result.ChangeVersion,
+                settings = result.Settings.Select(item => new { item.Key, item.Revision, item.UpdatedAt })
             });
         }
-        catch (UnauthorizedAccessException ex)
+        catch (RuntimeSettingConflictException ex)
         {
-            _logger.LogError(ex, "Permission denied writing to .env file at {Path}", _helperService.GetEnvFilePath());
-            return StatusCode(500, new {
-                error = "Permission denied",
-                message = "Cannot write to .env file. Check file permissions and volume mount."
-            });
+            return Conflict(new { error = ex.Message, code = "setting_conflict" });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "invalid_setting" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update configuration at {Path}", _helperService.GetEnvFilePath());
+            _logger.LogError(ex, "Failed to update durable runtime configuration");
             return StatusCode(500, new {
                 error = "Failed to update configuration"
             });
@@ -882,52 +731,145 @@ public class ConfigController : ControllerBase
             return adminCheck;
         }
 
-        if (file == null || file.Length == 0)
+        await Task.CompletedTask;
+        return StatusCode(StatusCodes.Status410Gone, new
         {
-            return BadRequest(new { error = "No file provided" });
+            error = "The wholesale .env import endpoint has been retired.",
+            message = "Use /api/admin/config/migration/preview and explicitly confirm /api/admin/config/migration/apply."
+        });
+    }
+
+    [HttpGet("config/migration/status")]
+    public async Task<IActionResult> GetEnvMigrationStatus(CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("env migration status");
+        if (adminCheck != null)
+        {
+            return adminCheck;
         }
 
-        if (!file.FileName.EndsWith(".env"))
+        var session = GetAdminSession();
+        var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
+        return Ok(await service.GetStatusAsync(session?.TenantId, cancellationToken));
+    }
+
+    [HttpPost("config/migration/preview")]
+    [RequestSizeLimit(LegacyEnvParser.MaxBytes * 2L)]
+    public async Task<IActionResult> PreviewEnvMigration(
+        [FromForm] IFormFile? file,
+        CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("env migration preview");
+        if (adminCheck != null)
         {
-            return BadRequest(new { error = "File must be a .env file" });
+            return adminCheck;
+        }
+
+        if (file == null || file.Length is <= 0 or > LegacyEnvParser.MaxBytes)
+        {
+            return BadRequest(new { error = $"Choose a .env file between 1 and {LegacyEnvParser.MaxBytes} bytes." });
+        }
+
+        var sourceName = Path.GetFileName(file.FileName);
+        if (sourceName.Length is 0 or > 255 ||
+            !sourceName.EndsWith(".env", StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { error = "Choose a file with a bounded .env filename." });
         }
 
         try
         {
-            // Read uploaded file
-            using var reader = new StreamReader(file.OpenReadStream());
-            var content = await reader.ReadToEndAsync();
-
-            // Validate it's a valid .env file (basic check)
-            if (string.IsNullOrWhiteSpace(content))
+            await using var source = file.OpenReadStream();
+            using var buffer = new MemoryStream((int)file.Length);
+            await source.CopyToAsync(buffer, cancellationToken);
+            var bytes = buffer.ToArray();
+            try
             {
-                return BadRequest(new { error = ".env file is empty" });
+                var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
+                return Ok(await service.PreviewAsync(
+                    bytes,
+                    CreateMigrationActor(),
+                    cancellationToken));
             }
-
-            // Backup existing .env
-            if (System.IO.File.Exists(_helperService.GetEnvFilePath()))
+            finally
             {
-                var backupPath = $"{_helperService.GetEnvFilePath()}.backup.{DateTime.UtcNow:yyyyMMddHHmmss}";
-                System.IO.File.Copy(_helperService.GetEnvFilePath(), backupPath, true);
-                _logger.LogDebug("Backed up existing .env to {BackupPath}", backupPath);
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
             }
-
-            // Write new .env file
-            await System.IO.File.WriteAllTextAsync(_helperService.GetEnvFilePath(), content);
-
-            _logger.LogInformation(".env file imported successfully");
-
-            return Ok(new
-            {
-                success = true,
-                message = ".env file imported successfully. Restart Allstarr for changes to take effect."
-            });
         }
-        catch (Exception ex)
+        catch (LegacyEnvParseException ex)
         {
-            _logger.LogError(ex, "Failed to import .env file");
-            return StatusCode(500, new { error = "Failed to import .env file" });
+            return BadRequest(new { error = ex.Message, code = "invalid_env" });
         }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "invalid_setting" });
+        }
+    }
+
+    [HttpPost("config/migration/apply")]
+    public async Task<IActionResult> ApplyEnvMigration(
+        [FromBody] ApplyLegacyEnvMigrationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("env migration apply");
+        if (adminCheck != null)
+        {
+            return adminCheck;
+        }
+
+        try
+        {
+            var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
+            return Ok(await service.ApplyAsync(
+                request.PreviewToken ?? string.Empty,
+                request.Revision ?? string.Empty,
+                request.Confirmed,
+                CreateMigrationActor(),
+                cancellationToken));
+        }
+        catch (LegacyEnvMigrationException ex) when (ex.Code == "preview_owner_mismatch")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message, code = ex.Code });
+        }
+        catch (LegacyEnvMigrationException ex) when (ex.Code is "revision_mismatch" or "state_changed" or
+                                                      "provider_account_conflict")
+        {
+            return Conflict(new { error = ex.Message, code = ex.Code });
+        }
+        catch (LegacyEnvMigrationException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = ex.Code });
+        }
+        catch (RuntimeSettingConflictException ex)
+        {
+            return Conflict(new { error = ex.Message, code = "setting_conflict" });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "invalid_setting" });
+        }
+    }
+
+    private AdminAuthSession? GetAdminSession() =>
+        HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value)
+            ? value as AdminAuthSession
+            : null;
+
+    private LegacyEnvMigrationActor CreateMigrationActor()
+    {
+        var session = GetAdminSession() ?? throw new LegacyEnvMigrationException(
+            "admin_session_required",
+            "An administrator session is required.");
+        var correlationId = HttpContext.Items[CorrelationMiddleware.HttpContextItemKey]?.ToString()
+                            ?? HttpContext.TraceIdentifier;
+        return new(session.SessionId, session.TenantId, session.AllstarrUserId, correlationId);
+    }
+
+    public sealed class ApplyLegacyEnvMigrationRequest
+    {
+        public string? PreviewToken { get; set; }
+        public string? Revision { get; set; }
+        public bool Confirmed { get; set; }
     }
 
     private string? GetAuthenticatedUserId()
@@ -975,7 +917,7 @@ public class ConfigController : ControllerBase
     }
 
     [HttpGet("providers/status")]
-    public IActionResult GetProvidersStatus()
+    public async Task<IActionResult> GetProvidersStatus(CancellationToken cancellationToken = default)
     {
         var adminCheck = RequireAdministratorForSensitiveOperation("get providers status");
         if (adminCheck != null)
@@ -984,25 +926,71 @@ public class ConfigController : ControllerBase
         }
 
         var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
-        var statusCache = statusManager.GetStatusCache();
-        
-        var allProviders = new[] { "spotify", "applemusic", "deezer", "qobuz", "squidwtf" };
-        var results = allProviders.Select(p => {
-            var healthy = statusManager.IsProviderHealthy(p);
-            statusCache = statusManager.GetStatusCache(); 
-            var testedAt = statusCache.TryGetValue(p, out var info) ? info.TestedAt.ToString("o") : DateTime.UtcNow.ToString("o");
-            return new {
-                name = p,
-                healthy = healthy,
-                testedAt = testedAt
-            };
-        }).ToList();
+        var contextFactory = HttpContext.RequestServices
+            .GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var accounts = await context.ProviderAccounts.AsNoTracking()
+            .OrderBy(item => item.ProviderId)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+
+        var results = new List<object>();
+        foreach (var account in accounts)
+        {
+            IReadOnlyDictionary<string, string> accountSecrets =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+            if (account.Enabled && account.SecretReferenceId.HasValue)
+            {
+                try
+                {
+                    accountSecrets = await ReadProviderAccountSecretsAsync(account, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        "Managed provider account status configuration could not be opened ({ExceptionType})",
+                        ex.GetType().Name);
+                }
+            }
+
+            foreach (var status in statusManager.GetAllManagedStatuses(
+                         account.ProviderId,
+                         account.Id,
+                         accountSecrets))
+            {
+                results.Add(new
+                {
+                    provider = status.Provider,
+                    providerAccountId = account.Id,
+                    providerAccountName = account.DisplayName,
+                    capability = status.Capability,
+                    accountScope = account.Scope.ToString().ToLowerInvariant(),
+                    supported = status.IsSupported,
+                    enabled = account.Enabled && status.IsEnabled,
+                    configuration = status.Configuration switch
+                    {
+                        ProviderConfigurationState.NotRequired => "not_required",
+                        ProviderConfigurationState.Configured => "configured",
+                        _ => "needs_configuration"
+                    },
+                    health = status.Health.ToString().ToLowerInvariant(),
+                    ready = account.Enabled && status.IsReady,
+                    canAttempt = account.Enabled && status.CanAttempt,
+                    testedAt = status.TestedAt,
+                    reasonCode = account.Enabled ? status.ReasonCode : "account_disabled"
+                });
+            }
+        }
 
         return Ok(results);
     }
 
     [HttpPost("providers/test/{provider}")]
-    public async Task<IActionResult> TestProvider(string provider)
+    [HttpPost("providers/test/{provider}/{capability}")]
+    public async Task<IActionResult> TestProvider(
+        string provider,
+        string? capability = null,
+        [FromQuery] Guid? accountId = null)
     {
         var adminCheck = RequireAdministratorForSensitiveOperation("test provider connection");
         if (adminCheck != null)
@@ -1010,9 +998,143 @@ public class ConfigController : ControllerBase
             return adminCheck;
         }
 
+        if (!accountId.HasValue || accountId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                error = "Select a managed provider account before testing a capability"
+            });
+        }
+
+        var normalizedProvider = provider.Trim().ToLowerInvariant();
+        var contextFactory = HttpContext.RequestServices
+            .GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var context = await contextFactory.CreateDbContextAsync(HttpContext.RequestAborted);
+        var account = await context.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == accountId.Value,
+            HttpContext.RequestAborted);
+        if (account == null ||
+            !account.ProviderId.Equals(normalizedProvider, StringComparison.OrdinalIgnoreCase))
+        {
+            return NotFound(new { success = false, error = "Managed provider account not found" });
+        }
+
+        if (!account.Enabled)
+        {
+            return Conflict(new { success = false, error = "Managed provider account is disabled" });
+        }
+
+        IReadOnlyDictionary<string, string> accountSecrets;
+        try
+        {
+            accountSecrets = await ReadProviderAccountSecretsAsync(account, HttpContext.RequestAborted);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                "Managed provider account probe configuration could not be opened ({ExceptionType})",
+                ex.GetType().Name);
+            return BadRequest(new
+            {
+                success = false,
+                error = "The managed provider account credential is missing or invalid"
+            });
+        }
+
         var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
-        var healthy = await statusManager.TestProviderConnectionAsync(provider, HttpContext.RequestAborted);
-        return Ok(new { success = true, provider = provider, healthy = healthy });
+        if (string.IsNullOrWhiteSpace(capability))
+        {
+            var healthy = await statusManager.TestManagedProviderConnectionAsync(
+                normalizedProvider,
+                account.Id,
+                accountSecrets,
+                HttpContext.RequestAborted);
+            return Ok(new
+            {
+                success = true,
+                provider = normalizedProvider,
+                providerAccountId = account.Id,
+                healthy
+            });
+        }
+
+        var current = statusManager.GetManagedStatus(
+            normalizedProvider,
+            capability,
+            account.Id,
+            accountSecrets);
+        if (!current.IsSupported)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                provider = normalizedProvider,
+                capability,
+                error = "Unsupported provider capability"
+            });
+        }
+
+        var tested = await statusManager.TestManagedProviderCapabilityAsync(
+            normalizedProvider,
+            capability,
+            account.Id,
+            accountSecrets,
+            HttpContext.RequestAborted);
+        return Ok(new
+        {
+            success = tested.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
+            provider = tested.Provider,
+            providerAccountId = account.Id,
+            capability = tested.Capability,
+            health = tested.Health.ToString().ToLowerInvariant(),
+            testedAt = tested.TestedAt,
+            reasonCode = tested.ReasonCode
+        });
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> ReadProviderAccountSecretsAsync(
+        ProviderAccountRecord account,
+        CancellationToken cancellationToken)
+    {
+        if (!account.SecretReferenceId.HasValue)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        var secretStore = HttpContext.RequestServices.GetRequiredService<EncryptedSecretStore>();
+        using var lease = await secretStore.OpenAsync(
+            account.SecretReferenceId.Value,
+            new SecretAccessContext(
+                account.TenantId,
+                AllowGlobal: account.TenantId == null),
+            cancellationToken);
+        using var document = JsonDocument.Parse(lease.Value);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Provider account credentials must be a JSON object.");
+        }
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            var normalizedName = new string(property.Name
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+            var value = property.Value.ValueKind switch
+            {
+                JsonValueKind.String => property.Value.GetString(),
+                JsonValueKind.Number => property.Value.GetRawText(),
+                _ => null
+            };
+            if (!string.IsNullOrWhiteSpace(normalizedName) && !string.IsNullOrWhiteSpace(value))
+            {
+                values[normalizedName] = value;
+            }
+        }
+
+        return values;
     }
 
     /// <summary>

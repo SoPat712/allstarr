@@ -1,184 +1,98 @@
 # Architecture
 
-This document describes the technical architecture of Allstarr.
+Allstarr is an ASP.NET Core control plane and protocol gateway. It sits between a music client and one configured backend, then routes optional work through provider capabilities without taking ownership away from the backend or hiding media inside a database.
 
-## System Architecture
-
-```
-                                                    ┌─────────────────┐
-                                               ┌───▶│    Jellyfin     │
-┌─────────────────┐     ┌──────────────────┐   │    │    Server       │
-│  Music Client   │────▶│     Allstarr     │───┤    └─────────────────┘
-│  (Aonsoku,      │◀────│   (Proxy)        │◀──┤
-│   Finamp, etc.) │     │                  │   │    ┌─────────────────┐
-└─────────────────┘     └────────┬─────────┘   └───▶│   Navidrome     │
-                                 │                  │   (Subsonic)    │
-                                 ▼                  └─────────────────┘
-                        ┌─────────────────┐
-                        │ Music Providers │
-                        │  - SquidWTF     │
-                        │  - Deezer       │
-                        │  - Qobuz        │
-                        └─────────────────┘
+```text
+Jellyfin or Subsonic client
+           |
+           v
+  selected proxy surface (5274)      admin UI/API (5275)
+           |                                  |
+           +------------ Allstarr core -------+
+                    /        |        \
+             providers    durable jobs   matching/policy
+                  |            |              |
+          external services  Postgres      managed roots
+                  |            |              |
+                  +------ Valkey cache     audio files
+           |
+           v
+ Jellyfin or Subsonic-compatible backend (for example Navidrome)
 ```
 
-The proxy intercepts requests from your music client and:
-1. Forwards library requests to your configured backend (Jellyfin or Subsonic)
-2. Merges results with content from your music provider
-3. Downloads and caches external tracks on-demand
-4. Serves audio streams transparently
+## Boundaries That Matter
 
-**Note**: Only the controller matching your configured `BACKEND_TYPE` is registered at runtime, preventing route conflicts and ensuring clean API separation.
+Only one proxy protocol is active in a deployment. `BACKEND_TYPE=Jellyfin` exposes Jellyfin-compatible routes. `BACKEND_TYPE=Subsonic` exposes Subsonic/OpenSubsonic routes and relays to a compatible backend such as Navidrome. Both controllers have catch-all routes, so registering both is not supported.
 
-## API Endpoints
+The backend remains authoritative for its library and client authentication. Verified backend principals can be linked to stable Allstarr users. A user ID copied from a path, query string, or payload is never enough to authorize a provider account or user-owned side effect.
 
-### Jellyfin Backend (Primary Focus)
+The core owns capability routing, policy, durable state, matching, and workflows. Protocol adapters own client-visible response shapes. Providers own their own external HTTP details. This keeps Jellyfin quirks out of provider code and provider credentials out of protocol payloads.
 
-The proxy provides comprehensive Jellyfin API support with streaming provider integration:
+## Storage Model
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /Items` | Search and browse library items (local + streaming providers) |
-| `GET /Artists` | Browse artists with merged results from local + streaming |
-| `GET /Artists/AlbumArtists` | Album artists with streaming provider results |
-| `GET /Users/{userId}/Items` | User library items with external content |
-| `GET /Audio/{id}/stream` | Stream audio, downloading from provider on-demand |
-| `GET /Audio/{id}/Lyrics` | Lyrics from Jellyfin, Spotify, or LRCLib |
-| `GET /Items/{id}/Images/{type}` | Proxy cover art for external content |
-| `GET /Playlists/{id}/Items` | Playlist items (Spotify Import integration) |
-| `POST /UserFavoriteItems/{id}` | Favorite items; copies external tracks to kept folder |
-| `DELETE /UserFavoriteItems/{id}` | Unfavorite items |
-| `POST /Sessions/Playing` | Playback reporting for external tracks |
-| `POST /Sessions/Playing/Progress` | Playback progress tracking |
-| `POST /Sessions/Playing/Stopped` | Playback stopped reporting |
-| `WebSocket /socket` | Real-time session management and remote control |
+Postgres stores control-plane state only. This includes identities, provider accounts, encrypted secret versions, jobs and attempts, outbox events, provider health, canonical recordings, provider identities, playlist links, favorite workflows, generated sets, playback checkpoints, and audits.
 
-**Admin API (Port 5275):**
+It does not store song bytes or media blobs. Downloaded, cached, kept, and placed tracks remain filesystem files under configured, operator-accessible roots. Database rows may point to those files and record checksums and ownership.
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/admin/health` | Health check endpoint |
-| `GET /api/admin/config` | Get current configuration |
-| `POST /api/admin/config` | Update configuration |
-| `POST /api/admin/cache/clear` | Clear cache |
-| `GET /api/admin/status` | Get system status |
-| `GET /api/admin/memory-stats` | Get memory usage statistics |
-| `POST /api/admin/force-gc` | Force garbage collection |
-| `GET /api/admin/sessions` | Get active sessions |
-| `GET /api/admin/debug/endpoint-usage` | Get endpoint usage statistics |
-| `DELETE /api/admin/debug/endpoint-usage` | Clear endpoint usage log |
-| `GET /api/admin/squidwtf-base-url` | Get SquidWTF base URL |
-| `GET /api/admin/playlists` | List all playlists with status |
-| `GET /api/admin/playlists/{name}/tracks` | Get tracks for playlist |
-| `POST /api/admin/playlists/refresh` | Refresh all playlists |
-| `POST /api/admin/playlists/{name}/match` | Match tracks for playlist |
-| `POST /api/admin/playlists/{name}/clear-cache` | Clear playlist cache |
-| `POST /api/admin/playlists/match-all` | Match all playlists |
-| `POST /api/admin/playlists` | Add new playlist |
-| `DELETE /api/admin/playlists/{name}` | Remove playlist |
-| `POST /api/admin/playlists/{name}/map` | Save manual track mapping |
-| `GET /api/admin/jellyfin/search` | Search Jellyfin library |
-| `GET /api/admin/jellyfin/track/{id}` | Get Jellyfin track details |
-| `GET /api/admin/jellyfin/users` | List Jellyfin users |
-| `GET /api/admin/jellyfin/libraries` | List Jellyfin libraries |
-| `GET /api/admin/jellyfin/playlists` | List Jellyfin playlists |
-| `POST /api/admin/jellyfin/playlists/{id}/link` | Link Jellyfin playlist to Spotify |
-| `DELETE /api/admin/jellyfin/playlists/{name}/unlink` | Unlink playlist |
-| `PUT /api/admin/playlists/{name}/schedule` | Update playlist sync schedule |
-| `GET /api/admin/spotify/user-playlists` | Get Spotify user playlists |
-| `GET /api/admin/spotify/sync` | Trigger Spotify sync |
-| `GET /api/admin/spotify/match` | Trigger Spotify track matching |
-| `POST /api/admin/spotify/clear-cache` | Clear Spotify cache |
-| `GET /api/admin/spotify/mappings` | Get Spotify track mappings (paginated) |
-| `GET /api/admin/spotify/mappings/{spotifyId}` | Get specific Spotify mapping |
-| `POST /api/admin/spotify/mappings` | Save Spotify track mapping |
-| `DELETE /api/admin/spotify/mappings/{spotifyId}` | Delete Spotify mapping |
-| `GET /api/admin/spotify/mappings/stats` | Get Spotify mapping statistics |
-| `GET /api/admin/downloads` | List kept downloads |
-| `DELETE /api/admin/downloads` | Delete kept file |
-| `GET /api/admin/downloads/file` | Download specific file |
-| `GET /api/admin/downloads/all` | Download all files as zip |
-| `GET /api/admin/scrobbling/status` | Get scrobbling status |
-| `POST /api/admin/scrobbling/lastfm/authenticate` | Authenticate Last.fm |
-| `GET /api/admin/scrobbling/lastfm/auth-url` | Get Last.fm auth URL |
-| `POST /api/admin/scrobbling/lastfm/get-session` | Get Last.fm session key |
-| `POST /api/admin/scrobbling/lastfm/test` | Test Last.fm connection |
-| `POST /api/admin/scrobbling/lastfm/debug-auth` | Debug Last.fm auth |
-| `POST /api/admin/scrobbling/listenbrainz/validate` | Validate ListenBrainz token |
-| `POST /api/admin/scrobbling/listenbrainz/test` | Test ListenBrainz connection |
+Valkey is an accelerator for rebuildable cache data. Losing Valkey may make requests slower while caches rebuild, but it must not erase durable jobs, identities, mappings, or playlist state.
 
-All other Jellyfin API endpoints are passed through unchanged.
+Standard Compose selects Postgres explicitly. A custom local deployment may select SQLite explicitly. Allstarr never falls back from an unavailable selected database to a new database of another type. Readiness and state-changing work stop until the selected database and expected schema return.
 
-### Subsonic Backend
+## Provider Capabilities And Routing
 
-The proxy implements the Subsonic API with streaming provider integration:
+Providers declare capabilities such as metadata, streaming, download, playlist, lyrics, health, enrichment, and recommendations. An authenticated execution context narrows candidate accounts by tenant, user, library, permission, policy, sidecar readiness, and provider health. Streaming and downloading are separate routes and can choose different providers.
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /rest/search3` | Merged search results from Navidrome + streaming provider |
-| `GET /rest/stream` | Streams audio, downloading from provider if needed |
-| `GET /rest/getSong` | Returns song details (local or from provider) |
-| `GET /rest/getAlbum` | Returns album with tracks from both sources |
-| `GET /rest/getArtist` | Returns artist with albums from both sources |
-| `GET /rest/getCoverArt` | Proxies cover art for external content |
-| `GET /rest/star` | Stars items; triggers automatic playlist download for external playlists |
+One canonical recording can have multiple local-library and provider identities. Exact IDs such as backend item ID, MusicBrainz recording ID, ISRC, and verified provider ID are preferred. Decisions retain scope, verification state, version, and explanation. An accepted exact mapping is not silently overwritten by a later fuzzy guess.
 
-All other Subsonic API endpoints are passed through to Navidrome unchanged.
+Built-in and packaged providers meet at the same internal capability contracts. Provider packages declare hooks, network access, secrets, and scope in a manifest, then pass checksum, permission, activation, rollback, and compatibility checks. Third-party registries are opt-in.
 
-## External ID Format
+## Durable Work
 
-External (streaming provider) content uses typed IDs:
+Downloads, playlist materialization, favorite actions, playback delivery, recommendations, enrichment, and backend refresh use database-backed jobs. Jobs have idempotency keys, leases, attempts, retry/backoff, cancellation, and operator-visible outcomes. Transactional outbox records keep durable state changes and follow-up delivery in step.
 
-| Type | Format | Example |
-|------|--------|---------|
-| Song | `ext-{provider}-song-{id}` | `ext-deezer-song-123456`, `ext-qobuz-song-789012` |
-| Album | `ext-{provider}-album-{id}` | `ext-deezer-album-789012`, `ext-qobuz-album-456789` |
-| Artist | `ext-{provider}-artist-{id}` | `ext-deezer-artist-259`, `ext-qobuz-artist-123` |
+Optional sidecars report capability readiness. An unavailable optional sidecar defers or disables only the dependent work. It does not make unrelated proxy routes unavailable.
 
-Legacy format `ext-deezer-{id}` is also supported (assumes song type).
+Apple downloads use a separately deployed compatible provider gateway. Standard and AIO do not bundle GAMDL or
+wrapper-v2. Allstarr owns the configured URL, API compatibility check, health state, and routed capability; the
+operator owns the gateway stack, session data, upgrades, and rollback. A raw wrapper-v2 URL is not a compatible
+search/download gateway.
 
-## Download Folder Structure
+## Playlists And Favorites
 
-All downloads are organized under a single base directory (default: `./downloads`):
+Provider playlists can stay virtual or be materialized into Jellyfin or a Subsonic-compatible backend. A link records its exact tenant, user, protocol, backend, library, provider account, source, mode, and schedule. Reconcile mode is non-destructive. Recreate mode is explicit. Both preserve source order, reuse existing exact matches, and leave unmatched entries explained without downloading them.
 
-```
-downloads/
-├── permanent/                    # Permanent downloads (STORAGE_MODE=Permanent)
-│   ├── Artist Name/
-│   │   ├── Album Title/
-│   │   │   ├── 01 - Track One.flac
-│   │   │   ├── 02 - Track Two.flac
-│   │   │   └── ...
-│   │   └── Another Album/
-│   │       └── ...
-│   └── playlists/
-│       ├── My Favorite Songs.m3u
-│       └── Chill Vibes.m3u
-├── cache/                        # Temporary cache (STORAGE_MODE=Cache)
-│   └── Artist Name/
-│       └── Album Title/
-│           └── Track.flac
-└── kept/                         # Favorited external tracks (always permanent)
-    └── Artist Name/
-        └── Album Title/
-            └── Track.flac
-```
+A normal backend favorite or star completes first. If an exact-scope policy opts in, Allstarr records a favorite event and queues ordered actions such as matching, downloading, managed placement, enrichment, and backend refresh. Original libraries remain read-only inputs. Unfavorite may cancel pending optional work but never deletes source or managed audio.
 
-**Storage modes:**
-- **Permanent** (`downloads/permanent/`): Files saved permanently and registered in your media server
-- **Cache** (`downloads/cache/`): Temporary files, auto-cleaned after `CACHE_DURATION_HOURS`
-- **Kept** (`downloads/kept/`): External tracks you've favorited - always permanent, separate from cache
+## Managed Files
 
-Playlists are stored as M3U files with relative paths, making them portable and compatible with most music players.
+Allstarr may modify only files it owns and tracks. Placement stages and verifies output, rejects traversal and symlink escapes, then uses an appropriate hardlink, reflink, or copy. Metadata changes cannot rewrite a source-library inode through a hardlink. Removal is a separate confirmed action with scope, ownership, and reference checks.
 
-## Metadata Embedding
+## Intelligence And Playback
 
-Downloaded files include:
-- **Basic**: Title, Artist, Album, Album Artist
-- **Track Info**: Track Number, Total Tracks, Disc Number
-- **Dates**: Year, Release Date
-- **Audio**: BPM, Duration
-- **Identifiers**: ISRC (in comments)
-- **Credits**: Contributors/Composers
-- **Visual**: Embedded cover art (high resolution)
-- **Rights**: Copyright, Label
+Listening intelligence is opt-in at an exact tenant, user, protocol, backend, and library scope. Retention and purge are explicit. Durable playback observations build habit profiles and can seed Jellyfin InstantMix, Last.fm similar tracks, ListenBrainz collaborative filtering, MusicBrainz-enriched local relationships, local rules, and optional AudioMuse-AI similarity.
+
+Generated sets include explanations and reconcile only local matches into a target playlist. They never turn a recommendation into an implicit download. Scrobble delivery to Last.fm and ListenBrainz uses per-target checkpoints so retries do not duplicate completed work.
+
+## Security And Operations
+
+Provider records hold secret references, not plaintext credentials. Secret versions are protected with AES-GCM using an external key ring. Values are resolved just in time and redacted from logs, job payloads, state-transfer archives, and diagnostics.
+
+The proxy and admin listeners are separate. Admin network access is opt-in and CIDR restricted. Liveness, readiness, structured redacted logs, metrics, diagnostics, provider health, job history, and audit events expose failures without leaking account names, credentials, or media URLs.
+
+Backups cover the selected durable database and carry a strict manifest and checksum. They do not include media folders, caches, or the encryption key ring. Restore is verified into an isolated target before cutover. See [docs/operations/storage.md](docs/operations/storage.md).
+
+## Code Map
+
+- `allstarr/Core/Storage`: database selection, migrations, locks, backup, restore, and state transfer
+- `allstarr/Core/Identity` and `Core/Secrets`: users, accounts, scope policy, and encrypted values
+- `allstarr/Core/Jobs`: durable queue, workers, attempts, leases, cancellation, and outbox
+- `allstarr/Core/Capabilities`, `Core/Routing`, `Core/Providers`: capability contracts and route selection
+- `allstarr/Core/Matching`: canonical recordings and provider/local identities
+- `allstarr/Core/Protocols`: Jellyfin and Subsonic compatibility adapters
+- `allstarr/Core/Playlists`, `Core/Favorites`, `Core/ManagedFiles`: user workflows and filesystem ownership
+- `allstarr/Core/Playback` and `Core/Intelligence`: signals, scrobbling, profiles, recommendations, and generated sets
+- `allstarr/Controllers`: proxy and admin HTTP surfaces
+- `allstarr/Services`: backend adapters, current provider implementations, lyrics, caches, and compatibility services
+- `first-party`: SDK-conformant first-party provider packages and reproducible bundle metadata
+
+The implementation charter and phase-level invariants are in [OVERHAUL.md](OVERHAUL.md). Detailed maintainer steering lives under [`docs/steering`](docs/steering/INTRODUCTION.md).

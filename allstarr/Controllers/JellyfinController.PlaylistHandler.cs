@@ -1,3 +1,4 @@
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
@@ -56,6 +57,13 @@ public partial class JellyfinController
         try
         {
             _logger.LogDebug("=== GetPlaylistTracks called === PlaylistId: {PlaylistId}", playlistId);
+
+            if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
+            {
+                return await _virtualPlaylistProtocolAdapter.ReadItemsAsync(
+                           HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted)
+                       ?? _responseBuilder.CreateError(404, "Playlist not found");
+            }
 
             // Check if this is an external playlist (Deezer/Qobuz) first
             if (PlaylistIdHelper.IsExternalPlaylist(playlistId))

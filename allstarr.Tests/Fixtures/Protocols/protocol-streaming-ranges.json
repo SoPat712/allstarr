@@ -1,0 +1,38 @@
+[
+  {
+    "protocol": "jellyfin",
+    "method": "GET",
+    "path": "/Audio/local-song/stream?api_key=fixture-key",
+    "verificationPath": "/Users/Me?api_key=fixture-key",
+    "streamPath": "/Audio/local-song/stream?api_key=fixture-key",
+    "range": "bytes=8-15",
+    "ifRange": "\"fixture-etag\""
+  },
+  {
+    "protocol": "jellyfin",
+    "method": "HEAD",
+    "path": "/Audio/local-song/universal?api_key=fixture-key",
+    "verificationPath": "/Users/Me?api_key=fixture-key",
+    "streamPath": "/Audio/local-song/universal?api_key=fixture-key",
+    "range": "bytes=8-15",
+    "ifRange": "\"fixture-etag\""
+  },
+  {
+    "protocol": "subsonic",
+    "method": "GET",
+    "path": "/rest/stream.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&id=local-song",
+    "verificationPath": "/rest/ping.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture",
+    "streamPath": "/rest/stream?u=fixture&p=fixture-password&v=1.16.1&c=fixture&id=local-song",
+    "range": "bytes=8-15",
+    "ifRange": "\"fixture-etag\""
+  },
+  {
+    "protocol": "subsonic",
+    "method": "HEAD",
+    "path": "/rest/stream.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&id=local-song",
+    "verificationPath": "/rest/ping.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture",
+    "streamPath": "/rest/stream?u=fixture&p=fixture-password&v=1.16.1&c=fixture&id=local-song",
+    "range": "bytes=8-15",
+    "ifRange": "\"fixture-etag\""
+  }
+]

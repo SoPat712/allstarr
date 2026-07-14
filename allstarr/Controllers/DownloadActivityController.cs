@@ -1,7 +1,7 @@
 using System.Text.Json;
 using allstarr.Models.Download;
 using allstarr.Services;
-using allstarr.Services.Jellyfin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Filters;
 
@@ -13,16 +13,19 @@ namespace allstarr.Controllers;
 public class DownloadActivityController : ControllerBase
 {
     private readonly IEnumerable<IDownloadService> _downloadServices;
-    private readonly JellyfinSessionManager _sessionManager;
+    private readonly IReadOnlyList<IPlaybackActivitySource> _playbackSources;
+    private readonly IReadOnlyList<IPlaybackMetadataResolver> _metadataResolvers;
     private readonly ILogger<DownloadActivityController> _logger;
 
     public DownloadActivityController(
         IEnumerable<IDownloadService> downloadServices,
-        JellyfinSessionManager sessionManager,
+        IEnumerable<IPlaybackActivitySource> playbackSources,
+        IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
         ILogger<DownloadActivityController> logger)
     {
         _downloadServices = downloadServices;
-        _sessionManager = sessionManager;
+        _playbackSources = playbackSources.ToList();
+        _metadataResolvers = metadataResolvers.ToList();
         _logger = logger;
     }
 
@@ -30,10 +33,27 @@ public class DownloadActivityController : ControllerBase
     /// Returns the current download queue as JSON.
     /// </summary>
     [HttpGet("queue")]
-    public IActionResult GetDownloadQueue()
+    public async Task<IActionResult> GetDownloadQueue()
     {
-        var allDownloads = GetAllActivityEntries();
+        var allDownloads = await GetAllActivityEntriesAsync(HttpContext.RequestAborted);
         return Ok(allDownloads);
+    }
+
+    [HttpGet("artwork/{itemId}")]
+    public async Task<IActionResult> GetPlaybackArtwork(
+        string itemId,
+        CancellationToken cancellationToken)
+    {
+        foreach (var resolver in _metadataResolvers)
+        {
+            var artwork = await resolver.ResolveArtworkAsync(itemId, cancellationToken);
+            if (artwork != null)
+            {
+                return File(artwork.Content, artwork.ContentType);
+            }
+        }
+
+        return NotFound();
     }
 
     /// <summary>
@@ -64,7 +84,7 @@ public class DownloadActivityController : ControllerBase
         {
             while (!token.IsCancellationRequested)
             {
-                var allDownloads = GetAllActivityEntries();
+                var allDownloads = await GetAllActivityEntriesAsync(token);
 
                 var payload = JsonSerializer.Serialize(allDownloads, jsonOptions);
                 var message = $"data: {payload}\n\n";
@@ -89,7 +109,7 @@ public class DownloadActivityController : ControllerBase
         }
     }
 
-    private List<DownloadActivityEntry> GetAllActivityEntries()
+    private async Task<List<DownloadActivityEntry>> GetAllActivityEntriesAsync(CancellationToken cancellationToken)
     {
         var allDownloads = new List<DownloadInfo>();
         foreach (var service in _downloadServices)
@@ -102,8 +122,8 @@ public class DownloadActivityController : ControllerBase
             .ThenByDescending(d => d.StartedAt)
             .ToList();
 
-        var playbackByItemId = _sessionManager
-            .GetActivePlaybackStates(TimeSpan.FromMinutes(5))
+        var playbackByItemId = _playbackSources
+            .SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
             .GroupBy(state => NormalizeExternalItemId(state.ItemId))
             .ToDictionary(
                 group => group.Key,
@@ -157,18 +177,21 @@ public class DownloadActivityController : ControllerBase
                 continue;
             }
 
+            var localMetadata = await TryResolveLocalPlaybackMetadataAsync(itemId, cancellationToken);
+
             entries.Add(new DownloadActivityEntry
             {
                 SongId = itemId,
                 ExternalId = itemId,
                 ExternalProvider = ResolvePlaybackProvider(itemId),
-                Title = ResolvePlaybackTitle(itemId),
-                Artist = playbackState.DeviceId,
+                Title = localMetadata?.Title ?? ResolvePlaybackTitle(itemId),
+                Artist = localMetadata?.Artist ?? playbackState.DeviceId,
                 Status = DownloadStatus.Completed,
                 Progress = 1,
                 RequestedForStreaming = false,
                 StartedAt = playbackState.LastActivity,
                 IsPlaying = true,
+                CoverArtUrl = localMetadata?.CoverArtUrl,
                 PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond)
             });
         }
@@ -178,6 +201,38 @@ public class DownloadActivityController : ControllerBase
             .ThenByDescending(entry => entry.Status == DownloadStatus.InProgress)
             .ThenByDescending(entry => entry.StartedAt)
             .ToList();
+    }
+
+    private async Task<PlaybackTrackMetadata?> TryResolveLocalPlaybackMetadataAsync(
+        string itemId,
+        CancellationToken cancellationToken)
+    {
+        if (itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        foreach (var resolver in _metadataResolvers)
+        {
+            try
+            {
+                var metadata = await resolver.ResolveAsync(itemId, cancellationToken);
+                if (metadata != null)
+                {
+                    return metadata;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Playback metadata resolver failed for item {ItemId}", itemId);
+            }
+        }
+
+        return null;
     }
 
     private static string NormalizeExternalItemId(string itemId)
@@ -235,6 +290,7 @@ public class DownloadActivityController : ControllerBase
     private sealed class DownloadActivityEntry : DownloadInfo
     {
         public bool IsPlaying { get; init; }
+        public string? CoverArtUrl { get; init; }
         public int? PlaybackPositionSeconds { get; init; }
         public double? PlaybackProgress { get; init; }
     }

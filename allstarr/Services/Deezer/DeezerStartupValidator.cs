@@ -27,7 +27,6 @@ public class DeezerStartupValidator : BaseStartupValidator
         var arlFallback = _settings.ArlFallback;
         var quality = _settings.Quality;
 
-        Console.WriteLine();
 
         if (string.IsNullOrWhiteSpace(arl))
         {
@@ -119,15 +118,15 @@ public class DeezerStartupValidator : BaseStartupValidator
             WriteStatus(fieldName, "TIMEOUT", ConsoleColor.Yellow);
             WriteDetail("Could not reach Deezer within 10 seconds");
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException)
         {
             WriteStatus(fieldName, "UNREACHABLE", ConsoleColor.Yellow);
-            WriteDetail(ex.Message);
+            WriteDetail("The Deezer service could not be reached");
         }
         catch (Exception ex)
         {
             WriteStatus(fieldName, "ERROR", ConsoleColor.Red);
-            WriteDetail(ex.Message);
+            WriteDetail($"Deezer validation failed ({ex.GetType().Name})");
         }
     }
 

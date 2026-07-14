@@ -149,7 +149,7 @@ public class OdesliService
         var targetPlatform = targetProvider.ToLowerInvariant() switch
         {
             "spotify" => "spotify",
-            "applemusic" => "appleMusic",
+            "applemusic" or "apple-download" => "appleMusic",
             "deezer" => "deezer",
             "qobuz" => "qobuz",
             "squidwtf" => "tidal",

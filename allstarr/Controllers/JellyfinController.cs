@@ -18,6 +18,10 @@ using allstarr.Services.Scrobbling;
 using allstarr.Services.Admin;
 using allstarr.Services.SquidWTF;
 using allstarr.Filters;
+using allstarr.Core.Protocols.Jellyfin;
+using allstarr.Core.Protocols;
+using allstarr.Core.Favorites;
+using allstarr.Core.Playback;
 
 namespace allstarr.Controllers;
 
@@ -27,6 +31,8 @@ namespace allstarr.Controllers;
 /// </summary>
 [ApiController]
 [Route("")]
+[ServiceFilter(typeof(JellyfinAuthFilter), Order = int.MinValue)]
+[ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
 public partial class JellyfinController : ControllerBase
 {
     private readonly JellyfinSettings _settings;
@@ -38,6 +44,13 @@ public partial class JellyfinController : ControllerBase
     private readonly ILocalLibraryService _localLibraryService;
     private readonly IDownloadService _downloadService;
     private readonly JellyfinResponseBuilder _responseBuilder;
+    private readonly IJellyfinSearchProtocolAdapter _searchProtocolAdapter;
+    private readonly IJellyfinItemProtocolAdapter _itemProtocolAdapter;
+    private readonly IJellyfinImageProtocolAdapter _imageProtocolAdapter;
+    private readonly IJellyfinLyricsProtocolAdapter _lyricsProtocolAdapter;
+    private readonly IJellyfinInteractionProtocolAdapter _interactionProtocolAdapter;
+    private readonly JellyfinVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
+    private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly JellyfinModelMapper _modelMapper;
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
@@ -47,13 +60,14 @@ public partial class JellyfinController : ControllerBase
     private readonly LyricsPlusService? _lyricsPlusService;
     private readonly LrclibService? _lrclibService;
     private readonly LyricsOrchestrator? _lyricsOrchestrator;
-    private readonly IKeptLyricsSidecarService? _keptLyricsSidecarService;
     private readonly ScrobblingOrchestrator? _scrobblingOrchestrator;
     private readonly ScrobblingHelper? _scrobblingHelper;
     private readonly OdesliService _odesliService;
     private readonly RedisCacheService _cache;
     private readonly IConfiguration _configuration;
     private readonly ILogger<JellyfinController> _logger;
+    private readonly IFavoriteActionPipeline? _favoriteActions;
+    private readonly IPlaybackSignalPipeline? _playbackSignals;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -64,6 +78,13 @@ public partial class JellyfinController : ControllerBase
         ILocalLibraryService localLibraryService,
         IDownloadService downloadService,
         JellyfinResponseBuilder responseBuilder,
+        IJellyfinSearchProtocolAdapter searchProtocolAdapter,
+        IJellyfinItemProtocolAdapter itemProtocolAdapter,
+        IJellyfinImageProtocolAdapter imageProtocolAdapter,
+        IJellyfinLyricsProtocolAdapter lyricsProtocolAdapter,
+        IJellyfinInteractionProtocolAdapter interactionProtocolAdapter,
+        JellyfinVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
+        ProtocolStreamingResponseAdapter streamingResponseAdapter,
         JellyfinModelMapper modelMapper,
         JellyfinProxyService proxyService,
         JellyfinSessionManager sessionManager,
@@ -78,9 +99,10 @@ public partial class JellyfinController : ControllerBase
         LyricsPlusService? lyricsPlusService = null,
         LrclibService? lrclibService = null,
         LyricsOrchestrator? lyricsOrchestrator = null,
-        IKeptLyricsSidecarService? keptLyricsSidecarService = null,
         ScrobblingOrchestrator? scrobblingOrchestrator = null,
-        ScrobblingHelper? scrobblingHelper = null)
+        ScrobblingHelper? scrobblingHelper = null,
+        IFavoriteActionPipeline? favoriteActions = null,
+        IPlaybackSignalPipeline? playbackSignals = null)
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
@@ -91,6 +113,13 @@ public partial class JellyfinController : ControllerBase
         _localLibraryService = localLibraryService;
         _downloadService = downloadService;
         _responseBuilder = responseBuilder;
+        _searchProtocolAdapter = searchProtocolAdapter;
+        _itemProtocolAdapter = itemProtocolAdapter;
+        _imageProtocolAdapter = imageProtocolAdapter;
+        _lyricsProtocolAdapter = lyricsProtocolAdapter;
+        _interactionProtocolAdapter = interactionProtocolAdapter;
+        _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
+        _streamingResponseAdapter = streamingResponseAdapter;
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _sessionManager = sessionManager;
@@ -100,13 +129,14 @@ public partial class JellyfinController : ControllerBase
         _lyricsPlusService = lyricsPlusService;
         _lrclibService = lrclibService;
         _lyricsOrchestrator = lyricsOrchestrator;
-        _keptLyricsSidecarService = keptLyricsSidecarService;
         _scrobblingOrchestrator = scrobblingOrchestrator;
         _scrobblingHelper = scrobblingHelper;
         _odesliService = odesliService;
         _cache = cache;
         _configuration = configuration;
         _logger = logger;
+        _favoriteActions = favoriteActions;
+        _playbackSignals = playbackSignals;
 
         if (string.IsNullOrWhiteSpace(_settings.Url))
         {
@@ -126,6 +156,13 @@ public partial class JellyfinController : ControllerBase
         if (string.IsNullOrWhiteSpace(itemId))
         {
             return _responseBuilder.CreateError(400, "Missing item ID");
+        }
+
+        if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))
+        {
+            return await _virtualPlaylistProtocolAdapter.ReadItemAsync(
+                       HttpContext.RequireProtocolExecutionContext(), itemId, HttpContext.RequestAborted)
+                   ?? _responseBuilder.CreateError(404, "Playlist not found");
         }
 
         // Check for external playlist
@@ -165,17 +202,17 @@ public partial class JellyfinController : ControllerBase
         {
             case "song":
                 var song = await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
-                if (song == null) return _responseBuilder.CreateError(404, "Song not found");
-                return _responseBuilder.CreateSongResponse(song);
+                if (song == null) return _itemProtocolAdapter.ShapeNotFound("Song");
+                return _itemProtocolAdapter.ShapeSong(song);
 
             case "album":
                 var album = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
-                if (album == null) return _responseBuilder.CreateError(404, "Album not found");
-                return _responseBuilder.CreateAlbumResponse(album);
+                if (album == null) return _itemProtocolAdapter.ShapeNotFound("Album");
+                return _itemProtocolAdapter.ShapeAlbum(album);
 
             case "artist":
                 var artist = await _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
-                if (artist == null) return _responseBuilder.CreateError(404, "Artist not found");
+                if (artist == null) return _itemProtocolAdapter.ShapeNotFound("Artist");
                 var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
 
                 // Fill in artist info for albums
@@ -185,17 +222,17 @@ public partial class JellyfinController : ControllerBase
                     if (string.IsNullOrEmpty(a.ArtistId)) a.ArtistId = artist.Id;
                 }
 
-                return _responseBuilder.CreateArtistResponse(artist, albums);
+                return _itemProtocolAdapter.ShapeArtist(artist, albums);
 
             default:
                 // Try song first, then album
                 var s = await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
-                if (s != null) return _responseBuilder.CreateSongResponse(s);
+                if (s != null) return _itemProtocolAdapter.ShapeSong(s);
 
                 var alb = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
-                if (alb != null) return _responseBuilder.CreateAlbumResponse(alb);
+                if (alb != null) return _itemProtocolAdapter.ShapeAlbum(alb);
 
-                return _responseBuilder.CreateError(404, "Item not found");
+                return _itemProtocolAdapter.ShapeNotFound("Item");
         }
     }
 
@@ -805,15 +842,18 @@ public partial class JellyfinController : ControllerBase
 
     private IActionResult CreateConditionalImageResponse(byte[] imageBytes, string contentType)
     {
-        var etag = ImageConditionalRequestHelper.ComputeStrongETag(imageBytes);
-        Response.Headers["ETag"] = etag;
+        var response = _imageProtocolAdapter.Shape(
+            imageBytes,
+            contentType,
+            Request.Headers);
+        Response.Headers.ETag = response.ETag;
 
-        if (ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag))
+        if (response.StatusCode == StatusCodes.Status304NotModified)
         {
-            return StatusCode(StatusCodes.Status304NotModified);
+            return StatusCode(response.StatusCode);
         }
 
-        return File(imageBytes, contentType);
+        return File(response.Body!, response.ContentType);
     }
 
     private async Task<string?> ResolveCurrentSpotifyPlaylistImageTagAsync(string itemId, string imageType)
@@ -879,32 +919,12 @@ public partial class JellyfinController : ControllerBase
         // Check if this is an external playlist - trigger download
         if (PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
-            if (_playlistSyncService == null)
+            if (CanRunOptionalUserScopedWork())
             {
-                return _responseBuilder.CreateError(500, "Playlist functionality not enabled");
+                await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
             }
 
-            _logger.LogInformation("Favoriting external playlist {PlaylistId}, triggering download", itemId);
-
-            // Start download in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _playlistSyncService.DownloadFullPlaylistAsync(itemId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to download playlist {PlaylistId}", itemId);
-                }
-            });
-
-            // Return a minimal UserItemDataDto response
-            return Ok(new
-            {
-                IsFavorite = true,
-                ItemId = itemId
-            });
+            return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, true));
         }
 
         // Check if this is an external song/album
@@ -914,47 +934,12 @@ public partial class JellyfinController : ControllerBase
             // Check if it's an album by parsing the full ID with type
             var (_, _, type, _) = _localLibraryService.ParseExternalId(itemId);
 
-            if (type == "album")
+            if (CanRunOptionalUserScopedWork())
             {
-                _logger.LogInformation("Favoriting external album {ItemId}, downloading all tracks to kept folder", itemId);
-
-                // Download entire album to kept folder in background
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await CopyExternalAlbumToKeptAsync(itemId, provider!, externalId!);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to copy external album {ItemId} to kept folder", itemId);
-                    }
-                });
-            }
-            else
-            {
-                _logger.LogInformation("Favoriting external track {ItemId}, copying to kept folder", itemId);
-
-                // Copy the track to kept folder in background
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await CopyExternalTrackToKeptAsync(itemId, provider!, externalId!);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to copy external track {ItemId} to kept folder", itemId);
-                    }
-                });
+                await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
             }
 
-            // Return a minimal UserItemDataDto response
-            return Ok(new
-            {
-                IsFavorite = true,
-                ItemId = itemId
-            });
+            return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, true));
         }
 
         // For local Jellyfin items, proxy the request through
@@ -968,6 +953,11 @@ public partial class JellyfinController : ControllerBase
         _logger.LogDebug("Proxying favorite request to Jellyfin: {Endpoint}", endpoint);
 
         var (result, statusCode) = await _proxyService.PostJsonAsync(endpoint, "{}", Request.Headers);
+
+        if (statusCode is >= 200 and < 300 && CanRunOptionalUserScopedWork())
+        {
+            await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
+        }
 
         return HandleProxyResponse(result, statusCode);
     }
@@ -989,30 +979,17 @@ public partial class JellyfinController : ControllerBase
         _logger.LogDebug("UnmarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}",
             userId, itemId, Request.Path);
 
-        // External items - remove from kept folder if it exists
+        // External favorite state is logical only. Managed-file removal is a separate explicit action.
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
         if (isExternal || PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
-            _logger.LogInformation("Unfavoriting external item {ItemId} - removing from kept folder", itemId);
+            if (CanRunOptionalUserScopedWork())
+                await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
+            _logger.LogInformation(
+                "Unfavorited external item {ItemId}; managed files were preserved",
+                itemId);
 
-            // Remove from kept folder in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await RemoveExternalTrackFromKeptAsync(itemId, provider!, externalId!);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to remove external track {ItemId} from kept folder", itemId);
-                }
-            });
-
-            return Ok(new
-            {
-                IsFavorite = false,
-                ItemId = itemId
-            });
+            return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, false));
         }
 
         // Proxy to Jellyfin to unfavorite
@@ -1027,7 +1004,33 @@ public partial class JellyfinController : ControllerBase
 
         var (result, statusCode) = await _proxyService.DeleteAsync(endpoint, Request.Headers);
 
+        if (statusCode is >= 200 and < 300 && CanRunOptionalUserScopedWork())
+        {
+            await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
+        }
+
         return HandleProxyResponse(result, statusCode);
+    }
+
+    private async Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation)
+    {
+        if (_favoriteActions == null) return;
+        try
+        {
+            var execution = HttpContext.RequireProtocolExecutionContext();
+            var sourceRevision = Request.Headers["Idempotency-Key"].FirstOrDefault()
+                ?? Request.Headers["X-Allstarr-Source-Revision"].FirstOrDefault()
+                ?? "protocol-state-v1";
+            await _favoriteActions.RecordAsync(
+                new FavoriteMutationRequest(execution, itemId, operation, sourceRevision),
+                HttpContext.RequestAborted);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The backend mutation already succeeded. Optional work is observable through the durable system
+            // when recorded, but must never rewrite the backend's favorite response.
+            _logger.LogWarning("Favorite workflow recording failed ({ExceptionType})", ex.GetType().Name);
+        }
     }
 
     #endregion
@@ -1164,6 +1167,10 @@ public partial class JellyfinController : ControllerBase
     /// </summary>
     [HttpGet("Songs/{itemId}/InstantMix")]
     [HttpGet("Items/{itemId}/InstantMix")]
+    [HttpGet("Albums/{itemId}/InstantMix")]
+    [HttpGet("Artists/{itemId}/InstantMix")]
+    [HttpGet("MusicGenres/{itemId}/InstantMix")]
+    [HttpGet("Playlists/{itemId}/InstantMix")]
     public async Task<IActionResult> GetInstantMix(
         string itemId,
         [FromQuery] int limit = 50,
@@ -1174,6 +1181,11 @@ public partial class JellyfinController : ControllerBase
 
         if (isExternal)
         {
+            if (!CanRunOptionalUserScopedWork())
+            {
+                return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix([]));
+            }
+
             try
             {
                 // Get the original song
@@ -1225,11 +1237,7 @@ public partial class JellyfinController : ControllerBase
                     .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
                     .ToList();
 
-                return _responseBuilder.CreateJsonResponse(new
-                {
-                    Items = shuffledMix,
-                    TotalRecordCount = shuffledMix.Count
-                });
+                return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix(shuffledMix));
             }
             catch (Exception ex)
             {
@@ -1243,9 +1251,7 @@ public partial class JellyfinController : ControllerBase
         }
 
         // For local items, proxy using the same route shape and full query string from the client
-        var endpoint = Request.Path.Value?.Contains("/Items/", StringComparison.OrdinalIgnoreCase) == true
-            ? $"Items/{itemId}/InstantMix"
-            : $"Songs/{itemId}/InstantMix";
+        var endpoint = Request.Path.Value!.TrimStart('/');
 
         if (Request.QueryString.HasValue)
         {
@@ -1256,6 +1262,17 @@ public partial class JellyfinController : ControllerBase
 
         return HandleProxyResponse(result, statusCode);
     }
+
+    private bool CanRunOptionalUserScopedWork() =>
+        _interactionProtocolAdapter.CanRunOptionalUserWork(HttpContext.GetProtocolExecutionContext());
+
+    private IActionResult CreateProtocolResponse(JellyfinProtocolResponse response) =>
+        new ContentResult
+        {
+            StatusCode = response.StatusCode,
+            ContentType = response.ContentType,
+            Content = response.Body
+        };
 
     #endregion
 
@@ -1295,8 +1312,7 @@ public partial class JellyfinController : ControllerBase
     /// This route has the lowest priority and should only match requests that don't have SearchTerm.
     /// Blocks dangerous admin endpoints for security.
     /// </summary>
-    [HttpGet("{**path}", Order = 100)]
-    [HttpPost("{**path}", Order = 100)]
+    [AcceptVerbs("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", Route = "{**path}", Order = 100)]
     public async Task<IActionResult> ProxyRequest(string path)
     {
         // Block admin API routes - these should be handled by admin controllers, not proxied to Jellyfin
@@ -1354,9 +1370,31 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
+        async Task<IActionResult> RelayRawAsync()
+        {
+            var endpoint = Request.QueryString.HasValue
+                ? $"{path}{Request.QueryString.Value}"
+                : path;
+            var upstream = await _proxyService.SendPassthroughResponseAsync(
+                Request,
+                endpoint,
+                HttpContext.RequestAborted);
+            return new ProtocolRelayResponseResult(upstream);
+        }
+
         var playlistItemsRequestId = GetExactPlaylistItemsRequestId(path);
         if (!string.IsNullOrEmpty(playlistItemsRequestId))
         {
+            if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistItemsRequestId))
+            {
+                return await GetPlaylistTracks(playlistItemsRequestId);
+            }
+
+            if (PlaylistIdHelper.IsExternalPlaylist(playlistItemsRequestId))
+            {
+                return await GetPlaylistTracks(playlistItemsRequestId);
+            }
+
             if (_spotifySettings.Enabled)
             {
                 _logger.LogDebug("=== PLAYLIST REQUEST ===");
@@ -1400,38 +1438,7 @@ public partial class JellyfinController : ControllerBase
             path.EndsWith(".m3u", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase))
         {
-            var fullPath = path;
-            if (Request.QueryString.HasValue)
-            {
-                fullPath = $"{path}{Request.QueryString.Value}";
-            }
-
-            var url = $"{_settings.Url?.TrimEnd('/')}/{fullPath}";
-
-            try
-            {
-                // Forward authentication headers for image requests
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
-
-                // Forward auth headers from client
-                AuthHeaderHelper.ForwardAuthHeaders(Request.Headers, request);
-
-                var response = await _proxyService.HttpClient.SendAsync(request);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    return StatusCode((int)response.StatusCode);
-                }
-
-                var contentBytes = await response.Content.ReadAsByteArrayAsync();
-                var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
-                return File(contentBytes, contentType);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to proxy binary request for {Path}", path);
-                return NotFound();
-            }
+            return await RelayRawAsync();
         }
 
         // Check if this is a search request that should be handled by specific endpoints
@@ -1469,6 +1476,15 @@ public partial class JellyfinController : ControllerBase
 
         try
         {
+            var needsPlaylistCountRewrite = HttpMethods.IsGet(Request.Method) &&
+                _spotifySettings.Enabled &&
+                Request.Query["IncludeItemTypes"].ToString()
+                    .Contains("Playlist", StringComparison.OrdinalIgnoreCase);
+            if (!needsPlaylistCountRewrite)
+            {
+                return await RelayRawAsync();
+            }
+
             // Include query string in the path
             var fullPath = path;
             var safePathForLogs = path;
@@ -1562,7 +1578,7 @@ public partial class JellyfinController : ControllerBase
             }
 
             // Return the raw JSON element directly to avoid deserialization issues with simple types
-            return new JsonResult(result.RootElement.Clone());
+            return new JsonResult(result.RootElement.Clone()) { StatusCode = statusCode };
         }
         catch (HttpRequestException httpEx)
         {

@@ -22,6 +22,17 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     }
 
     [Fact]
+    public void MapEnvVarToConfiguration_MapsSqliteBootstrapConfirmationPath()
+    {
+        var mapping = Assert.Single(RuntimeEnvConfiguration.MapEnvVarToConfiguration(
+            "ALLSTARR_STORAGE_SQLITE_BOOTSTRAP_CONFIRMATION_FILE",
+            "/state/.create-database"));
+
+        Assert.Equal("Storage:SqliteBootstrapConfirmationFile", mapping.Key);
+        Assert.Equal("/state/.create-database", mapping.Value);
+    }
+
+    [Fact]
     public void MapEnvVarToConfiguration_MapsSharedBackendKeysToBothSections()
     {
         var mappings = RuntimeEnvConfiguration
@@ -54,6 +65,7 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     [InlineData("MULTI_PROVIDER_LYRICS_ORDER")]
     [InlineData("MULTI_PROVIDER_ENABLED_SEARCH")]
     [InlineData("MULTI_PROVIDER_ENABLED_PLAYLIST")]
+    [InlineData("MULTI_PROVIDER_DISABLED_PROVIDERS")]
     [InlineData("EXTENSION_REPOSITORIES")]
     public void MapEnvVarToConfiguration_MapsFlatPlatformKeys(string key)
     {

@@ -1,0 +1,28 @@
+[
+  {
+    "name": "get-json-independent-windows",
+    "request": {
+      "method": "GET",
+      "path": "/rest/search3.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&query=window&songCount=1&songOffset=1&albumCount=1&albumOffset=1&artistCount=1&artistOffset=1"
+    },
+    "expectedMethod": "GET",
+    "expectedSong": "song-2",
+    "expectedAlbum": "album-2",
+    "expectedArtist": "artist-2",
+    "format": "json"
+  },
+  {
+    "name": "post-xml-independent-windows",
+    "request": {
+      "method": "POST",
+      "path": "/rest/search3.view?v=1.16.1&c=fixture&f=xml",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&p=secret&query=window&songCount=1&songOffset=1&albumCount=1&albumOffset=1&artistCount=1&artistOffset=1"
+    },
+    "expectedMethod": "POST",
+    "expectedSong": "song-2",
+    "expectedAlbum": "album-2",
+    "expectedArtist": "artist-2",
+    "format": "xml"
+  }
+]

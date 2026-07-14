@@ -72,6 +72,112 @@ public class AdminAuthenticationMiddlewareTests
         Assert.True(context.Items.ContainsKey(AdminAuthSessionService.HttpContextSessionItemKey));
     }
 
+    [Theory]
+    [InlineData("/api/admin/ui/schema", "GET")]
+    [InlineData("/api/admin/provider-accounts", "GET")]
+    [InlineData("/api/admin/provider-accounts", "POST")]
+    [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "DELETE")]
+    [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/secret", "PUT")]
+    public async Task InvokeAsync_NonAdminUser_ProviderSelfServiceRoutesPassToScopedControllers(
+        string path,
+        string method)
+    {
+        var sessionService = new AdminAuthSessionService();
+        var session = sessionService.CreateSession(
+            userId: "user-1",
+            userName: "josh",
+            isAdministrator: false,
+            jellyfinAccessToken: "token",
+            jellyfinServerId: "server");
+        var invoked = false;
+        var middleware = new AdminAuthenticationMiddleware(
+            _ =>
+            {
+                invoked = true;
+                return Task.CompletedTask;
+            },
+            sessionService,
+            NullLogger<AdminAuthenticationMiddleware>.Instance);
+        var context = CreateContext(path, method, 5275, session.SessionId);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(invoked);
+    }
+
+    [Theory]
+    [InlineData("/api/admin/ui/schema", "POST")]
+    [InlineData("/api/admin/config", "GET")]
+    [InlineData("/api/admin/status", "GET")]
+    [InlineData("/api/admin/provider-accounts", "PUT")]
+    [InlineData("/api/admin/provider-accounts/not-a-guid", "DELETE")]
+    [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/secret", "GET")]
+    public async Task InvokeAsync_NonAdminUser_RemainsBlockedFromAdminAndInvalidAccountRoutes(
+        string path,
+        string method)
+    {
+        var sessionService = new AdminAuthSessionService();
+        var session = sessionService.CreateSession(
+            userId: "user-1",
+            userName: "josh",
+            isAdministrator: false,
+            jellyfinAccessToken: "token",
+            jellyfinServerId: "server");
+        var invoked = false;
+        var middleware = new AdminAuthenticationMiddleware(
+            _ =>
+            {
+                invoked = true;
+                return Task.CompletedTask;
+            },
+            sessionService,
+            NullLogger<AdminAuthenticationMiddleware>.Instance);
+        var context = CreateContext(path, method, 5275, session.SessionId);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(invoked);
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/api/admin/jobs", "GET")]
+    [InlineData("/api/admin/jobs/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "GET")]
+    [InlineData("/api/admin/jobs/019f48f2-5f28-7b11-b42d-0d9b76b73b40/cancel", "POST")]
+    [InlineData("/api/admin/favorite-action-policies", "GET")]
+    [InlineData("/api/admin/favorite-action-policies/me", "PUT")]
+    [InlineData("/api/admin/intelligence", "GET")]
+    [InlineData("/api/admin/intelligence/policy", "PUT")]
+    [InlineData("/api/admin/intelligence/runs", "POST")]
+    [InlineData("/api/admin/intelligence/generated-sets", "POST")]
+    [InlineData("/api/admin/intelligence/data", "DELETE")]
+    public async Task InvokeAsync_NonAdminUser_OwnJobRoutesPassToControllerScopeChecks(
+        string path,
+        string method)
+    {
+        var sessionService = new AdminAuthSessionService();
+        var session = sessionService.CreateSession(
+            userId: "user-1",
+            userName: "josh",
+            isAdministrator: false,
+            jellyfinAccessToken: "token",
+            jellyfinServerId: "server");
+        var invoked = false;
+        var middleware = new AdminAuthenticationMiddleware(
+            _ =>
+            {
+                invoked = true;
+                return Task.CompletedTask;
+            },
+            sessionService,
+            NullLogger<AdminAuthenticationMiddleware>.Instance);
+        var context = CreateContext(path, method, 5275, session.SessionId);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(invoked);
+    }
+
     [Fact]
     public async Task InvokeAsync_NonAdminUser_DisallowedRoute_Returns403()
     {

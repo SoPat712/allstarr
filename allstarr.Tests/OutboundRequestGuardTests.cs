@@ -24,8 +24,16 @@ public class OutboundRequestGuardTests
     [InlineData("http://10.0.0.5/album.png")]
     [InlineData("http://192.168.1.10/album.png")]
     [InlineData("http://100.64.0.25/path")]
+    [InlineData("http://192.0.2.1/path")]
+    [InlineData("http://198.51.100.1/path")]
+    [InlineData("http://203.0.113.1/path")]
     [InlineData("http://[::1]/image")]
     [InlineData("http://[fd00::1]/image")]
+    [InlineData("http://[2001:db8::1]/image")]
+    [InlineData("http://[100::1]/image")]
+    [InlineData("http://[64:ff9b::7f00:1]/image")]
+    [InlineData("http://[::127.0.0.1]/image")]
+    [InlineData("http://[2002:7f00:1::]/image")]
     public void TryCreateSafeHttpUri_WithLocalOrPrivateHost_BlocksRequest(string rawUrl)
     {
         var allowed = OutboundRequestGuard.TryCreateSafeHttpUri(rawUrl, out var uri, out var reason);

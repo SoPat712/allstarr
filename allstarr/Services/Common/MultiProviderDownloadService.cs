@@ -183,7 +183,7 @@ public class MultiProviderDownloadService : IDownloadService
         return _allServices.FirstOrDefault(s =>
             s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
             (normalizedName == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
-            (normalizedName == "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
+            (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
         );
     }
 
@@ -221,7 +221,7 @@ public class MultiProviderDownloadService : IDownloadService
         return _allMetadataServices.FirstOrDefault(s =>
             s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
             (normalizedName == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
-            (normalizedName == "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
+            (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
         );
     }
 
@@ -280,7 +280,7 @@ public class MultiProviderDownloadService : IDownloadService
         {
             "spotify" => $"https://open.spotify.com/track/{id}",
             "deezer" => $"https://www.deezer.com/track/{id}",
-            "applemusic" => $"https://music.apple.com/us/song/{id}",
+            "applemusic" or "apple-download" => $"https://music.apple.com/us/song/{id}",
             "qobuz" => $"https://open.qobuz.com/track/{id}",
             "squidwtf" => $"https://tidal.com/browse/track/{id}",
             "tidal" => $"https://tidal.com/browse/track/{id}",

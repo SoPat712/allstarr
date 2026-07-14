@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using allstarr.Filters;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
+using allstarr.Core.Identity;
 
 namespace allstarr.Controllers;
 
@@ -14,25 +15,48 @@ namespace allstarr.Controllers;
 public class AdminAuthController : ControllerBase
 {
     private readonly JellyfinSettings _jellyfinSettings;
+    private readonly SubsonicSettings _subsonicSettings;
+    private readonly BackendType _backendType;
     private readonly HttpClient _httpClient;
     private readonly AdminAuthSessionService _sessionService;
     private readonly ILogger<AdminAuthController> _logger;
+    private readonly BackendIdentityResolver? _identityResolver;
+    private readonly ProviderAccountManagementMode _providerAccountManagementMode;
 
     public AdminAuthController(
         IOptions<JellyfinSettings> jellyfinSettings,
+        IOptions<SubsonicSettings> subsonicSettings,
+        IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
         AdminAuthSessionService sessionService,
-        ILogger<AdminAuthController> logger)
+        ILogger<AdminAuthController> logger,
+        BackendIdentityResolver? identityResolver = null,
+        ProviderAccountManagementOptions? providerAccountManagementOptions = null)
     {
         _jellyfinSettings = jellyfinSettings.Value;
+        _subsonicSettings = subsonicSettings.Value;
+        _backendType = Enum.TryParse<BackendType>(
+            configuration["Backend:Type"],
+            ignoreCase: true,
+            out var configuredBackend)
+            ? configuredBackend
+            : BackendType.Jellyfin;
         _httpClient = httpClientFactory.CreateClient();
         _sessionService = sessionService;
         _logger = logger;
+        _identityResolver = identityResolver;
+        _providerAccountManagementMode = (providerAccountManagementOptions ?? new())
+            .ParseManagementMode();
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
+        if (_backendType == BackendType.Subsonic)
+        {
+            return await LoginWithSubsonicAsync(request);
+        }
+
         if (string.IsNullOrWhiteSpace(_jellyfinSettings.Url))
         {
             return StatusCode(500, new { error = "Jellyfin URL is not configured" });
@@ -109,13 +133,24 @@ public class AdminAuthController : ControllerBase
                 return StatusCode(502, new { error = "Jellyfin user details are missing in auth response" });
             }
 
+            var principal = _identityResolver == null
+                ? null
+                : await _identityResolver.ResolveAsync(
+                    new BackendIdentityDescriptor(
+                        "Jellyfin",
+                        userId,
+                        userName,
+                        isAdministrator),
+                    HttpContext.RequestAborted);
             var session = _sessionService.CreateSession(
                 userId: userId,
                 userName: userName,
                 isAdministrator: isAdministrator,
                 jellyfinAccessToken: accessToken,
                 jellyfinServerId: serverId,
-                isPersistent: request.RememberMe);
+                isPersistent: request.RememberMe,
+                tenantId: principal?.TenantId,
+                allstarrUserId: principal?.UserId);
 
             SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
 
@@ -129,15 +164,21 @@ public class AdminAuthController : ControllerBase
                 {
                     id = session.UserId,
                     name = session.UserName,
-                    isAdministrator = session.IsAdministrator
+                    isAdministrator = session.IsAdministrator,
+                    tenantId = session.TenantId,
+                    allstarrUserId = session.AllstarrUserId
                 },
                 rememberMe = session.IsPersistent,
+                backend = BackendType.Jellyfin.ToString(),
+                providerAccountManagementMode = _providerAccountManagementMode.ToString(),
                 expiresAtUtc = session.ExpiresAtUtc
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Admin WebUI Jellyfin login failed");
+            _logger.LogError(
+                "Admin WebUI Jellyfin login failed ({ExceptionType})",
+                ex.GetType().Name);
             return StatusCode(500, new { error = "Failed to authenticate with Jellyfin" });
         }
     }
@@ -149,7 +190,12 @@ public class AdminAuthController : ControllerBase
             !_sessionService.TryGetValidSession(sessionId, out var session))
         {
             Response.Cookies.Delete(AdminAuthSessionService.SessionCookieName);
-            return Ok(new { authenticated = false });
+            return Ok(new
+            {
+                authenticated = false,
+                backend = _backendType.ToString(),
+                providerAccountManagementMode = _providerAccountManagementMode.ToString()
+            });
         }
 
         return Ok(new
@@ -159,9 +205,13 @@ public class AdminAuthController : ControllerBase
             {
                 id = session.UserId,
                 name = session.UserName,
-                isAdministrator = session.IsAdministrator
+                isAdministrator = session.IsAdministrator,
+                tenantId = session.TenantId,
+                allstarrUserId = session.AllstarrUserId
             },
             rememberMe = session.IsPersistent,
+            backend = session.BackendType,
+            providerAccountManagementMode = _providerAccountManagementMode.ToString(),
             expiresAtUtc = session.ExpiresAtUtc
         });
     }
@@ -194,6 +244,148 @@ public class AdminAuthController : ControllerBase
             Expires = expiresAtUtc
         });
     }
+
+    private async Task<IActionResult> LoginWithSubsonicAsync(LoginRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
+        {
+            return StatusCode(500, new { error = "Subsonic URL is not configured" });
+        }
+
+        var username = request.Username?.Trim();
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest(new { error = "Username and password are required" });
+        }
+
+        try
+        {
+            var endpoint = $"{_subsonicSettings.Url.TrimEnd('/')}/rest/getUser.view";
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["u"] = username,
+                    ["p"] = request.Password,
+                    ["username"] = username,
+                    ["v"] = "1.16.1",
+                    ["c"] = "allstarr-admin",
+                    ["f"] = "json"
+                })
+            };
+            using var response = await _httpClient.SendAsync(httpRequest, HttpContext.RequestAborted);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or
+                    System.Net.HttpStatusCode.Forbidden)
+                {
+                    return Unauthorized(new { error = "Invalid Subsonic credentials" });
+                }
+
+                return StatusCode((int)response.StatusCode, new
+                {
+                    error = "Failed to authenticate with Subsonic"
+                });
+            }
+
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(HttpContext.RequestAborted),
+                cancellationToken: HttpContext.RequestAborted);
+            if (!TryReadSubsonicIdentity(document.RootElement, username, out var identity))
+            {
+                return Unauthorized(new { error = "Invalid Subsonic credentials" });
+            }
+
+            var principal = _identityResolver == null
+                ? null
+                : await _identityResolver.ResolveAsync(
+                    new BackendIdentityDescriptor(
+                        "Subsonic",
+                        identity.UserName,
+                        identity.UserName,
+                        identity.IsAdministrator),
+                    HttpContext.RequestAborted);
+            var session = _sessionService.CreateSession(
+                userId: identity.UserName,
+                userName: identity.UserName,
+                isAdministrator: identity.IsAdministrator,
+                jellyfinAccessToken: string.Empty,
+                jellyfinServerId: null,
+                isPersistent: request.RememberMe,
+                backendType: BackendType.Subsonic.ToString(),
+                tenantId: principal?.TenantId,
+                allstarrUserId: principal?.UserId);
+
+            SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
+            _logger.LogInformation(
+                "Admin WebUI login successful for Subsonic user {UserName}",
+                session.UserName);
+
+            return Ok(new
+            {
+                authenticated = true,
+                user = new
+                {
+                    id = session.UserId,
+                    name = session.UserName,
+                    isAdministrator = session.IsAdministrator,
+                    tenantId = session.TenantId,
+                    allstarrUserId = session.AllstarrUserId
+                },
+                rememberMe = session.IsPersistent,
+                backend = BackendType.Subsonic.ToString(),
+                providerAccountManagementMode = _providerAccountManagementMode.ToString(),
+                expiresAtUtc = session.ExpiresAtUtc
+            });
+        }
+        catch (JsonException)
+        {
+            return StatusCode(502, new { error = "Subsonic returned an invalid authentication response" });
+        }
+        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            return new StatusCodeResult(499);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "Subsonic admin authentication failed ({ExceptionType})",
+                ex.GetType().Name);
+            return StatusCode(502, new { error = "Failed to authenticate with Subsonic" });
+        }
+    }
+
+    private static bool TryReadSubsonicIdentity(
+        JsonElement root,
+        string requestedUserName,
+        out SubsonicIdentity identity)
+    {
+        identity = default;
+        if (!root.TryGetProperty("subsonic-response", out var envelope) ||
+            !envelope.TryGetProperty("status", out var status) ||
+            !string.Equals(status.GetString(), "ok", StringComparison.OrdinalIgnoreCase) ||
+            !envelope.TryGetProperty("user", out var user))
+        {
+            return false;
+        }
+
+        var returnedUserName = user.TryGetProperty("username", out var username)
+            ? username.GetString()
+            : requestedUserName;
+        if (string.IsNullOrWhiteSpace(returnedUserName) ||
+            !returnedUserName.Equals(requestedUserName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var isAdministrator = user.TryGetProperty("adminRole", out var adminRole) &&
+                              adminRole.ValueKind == JsonValueKind.True;
+        identity = new SubsonicIdentity(returnedUserName, isAdministrator);
+        return true;
+    }
+
+    private readonly record struct SubsonicIdentity(string UserName, bool IsAdministrator);
 
     public class LoginRequest
     {

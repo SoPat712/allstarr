@@ -51,11 +51,30 @@ public class JavaScriptSyntaxTests
         var webuiPath = Path.Combine(_wwwrootPath, "js", "webui.js");
         var content = File.ReadAllText(webuiPath);
 
-        Assert.Contains("cdn.jsdelivr.net/npm/lit", content);
+        Assert.Contains("/js/lit-3.3.3.js", content);
+        Assert.DoesNotContain("from \"https://", content);
+        Assert.DoesNotContain("from \"http://", content);
+        Assert.DoesNotContain("import(\"https://", content);
+        Assert.DoesNotContain("import(\"http://", content);
         Assert.Contains("/api/admin/ui/schema", content);
         Assert.Contains("customElements.define(\"allstarr-app\"", content);
         Assert.Contains("EventSource(\"/api/admin/downloads/activity\")", content);
-        Assert.Contains("EXTENSION_REPOSITORIES", content);
+        Assert.Contains("/api/admin/extensions/registries", content);
+        Assert.Contains("Discovered Apple download capabilities", content);
+    }
+
+    [Fact]
+    public void WebUiRuntime_ShouldBeLocalAndLicenseAttributed()
+    {
+        var runtimePath = Path.Combine(_wwwrootPath, "js", "lit-3.3.3.js");
+        var licensePath = Path.Combine(_wwwrootPath, "vendor", "LICENSE.lit");
+
+        Assert.True(File.Exists(runtimePath));
+        Assert.True(File.Exists(licensePath));
+        var runtime = File.ReadAllText(runtimePath);
+        Assert.Contains("SPDX-License-Identifier: BSD-3-Clause", runtime);
+        Assert.DoesNotContain("https://", runtime);
+        Assert.DoesNotContain("/npm/", runtime);
     }
 
     [Fact]

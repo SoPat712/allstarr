@@ -48,6 +48,39 @@ public class AdminNetworkAllowlistMiddlewareTests
     }
 
     [Fact]
+    public async Task InvokeAsync_DefaultContainerGateway_AllowsHostPublishedLoopbackRequest()
+    {
+        var middleware = CreateMiddleware(new Dictionary<string, string?>
+        {
+            ["Admin:Containerized"] = "true",
+            ["Admin:ContainerGateway"] = "172.17.0.1"
+        }, out var nextInvoked);
+        var context = CreateContext(5275, "172.17.0.1");
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(nextInvoked());
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ExplicitLanMode_DoesNotImplicitlyTrustContainerGateway()
+    {
+        var middleware = CreateMiddleware(new Dictionary<string, string?>
+        {
+            ["Admin:BindAnyIp"] = "true",
+            ["Admin:Containerized"] = "true",
+            ["Admin:ContainerGateway"] = "172.17.0.1"
+        }, out var nextInvoked);
+        var context = CreateContext(5275, "172.17.0.1");
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(nextInvoked());
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
+    [Fact]
     public async Task InvokeAsync_NonAdminPort_BypassesAllowlist()
     {
         var middleware = CreateMiddleware(new Dictionary<string, string?>(), out var nextInvoked);

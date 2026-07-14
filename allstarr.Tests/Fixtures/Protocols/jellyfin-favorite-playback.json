@@ -1,0 +1,38 @@
+{
+  "favorite": {
+    "local": {
+      "request": {
+        "method": "POST",
+        "path": "/Users/spoofed-route-user/FavoriteItems/local-song?api_key=fixture-key"
+      },
+      "upstream": {
+        "pathAndQuery": "/UserFavoriteItems/local-song?userId=spoofed-route-user",
+        "status": 409,
+        "body": { "error": "favorite conflict" }
+      }
+    },
+    "external": {
+      "request": {
+        "method": "POST",
+        "path": "/Users/spoofed-route-user/FavoriteItems/ext-deezer-song-42?api_key=fixture-key"
+      },
+      "expected": {
+        "status": 200,
+        "contentType": "application/json",
+        "body": { "IsFavorite": true, "ItemId": "ext-deezer-song-42" }
+      }
+    }
+  },
+  "capabilities": [
+    { "upstreamStatus": 200, "expectedStatus": 204 },
+    { "upstreamStatus": 204, "expectedStatus": 204 },
+    { "upstreamStatus": 401, "expectedStatus": 401 },
+    { "upstreamStatus": 403, "expectedStatus": 403 },
+    { "upstreamStatus": 503, "expectedStatus": 503 }
+  ],
+  "progress": {
+    "requestBody": {},
+    "upstreamStatus": 503,
+    "expectedStatus": 204
+  }
+}

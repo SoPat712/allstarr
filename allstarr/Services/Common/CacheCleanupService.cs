@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
-using allstarr.Controllers;
 
 namespace allstarr.Services.Common;
 
@@ -12,19 +11,16 @@ public class CacheCleanupService : BackgroundService
 {
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
-    private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<CacheCleanupService> _logger;
     private readonly TimeSpan _cleanupInterval = TimeSpan.FromHours(1);
 
     public CacheCleanupService(
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,
-        IServiceProvider serviceProvider,
         ILogger<CacheCleanupService> logger)
     {
         _configuration = configuration;
         _subsonicSettings = subsonicSettings.Value;
-        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -46,7 +42,6 @@ public class CacheCleanupService : BackgroundService
             {
                 await CleanupOldCachedFilesAsync(stoppingToken);
                 await CleanupTranscodedCacheAsync(stoppingToken);
-                await ProcessPendingDeletionsAsync(stoppingToken);
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }
             catch (OperationCanceledException)
@@ -234,29 +229,4 @@ public class CacheCleanupService : BackgroundService
         await Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Processes pending track deletions from the kept folder.
-    /// </summary>
-    private async Task ProcessPendingDeletionsAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Create a scope to get the JellyfinController
-            using var scope = _serviceProvider.CreateScope();
-            var jellyfinController = scope.ServiceProvider.GetService<JellyfinController>();
-            
-            if (jellyfinController != null)
-            {
-                await jellyfinController.ProcessPendingDeletionsAsync();
-            }
-            else
-            {
-                _logger.LogWarning("Could not resolve JellyfinController for pending deletions processing");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing pending deletions");
-        }
-    }
 }

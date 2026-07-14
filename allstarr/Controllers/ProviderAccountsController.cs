@@ -1,0 +1,565 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using allstarr.Core.Identity;
+using allstarr.Core.Secrets;
+using allstarr.Core.Storage;
+using allstarr.Filters;
+using allstarr.Middleware;
+using allstarr.Services.Admin;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace allstarr.Controllers;
+
+[ApiController]
+[Route("api/admin/provider-accounts")]
+[ServiceFilter(typeof(AdminPortFilter))]
+public sealed partial class ProviderAccountsController : ControllerBase
+{
+    private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
+    private readonly EncryptedSecretStore _secretStore;
+    private readonly ProviderAccountManagementMode _managementMode;
+
+    public ProviderAccountsController(
+        IDbContextFactory<AllstarrDbContext> contextFactory,
+        EncryptedSecretStore secretStore,
+        ProviderAccountManagementOptions managementOptions)
+    {
+        _contextFactory = contextFactory;
+        _secretStore = secretStore;
+        _managementMode = managementOptions.ParseManagementMode();
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error))
+        {
+            return error!;
+        }
+
+        if (GetManagementAccessError(session) is { } accessError)
+        {
+            return accessError;
+        }
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var query = ApplyManagementScope(context.ProviderAccounts.AsNoTracking(), session);
+
+        var accounts = await query
+            .OrderBy(item => item.ProviderId)
+            .ThenBy(item => item.DisplayName)
+            .ToListAsync(cancellationToken);
+        var secretIds = accounts
+            .Where(item => item.SecretReferenceId.HasValue)
+            .Select(item => item.SecretReferenceId!.Value)
+            .ToList();
+        var secrets = await context.SecretReferences.AsNoTracking()
+            .Where(item => secretIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        return Ok(new
+        {
+            managementMode = _managementMode.ToString(),
+            accounts = accounts.Select(account => AccountResponse(
+                account,
+                account.SecretReferenceId.HasValue &&
+                secrets.TryGetValue(account.SecretReferenceId.Value, out var secret)
+                    ? secret
+                    : null))
+        });
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create(
+        [FromBody] CreateProviderAccountRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error))
+        {
+            return error!;
+        }
+
+        if (GetManagementAccessError(session) is { } accessError)
+        {
+            return accessError;
+        }
+
+        if (!TryNormalizeRequest(
+                request,
+                session,
+                CanManageAllAccounts(session),
+                out var normalized,
+                out var validationError))
+        {
+            return BadRequest(new { error = validationError });
+        }
+
+        var scopeValidationError = await ValidateAccountScopeAsync(normalized, cancellationToken);
+        if (scopeValidationError != null)
+        {
+            return BadRequest(new { error = scopeValidationError });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var account = new ProviderAccountRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = normalized.TenantId,
+            OwnerUserId = normalized.OwnerUserId,
+            ProviderId = normalized.ProviderId,
+            DisplayName = normalized.DisplayName,
+            Scope = normalized.Scope,
+            LibraryScopeId = normalized.LibraryScopeId,
+            Enabled = false,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        await using (var context = await _contextFactory.CreateDbContextAsync(cancellationToken))
+        {
+            context.ProviderAccounts.Add(account);
+            await context.SaveChangesAsync(cancellationToken);
+        }
+
+        SecretReferenceInfo? storedSecret = null;
+        try
+        {
+            if (request.Secret.HasValue && request.Secret.Value.ValueKind != JsonValueKind.Null)
+            {
+                var secretBytes = Encoding.UTF8.GetBytes(request.Secret.Value.GetRawText());
+                storedSecret = await _secretStore.StoreAsync(
+                    account.TenantId,
+                    $"provider-account:{account.ProviderId}:{account.Id:N}",
+                    secretBytes,
+                    cancellationToken: cancellationToken);
+                account.SecretReferenceId = storedSecret.Id;
+            }
+
+            await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            var persisted = await context.ProviderAccounts.SingleAsync(
+                item => item.Id == account.Id,
+                cancellationToken);
+            persisted.SecretReferenceId = account.SecretReferenceId;
+            persisted.Enabled = request.Enabled;
+            persisted.UpdatedAt = DateTimeOffset.UtcNow;
+            persisted.Revision++;
+            AddAudit(
+                context,
+                session,
+                "provider-account.created",
+                "succeeded",
+                new { accountId = persisted.Id, persisted.ProviderId, scope = persisted.Scope.ToString() });
+            await context.SaveChangesAsync(cancellationToken);
+            return CreatedAtAction(
+                nameof(List),
+                AccountResponse(
+                    persisted,
+                    storedSecret == null
+                        ? null
+                        : new SecretReferenceRecord
+                        {
+                            Id = storedSecret.Id,
+                            TenantId = storedSecret.TenantId,
+                            Purpose = storedSecret.Purpose,
+                            ActiveVersion = storedSecret.ActiveVersion,
+                            UpdatedAt = storedSecret.UpdatedAt,
+                            RevokedAt = storedSecret.Revoked ? storedSecret.UpdatedAt : null
+                        }));
+        }
+        catch
+        {
+            if (storedSecret != null)
+            {
+                try
+                {
+                    await _secretStore.RevokeAsync(
+                        storedSecret.Id,
+                        new SecretAccessContext(
+                            storedSecret.TenantId,
+                            session.IsAdministrator && storedSecret.TenantId == null),
+                        CancellationToken.None);
+                }
+                catch
+                {
+                    // Preserve the original failure. Revoked-orphan cleanup is best effort.
+                }
+            }
+
+            await using var cleanup = await _contextFactory.CreateDbContextAsync(CancellationToken.None);
+            var orphan = await cleanup.ProviderAccounts.SingleOrDefaultAsync(item => item.Id == account.Id);
+            if (orphan != null)
+            {
+                cleanup.ProviderAccounts.Remove(orphan);
+                await cleanup.SaveChangesAsync();
+            }
+
+            throw;
+        }
+    }
+
+    [HttpPut("{accountId:guid}/secret")]
+    public async Task<IActionResult> ReplaceSecret(
+        Guid accountId,
+        [FromBody] ReplaceProviderSecretRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error))
+        {
+            return error!;
+        }
+
+        if (GetManagementAccessError(session) is { } accessError)
+        {
+            return accessError;
+        }
+
+        if (request.Secret.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return BadRequest(new { error = "Secret is required" });
+        }
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await ApplyManagementScope(context.ProviderAccounts, session).SingleOrDefaultAsync(
+            item => item.Id == accountId,
+            cancellationToken);
+        if (account == null)
+        {
+            return NotFound();
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(request.Secret.GetRawText());
+        var secret = await _secretStore.StoreAsync(
+            account.TenantId,
+            $"provider-account:{account.ProviderId}:{account.Id:N}",
+            bytes,
+            account.SecretReferenceId,
+            cancellationToken);
+        account.SecretReferenceId = secret.Id;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        account.Revision++;
+        AddAudit(
+            context,
+            session,
+            "provider-account.secret-replaced",
+            "succeeded",
+            new { accountId = account.Id, account.ProviderId, secretVersion = secret.ActiveVersion });
+        await context.SaveChangesAsync(cancellationToken);
+        return Ok(new
+        {
+            accountId = account.Id,
+            secret = new
+            {
+                configured = true,
+                version = secret.ActiveVersion,
+                keyId = secret.KeyId,
+                updatedAt = secret.UpdatedAt
+            }
+        });
+    }
+
+    [HttpDelete("{accountId:guid}")]
+    public async Task<IActionResult> Revoke(
+        Guid accountId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error))
+        {
+            return error!;
+        }
+
+        if (GetManagementAccessError(session) is { } accessError)
+        {
+            return accessError;
+        }
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await ApplyManagementScope(context.ProviderAccounts, session).SingleOrDefaultAsync(
+            item => item.Id == accountId,
+            cancellationToken);
+        if (account == null)
+        {
+            return NotFound();
+        }
+
+        account.Enabled = false;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        account.Revision++;
+        if (account.SecretReferenceId.HasValue)
+        {
+            await _secretStore.RevokeAsync(
+                account.SecretReferenceId.Value,
+                new SecretAccessContext(account.TenantId, session.IsAdministrator && account.TenantId == null),
+                cancellationToken);
+        }
+
+        AddAudit(
+            context,
+            session,
+            "provider-account.revoked",
+            "succeeded",
+            new { accountId = account.Id, account.ProviderId });
+        await context.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    private bool TryGetSession(
+        out AdminAuthSession session,
+        out IActionResult? error)
+    {
+        session = null!;
+        error = null;
+        if (HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) &&
+            value is AdminAuthSession current)
+        {
+            session = current;
+            return true;
+        }
+
+        error = Unauthorized(new { error = "Authentication required" });
+        return false;
+    }
+
+    private static bool TryNormalizeRequest(
+        CreateProviderAccountRequest request,
+        AdminAuthSession session,
+        bool canManageAllAccounts,
+        out NormalizedAccountRequest normalized,
+        out string? error)
+    {
+        normalized = default;
+        error = null;
+        var providerId = request.ProviderId?.Trim().ToLowerInvariant();
+        var displayName = request.DisplayName?.Trim();
+        if (string.IsNullOrWhiteSpace(providerId) || !ProviderIdPattern().IsMatch(providerId))
+        {
+            error = "ProviderId must use lowercase letters, numbers, and single hyphens";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(displayName) || displayName.Length > 200)
+        {
+            error = "DisplayName is required and must be at most 200 characters";
+            return false;
+        }
+
+        if (!Enum.TryParse<ProviderAccountScope>(request.Scope, ignoreCase: true, out var scope))
+        {
+            error = "Scope must be Global, User, or Library";
+            return false;
+        }
+
+        Guid? tenantId;
+        Guid? ownerUserId;
+        string? libraryScopeId = request.LibraryScopeId?.Trim();
+        if (canManageAllAccounts)
+        {
+            tenantId = scope == ProviderAccountScope.Global ? null : request.TenantId ?? session.TenantId;
+            ownerUserId = scope == ProviderAccountScope.User ? request.OwnerUserId ?? session.AllstarrUserId : null;
+        }
+        else
+        {
+            if (scope != ProviderAccountScope.User ||
+                !session.TenantId.HasValue ||
+                !session.AllstarrUserId.HasValue)
+            {
+                error = "Users may create only their own user-scoped accounts";
+                return false;
+            }
+
+            tenantId = session.TenantId;
+            ownerUserId = session.AllstarrUserId;
+            libraryScopeId = null;
+        }
+
+        if (scope is ProviderAccountScope.Global or ProviderAccountScope.User)
+        {
+            libraryScopeId = null;
+        }
+
+        if (scope != ProviderAccountScope.Global && !tenantId.HasValue)
+        {
+            error = "TenantId is required for non-global accounts";
+            return false;
+        }
+
+        if (scope == ProviderAccountScope.User && !ownerUserId.HasValue)
+        {
+            error = "OwnerUserId is required for user accounts";
+            return false;
+        }
+
+        if (scope == ProviderAccountScope.Library && string.IsNullOrWhiteSpace(libraryScopeId))
+        {
+            error = "LibraryScopeId is required for library accounts";
+            return false;
+        }
+
+        normalized = new NormalizedAccountRequest(
+            providerId,
+            displayName,
+            scope,
+            tenantId,
+            ownerUserId,
+            libraryScopeId);
+        return true;
+    }
+
+    private async Task<string?> ValidateAccountScopeAsync(
+        NormalizedAccountRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        if (request.Scope == ProviderAccountScope.Global)
+        {
+            return request.TenantId == null &&
+                   request.OwnerUserId == null &&
+                   request.LibraryScopeId == null
+                ? null
+                : "Global accounts cannot have a tenant, owner, or library scope";
+        }
+
+        if (!request.TenantId.HasValue ||
+            !await context.Tenants.AsNoTracking().AnyAsync(
+                item => item.Id == request.TenantId.Value,
+                cancellationToken))
+        {
+            return "The selected tenant does not exist";
+        }
+
+        if (request.Scope == ProviderAccountScope.Library)
+        {
+            return request.OwnerUserId == null && !string.IsNullOrWhiteSpace(request.LibraryScopeId)
+                ? null
+                : "Library accounts require a library scope and cannot have a user owner";
+        }
+
+        if (!request.OwnerUserId.HasValue)
+        {
+            return "User accounts require an owner";
+        }
+
+        var ownerIsActiveInTenant = await context.Users.AsNoTracking().AnyAsync(
+            item => item.Id == request.OwnerUserId.Value &&
+                    item.TenantId == request.TenantId.Value &&
+                    item.Status == PlatformUserStatus.Active,
+            cancellationToken);
+        return ownerIsActiveInTenant
+            ? null
+            : "The selected account owner is inactive or belongs to another tenant";
+    }
+
+    private bool CanAccessManagement(AdminAuthSession session) =>
+        _managementMode != ProviderAccountManagementMode.AdminManaged || session.IsAdministrator;
+
+    private bool CanManageAllAccounts(AdminAuthSession session) =>
+        session.IsAdministrator &&
+        _managementMode is ProviderAccountManagementMode.AdminManaged or ProviderAccountManagementMode.Hybrid;
+
+    private IActionResult? GetManagementAccessError(AdminAuthSession session)
+    {
+        if (!CanAccessManagement(session))
+        {
+            return ManagementForbidden();
+        }
+
+        if (!CanManageAllAccounts(session) &&
+            (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "The backend identity is not linked to an Allstarr user."
+            });
+        }
+
+        return null;
+    }
+
+    private IQueryable<ProviderAccountRecord> ApplyManagementScope(
+        IQueryable<ProviderAccountRecord> query,
+        AdminAuthSession session) => CanManageAllAccounts(session)
+            ? query
+            : query.Where(item =>
+                item.Scope == ProviderAccountScope.User &&
+                item.TenantId == session.TenantId &&
+                item.OwnerUserId == session.AllstarrUserId);
+
+    private IActionResult ManagementForbidden() =>
+        StatusCode(StatusCodes.Status403Forbidden, new
+        {
+            error = "Provider account management is restricted to administrators."
+        });
+
+    private void AddAudit(
+        AllstarrDbContext context,
+        AdminAuthSession session,
+        string action,
+        string outcome,
+        object details)
+    {
+        var correlationId = HttpContext.Items[CorrelationMiddleware.HttpContextItemKey]?.ToString()
+                            ?? HttpContext.TraceIdentifier;
+        context.AuditEvents.Add(new AuditEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = session.TenantId,
+            ActorUserId = session.AllstarrUserId,
+            Category = "provider-account",
+            Action = action,
+            Outcome = outcome,
+            CorrelationId = correlationId,
+            DetailsJson = JsonSerializer.Serialize(details),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+    }
+
+    private static object AccountResponse(
+        ProviderAccountRecord account,
+        SecretReferenceRecord? secret) => new
+    {
+        account.Id,
+        account.ProviderId,
+        account.DisplayName,
+        scope = account.Scope.ToString(),
+        account.TenantId,
+        account.OwnerUserId,
+        account.LibraryScopeId,
+        account.Enabled,
+        secret = new
+        {
+            configured = account.SecretReferenceId.HasValue,
+            version = secret?.ActiveVersion,
+            updatedAt = secret?.UpdatedAt,
+            revoked = secret?.RevokedAt.HasValue ?? false
+        },
+        account.CreatedAt,
+        account.UpdatedAt
+    };
+
+    [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant)]
+    private static partial Regex ProviderIdPattern();
+
+    public sealed class CreateProviderAccountRequest
+    {
+        public string? ProviderId { get; set; }
+        public string? DisplayName { get; set; }
+        public string Scope { get; set; } = nameof(ProviderAccountScope.User);
+        public Guid? TenantId { get; set; }
+        public Guid? OwnerUserId { get; set; }
+        public string? LibraryScopeId { get; set; }
+        public bool Enabled { get; set; } = true;
+        public JsonElement? Secret { get; set; }
+    }
+
+    public sealed class ReplaceProviderSecretRequest
+    {
+        public JsonElement Secret { get; set; }
+    }
+
+    private readonly record struct NormalizedAccountRequest(
+        string ProviderId,
+        string DisplayName,
+        ProviderAccountScope Scope,
+        Guid? TenantId,
+        Guid? OwnerUserId,
+        string? LibraryScopeId);
+}

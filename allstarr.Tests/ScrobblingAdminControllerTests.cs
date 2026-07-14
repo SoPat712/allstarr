@@ -148,6 +148,49 @@ public class ScrobblingAdminControllerTests
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
+    [Fact]
+    public async Task TestLastFmConnection_Forbidden_ReturnsActionableCredentialError()
+    {
+        var settings = CreateSettings("testuser", "password123");
+        settings.LastFm.SessionKey = "configured-session";
+        var controller = CreateController(
+            settings,
+            new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("forbidden", Encoding.UTF8, "text/plain")
+            });
+
+        var result = await controller.TestLastFmConnection();
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = JsonSerializer.Serialize(badRequest.Value);
+        Assert.Contains("Last.fm", payload, StringComparison.Ordinal);
+        Assert.Contains("403", payload, StringComparison.Ordinal);
+        Assert.Contains("re-authenticate", payload, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestListenBrainzConnection_UpstreamFailure_ReturnsActionableGatewayError()
+    {
+        var settings = CreateSettings("testuser", "password123");
+        settings.ListenBrainz.UserToken = "configured-token";
+        var controller = CreateController(
+            settings,
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("unavailable", Encoding.UTF8, "text/plain")
+            });
+
+        var result = await controller.TestListenBrainzConnection();
+
+        var gatewayError = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status502BadGateway, gatewayError.StatusCode);
+        var payload = JsonSerializer.Serialize(gatewayError.Value);
+        Assert.Contains("ListenBrainz", payload, StringComparison.Ordinal);
+        Assert.Contains("503", payload, StringComparison.Ordinal);
+        Assert.Contains("Try again later", payload, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ScrobblingSettings CreateSettings(string? username, string? password)
     {
         return new ScrobblingSettings

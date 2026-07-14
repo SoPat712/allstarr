@@ -25,4 +25,8 @@
     <ProjectReference Include="..\allstarr\allstarr.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

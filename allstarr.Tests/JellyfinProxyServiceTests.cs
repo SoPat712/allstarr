@@ -96,6 +96,36 @@ public class JellyfinProxyServiceTests
     }
 
     [Fact]
+    public async Task PostJsonAsync_UpstreamFailure_DoesNotLogResponseBodyOrQuerySecret()
+    {
+        const string responseSecret = "upstream-session-secret";
+        const string querySecret = "client-token-secret";
+        SetupMockResponse(
+            HttpStatusCode.InternalServerError,
+            $$"""{"error":"{{responseSecret}}"}""",
+            "application/json");
+
+        var messages = new List<string>();
+        var service = new JellyfinProxyService(
+            _mockHttpClientFactory.Object,
+            Options.Create(_settings),
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            new CollectingLogger<JellyfinProxyService>(messages),
+            _cache,
+            new ConfigurationBuilder().Build());
+
+        var (_, statusCode) = await service.PostJsonAsync(
+            $"Items?api_key={querySecret}",
+            "{}",
+            new HeaderDictionary());
+
+        Assert.Equal(500, statusCode);
+        Assert.DoesNotContain(messages, message => message.Contains(responseSecret, StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, message => message.Contains(querySecret, StringComparison.Ordinal));
+        Assert.Contains(messages, message => message.Contains("<redacted>", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GetJsonAsync_WithoutClientHeaders_SendsNoAuth()
     {
         // Arrange
@@ -678,6 +708,59 @@ public class JellyfinProxyServiceTests
         Assert.Equal(500, objectResult.StatusCode);
     }
 
+    [Fact]
+    public async Task SendPassthroughResponseAsync_PreservesMethodQueryBodyAndConditionalHeaders()
+    {
+        string? observedMethod = null;
+        string? observedPathAndQuery = null;
+        string? observedBody = null;
+        string? observedContentType = null;
+        string[] observedIfMatch = [];
+        string[] observedAuth = [];
+        string[] observedClientHeader = [];
+        _mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) =>
+            {
+                observedMethod = request.Method.Method;
+                observedPathAndQuery = request.RequestUri!.PathAndQuery;
+                observedBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                observedContentType = request.Content.Headers.ContentType?.ToString();
+                observedIfMatch = request.Headers.GetValues("If-Match").ToArray();
+                observedAuth = request.Headers.GetValues("X-Emby-Authorization").ToArray();
+                observedClientHeader = request.Headers.GetValues("X-Jellyfin-Client-Capability").ToArray();
+            })
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = new StringContent("accepted", System.Text.Encoding.UTF8, "text/plain")
+            });
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Patch;
+        context.Request.ContentType = "application/merge-patch+json";
+        context.Request.Headers.Append("If-Match", "\"one\"");
+        context.Request.Headers.Append("If-Match", "\"two\"");
+        context.Request.Headers["X-Emby-Authorization"] = "MediaBrowser Token=\"client-token\"";
+        context.Request.Headers["X-Jellyfin-Client-Capability"] = "gapless";
+        var payload = System.Text.Encoding.UTF8.GetBytes("{\"Name\":\"Updated\"}");
+        context.Request.ContentLength = payload.Length;
+        context.Request.Body = new MemoryStream(payload);
+
+        using var response = await _service.SendPassthroughResponseAsync(
+            context.Request,
+            "Items/item-1?api_key=client-token&Fields=Name");
+
+        Assert.Equal("PATCH", observedMethod);
+        Assert.Equal("/Items/item-1?api_key=client-token&Fields=Name", observedPathAndQuery);
+        Assert.Equal("{\"Name\":\"Updated\"}", observedBody);
+        Assert.Equal("application/merge-patch+json", observedContentType);
+        Assert.Equal(["\"one\"", "\"two\""], observedIfMatch);
+        Assert.Equal(["MediaBrowser Token=\"client-token\""], observedAuth);
+        Assert.Equal(["gapless"], observedClientHeader);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
     private void SetupMockResponse(HttpStatusCode statusCode, string content, string contentType)
     {
         var response = new HttpResponseMessage(statusCode)
@@ -691,5 +774,22 @@ public class JellyfinProxyServiceTests
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(response);
+    }
+
+    private sealed class CollectingLogger<T>(List<string> messages) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            messages.Add(formatter(state, exception));
+        }
     }
 }

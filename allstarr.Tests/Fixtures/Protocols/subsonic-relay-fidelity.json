@@ -1,0 +1,104 @@
+[
+  {
+    "name": "get-update-playlist-repeated-values",
+    "request": {
+      "method": "GET",
+      "path": "/rest/updatePlaylist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&playlistId=pl-1&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=2&songIndexToRemove=0"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json"
+    },
+    "relay": {
+      "method": "GET",
+      "pathAndQuery": "/rest/updatePlaylist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&playlistId=pl-1&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=2&songIndexToRemove=0",
+      "status": 202,
+      "contentType": "application/json",
+      "responseBody": { "subsonic-response": { "status": "ok", "version": "1.16.1" } }
+    }
+  },
+  {
+    "name": "post-scrobble-repeated-pairs-and-form-token",
+    "request": {
+      "method": "POST",
+      "path": "/rest/scrobble.view?v=1.16.1&c=fixture&f=json",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&t=hash&s=salt&id=song-a&id=song-b&time=1000&time=2000&submission=true&submission=true"
+    },
+    "verification": {
+      "method": "POST",
+      "pathAndQuery": "/rest/ping.view?v=1.16.1&c=fixture&f=json",
+      "body": "u=fixture&t=hash&s=salt"
+    },
+    "relay": {
+      "method": "POST",
+      "pathAndQuery": "/rest/scrobble.view?v=1.16.1&c=fixture&f=json",
+      "requestBody": "u=fixture&t=hash&s=salt&id=song-a&id=song-b&time=1000&time=2000&submission=true&submission=true",
+      "status": 202,
+      "contentType": "application/json",
+      "responseBody": { "subsonic-response": { "status": "ok", "version": "1.16.1" } }
+    }
+  },
+  {
+    "name": "post-update-playlist-form-password-and-repeated-values",
+    "request": {
+      "method": "POST",
+      "path": "/rest/updatePlaylist.view?v=1.16.1&c=fixture&f=json",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&p=secret&playlistId=pl-1&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=1&songIndexToRemove=0"
+    },
+    "verification": {
+      "method": "POST",
+      "pathAndQuery": "/rest/ping.view?v=1.16.1&c=fixture&f=json",
+      "body": "u=fixture&p=secret"
+    },
+    "relay": {
+      "method": "POST",
+      "pathAndQuery": "/rest/updatePlaylist.view?v=1.16.1&c=fixture&f=json",
+      "requestBody": "u=fixture&p=secret&playlistId=pl-1&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=1&songIndexToRemove=0",
+      "status": 202,
+      "contentType": "application/json",
+      "responseBody": { "subsonic-response": { "status": "ok", "version": "1.16.1" } }
+    }
+  },
+  {
+    "name": "get-star-transparent-backend-result",
+    "request": {
+      "method": "GET",
+      "path": "/rest/star.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id=song-local"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json"
+    },
+    "relay": {
+      "method": "GET",
+      "pathAndQuery": "/rest/star.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id=song-local",
+      "status": 202,
+      "contentType": "application/json",
+      "responseBody": { "subsonic-response": { "status": "ok", "version": "1.16.1" } }
+    }
+  },
+  {
+    "name": "post-unstar-repeated-values",
+    "request": {
+      "method": "POST",
+      "path": "/rest/unstar.view?v=1.16.1&c=fixture&f=json",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&p=secret&id=song-a&id=song-b&albumId=album-a&artistId=artist-a"
+    },
+    "verification": {
+      "method": "POST",
+      "pathAndQuery": "/rest/ping.view?v=1.16.1&c=fixture&f=json",
+      "body": "u=fixture&p=secret"
+    },
+    "relay": {
+      "method": "POST",
+      "pathAndQuery": "/rest/unstar.view?v=1.16.1&c=fixture&f=json",
+      "requestBody": "u=fixture&p=secret&id=song-a&id=song-b&albumId=album-a&artistId=artist-a",
+      "status": 202,
+      "contentType": "application/json",
+      "responseBody": { "subsonic-response": { "status": "ok", "version": "1.16.1" } }
+    }
+  }
+]

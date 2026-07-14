@@ -1,339 +1,108 @@
 # Allstarr
 
-[![Build Status - Main](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml)
-[![Build Status - Beta](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml/badge.svg?branch=beta)](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml)
+[![Build Status](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/SoPat712/allstarr/actions/workflows/docker.yml)
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fsopat712%2Fallstarr-blue)](https://github.com/SoPat712/allstarr/pkgs/container/allstarr)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
-A media server proxy that integrates music streaming providers with your local library. Works with **Jellyfin** servers. When a song isn't in your local library, it gets fetched from your configured provider, downloaded, and served to your client. The downloaded song then lives in your library for next time.
+Allstarr is a self-hosted music gateway for Jellyfin and Subsonic-compatible clients. Put it in front of Jellyfin or a server such as Navidrome, connect the providers you actually use, and keep one familiar client while Allstarr handles search, matching, streaming, downloads, playlists, lyrics, scrobbling, favorites, and recommendations.
+
+Allstarr does not put songs inside Postgres. Audio stays as normal files in the mounted `downloads`, `kept`, cache, and managed-library folders. Postgres holds control-plane state such as identities, provider accounts, encrypted-secret references, jobs, matches, playlist links, health history, and audits. Valkey accelerates rebuildable cache work and is not the source of truth.
+
+## Before You Install
+
+The `v3.0.0-beta.1` overhaul release is a breaking fresh-install baseline. Do not reuse the old Redis-to-Valkey conversion overlay or expect legacy Redis, mapping, extension, or job state to import automatically. Keep the old stack stopped for rollback, attach the existing backend library read-only when practical, and give the separate version 3 deployment its own writable download, kept, cache, and managed-library roots. Never let both versions write the same media roots. Then use the administrator WebUI to preview and import the safe parts of the old `.env`. Deployment values remain a checklist, personal accounts are reconnected by their owners, and the original file is never replaced. Follow the [legacy environment upgrade procedure](docs/operations/legacy-env-import.md#upgrade-procedure) before cutting clients over.
+
+Standard Compose runs Allstarr, Postgres, and Valkey. It exposes one client protocol per deployment because the Jellyfin and Subsonic surfaces both own catch-all routes. Choose `Jellyfin` or `Subsonic`; a Subsonic deployment can use Navidrome as its backend.
 
 ## Quick Start
 
-Using Docker (recommended):
+```bash
+git clone https://github.com/SoPat712/allstarr.git
+cd allstarr
+cp .env.example .env
+mkdir -p secrets downloads kept
+umask 077
+openssl rand -base64 32 > secrets/postgres-password.txt
+key="$(openssl rand -base64 32)"
+printf '{"activeKeyId":"key-1","keys":{"key-1":"%s"}}\n' "$key" > secrets/allstarr-keyring.json
+unset key
+chmod 600 .env secrets/postgres-password.txt secrets/allstarr-keyring.json
+```
+
+Edit `.env`. At minimum, select `BACKEND_TYPE`, set the matching backend URL, and review the image tag and mounted paths. Jellyfin server-side library operations also need its API key and user ID.
 
 ```bash
-# 1. Download the docker-compose.yml file and the .env.example file to a folder on the machine you have Docker
-
-curl -O https://raw.githubusercontent.com/SoPat712/allstarr/refs/heads/main/docker-compose.yml \
-     -O https://raw.githubusercontent.com/SoPat712/allstarr/refs/heads/main/.env.example
-
-# 2. Configure environment
-cp .env.example .env
-vi .env  # Edit with your settings
-
-# 3. Pull the latest image
-docker-compose pull
-
-# 4. Start services
-docker-compose up -d
-
-# 5. Check status
-docker-compose ps
-docker-compose logs -f
+docker compose config --quiet
+docker compose pull
+docker compose up -d
+docker compose ps
+curl --fail http://127.0.0.1:5274/health/ready
 ```
 
-The media-client proxy will be available at `http://localhost:5274`.
+The standard stack is the smaller, recommended default. The AIO override mounts the checksum-locked offline
+first-party package bundle, but it does not force optional provider sidecars on anyone:
 
-Port `5274` maps to the container's proxy port (`8080`). It does not serve the
-Allstarr dashboard. The dashboard uses the separate admin port (`5275`).
-
-## Web Dashboard
-
-Allstarr includes a web UI for easy configuration and playlist management,
-accessible at `http://localhost:5275`.
-
-The admin listener is localhost-only by default. When Allstarr runs in Docker,
-set the following values in `.env` before accessing it through a host port,
-LAN address, or reverse proxy:
-
-```dotenv
-ADMIN_BIND_ANY_IP=true
-ADMIN_TRUSTED_SUBNETS=192.168.1.0/24
+```bash
+docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 ```
 
-Replace the example CIDR with the network that should be allowed. For a reverse
-proxy on a Docker network, include that Docker network's CIDR instead. Keep the
-dashboard behind a private network, VPN, or an authenticated access proxy.
-<img width="1664" height="1101" alt="image" src="https://github.com/user-attachments/assets/9159100b-7e11-449e-8530-517d336d6bd2" />
+The bundle lock is still authoritative. A bundled package marked blocked is not staged or activated merely because
+the AIO files are mounted.
 
-### Features
+Apple downloads are optional and are not bundled with Standard or AIO. Run a compatible Apple provider gateway
+separately, then give Allstarr its URL through the dashboard or `APPLE_DOWNLOAD_URL`. The URL must point to the
+gateway API, not directly to wrapper-v2. Removing that URL disables Apple download routes without changing Postgres
+or media volumes. See [Apple download provider setup](docs/operations/apple-download-provider.md).
 
-- **Playlist Management**: Link Jellyfin playlists to Spotify playlists with just a few clicks
-- **Provider Matching**: It should fill in the gaps of your Jellyfin library with tracks from your selected provider
-- **WebUI**: Update settings without manually editing .env files
-- **Music**: Using multiple sources for music (optimized for SquidWTF right now, though)
-- **Lyrics**: Using multiple sources for lyrics - Jellyfin local, Spotify Lyrics API, LyricsPlus (multi-source), and LRCLib
-- **Scrobbling**: Track your listening history to Last.fm and ListenBrainz with automatic scrobbling
-- **Downloads Management**: View, download, and manage your kept files through the web UI
-- **Diagnostics**: Monitor system performance, memory usage, cache statistics, and endpoint usage
+Client traffic uses `http://localhost:5274`. The separate dashboard is on `http://localhost:5275`. Standard Compose publishes the dashboard on host loopback and only trusts the container gateway needed to cross that mapping. LAN or reverse-proxy access requires `ADMIN_BIND_ADDRESS=0.0.0.0`, `ADMIN_BIND_ANY_IP=true`, and an explicit `ADMIN_TRUSTED_SUBNETS` CIDR. Please keep it behind a private network, VPN, or authenticated access proxy. This software has meaningful access to your media server and provider accounts.
 
-### Quick Setup with Web UI
+The complete install, backup, restore, and rollback instructions live in [the storage runbook](docs/operations/storage.md). Configuration keys are explained in [CONFIGURATION.md](CONFIGURATION.md).
 
-1. **Access the dashboard** at `http://localhost:5275`
-2. **Configure Spotify** (Configuration tab):
-   - Enable Spotify API
-   - Add your `sp_dc` cookie from Spotify (see instructions in UI)
-   - The cookie age is automatically tracked
-3. **Link playlists** (Link Playlists tab):
-   - View all your Jellyfin playlists
-   - Click "Link to Spotify" on any playlist
-   - Paste the Spotify playlist ID, URL, or `spotify:playlist:` URI
-   - Accepts formats like:
-     - `37i9dQZF1DXcBWIGoYBM5M` (just the ID)
-     - `spotify:playlist:37i9dQZF1DXcBWIGoYBM5M` (Spotify URI)
-     - `https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M` (full URL)
-4. **Restart Allstarr** to apply changes (should be a banner)
+## What It Does
 
-Then, proceeed to **Active Playlists**, which shows you which Spotify playlists are currently being monitored and filled with tracks, and lets you do a bunch of useful operations on them.
+- Proxies either the Jellyfin or Subsonic/OpenSubsonic surface while preserving native backend authentication and normal pass-through behavior.
+- Merges local results with policy-eligible metadata providers and streams or downloads through separately selected capability routes.
+- Keeps every real media file in accessible folders. Managed files have ownership, checksum, placement, and job records so Allstarr knows what it is allowed to change.
+- Matches one real recording to local copies and multiple provider identities. Matching is provider-neutral and records why a link was accepted or rejected.
+- Imports provider playlists as virtual views or materializes exact local matches into Jellyfin or Navidrome/Subsonic. Materialization preserves order, reuses existing tracks, supports reconcile or explicit recreate mode, and does not download unmatched entries.
+- Runs long work as durable, inspectable jobs with retries, leases, cancellation, idempotency, and visible failure state.
+- Supports opt-in favorite workflows for download, tagging, managed placement, and backend refresh. Unfavorite does not delete music.
+- Collects opt-in listening signals and can build explained playlists from Jellyfin InstantMix, Last.fm similarity, ListenBrainz collaborative filtering, MusicBrainz-enriched local relationships, local rules, and optional AudioMuse-AI.
+- Scrobbles to Last.fm and ListenBrainz through durable delivery checkpoints.
+- Installs verified provider extensions through the provider SDK permission and lifecycle boundary. No third-party registry is added automatically.
 
-### Configuration Persistence
+Provider availability depends on the configured accounts, optional sidecars, permissions, and health. Missing optional services reduce capability instead of taking the whole application down.
 
-The web UI updates your `.env` file directly. Allstarr reloads that file on startup, so a normal container restart is enough for UI changes to take effect. In development mode, the `.env` file is in your project root. In Docker, it's at `/app/.env`.
+## Storage At A Glance
 
-There's an environment variable to modify this.
+| Location | Purpose | Authoritative? |
+| --- | --- | --- |
+| Postgres | Users, accounts, secret references, jobs, matches, playlists, intelligence, health, audits | Yes, for application state |
+| Valkey | Search, metadata, lyrics, image, and other acceleration caches | No |
+| `downloads` / `kept` / managed roots | Playable audio and related files | Yes, for media |
+| `/app/state/backups` | Verified database backup artifacts and manifests | Copy these off the host |
+| key-ring file | Keys used to open encrypted application secrets | Yes, back it up separately |
 
-**Recommended workflow**: Use the `sp_dc` cookie method alongside the [Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file).
+A database backup does not contain your songs or encryption key ring. Back up those separately.
 
-### Nginx Proxy Setup (Optional)
+## Clients And Backends
 
-This service only exposes ports internally. You can use nginx to proxy to it, however PLEASE take significant precautions before exposing this! Everyone decides their own level of risk, but this is currently untested, potentially dangerous software, with almost unfettered access to your Jellyfin server. My recommendation is use Tailscale or something similar!
-
-The example below targets port `8080` and is for Jellyfin/Subsonic client
-traffic. It does not expose the Allstarr dashboard. To proxy the dashboard,
-create a separate protected virtual host targeting port `5275`, and configure
-`ADMIN_BIND_ANY_IP` and `ADMIN_TRUSTED_SUBNETS` as described above.
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    add_header X-Content-Type-Options "nosniff" always;
-
-    # Streaming settings
-    proxy_buffering off;
-    proxy_request_buffering off;
-    proxy_read_timeout 600s;
-
-    location / {
-        proxy_pass http://allstarr:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-**Security:** Don't trust me or my code, or anyone for that matter (Zero-trust, get it?), use Tailscale or Pangolin or Cloudflare Zero-Trust or anything like it please
-
-## Why "Allstarr"?
-
-This project brings together all the music streaming providers into one unified library - making them all stars in your collection.
-
-## Features
-
-- **Dual Backend Support**: Works with Jellyfin
-- **Multi-Provider Architecture**: Pluggable system for streaming providers (Deezer, Qobuz, SquidWTF)
-- **Transparent Proxy**: Sits between your music clients and media server
-- **Automatic Search**: Searches streaming providers when songs aren't local
-- **On-the-Fly Downloads**: Songs download and cache for future use
-- **Favorite to Keep**: When you favorite an external track, it's automatically copied to a permanent `/kept` folder separate from the cache
-- **External Playlist Support**: Search and download playlists from Deezer, Qobuz, and SquidWTF with M3U generation
-- **Hi-Res Audio**: SquidWTF supports up to 24-bit/192kHz FLAC
-- **Full Metadata**: Downloaded files include complete ID3 tags (title, artist, album, track number, year, genre, BPM, ISRC, etc.) and cover art
-- **Organized Library**: Downloads save in `Artist/Album/Track` folder structure
-- **Artist Deduplication**: Merges local and streaming artists to avoid duplicates
-- **Album Enrichment**: Adds missing tracks to local albums from streaming providers
-- **Cover Art Proxy**: Serves cover art for external content
-- **Spotify Playlist Injection** (Jellyfin only): Intercepts Spotify Import plugin playlists (Release Radar, Discover Weekly) and fills them with tracks auto-matched from streaming providers
-- **Lyrics Support**: Multi-source lyrics fetching from Jellyfin local files, Spotify Lyrics API (synchronized), LyricsPlus (multi-source aggregator), and LRCLib (community database)
-- **Scrobbling Support**: Track your listening history to Last.fm and ListenBrainz
-
-## Supported Backends
-
-### Jellyfin
-
-[Jellyfin](https://jellyfin.org/) is a free and open-source media server. Allstarr connects via the Jellyfin API using your Jellyfin user login. (I plan to move this to api key if possible)
-
-**Compatible Jellyfin clients:**
-
-- [Feishin](https://github.com/jeffvli/feishin) (Mac/Windows/Linux)
-  <img width="1691" height="1128" alt="image" src="https://github.com/user-attachments/assets/c602f71c-c4dd-49a9-b533-1558e24a9f45" />
-
-- [Musiver](https://music.aqzscn.cn/en/) (Android/iOS/Windows/Android)
-  <img width="523" height="1025" alt="image" src="https://github.com/user-attachments/assets/135e2721-5fd7-482f-bb06-b0736003cfe7" />
-
-- [Finamp](https://github.com/jmshrv/finamp) (Android/iOS)
-
-- [Finer Player](https://monk-studio.com/finer) (iOS/iPadOS/macOS/tvOS)
-
-> **Want to improve client compatibility?** Pull requests are welcome!
-
-### Incompatible Clients
-
-These clients are **not compatible** with Allstarr due to architectural limitations:
-
-- [Symfonium](https://symfonium.app/) - Uses offline-first architecture and never queries the server for searches, making streaming provider integration impossible. [See details](https://support.symfonium.app/t/suggestions-on-search-function/1121/)
-
-See [CLIENTS.md](CLIENTS.md) for more detailed client information.
-
-## Supported Music Providers
-
-- **[SquidWTF](https://tidal.squid.wtf/)** - Quality: FLAC (Hi-Res 24-bit/192kHz & CD-Lossless 16-bit/44.1kHz), AAC
-- **[Deezer](https://www.deezer.com/)** - Quality: FLAC, MP3_320, MP3_128
-- **[Qobuz](https://www.qobuz.com/)** - Quality: FLAC, FLAC_24_HIGH (Hi-Res 24-bit/192kHz), FLAC_24_LOW, FLAC_16, MP3_320
-
-Choose your preferred provider via the `MUSIC_SERVICE` environment variable. Additional providers may be added in future releases.
-
-## Requirements
-
-- A running media server:
-  - **Jellyfin**: Any recent version with API access enabled
-- **Docker and Docker Compose** (recommended) - includes Redis and Spotify Lyrics API sidecars
-  - Redis is used for caching (search results, playlists, lyrics, etc.)
-  - Spotify Lyrics API provides synchronized lyrics for Spotify tracks
-- Credentials for at least one music provider (IF NOT USING SQUIDWTF):
-  - **Deezer**: ARL token from browser cookies
-  - **Qobuz**: User ID + User Auth Token from browser localStorage ([see Wiki guide](<https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)>))
-- **OR** [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for manual installation (requires separate Redis setup)
-
-## Configuration
-
-### Environment Setup
-
-1. **Create your environment file**
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **Edit the `.env` file** with your configuration:
-
-   **Server Settings:**
-
-   ```bash
-   # Backend selection
-   BACKEND_TYPE=Jellyfin
-
-   # Jellyfin server URL
-   JELLYFIN_URL=http://localhost:8096
-
-   # API key (get from Jellyfin Dashboard > API Keys)
-   JELLYFIN_API_KEY=your-api-key-here
-
-   # User ID (from Jellyfin Dashboard > Users > click user > check URL)
-   JELLYFIN_USER_ID=your-user-id-here
-
-   # Music library ID (optional, auto-detected if not set)
-   JELLYFIN_LIBRARY_ID=
-   ```
-
-   ```bash
-   # Path where downloaded songs will be stored
-   DOWNLOAD_PATH=./downloads
-
-   # Music service to use: SquidWTF, Deezer, or Qobuz
-   MUSIC_SERVICE=SquidWTF
-
-   # Storage mode: Permanent or Cache
-   STORAGE_MODE=Permanent
-   ```
-
-   See the full `.env.example` for all available options including Deezer/Qobuz credentials.
-
-3. **Configure your client**
-
-   Point your music client to `http://localhost:5274` instead of your media server directly.
-
-> **Tip**: Make sure the `DOWNLOAD_PATH` points to a directory that your media server can scan, so downloaded songs appear in your library.
-
-For detailed configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
-
-## Manual Installation
-
-If you prefer to run Allstarr without Docker:
-
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/SoPat712/allstarr.git
-   cd allstarr
-   ```
-
-2. **Restore dependencies**
-
-   ```bash
-   dotnet restore
-   ```
-
-3. **Configure the application**
-
-   Edit `allstarr/appsettings.json`:
-
-   **For Jellyfin:**
-
-   ```json
-   {
-     "Backend": {
-       "Type": "Jellyfin"
-     },
-     "Jellyfin": {
-       "Url": "http://localhost:8096",
-       "ApiKey": "your-api-key",
-       "UserId": "your-user-id",
-       "MusicService": "SquidWTF"
-     },
-     "Library": {
-       "DownloadPath": "./downloads"
-     }
-   }
-   ```
-
-4. **Run the server**
-
-   ```bash
-   cd allstarr
-   dotnet run
-   ```
-
-   The proxy will start on `http://localhost:5274` by default.
-
-5. **Configure your client**
-
-   Point your music client to `http://localhost:5274` instead of your media server directly.
+Allstarr supports Jellyfin clients and Subsonic/OpenSubsonic clients through the selected deployment surface. Client behavior varies, especially around search, offline indexing, playlists, and lyrics. See [CLIENTS.md](CLIENTS.md) for the tested list and reporting checklist.
 
 ## Documentation
 
-- **[CONFIGURATION.md](CONFIGURATION.md)** - Detailed configuration guide for all settings
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical architecture and API documentation
-- **[CLIENTS.md](CLIENTS.md)** - Client compatibility and setup
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup and contribution guidelines
+- [Architecture](ARCHITECTURE.md)
+- [Configuration](CONFIGURATION.md)
+- [Client compatibility](CLIENTS.md)
+- [Storage operations](docs/operations/storage.md)
+- [Extension SDK](docs/extensions/sdk-v1.md)
+- [Contributing](CONTRIBUTING.md)
+- [Implementation charter and phase history](OVERHAUL.md)
 
-## Limitations
+## Why “Allstarr”?
 
-- **Region Restrictions**: Some tracks may be unavailable depending on your region and provider.
-- **Token Expiration**: Provider authentication tokens expire and need periodic refresh.
+The goal is to bring the useful parts of different music services into one library experience and let every provider be good at the part it actually does well.
 
 ## License
 
-GPL-3.0
-
-## Acknowledgments
-
-- [octo-fiesta](https://github.com/V1ck3s/octo-fiesta) - The original
-- [octo-fiestarr](https://github.com/bransoned/octo-fiestarr) - The fork that introduced me to this idea based on the above
-- [Jellyfin Spotify Import Plugin](https://github.com/Viperinius/jellyfin-plugin-spotify-import?tab=readme-ov-file) - The plugin that I **strongly** recommend using alongside this repo
-- [Jellyfin](https://jellyfin.org/) - The free and open-source media server
-- [Navidrome](https://www.navidrome.org/) - The excellent self-hosted music server
-- [Hi-Fi API](https://github.com/binimum/hifi-api) - These people do some great work, and you should thank them for this even existing!
-- [Deezer](https://www.deezer.com/) - Music streaming service
-- [Qobuz](https://www.qobuz.com/) - Hi-Res music streaming service
-- [spotify-lyrics-api](https://github.com/akashrchandran/spotify-lyrics-api) - Thank them for the fact that we have access to Spotify's lyrics!
-- [LRCLIB](https://github.com/tranxuanthang/lrclib) - The GOATS for giving us a free api for lyrics! They power LRCGET, which I'm sure some of you have heard of
+Allstarr is licensed under [GPL-3.0](LICENSE).

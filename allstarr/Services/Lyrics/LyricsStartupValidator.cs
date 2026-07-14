@@ -33,7 +33,6 @@ public class LyricsStartupValidator : BaseStartupValidator
 
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
-        Console.WriteLine();
         WriteStatus("Lyrics Test Song", $"{TestSongTitle} by {TestArtist}", ConsoleColor.Cyan);
         WriteDetail($"Spotify ID: {TestSpotifyId}");
         
@@ -98,7 +97,7 @@ public class LyricsStartupValidator : BaseStartupValidator
         catch (Exception ex)
         {
             WriteStatus("LRCLib", "ERROR", ConsoleColor.Red);
-            WriteDetail($"Failed to connect: {ex.Message}");
+            WriteDetail($"LRCLib validation failed ({ex.GetType().Name})");
             return false;
         }
     }
@@ -127,11 +126,7 @@ public class LyricsStartupValidator : BaseStartupValidator
                 
                 if (hasError)
                 {
-                    var message = doc.RootElement.TryGetProperty("message", out var msg) 
-                        ? msg.GetString() 
-                        : "Unknown error";
                     WriteStatus("Spotify Lyrics Sidecar", "API ERROR", ConsoleColor.Yellow);
-                    WriteDetail($"⚠ {message}");
                     WriteDetail("Check if sp_dc cookie is valid");
                     return false;
                 }
@@ -157,7 +152,7 @@ public class LyricsStartupValidator : BaseStartupValidator
         catch (Exception ex)
         {
             WriteStatus("Spotify Lyrics Sidecar", "ERROR", ConsoleColor.Red);
-            WriteDetail($"Failed to connect: {ex.Message}");
+            WriteDetail($"Lyrics sidecar validation failed ({ex.GetType().Name})");
             WriteDetail("Ensure spotify-lyrics container is running in docker-compose");
             return false;
         }
@@ -180,7 +175,7 @@ public class LyricsStartupValidator : BaseStartupValidator
         catch (Exception ex)
         {
             WriteStatus("Spotify API", "ERROR", ConsoleColor.Red);
-            WriteDetail($"Validation failed: {ex.Message}");
+            WriteDetail($"Spotify validation failed ({ex.GetType().Name})");
             return false;
         }
     }

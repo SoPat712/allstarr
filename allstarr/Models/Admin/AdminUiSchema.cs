@@ -13,8 +13,14 @@ public sealed class AdminUiSchemaResponse
     [JsonPropertyName("activeBackend")]
     public string ActiveBackend { get; set; } = "Jellyfin";
 
+    [JsonPropertyName("providerAccountManagementMode")]
+    public string ProviderAccountManagementMode { get; set; } = "Hybrid";
+
     [JsonPropertyName("providers")]
     public List<AdminUiProvider> Providers { get; set; } = [];
+
+    [JsonPropertyName("providerSupportMatrix")]
+    public List<AdminUiProviderSupport> ProviderSupportMatrix { get; set; } = [];
 
     [JsonPropertyName("multiProviderCategories")]
     public List<string> MultiProviderCategories { get; set; } = [];
@@ -30,6 +36,42 @@ public sealed class AdminUiSchemaResponse
 
     [JsonPropertyName("pluginCapabilities")]
     public List<AdminUiPluginCapability> PluginCapabilities { get; set; } = [];
+}
+
+public sealed class AdminUiProviderSupport
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("runtimeId")]
+    public string? RuntimeId { get; set; }
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("accountScope")]
+    public string AccountScope { get; set; } = "none";
+
+    [JsonPropertyName("configuration")]
+    public string Configuration { get; set; } = string.Empty;
+
+    [JsonPropertyName("capabilities")]
+    public List<AdminUiCapabilitySupport> Capabilities { get; set; } = [];
+}
+
+public sealed class AdminUiCapabilitySupport
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("state")]
+    public string State { get; set; } = "unavailable";
+
+    [JsonPropertyName("protocolLimit")]
+    public string ProtocolLimit { get; set; } = string.Empty;
+
+    [JsonPropertyName("testCoverage")]
+    public string TestCoverage { get; set; } = string.Empty;
 }
 
 public sealed class AdminUiRoute
@@ -84,6 +126,36 @@ public sealed class AdminUiProvider
 
     [JsonPropertyName("notes")]
     public List<string> Notes { get; set; } = [];
+
+    [JsonPropertyName("runtimeCapabilities")]
+    public List<AdminUiProviderRuntimeCapability> RuntimeCapabilities { get; set; } = [];
+}
+
+public sealed class AdminUiProviderRuntimeCapability
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("configuration")]
+    public string Configuration { get; set; } = "needs_configuration";
+
+    [JsonPropertyName("supported")]
+    public bool Supported { get; set; }
+
+    [JsonPropertyName("health")]
+    public string Health { get; set; } = "unknown";
+
+    [JsonPropertyName("ready")]
+    public bool Ready { get; set; }
+
+    [JsonPropertyName("canAttempt")]
+    public bool CanAttempt { get; set; }
+
+    [JsonPropertyName("testedAt")]
+    public DateTimeOffset? TestedAt { get; set; }
+
+    [JsonPropertyName("reasonCode")]
+    public string? ReasonCode { get; set; }
 }
 
 public sealed class AdminUiPriorityGroup
@@ -139,8 +211,17 @@ public sealed class AdminUiConfigField
     [JsonPropertyName("sensitive")]
     public bool Sensitive { get; set; }
 
+    [JsonPropertyName("ownership")]
+    public string Ownership { get; set; } = "durable";
+
+    [JsonPropertyName("readOnly")]
+    public bool ReadOnly { get; set; }
+
+    [JsonPropertyName("helpText")]
+    public string? HelpText { get; set; }
+
     [JsonPropertyName("requiresRestart")]
-    public bool RequiresRestart { get; set; } = true;
+    public bool RequiresRestart { get; set; }
 
     [JsonPropertyName("min")]
     public int? Min { get; set; }

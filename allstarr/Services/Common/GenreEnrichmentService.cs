@@ -13,20 +13,21 @@ public class GenreEnrichmentService
     private readonly MusicBrainzService _musicBrainz;
     private readonly RedisCacheService _cache;
     private readonly ILogger<GenreEnrichmentService> _logger;
-    private const string GenreCacheDirectory = "/app/cache/genres";
+    private readonly string _genreCacheDirectory;
     private static readonly TimeSpan GenreCacheDuration = TimeSpan.FromDays(30);
 
     public GenreEnrichmentService(
         MusicBrainzService musicBrainz,
         RedisCacheService cache,
+        IConfiguration configuration,
         ILogger<GenreEnrichmentService> logger)
     {
         _musicBrainz = musicBrainz;
         _cache = cache;
         _logger = logger;
+        _genreCacheDirectory = configuration["Cache:GenreDirectory"] ?? "/app/cache/genres";
 
-        // Ensure cache directory exists
-        Directory.CreateDirectory(GenreCacheDirectory);
+        Directory.CreateDirectory(_genreCacheDirectory);
     }
 
     /// <summary>
@@ -130,7 +131,7 @@ public class GenreEnrichmentService
         try
         {
             var fileName = GetCacheFileName(cacheKey);
-            var filePath = Path.Combine(GenreCacheDirectory, fileName);
+            var filePath = Path.Combine(_genreCacheDirectory, fileName);
 
             if (!File.Exists(filePath))
             {
@@ -165,7 +166,7 @@ public class GenreEnrichmentService
         try
         {
             var fileName = GetCacheFileName(cacheKey);
-            var filePath = Path.Combine(GenreCacheDirectory, fileName);
+            var filePath = Path.Combine(_genreCacheDirectory, fileName);
 
             var cacheEntry = new GenreCacheEntry
             {

@@ -2,8 +2,20 @@ using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
 using StackExchange.Redis;
 using System.Text.Json;
+using allstarr.Core.Operations;
 
 namespace allstarr.Services.Common;
+
+public interface IRedisConnectionFactory
+{
+    IConnectionMultiplexer Connect(string connectionString);
+}
+
+public sealed class RedisConnectionFactory : IRedisConnectionFactory
+{
+    public IConnectionMultiplexer Connect(string connectionString) =>
+        ConnectionMultiplexer.Connect(connectionString);
+}
 
 /// <summary>
 /// Redis caching service for metadata and images.
@@ -12,16 +24,52 @@ public class RedisCacheService
 {
     private readonly RedisSettings _settings;
     private readonly ILogger<RedisCacheService> _logger;
+    private readonly OperationalRuntimeState? _runtimeState;
+    private readonly IRedisConnectionFactory _connectionFactory;
+    private readonly IPlatformClock _clock;
     private IConnectionMultiplexer? _redis;
     private IDatabase? _db;
     private readonly object _lock = new();
+    private DateTimeOffset _nextReconnectAttempt = DateTimeOffset.MinValue;
 
     public RedisCacheService(
         IOptions<RedisSettings> settings,
         ILogger<RedisCacheService> logger)
+        : this(
+            settings,
+            logger,
+            null,
+            new RedisConnectionFactory(),
+            new SystemPlatformClock())
+    {
+    }
+
+    public RedisCacheService(
+        IOptions<RedisSettings> settings,
+        ILogger<RedisCacheService> logger,
+        OperationalRuntimeState? runtimeState)
+        : this(
+            settings,
+            logger,
+            runtimeState,
+            new RedisConnectionFactory(),
+            new SystemPlatformClock())
+    {
+    }
+
+    public RedisCacheService(
+        IOptions<RedisSettings> settings,
+        ILogger<RedisCacheService> logger,
+        OperationalRuntimeState? runtimeState,
+        IRedisConnectionFactory connectionFactory,
+        IPlatformClock clock)
     {
         _settings = settings.Value;
         _logger = logger;
+        _runtimeState = runtimeState;
+        _connectionFactory = connectionFactory;
+        _clock = clock;
+        _runtimeState?.RecordValkey(_settings.Enabled, available: false);
 
         if (_settings.Enabled)
         {
@@ -33,19 +81,43 @@ public class RedisCacheService
     {
         try
         {
-            _redis = ConnectionMultiplexer.Connect(_settings.ConnectionString);
+            _redis = _connectionFactory.Connect(_settings.ConnectionString);
             _db = _redis.GetDatabase();
-            _logger.LogInformation("Redis connected: {ConnectionString}", _settings.ConnectionString);
+            _nextReconnectAttempt = DateTimeOffset.MinValue;
+            _runtimeState?.RecordValkey(configured: true, available: true);
+            _logger.LogInformation("Valkey cache connected using {ConnectionString}", _settings.ConnectionString);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Redis connection failed. Caching disabled.");
+            _logger.LogWarning(ex, "Valkey cache connection failed; cache operations will retry on a bounded interval.");
             _redis = null;
             _db = null;
+            _nextReconnectAttempt = _clock.UtcNow.AddSeconds(
+                Math.Clamp(_settings.ReconnectIntervalSeconds, 1, 3600));
+            _runtimeState?.RecordValkey(_settings.Enabled, available: false);
         }
     }
 
-    public bool IsEnabled => _settings.Enabled && _db != null;
+    public bool IsEnabled
+    {
+        get
+        {
+            if (!_settings.Enabled)
+            {
+                _runtimeState?.RecordValkey(configured: false, available: false);
+                return false;
+            }
+
+            var available = _db != null && (_redis?.IsConnected ?? false);
+            if (!available && _clock.UtcNow >= _nextReconnectAttempt)
+            {
+                available = TryReconnect();
+            }
+
+            _runtimeState?.RecordValkey(_settings.Enabled, available);
+            return available;
+        }
+    }
 
     /// <summary>
     /// Gets a cached value as a string.
@@ -153,7 +225,7 @@ public class RedisCacheService
     {
         _logger.LogWarning(ex, warningMessage, key);
 
-        if (!TryReconnect())
+        if (!TryReconnect(force: true))
         {
             _logger.LogError("Redis reconnect failed; cannot retry SET for key: {Key}", key);
             return false;
@@ -170,11 +242,21 @@ public class RedisCacheService
         }
     }
 
-    private bool TryReconnect()
+    private bool TryReconnect(bool force = false)
     {
         lock (_lock)
         {
             if (!_settings.Enabled)
+            {
+                return false;
+            }
+
+            if (_db != null && (_redis?.IsConnected ?? false))
+            {
+                return true;
+            }
+
+            if (!force && _clock.UtcNow < _nextReconnectAttempt)
             {
                 return false;
             }
@@ -191,7 +273,7 @@ public class RedisCacheService
             _redis = null;
             _db = null;
             InitializeConnection();
-            return _db != null;
+            return _db != null && (_redis?.IsConnected ?? false);
         }
     }
 

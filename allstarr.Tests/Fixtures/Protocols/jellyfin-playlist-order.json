@@ -1,0 +1,8 @@
+{
+  "requestPath": "/Playlists/ext-deezer-playlist-list-7/Items?api_key=fixture-key&StartIndex=0&Limit=100",
+  "provider": "deezer",
+  "externalPlaylistId": "list-7",
+  "sourceTrackIds": ["track-3", "track-1", "track-2"],
+  "expectedItemIds": ["ext-deezer-track-3", "ext-deezer-track-1", "ext-deezer-track-2"],
+  "expectedParentId": "ext-deezer-playlist-list-7"
+}

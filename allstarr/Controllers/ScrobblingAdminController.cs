@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
@@ -254,6 +255,14 @@ public class ScrobblingAdminController : ControllerBase
             var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content);
             var responseBody = await response.Content.ReadAsStringAsync();
 
+            if (!response.IsSuccessStatusCode)
+            {
+                return BuildProviderConnectionError(
+                    "Last.fm",
+                    response.StatusCode,
+                    "Check the API key and session, then re-authenticate.");
+            }
+
             var doc = XDocument.Parse(responseBody);
             var root = doc.Root;
 
@@ -341,7 +350,10 @@ public class ScrobblingAdminController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                return BadRequest(new { error = "Invalid user token" });
+                return BuildProviderConnectionError(
+                    "ListenBrainz",
+                    response.StatusCode,
+                    "Check the user token and save a replacement if needed.");
             }
 
             var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
@@ -416,7 +428,10 @@ public class ScrobblingAdminController : ControllerBase
 
             if (!response.IsSuccessStatusCode)
             {
-                return BadRequest(new { error = "Invalid user token" });
+                return BuildProviderConnectionError(
+                    "ListenBrainz",
+                    response.StatusCode,
+                    "Check the user token and save a replacement if needed.");
             }
 
             var jsonDoc = System.Text.Json.JsonDocument.Parse(responseBody);
@@ -441,6 +456,34 @@ public class ScrobblingAdminController : ControllerBase
             _logger.LogError(ex, "Error testing ListenBrainz connection");
             return StatusCode(500, new { error = "Failed to test ListenBrainz connection" });
         }
+    }
+
+    private IActionResult BuildProviderConnectionError(
+        string provider,
+        HttpStatusCode upstreamStatus,
+        string credentialHint)
+    {
+        var status = (int)upstreamStatus;
+        if (upstreamStatus is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            return BadRequest(new
+            {
+                error = $"{provider} rejected the configured credentials (HTTP {status}). {credentialHint}"
+            });
+        }
+
+        if (upstreamStatus == HttpStatusCode.TooManyRequests)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = $"{provider} rate-limited the connection test (HTTP {status}). Try again later."
+            });
+        }
+
+        return StatusCode(StatusCodes.Status502BadGateway, new
+        {
+            error = $"{provider} is unavailable or returned an unexpected response (HTTP {status}). Try again later."
+        });
     }
 
     private string GenerateSignature(Dictionary<string, string> parameters, string sharedSecret)

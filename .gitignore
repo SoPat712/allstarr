@@ -69,6 +69,19 @@ obj/
 *.log
 
 /.env
+/.env.before-*
+/secrets/
+/allstarr-backups/
+/state-transfers/
+*.dump
+*.sqlite-wal
+*.sqlite-shm
+
+# Python build and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
 
 # Downloaded music files
 downloads/
@@ -81,22 +94,16 @@ kept/
 cache/
 
 # Docker volumes
-redis-data/
+valkey-data/
 
-# Ignore everything in apis folder except jellyfin-openapi-stable.json
+# Keep only the exact versioned OpenAPI artifact. Local feature notes, raw captures, cloned repositories,
+# ad-hoc scripts, and credentials under apis/ are intentionally ignored.
 apis/*
-!apis/jellyfin-openapi-stable.json
-
-# Original source code for reference
-originals/
+!apis/specifications/
+apis/specifications/*
+!apis/specifications/jellyfin/
+apis/specifications/jellyfin/*
+!apis/specifications/jellyfin/openapi-12.0.0.json
 
 # Sample missing playlists for Spotify integration testing
 sampleMissingPlaylists/
-
-# Migration guide (local only)
-MIGRATION.md
-
-# Prevent ignoring Android system vendor binaries
-!gamdl-aio/**/bin/
-!gamdl-aio/**/bin/*
-!gamdl-aio/**/bin/**/*

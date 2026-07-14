@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using allstarr.Services.Common;
 using allstarr.Models.Settings;
+using allstarr.Core.Operations;
+using StackExchange.Redis;
 
 namespace allstarr.Tests;
 
@@ -244,6 +246,43 @@ public class RedisCacheServiceTests
         Assert.NotNull(service);
     }
 
+    [Fact]
+    public void FailedInitialConnection_RetriesOnBoundedCadenceAndRecoversWithoutRestart()
+    {
+        var settings = Options.Create(new RedisSettings
+        {
+            Enabled = true,
+            ConnectionString = "valkey.internal:6379",
+            ReconnectIntervalSeconds = 30
+        });
+        var clock = new FakeClock(new DateTimeOffset(2026, 7, 11, 0, 0, 0, TimeSpan.Zero));
+        var connectionFactory = new RecoveringConnectionFactory();
+        var runtime = new OperationalRuntimeState();
+        var service = new RedisCacheService(
+            settings,
+            _mockLogger.Object,
+            runtime,
+            connectionFactory,
+            clock);
+
+        Assert.False(service.IsEnabled);
+        Assert.False(service.IsEnabled);
+        Assert.Equal(1, connectionFactory.AttemptCount);
+
+        connectionFactory.Available = true;
+        clock.Advance(TimeSpan.FromSeconds(29));
+        Assert.False(service.IsEnabled);
+        Assert.Equal(1, connectionFactory.AttemptCount);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(service.IsEnabled);
+        Assert.Equal(2, connectionFactory.AttemptCount);
+        var snapshot = runtime.GetSnapshot();
+        Assert.True(snapshot.ValkeyConfigured);
+        Assert.True(snapshot.ValkeyAvailable);
+        Assert.Equal(1, snapshot.ValkeyRecoveryEvents);
+    }
+
     private class TestObject
     {
         public int Id { get; set; }
@@ -256,5 +295,34 @@ public class RedisCacheServiceTests
         public string Name { get; set; } = string.Empty;
         public System.Collections.Generic.List<string> Items { get; set; } = new();
         public System.Collections.Generic.Dictionary<string, string> Metadata { get; set; } = new();
+    }
+
+    private sealed class FakeClock(DateTimeOffset now) : IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; private set; } = now;
+
+        public void Advance(TimeSpan duration) => UtcNow = UtcNow.Add(duration);
+    }
+
+    private sealed class RecoveringConnectionFactory : IRedisConnectionFactory
+    {
+        public bool Available { get; set; }
+        public int AttemptCount { get; private set; }
+
+        public IConnectionMultiplexer Connect(string connectionString)
+        {
+            AttemptCount++;
+            if (!Available)
+            {
+                throw new InvalidOperationException("Valkey is unavailable in this fixture.");
+            }
+
+            var database = new Mock<IDatabase>();
+            var connection = new Mock<IConnectionMultiplexer>();
+            connection.SetupGet(item => item.IsConnected).Returns(true);
+            connection.Setup(item => item.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
+                .Returns(database.Object);
+            return connection.Object;
+        }
     }
 }

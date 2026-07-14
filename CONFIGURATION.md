@@ -1,351 +1,161 @@
-# Configuration Guide
+# Configuration
 
-This document provides detailed configuration options for Allstarr.
+Start with [.env.example](.env.example). It is the checked-in list of deployment-facing settings for standard Compose. The dashboard can manage supported runtime settings, but secrets should still enter through protected bootstrap files or the encrypted provider-account flow, not source control.
 
-## Advanced Configuration
+`v3.0.0-beta.1` is a fresh-install baseline. Recreate the deployment instead of copying an old `.env` wholesale.
+After the new database is ready, the administrator WebUI can preview and import the safe allowlisted subset without
+replacing existing settings. Old Redis, mapping, extension, and job state is not imported automatically. Follow the
+[legacy environment upgrade procedure](docs/operations/legacy-env-import.md#upgrade-procedure).
 
-### Admin Dashboard Network Access
+## Required First Choices
 
-The media-client proxy and the admin dashboard use different ports:
+### Backend and protocol
 
-| Port | Purpose |
-|------|---------|
-| `8080` (host port `5274` in the provided Compose file) | Jellyfin/Subsonic proxy traffic |
-| `5275` | Allstarr admin dashboard and admin API |
-
-Opening port `8080` in a browser does not open the Allstarr dashboard. For
-Docker, LAN, or reverse-proxy access to the dashboard, configure:
+Set exactly one backend type:
 
 ```dotenv
+BACKEND_TYPE=Jellyfin
+```
+
+or:
+
+```dotenv
+BACKEND_TYPE=Subsonic
+```
+
+For Jellyfin, set `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, and optionally `JELLYFIN_LIBRARY_ID`. The API key and user ID are for server-side library operations. Client authentication is still passed through to Jellyfin.
+
+For Navidrome or another Subsonic-compatible backend, set `SUBSONIC_URL`. User-specific operations that need backend credentials store an encrypted credential reference through the UI/API instead of borrowing another user's credentials.
+
+`ALLSTARR_BACKEND_INSTANCE_ID` gives the configured backend a stable identity. Do not casually change it after users, policies, jobs, or playlist links exist.
+
+### Durable storage and encryption
+
+Standard Compose always selects Postgres and reads its password from `POSTGRES_PASSWORD_FILE`. Create the file and the Allstarr key ring before first startup:
+
+```bash
+mkdir -p secrets
+umask 077
+openssl rand -base64 32 > secrets/postgres-password.txt
+key="$(openssl rand -base64 32)"
+printf '{"activeKeyId":"key-1","keys":{"key-1":"%s"}}\n' "$key" > secrets/allstarr-keyring.json
+unset key
+chmod 600 secrets/postgres-password.txt secrets/allstarr-keyring.json
+```
+
+The key ring is not stored in Postgres and is not included in database backups. Losing it makes encrypted provider secrets unreadable. Keep a protected backup.
+
+Postgres stores application state, not audio. Set `DOWNLOAD_PATH` and `KEPT_PATH` to persistent, accessible host folders. Other managed-library roots are selected by their scoped policies. Valkey is included for cache and acceleration; there is no legacy Redis conversion step.
+
+Standard Compose intentionally omits provider sidecars. The AIO override adds the verified offline first-party
+package bundle, not Apple/gamdl or another optional provider service:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
+```
+
+Mounting that bundle does not bypass package state or permission review. Entries marked blocked remain inactive.
+
+Apple downloads use a separately deployed compatible provider gateway. They are not part of Standard or AIO and
+this repository does not build or update GAMDL or wrapper-v2 for the operator. Configure the gateway URL in the
+dashboard or as `APPLE_DOWNLOAD_URL`. The URL must be the gateway's Allstarr-compatible HTTP API, not the raw
+wrapper-v2 address. Adding or removing it does not replace the database, Valkey, application state, or media
+volumes. Follow [the Apple download provider procedure](docs/operations/apple-download-provider.md).
+
+Custom manual deployments may select SQLite explicitly. SQLite bootstrap has an intentional one-shot confirmation requirement, and no automatic Postgres-to-SQLite fallback exists. Follow [docs/operations/storage.md](docs/operations/storage.md) instead of guessing these settings.
+
+### Identity and provider-account ownership
+
+`ALLSTARR_MULTI_USER_MODE` controls stable user provisioning. `Hybrid` is the normal default. `ALLSTARR_PROVIDER_ACCOUNT_MANAGEMENT_MODE` accepts `AdminManaged`, `UserManaged`, or `Hybrid` and controls who can connect provider accounts.
+
+Account scope is part of every decision:
+
+- global accounts are admin-owned;
+- user accounts belong to one tenant user;
+- library accounts apply only to their configured library roots.
+
+The selected mode does not make credentials interchangeable. Playlist, scrobbling, favorites, and intelligence work still resolve the exact allowed account at execution time.
+
+## Listener And Network Settings
+
+Client traffic is served on proxy port `5274`. The dashboard and admin API use port `5275`.
+
+Standard Compose publishes the admin listener on host loopback and permits only the resolved container gateway needed to cross that mapping. To make it reachable through a LAN or reverse proxy, set all three:
+
+```dotenv
+ADMIN_BIND_ADDRESS=0.0.0.0
 ADMIN_BIND_ANY_IP=true
 ADMIN_TRUSTED_SUBNETS=192.168.1.0/24
 ```
 
-`ADMIN_TRUSTED_SUBNETS` is a comma-separated CIDR allowlist. If a reverse proxy
-connects over a Docker network, allow that Docker network's CIDR and route the
-dashboard service to container port `5275`, not `8080`.
+Replace the example with the network that should be trusted. For a reverse proxy, include its Docker network CIDR. CORS stays disabled unless `CORS_ALLOWED_ORIGINS` contains explicit origins. Keep allowed methods, headers, and credential support as narrow as the client requires.
 
-Do not publish the dashboard without an additional private-network or
-authenticated-access boundary.
+## Providers And Capabilities
 
-### Backend Selection
+The old `MUSIC_SERVICE` primary-provider switch is retained only for compatibility. New work uses capability-specific provider order and account policy. Streaming, downloading, metadata, playlists, lyrics, enrichment, scrobbling, and recommendations may use different eligible providers.
 
-| Setting | Description |
-|---------|-------------|
-| `Backend:Type` | Backend type: `Subsonic` or `Jellyfin` (default: `Subsonic`) |
+Provider credentials should be connected through the provider-account UI/API so the durable record contains only an encrypted secret reference. Legacy environment fields for Deezer, Qobuz, Spotify, Last.fm, and ListenBrainz remain documented in `.env.example` where the compatibility path still reads them. Never commit real values.
 
-### Jellyfin Settings
+Current built-in or first-party integrations include provider work for Deezer, Qobuz, SquidWTF, Spotify, Apple MusicKit, lyrics services, Last.fm, ListenBrainz, MusicBrainz, and optional AudioMuse-AI. A feature is ready only when its account, permissions, optional sidecar, and health checks pass. An optional integration may be absent without breaking unrelated startup.
 
-| Setting | Description |
-|---------|-------------|
-| `Jellyfin:Url` | URL of your Jellyfin server |
-| `Jellyfin:ApiKey` | API key (get from Jellyfin Dashboard > API Keys) |
-| `Jellyfin:UserId` | User ID for library access |
-| `Jellyfin:LibraryId` | Music library ID (optional, auto-detected) |
-| `Jellyfin:MusicService` | Music provider: `SquidWTF`, `Deezer`, or `Qobuz` |
+Provider extensions are installed packages with declared capability hooks, scopes, network hosts, and secret permissions. Installation verifies the package and uses staged activation and rollback. Allstarr does not add a third-party registry on your behalf. See [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md).
 
-### Subsonic Settings
+## Media, Downloads, And Favorites
 
-| Setting | Description |
-|---------|-------------|
-| `Subsonic:Url` | URL of your Navidrome/Subsonic server |
-| `Subsonic:MusicService` | Music provider: `SquidWTF`, `Deezer`, or `Qobuz` (default: `SquidWTF`) |
+`DOWNLOAD_PATH` is the persistent base for permanent downloads. Temporary cache behavior is controlled by `STORAGE_MODE`, `CACHE_DURATION_HOURS`, and the process/container temporary directory. `KEPT_PATH` is mounted separately in standard Compose.
 
-### Shared Settings
+`DOWNLOAD_MODE=Track` downloads only the requested track. `Album` may queue the remaining album after the requested track. Provider quality and rate-limit settings remain provider-specific.
 
-| Setting | Description |
-|---------|-------------|
-| `Library:DownloadPath` | Directory where downloaded songs are stored |
-| `*:ExplicitFilter` | Content filter: `All`, `ExplicitOnly`, or `CleanOnly` |
-| `*:DownloadMode` | Download mode: `Track` or `Album` |
-| `*:StorageMode` | Storage mode: `Permanent` or `Cache` |
-| `*:CacheDurationHours` | Cache expiration time in hours |
-| `*:EnableExternalPlaylists` | Enable external playlist support |
+Original libraries are read-only inputs. Favorite-triggered work is off until an exact-scope policy enables it. A policy may queue matching, provider download, managed placement, enrichment, and backend refresh. Unfavorite does not remove source or managed audio. Managed removal is a separate confirmed action.
 
-### SquidWTF Settings
+## Playlists
 
-| Setting | Description |
-|---------|-------------|
-| `SquidWTF:Quality` | Preferred audio quality: `FLAC`, `MP3_320`, `MP3_128`. If not specified, the highest available quality for your account will be used |
+Playlist links are provider-neutral. A source playlist can be shown virtually or materialized into Jellyfin or a Subsonic-compatible backend. Materialization uses local matches only, keeps source order and metadata where the target supports them, and explains unmatched entries.
 
-**Load Balancing & Reliability:**
+The default mode reconciles without destroying the target. Recreate-on-every-run is an explicit per-link option. Links can run manually or as durable scheduled jobs. Neither mode deletes media files.
 
-SquidWTF uses a round-robin load balancing strategy across multiple backup API endpoints to distribute requests evenly and prevent overwhelming any single provider. Each request automatically rotates to the next endpoint in the pool, with automatic fallback to other endpoints if one fails. This ensures high availability and prevents rate limiting by distributing load across multiple providers.
+The Spotify Import compatibility settings remain available for Jellyfin deployments. Direct Spotify access can provide ordering and stronger identifiers. New playlist workflows should use the provider-neutral link and matching records rather than assuming every identity is Spotify-specific.
 
-### Deezer Settings
+## Playback, Scrobbling, And Intelligence
 
-| Setting | Description |
-|---------|-------------|
-| `Deezer:Arl` | Your Deezer ARL token (required if using Deezer) |
-| `Deezer:ArlFallback` | Backup ARL token if primary fails |
-| `Deezer:Quality` | Preferred audio quality: `FLAC`, `MP3_320`, `MP3_128`. If not specified, the highest available quality for your account will be used |
+Scrobbling is opt-in. Last.fm and ListenBrainz targets are user-scoped and delivered through durable jobs. Local-track scrobbling should generally stay disabled when the backend already has its own scrobbling plugin, which avoids duplicate submissions.
 
-### Qobuz Settings
+Intelligence is also opt-in at an exact user/backend/library scope. Configure retention and available recommendation sources in the Intelligence UI. Habit profiles can feed Last.fm, ListenBrainz, MusicBrainz-informed local similarity, Jellyfin InstantMix, local rules, and optional AudioMuse-AI. Generated playlists materialize local matches only; recommendations do not silently trigger downloads. Disabling collection stops new signals, and purge removes retained intelligence data for the scope.
 
-| Setting | Description |
-|---------|-------------|
-| `Qobuz:UserAuthToken` | Your Qobuz User Auth Token (required if using Qobuz) - [How to get it](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) |
-| `Qobuz:UserId` | Your Qobuz User ID (required if using Qobuz) |
-| `Qobuz:Quality` | Preferred audio quality: `FLAC`, `FLAC_24_HIGH`, `FLAC_24_LOW`, `FLAC_16`, `MP3_320`. If not specified, the highest available quality will be used |
+## Cache Settings
 
-### External Playlists
+The `CACHE_*` variables tune rebuildable data such as search results, playlist images, playlist items, lyrics, genres, metadata, Odesli lookups, proxy images, and transcoded files. Longer TTLs reduce provider traffic but may show stale results. These values do not control durable jobs or Postgres retention.
 
-Allstarr supports discovering and downloading playlists from your streaming providers (SquidWTF, Deezer, and Qobuz).
+Valkey is not a backup. It is safe for cache data to rebuild after loss.
 
-| Setting | Description |
-|---------|-------------|
-| `Subsonic:EnableExternalPlaylists` | Enable/disable external playlist support (default: `true`) |
-| `Subsonic:PlaylistsDirectory` | Directory name where M3U playlist files are created (default: `playlists`) |
+## Backup, Restore, And Upgrades
 
-**How it works:**
-1. Search for playlists from an external provider using the global search in your Subsonic client
-2. When you "star" (favorite) a playlist, Allstarr automatically downloads all tracks
-3. An M3U playlist file is created in `{DownloadPath}/playlists/` with relative paths to downloaded tracks
-4. Individual tracks are added to the M3U as they are played or downloaded
-
-**Environment variable:**
-```bash
-# To disable playlists
-Subsonic__EnableExternalPlaylists=false
-```
-
-> **Note**: Due to client-side filtering, playlists from streaming providers may not appear in the "Playlists" tab of some clients, but will show up in global search results.
-
-### Spotify Playlist Injection (Jellyfin Only)
-
-Allstarr automatically fills your Spotify playlists (like Release Radar and Discover Weekly) with tracks from your configured streaming provider (SquidWTF, Deezer, or Qobuz). This works by intercepting playlists created by the Jellyfin Spotify Import plugin and matching missing tracks with your streaming service.
-
-<img width="1649" height="3764" alt="image" src="https://github.com/user-attachments/assets/a4d3d79c-7741-427f-8c01-ffc90f3a579b" />
-
-
-#### Prerequisites
-
-1. **Install the Jellyfin Spotify Import Plugin**
-   - Navigate to Jellyfin Dashboard → Plugins → Catalog
-   - Search for "Spotify Import" by Viperinius
-   - Install and restart Jellyfin
-   - Plugin repository: [Viperinius/jellyfin-plugin-spotify-import](https://github.com/Viperinius/jellyfin-plugin-spotify-import)
-
-2. **Configure the Spotify Import Plugin**
-   - Go to Jellyfin Dashboard → Plugins → Spotify Import
-   - Connect your Spotify account
-   - Select which playlists to sync (e.g., Release Radar, Discover Weekly)
-   - Set a sync schedule (the plugin will create playlists in Jellyfin)
-
-3. **Configure Allstarr**
-   - Enable Spotify Import in Allstarr (see configuration below)
-   - Link your Jellyfin playlists to Spotify playlists via the Web UI
-   - Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
-
-#### Configuration
-
-| Setting | Description |
-|---------|-------------|
-| `SpotifyImport:Enabled` | Enable Spotify playlist injection (default: `false`) |
-| `SpotifyImport:MatchingIntervalHours` | How often to run track matching in hours (default: 24, set to 0 for startup only) |
-| `SpotifyImport:Playlists` | JSON array of playlists (managed via Web UI) |
-
-**Environment variables example:**
-```bash
-# Enable the feature
-SPOTIFY_IMPORT_ENABLED=true
-
-# Matching interval (24 hours = once per day)
-SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS=24
-
-# Playlists (use Web UI to manage instead of editing manually)
-SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","37i9dQZEVXcV6s7Dm7RXsU","first"],["Release Radar","37i9dQZEVXbng2vDHnfQlC","first"]]
-```
-
-#### How It Works
-
-1. **Spotify Import Plugin Runs**
-   - Plugin fetches your Spotify playlists
-   - Creates/updates playlists in Jellyfin with tracks already in your library
-   - Generates "missing tracks" JSON files for songs not found locally
-
-2. **Allstarr Matches Tracks** (on startup + every 24 hours by default)
-   - Reads missing tracks files from the Jellyfin plugin
-   - For each missing track, searches your streaming provider (SquidWTF, Deezer, or Qobuz)
-   - Uses fuzzy matching to find the best match (title + artist similarity)
-   - Rate-limited to avoid overwhelming the service (150ms delay between searches)
-   - Pre-builds playlist cache for instant loading
-
-3. **You Open the Playlist in Jellyfin**
-   - Allstarr intercepts the request
-   - Returns a merged list: local tracks + matched streaming tracks
-   - Loads instantly from cache!
-
-4. **You Play a Track**
-   - Local tracks stream from Jellyfin normally
-   - Matched tracks download from streaming provider on-demand
-   - Downloaded tracks are saved to your library for future use
-
-#### Manual API Triggers
-
-You can manually trigger operations via the admin API:
+Create a verified database backup before changing the application image. The dashboard can create one, or the stopped host can run:
 
 ```bash
-# Get API key from your .env file
-API_KEY="your-api-key-here"
-
-# Fetch missing tracks from Jellyfin plugin
-curl "http://localhost:5274/spotify/sync?api_key=$API_KEY"
-
-# Trigger track matching (searches streaming provider)
-curl "http://localhost:5274/spotify/match?api_key=$API_KEY"
-
-# Match all playlists (refresh all matches)
-curl "http://localhost:5274/spotify/match-all?api_key=$API_KEY"
-
-# Clear cache and rebuild
-curl "http://localhost:5274/spotify/clear-cache?api_key=$API_KEY"
-
-# Refresh specific playlist
-curl "http://localhost:5274/spotify/refresh-playlist?playlistId=PLAYLIST_ID&api_key=$API_KEY"
+docker compose stop allstarr
+docker compose run --rm --no-deps allstarr storage backup
 ```
 
-#### Web UI Management
+Copy the dump and its neighboring manifest out of `/app/state/backups`. Back up the media roots and encryption key ring separately. Restore Postgres into a new database, verify it, then switch the configured database name. Do not run a destructive restore against the live database and do not treat a schema down-migration as rollback.
 
-The easiest way to manage Spotify playlists is through the Web UI at `http://localhost:5275`:
+The exact tested commands, checksum rules, SQLite behavior, state transfer, and cutover procedure are in [docs/operations/storage.md](docs/operations/storage.md).
 
-1. **Link Playlists Tab**: Link Jellyfin playlists to Spotify playlists
-2. **Active Playlists Tab**: View status, trigger matching, and manage playlists
-3. **Configuration Tab**: Enable/disable Spotify Import and adjust settings
+## Validation And Troubleshooting
 
-#### Troubleshooting
+Before startup:
 
-**Playlists are empty:**
-- Check that the Spotify Import plugin is running and creating playlists
-- Verify playlists are linked in the Web UI
-- Check logs: `docker-compose logs -f allstarr | grep -i spotify`
-
-**Tracks aren't matching:**
-- Ensure your streaming provider is configured (`MUSIC_SERVICE`, credentials)
-- Manually trigger matching via Web UI or API
-- Check that the Jellyfin plugin generated missing tracks files
-
-**Performance:**
-- Matching runs in background with rate limiting (150ms between searches)
-- First match may take a few minutes for large playlists
-- Subsequent loads are instant (served from cache)
-
-#### Notes
-
-- Uses your existing `JELLYFIN_URL` and `JELLYFIN_API_KEY` settings
-- Matched tracks cached for fast loading
-- Missing tracks cache persists across restarts (Redis + file cache)
-- Rate limiting prevents overwhelming your streaming provider
-- Only works with Jellyfin backend (not Subsonic/Navidrome)
-
-### Scrobbling (Last.fm & ListenBrainz)
-
-Track your listening history to Last.fm and/or ListenBrainz. Allstarr automatically scrobbles tracks when you listen to at least half the track or 4 minutes (whichever comes first).
-
-#### Configuration
-
-| Setting | Description |
-|---------|-------------|
-| `Scrobbling:Enabled` | Enable scrobbling globally (default: `false`) |
-| `Scrobbling:LocalTracksEnabled` | Enable scrobbling for local library tracks (default: `false`) - See note below |
-| `Scrobbling:LastFm:Enabled` | Enable Last.fm scrobbling (default: `false`) |
-| `Scrobbling:LastFm:ApiKey` | Your Last.fm API key (required when enabled) — [create an app](https://www.last.fm/api/account/create) |
-| `Scrobbling:LastFm:SharedSecret` | Your Last.fm shared secret (required when enabled) |
-| `Scrobbling:LastFm:Username` | Your Last.fm username |
-| `Scrobbling:LastFm:Password` | Your Last.fm password (only used for authentication) |
-| `Scrobbling:LastFm:SessionKey` | Last.fm session key (auto-generated via Web UI) |
-| `Scrobbling:ListenBrainz:Enabled` | Enable ListenBrainz scrobbling (default: `false`) |
-| `Scrobbling:ListenBrainz:UserToken` | Your ListenBrainz user token |
-
-**Environment variables example:**
 ```bash
-# Enable scrobbling globally
-SCROBBLING_ENABLED=true
-
-# Local track scrobbling (RECOMMENDED: keep disabled)
-# Use native Jellyfin plugins instead:
-# - Last.fm: https://github.com/danielfariati/jellyfin-plugin-lastfm
-# - ListenBrainz: https://github.com/lyarenei/jellyfin-plugin-listenbrainz
-SCROBBLING_LOCAL_TRACKS_ENABLED=false
-
-# Last.fm configuration (API key + secret required — shared Jellyfin plugin key is suspended)
-SCROBBLING_LASTFM_ENABLED=true
-SCROBBLING_LASTFM_API_KEY=your-api-key
-SCROBBLING_LASTFM_SHARED_SECRET=your-shared-secret
-SCROBBLING_LASTFM_USERNAME=your-username
-SCROBBLING_LASTFM_PASSWORD=your-password
-# Session key is auto-generated via Web UI after you set API credentials
-
-# ListenBrainz configuration
-SCROBBLING_LISTENBRAINZ_ENABLED=true
-SCROBBLING_LISTENBRAINZ_USER_TOKEN=your-token-here
+docker compose config --quiet
 ```
 
-#### Setup via Web UI (Recommended)
+After startup:
 
-The easiest way to configure scrobbling is through the Web UI at `http://localhost:5275`:
+```bash
+docker compose ps
+docker compose logs -f allstarr
+curl --fail http://127.0.0.1:5274/health/live
+curl --fail http://127.0.0.1:5274/health/ready
+```
 
-**Last.fm Setup:**
-1. Create a Last.fm API account at https://www.last.fm/api/account/create and note the API key and shared secret
-2. Set `SCROBBLING_LASTFM_API_KEY` and `SCROBBLING_LASTFM_SHARED_SECRET` in your `.env` file
-3. Navigate to the **Scrobbling** tab
-4. Toggle "Last.fm Enabled" to enable
-5. Click "Edit" next to Username and enter your Last.fm username
-6. Click "Edit" next to Password and enter your Last.fm password
-7. Click "Authenticate & Save" to generate a session key (must be done again if you change API key)
-8. Restart the container for changes to take effect
-
-**ListenBrainz Setup:**
-1. Get your user token from [ListenBrainz Settings](https://listenbrainz.org/settings/)
-2. Navigate to the **Scrobbling** tab in Allstarr Web UI
-3. Toggle "ListenBrainz Enabled" to enable
-4. Click "Validate & Save Token" and enter your token
-5. Restart the container for changes to take effect
-
-#### Important Notes
-
-- **Local Track Scrobbling**: By default, Allstarr does NOT scrobble local library tracks. It's recommended to use native Jellyfin plugins for local track scrobbling:
-  - [Last.fm Plugin](https://github.com/danielfariati/jellyfin-plugin-lastfm)
-  - [ListenBrainz Plugin](https://github.com/lyarenei/jellyfin-plugin-listenbrainz)
-  
-  This ensures Allstarr only scrobbles external tracks (Spotify, Deezer, Qobuz) that aren't in your local library.
-
-- **Last.fm**: Scrobbles both local library tracks (if enabled) and external tracks
-- **ListenBrainz**: Only scrobbles external tracks (not local library tracks) to maintain data quality
-- Tracks shorter than 30 seconds are not scrobbled (per Last.fm rules)
-- "Now Playing" status is updated when you start playing a track
-- Scrobbles are submitted when you reach the scrobble threshold (50% or 4 minutes)
-
-#### Troubleshooting
-
-**Last.fm "API Key Suspended" or "not allowed to make requests":**
-- Last.fm suspended the old shared Jellyfin plugin API key that Allstarr used by default
-- Create your own application at https://www.last.fm/api/account/create
-- Set `SCROBBLING_LASTFM_API_KEY` and `SCROBBLING_LASTFM_SHARED_SECRET` in `.env`, restart, then authenticate again in Admin → Scrobbling
-
-**Last.fm authentication fails:**
-- Verify your username and password are correct
-- Ensure API key and shared secret are set (not empty)
-- Check that there are no extra spaces in your credentials
-- Try re-authenticating via the Web UI
-
-**ListenBrainz token invalid:**
-- Make sure you copied the entire token from ListenBrainz settings
-- Check that there are no extra spaces or newlines
-- Try generating a new token by clicking "Reset token" on ListenBrainz
-
-**Tracks not scrobbling:**
-- Verify scrobbling is enabled globally (`SCROBBLING_ENABLED=true`)
-- Check that the specific service is enabled (Last.fm or ListenBrainz)
-- Ensure you're listening to at least 50% of the track or 4 minutes
-- Check container logs: `docker-compose logs -f allstarr | grep -i scrobbl`
-
-### Getting Credentials
-
-#### Deezer ARL Token
-
-See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Deezer-Credentials-(ARL-Token)) for detailed instructions on obtaining your Deezer ARL token.
-
-#### Qobuz Credentials
-
-See the [Wiki guide](https://github.com/V1ck3s/octo-fiesta/wiki/Getting-Qobuz-Credentials-(User-ID-&-Token)) for detailed instructions on obtaining your Qobuz User ID and User Auth Token.
+Liveness means the process is running. Readiness additionally covers the selected database, expected schema, key ring, required paths, and required capabilities. If readiness fails, use its reason and the redacted diagnostics rather than deleting state or switching database providers.

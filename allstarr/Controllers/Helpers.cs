@@ -32,36 +32,7 @@ public partial class JellyfinController
     /// </summary>
     private IActionResult HandleProxyResponse(JsonDocument? result, int statusCode, object? fallbackValue = null)
     {
-        if (result != null)
-        {
-            return new JsonResult(JsonSerializer.Deserialize<object>(result.RootElement.GetRawText()));
-        }
-
-        // Handle error status codes
-        if (statusCode == 401)
-        {
-            return Unauthorized();
-        }
-        else if (statusCode == 403)
-        {
-            return Forbid();
-        }
-        else if (statusCode == 404)
-        {
-            return NotFound();
-        }
-        else if (statusCode >= 400)
-        {
-            return StatusCode(statusCode);
-        }
-
-        // Success with no body - return fallback or empty
-        if (fallbackValue != null)
-        {
-            return new JsonResult(fallbackValue);
-        }
-
-        return NoContent();
+        return ProxyResponseResultFactory.Create(result, statusCode, fallbackValue);
     }
 
     private async Task<IActionResult> ProxyJsonPassthroughAsync(string endpoint)
@@ -411,10 +382,10 @@ public partial class JellyfinController
     {
         try
         {
-            var logDir = "/app/cache/endpoint-usage";
+            var logDir = EndpointUsagePathResolver.GetDirectory(_configuration);
             Directory.CreateDirectory(logDir);
 
-            var logFile = Path.Combine(logDir, "endpoints.csv");
+            var logFile = EndpointUsagePathResolver.GetLogFile(_configuration);
             var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
             // Sanitize path for CSV (remove commas, quotes, newlines)

@@ -1,6 +1,3 @@
-using Microsoft.Extensions.Options;
-using allstarr.Models.Settings;
-
 namespace allstarr.Services.Validation;
 
 /// <summary>
@@ -10,14 +7,14 @@ namespace allstarr.Services.Validation;
 public class StartupValidationOrchestrator : IHostedService
 {
     private readonly IEnumerable<IStartupValidator> _validators;
-    private readonly IOptions<SubsonicSettings> _subsonicSettings;
+    private readonly ILogger<StartupValidationOrchestrator> _logger;
 
     public StartupValidationOrchestrator(
         IEnumerable<IStartupValidator> validators,
-        IOptions<SubsonicSettings> subsonicSettings)
+        ILogger<StartupValidationOrchestrator> logger)
     {
         _validators = validators;
-        _subsonicSettings = subsonicSettings;
+        _logger = logger;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -26,30 +23,28 @@ public class StartupValidationOrchestrator : IHostedService
         var version = typeof(StartupValidationOrchestrator).Assembly
             .GetName().Version?.ToString(3) ?? "unknown";
         
-        Console.WriteLine();
-        Console.WriteLine("========================================");
-        Console.WriteLine($"       allstarr v{version}       ");
-        Console.WriteLine("========================================");
-        Console.WriteLine();
+        _logger.LogInformation("Starting provider validation for Allstarr {Version}", version);
 
         // Run all validators
         foreach (var validator in _validators)
         {
             try
             {
-                await validator.ValidateAsync(cancellationToken);
+                var result = await validator.ValidateAsync(cancellationToken);
+                _logger.LogInformation(
+                    "Startup validation for {ServiceName} completed with {ValidationStatus}",
+                    validator.ServiceName,
+                    result.Status);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error validating {validator.ServiceName}: {ex.Message}");
+                _logger.LogWarning(
+                    "Startup validation failed for {ServiceName} ({ExceptionType})",
+                    validator.ServiceName,
+                    ex.GetType().Name);
             }
         }
-
-        Console.WriteLine();
-        Console.WriteLine("========================================");
-        Console.WriteLine("       Startup validation complete      ");
-        Console.WriteLine("========================================");
-        Console.WriteLine();
+        _logger.LogInformation("Provider startup validation complete");
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

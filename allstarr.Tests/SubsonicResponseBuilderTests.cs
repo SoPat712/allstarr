@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Models.Domain;
+using allstarr.Models.Subsonic;
 using allstarr.Services.Subsonic;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -13,6 +14,69 @@ public class SubsonicResponseBuilderTests
     public SubsonicResponseBuilderTests()
     {
         _builder = new SubsonicResponseBuilder();
+    }
+
+    [Fact]
+    public void CreateLyricsBySongIdResponse_Json_SyncedBuildsOpenSubsonicShape()
+    {
+        var lyrics = new SubsonicStructuredLyrics(
+            "Daft Punk",
+            "Get Lucky",
+            "xxx",
+            0,
+            true,
+            [new SubsonicLyricLine(1_000, "one")]);
+
+        var result = _builder.CreateLyricsBySongIdResponse("json", lyrics);
+
+        var root = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<JsonResult>(result).Value))
+            .RootElement.GetProperty("subsonic-response");
+        var structured = root.GetProperty("lyricsList").GetProperty("structuredLyrics")[0];
+        Assert.Equal("Daft Punk", structured.GetProperty("displayArtist").GetString());
+        Assert.True(structured.GetProperty("synced").GetBoolean());
+        Assert.Equal(1_000, structured.GetProperty("line")[0].GetProperty("start").GetInt64());
+    }
+
+    [Fact]
+    public void CreateLyricsBySongIdResponse_Xml_UnsyncedOmitsStart()
+    {
+        var lyrics = new SubsonicStructuredLyrics(
+            "Artist",
+            "Title",
+            "xxx",
+            0,
+            false,
+            [new SubsonicLyricLine(0, "plain line")]);
+
+        var result = Assert.IsType<ContentResult>(
+            _builder.CreateLyricsBySongIdResponse("xml", lyrics));
+
+        var document = XDocument.Parse(result.Content!);
+        XNamespace ns = "http://subsonic.org/restapi";
+        var structured = document.Root!.Element(ns + "lyricsList")!.Element(ns + "structuredLyrics")!;
+        var line = Assert.Single(structured.Elements(ns + "line"));
+        Assert.Null(line.Attribute("start"));
+        Assert.Equal("plain line", line.Value);
+    }
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("xml")]
+    public void CreateLyricsBySongIdResponse_MissingLyricsReturnsSuccessfulEmptyList(string format)
+    {
+        var result = _builder.CreateLyricsBySongIdResponse(format, null);
+
+        if (format == "json")
+        {
+            var root = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<JsonResult>(result).Value))
+                .RootElement.GetProperty("subsonic-response");
+            Assert.False(root.GetProperty("lyricsList").TryGetProperty("structuredLyrics", out _));
+            return;
+        }
+
+        var document = XDocument.Parse(Assert.IsType<ContentResult>(result).Content!);
+        XNamespace ns = "http://subsonic.org/restapi";
+        Assert.Empty(document.Root!.Element(ns + "lyricsList")!.Elements());
     }
 
     [Fact]
@@ -145,6 +209,37 @@ public class SubsonicResponseBuilderTests
         Assert.NotNull(songElement);
         Assert.Equal("song123", songElement.Attribute("id")?.Value);
         Assert.Equal("Test Song", songElement.Attribute("title")?.Value);
+        Assert.Equal("false", songElement.Attribute("isDir")?.Value);
+        Assert.Equal("music", songElement.Attribute("type")?.Value);
+        Assert.Equal("false", songElement.Attribute("isVideo")?.Value);
+        Assert.Null(songElement.Attribute("suffix"));
+        Assert.Null(songElement.Attribute("contentType"));
+        Assert.Null(songElement.Attribute("coverArt"));
+    }
+
+    [Fact]
+    public void ConvertSongToXml_UsesOnlyKnownMediaAndArtworkFacts()
+    {
+        var song = new Song
+        {
+            Id = "song-1",
+            Title = "Fixture",
+            IsLocal = true,
+            LocalPath = "/library/fixture.flac",
+            AlbumId = "album-1",
+            ArtistId = "artist-1",
+            DiscNumber = 2
+        };
+
+        var element = _builder.ConvertSongToXml(song, XNamespace.Get("http://subsonic.org/restapi"));
+
+        Assert.Equal("album-1", element.Attribute("parent")?.Value);
+        Assert.Equal("album-1", element.Attribute("albumId")?.Value);
+        Assert.Equal("artist-1", element.Attribute("artistId")?.Value);
+        Assert.Equal("2", element.Attribute("discNumber")?.Value);
+        Assert.Equal("flac", element.Attribute("suffix")?.Value);
+        Assert.Equal("audio/flac", element.Attribute("contentType")?.Value);
+        Assert.Equal("song-1", element.Attribute("coverArt")?.Value);
     }
 
     [Fact]

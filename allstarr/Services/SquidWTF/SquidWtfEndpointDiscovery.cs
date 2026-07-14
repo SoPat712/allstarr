@@ -6,8 +6,6 @@ public static class SquidWtfEndpointDiscovery
 {
     public static readonly IReadOnlyList<string> SourceUrls = new[]
     {
-        "https://tidal-uptime.geeked.wtf/",
-        "https://tidal-uptime.jiffy-puffs-1j.workers.dev/",
         "https://tidal-uptime.props-76styles.workers.dev/"
     };
 
@@ -24,23 +22,17 @@ public static class SquidWtfEndpointDiscovery
         {
             try
             {
-                Console.WriteLine($"Loading SquidWTF uptime feed: {sourceUrl}");
                 var json = await httpClient.GetStringAsync(sourceUrl, cancellationToken);
                 var feed = ParseFeed(json);
                 feeds.Add(feed);
-                Console.WriteLine(
-                    $"Loaded SquidWTF uptime feed {sourceUrl}: api={feed.ApiUrls.Count}, streaming={feed.StreamingUrls.Count}, down={feed.DownUrls.Count}, lastUpdated={feed.LastUpdated:O}");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Console.WriteLine($"⚠️ Failed to load SquidWTF endpoint feed from {sourceUrl}: {ex.Message}");
             }
         }
 
         if (feeds.Count == 0)
         {
-            Console.WriteLine(
-                "⚠️ No SquidWTF uptime feeds could be loaded. Starting with SquidWTF external features unavailable; local Jellyfin content will still work.");
             return new SquidWtfEndpointCatalog(new List<string>(), new List<string>());
         }
 
@@ -64,18 +56,6 @@ public static class SquidWtfEndpointDiscovery
         var streamingUrls = MergeDistinctUrls(orderedFeeds.Select(f => f.StreamingUrls))
             .Where(url => !downUrls.Contains(url))
             .ToList();
-
-        if (apiUrls.Count == 0)
-        {
-            Console.WriteLine("⚠️ SquidWTF uptime feeds returned zero API endpoints.");
-        }
-
-        if (streamingUrls.Count == 0)
-        {
-            Console.WriteLine("⚠️ SquidWTF uptime feeds returned zero streaming endpoints.");
-        }
-
-        Console.WriteLine($"Loaded SquidWTF endpoints from uptime feeds: api={apiUrls.Count}, streaming={streamingUrls.Count}");
 
         return new SquidWtfEndpointCatalog(apiUrls, streamingUrls);
     }

@@ -5,7 +5,7 @@ using allstarr.Services.Admin;
 namespace allstarr.Middleware;
 
 /// <summary>
-/// Enforces Jellyfin-authenticated local sessions for admin API endpoints on port 5275.
+/// Enforces backend-authenticated local sessions for admin API endpoints on port 5275.
 /// </summary>
 public class AdminAuthenticationMiddleware
 {
@@ -94,7 +94,63 @@ public class AdminAuthenticationMiddleware
             return true;
         }
 
+        if (HttpMethods.IsGet(method) &&
+            path.Equals("/api/admin/ui/schema", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (IsProviderAccountSelfServiceRoute(path, method))
+        {
+            return true;
+        }
+
+        if ((path.Equals("/api/admin/favorite-action-policies", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsGet(method)) ||
+            (path.Equals("/api/admin/favorite-action-policies/me", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPut(method)))
+        {
+            return true;
+        }
+
+        if (path.Equals("/api/admin/intelligence", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/api/admin/intelligence/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (path.Equals("/api/admin/jobs", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/api/admin/jobs/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         return false;
+    }
+
+    private static bool IsProviderAccountSelfServiceRoute(string path, string method)
+    {
+        const string root = "/api/admin/provider-accounts";
+        var normalizedPath = path.Length > 1 ? path.TrimEnd('/') : path;
+        if (normalizedPath.Equals(root, StringComparison.OrdinalIgnoreCase))
+        {
+            return HttpMethods.IsGet(method) || HttpMethods.IsPost(method);
+        }
+
+        if (!normalizedPath.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var segments = normalizedPath[(root.Length + 1)..]
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 1 && Guid.TryParse(segments[0], out _))
+        {
+            return HttpMethods.IsDelete(method);
+        }
+
+        return segments.Length == 2 &&
+               Guid.TryParse(segments[0], out _) &&
+               segments[1].Equals("secret", StringComparison.OrdinalIgnoreCase) &&
+               HttpMethods.IsPut(method);
     }
 
     private async Task WriteUnauthorizedResponse(HttpContext context)
@@ -107,7 +163,7 @@ public class AdminAuthenticationMiddleware
         await context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
             error = "Authentication required",
-            message = "Please sign in with your Jellyfin account."
+            message = "Please sign in with your configured media-server account."
         }));
     }
 
@@ -121,7 +177,7 @@ public class AdminAuthenticationMiddleware
         await context.Response.WriteAsync(JsonSerializer.Serialize(new
         {
             error = "Administrator permissions required",
-            message = "This action is restricted to Jellyfin administrators."
+            message = "This action is restricted to media-server administrators."
         }));
     }
 }

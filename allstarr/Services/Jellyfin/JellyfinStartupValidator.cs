@@ -115,17 +115,21 @@ public class JellyfinStartupValidator : BaseStartupValidator
             WriteDetail("Could not reach server within 10 seconds");
             return ValidationResult.Failure("TIMEOUT", "Could not reach server within timeout period", ConsoleColor.Red);
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException)
         {
             WriteStatus("Jellyfin server", "UNREACHABLE", ConsoleColor.Red);
-            WriteDetail(ex.Message);
-            return ValidationResult.Failure("UNREACHABLE", ex.Message, ConsoleColor.Red);
+            return ValidationResult.Failure(
+                "UNREACHABLE",
+                "The Jellyfin server could not be reached",
+                ConsoleColor.Red);
         }
         catch (Exception ex)
         {
             WriteStatus("Jellyfin server", "ERROR", ConsoleColor.Red);
-            WriteDetail(ex.Message);
-            return ValidationResult.Failure("ERROR", ex.Message, ConsoleColor.Red);
+            return ValidationResult.Failure(
+                "ERROR",
+                $"Jellyfin validation failed ({ex.GetType().Name})",
+                ConsoleColor.Red);
         }
     }
 
@@ -172,7 +176,7 @@ public class JellyfinStartupValidator : BaseStartupValidator
         catch (Exception ex)
         {
             WriteStatus("Authentication", "ERROR", ConsoleColor.Yellow);
-            WriteDetail(ex.Message);
+            WriteDetail($"Authentication validation failed ({ex.GetType().Name})");
         }
     }
 

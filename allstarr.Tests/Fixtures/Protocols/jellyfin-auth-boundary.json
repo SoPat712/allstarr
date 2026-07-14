@@ -1,0 +1,108 @@
+[
+  {
+    "name": "search-items-unauthorized",
+    "request": {
+      "method": "GET",
+      "path": "/Items?SearchTerm=fixture&IncludeItemTypes=Audio&Limit=5",
+      "header": "X-Emby-Token",
+      "credential": "fixture-invalid-token"
+    },
+    "verification": {
+      "status": 401,
+      "body": { "error": "invalid client token" },
+      "pathAndQuery": "/Users/Me"
+    },
+    "expected": {
+      "status": 401,
+      "body": { "error": "invalid client token" }
+    }
+  },
+  {
+    "name": "search-hints-forbidden-query-token",
+    "request": {
+      "method": "GET",
+      "path": "/Search/Hints?SearchTerm=fixture&Limit=5&api_key=fixture-forbidden-key"
+    },
+    "verification": {
+      "status": 403,
+      "body": { "error": "user disabled" },
+      "pathAndQuery": "/Users/Me?api_key=fixture-forbidden-key"
+    },
+    "expected": {
+      "status": 403,
+      "body": { "error": "user disabled" }
+    }
+  },
+  {
+    "name": "external-item-unauthorized",
+    "request": {
+      "method": "GET",
+      "path": "/Items/ext-deezer-song-123",
+      "header": "Authorization",
+      "credential": "MediaBrowser Token=\"fixture-invalid-token\""
+    },
+    "verification": {
+      "status": 401,
+      "body": { "error": "invalid client token" },
+      "pathAndQuery": "/Users/Me"
+    },
+    "expected": {
+      "status": 401,
+      "body": { "error": "invalid client token" }
+    }
+  },
+  {
+    "name": "external-favorite-forbidden",
+    "request": {
+      "method": "POST",
+      "path": "/UserFavoriteItems/ext-deezer-song-123?userId=spoofed-user",
+      "header": "X-Emby-Authorization",
+      "credential": "MediaBrowser Client=\"fixture\", Token=\"fixture-disabled-token\""
+    },
+    "verification": {
+      "status": 403,
+      "body": { "error": "user disabled" },
+      "pathAndQuery": "/Users/Me"
+    },
+    "expected": {
+      "status": 403,
+      "body": { "error": "user disabled" }
+    }
+  },
+  {
+    "name": "external-stream-unauthorized",
+    "request": {
+      "method": "GET",
+      "path": "/Audio/ext-deezer-song-123/stream",
+      "header": "X-Emby-Token",
+      "credential": "fixture-invalid-token"
+    },
+    "verification": {
+      "status": 401,
+      "body": { "error": "invalid client token" },
+      "pathAndQuery": "/Users/Me"
+    },
+    "expected": {
+      "status": 401,
+      "body": { "error": "invalid client token" }
+    }
+  },
+  {
+    "name": "external-item-backend-unavailable",
+    "request": {
+      "method": "GET",
+      "path": "/Items/ext-qobuz-album-456",
+      "header": "X-Emby-Token",
+      "credential": "fixture-token"
+    },
+    "verification": {
+      "status": 503,
+      "body": { "error": "backend unavailable" },
+      "pathAndQuery": "/Users/Me"
+    },
+    "expected": {
+      "status": 503,
+      "body": { "error": "backend unavailable" }
+    }
+  }
+]

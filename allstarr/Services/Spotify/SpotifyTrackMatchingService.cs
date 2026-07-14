@@ -218,6 +218,10 @@ public class SpotifyTrackMatchingService : BackgroundService
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                 }
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in cron scheduling loop");
@@ -807,9 +811,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                     if (globalMapping != null && globalMapping.TargetType == "external")
                     {
                         Song? mappedSong = null;
-                        var preferredProvider = GetCurrentMusicServiceProvider();
-
-                        if (globalMapping.TryGetExternalTarget(preferredProvider, out var mappedProvider, out var mappedExternalId))
+                        if (globalMapping.TryGetExternalTarget(null, out var mappedProvider, out var mappedExternalId))
                         {
                             mappedSong = await metadataService.GetSongAsync(
                                 mappedProvider,
@@ -2035,19 +2037,4 @@ public class SpotifyTrackMatchingService : BackgroundService
         return song;
     }
 
-    private string? GetCurrentMusicServiceProvider()
-    {
-        var backendType = _configuration.GetValue<BackendType>("Backend:Type");
-        var musicService = backendType == BackendType.Jellyfin
-            ? _configuration.GetValue<MusicService>("Jellyfin:MusicService")
-            : _configuration.GetValue<MusicService>("Subsonic:MusicService");
-
-        return musicService switch
-        {
-            MusicService.Deezer => "deezer",
-            MusicService.Qobuz => "qobuz",
-            MusicService.SquidWTF => "squidwtf",
-            _ => null
-        };
-    }
 }

@@ -1,0 +1,24 @@
+{
+  "item": {
+    "requestPath": "/Items/ext-deezer-song-42?api_key=fixture-key",
+    "provider": "deezer",
+    "externalId": "42",
+    "expected": {
+      "status": 200,
+      "contentType": "application/json",
+      "id": "ext-deezer-song-42",
+      "name": "Fixture Song [D]",
+      "type": "Audio",
+      "providerId": "42"
+    }
+  },
+  "image": {
+    "requestPath": "/Items/ext-deezer-song-no-art/Images/Primary?api_key=fixture-key",
+    "expected": {
+      "status": 200,
+      "contentType": "image/png",
+      "length": 70,
+      "conditionalStatus": 304
+    }
+  }
+}

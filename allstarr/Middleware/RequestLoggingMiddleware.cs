@@ -24,14 +24,12 @@ public class RequestLoggingMiddleware
 
         // Log initialization status
         var initialValue = _configuration.GetValue<bool>("Debug:LogAllRequests");
-        var initialRedactionValue = _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false);
         _logger.LogWarning("🔍 RequestLoggingMiddleware initialized - LogAllRequests={LogAllRequests}", initialValue);
 
         if (initialValue)
         {
             _logger.LogWarning(
-                "🔍 Request logging ENABLED - all HTTP requests will be logged (RedactSensitiveRequestValues={Redact})",
-                initialRedactionValue);
+                "🔍 Request logging ENABLED - sensitive request values are always redacted");
         }
         else
         {
@@ -43,8 +41,6 @@ public class RequestLoggingMiddleware
     {
         // Check configuration on every request to allow dynamic toggling
         var logAllRequests = _configuration.GetValue<bool>("Debug:LogAllRequests");
-        var redactSensitiveValues = _configuration.GetValue<bool>("Debug:RedactSensitiveRequestValues", false);
-
         if (!logAllRequests)
         {
             await _next(context);
@@ -53,9 +49,7 @@ public class RequestLoggingMiddleware
 
         var stopwatch = Stopwatch.StartNew();
         var request = context.Request;
-        var queryStringForLog = redactSensitiveValues
-            ? BuildMaskedQueryString(request.QueryString.Value)
-            : request.QueryString.Value ?? string.Empty;
+        var queryStringForLog = BuildMaskedQueryString(request.QueryString.Value);
 
         // Log request details
         var requestLog = new StringBuilder();
@@ -73,17 +67,17 @@ public class RequestLoggingMiddleware
         if (request.Headers.ContainsKey("X-Emby-Authorization"))
         {
             var value = request.Headers["X-Emby-Authorization"].ToString();
-            requestLog.AppendLine($"   X-Emby-Authorization: {(redactSensitiveValues ? MaskAuthHeader(value) : value)}");
+            requestLog.AppendLine($"   X-Emby-Authorization: {MaskAuthHeader(value)}");
         }
         if (request.Headers.ContainsKey("Authorization"))
         {
             var value = request.Headers["Authorization"].ToString();
-            requestLog.AppendLine($"   Authorization: {(redactSensitiveValues ? MaskAuthHeader(value) : value)}");
+            requestLog.AppendLine($"   Authorization: {MaskAuthHeader(value)}");
         }
         if (request.Headers.ContainsKey("X-Emby-Token"))
         {
             var value = request.Headers["X-Emby-Token"].ToString();
-            requestLog.AppendLine($"   X-Emby-Token: {(redactSensitiveValues ? "***" : value)}");
+            requestLog.AppendLine("   X-Emby-Token: ***");
         }
         if (request.Headers.ContainsKey("X-Emby-Device-Id"))
         {
@@ -116,10 +110,11 @@ public class RequestLoggingMiddleware
         catch (Exception ex)
         {
             stopwatch.Stop();
-            _logger.LogError(ex,
-                "❌ HTTP {Method} {Url} → EXCEPTION ({ElapsedMs}ms)",
+            _logger.LogError(
+                "❌ HTTP {Method} {Url} → {ExceptionType} ({ElapsedMs}ms)",
                 request.Method,
                 requestUrlForLog,
+                ex.GetType().Name,
                 stopwatch.ElapsedMilliseconds);
             throw;
         }
@@ -172,16 +167,15 @@ public class RequestLoggingMiddleware
             return string.Empty;
         }
 
-        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
-        if (query.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var redactedParts = query.Keys
+        var redactedParts = queryString.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2)[0])
+            .Where(key => !string.IsNullOrWhiteSpace(key))
             .Select(key => $"{key}=<redacted>")
             .ToArray();
 
-        return "?" + string.Join("&", redactedParts);
+        return redactedParts.Length == 0
+            ? string.Empty
+            : "?" + string.Join("&", redactedParts);
     }
 }

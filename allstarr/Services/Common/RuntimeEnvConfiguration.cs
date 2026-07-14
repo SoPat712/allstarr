@@ -23,6 +23,20 @@ public static class RuntimeEnvConfiguration
             ["CORS_ALLOW_CREDENTIALS"] = ["Cors:AllowCredentials"],
 
             ["SUBSONIC_URL"] = ["Subsonic:Url"],
+            ["ALLSTARR_STORAGE_PROVIDER"] = ["Storage:Provider"],
+            ["ALLSTARR_STORAGE_CONNECTION_STRING"] = ["Storage:ConnectionString"],
+            ["ALLSTARR_STORAGE_PASSWORD_FILE"] = ["Storage:PasswordFile"],
+            ["ALLSTARR_STORAGE_AUTO_MIGRATE"] = ["Storage:AutoMigrate"],
+            ["ALLSTARR_STORAGE_ENFORCE_MUTATION_GUARD"] = ["Storage:EnforceMutationGuard"],
+            ["ALLSTARR_STORAGE_SQLITE_BOOTSTRAP_CONFIRMATION_FILE"] = ["Storage:SqliteBootstrapConfirmationFile"],
+            ["ALLSTARR_BACKUP_DIRECTORY"] = ["Storage:BackupDirectory"],
+            ["ALLSTARR_SECRET_KEY_RING_PATH"] = ["Secrets:KeyRingPath"],
+            ["ALLSTARR_MULTI_USER_MODE"] = ["Identity:Mode"],
+            ["ALLSTARR_BACKEND_INSTANCE_ID"] = ["Identity:BackendInstanceId"],
+            ["ALLSTARR_PROVIDER_ACCOUNT_MANAGEMENT_MODE"] = ["ProviderAccounts:ManagementMode"],
+            ["ALLSTARR_ALLOW_GLOBAL_ACCOUNTS"] = ["ProviderPolicy:AllowGlobalAccounts"],
+            ["ALLSTARR_ALLOW_GLOBAL_PERSONAL_ACCOUNTS"] = ["ProviderPolicy:AllowGlobalPersonalAccounts"],
+            ["ALLSTARR_SHARED_DOWNLOADER_ACCOUNT_ID"] = ["ProviderPolicy:SharedDownloaderAccountId"],
             ["JELLYFIN_URL"] = ["Jellyfin:Url"],
             ["JELLYFIN_API_KEY"] = ["Jellyfin:ApiKey"],
             ["JELLYFIN_USER_ID"] = ["Jellyfin:UserId"],
@@ -41,9 +55,6 @@ public static class RuntimeEnvConfiguration
             ["SPOTIFY_IMPORT_SYNC_WINDOW_HOURS"] = ["SpotifyImport:SyncWindowHours"],
             ["SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS"] = ["SpotifyImport:MatchingIntervalHours"],
             ["SPOTIFY_IMPORT_PLAYLISTS"] = ["SpotifyImport:Playlists"],
-            ["SPOTIFY_IMPORT_PLAYLIST_IDS"] = ["SpotifyImport:PlaylistIds"],
-            ["SPOTIFY_IMPORT_PLAYLIST_NAMES"] = ["SpotifyImport:PlaylistNames"],
-            ["SPOTIFY_IMPORT_PLAYLIST_LOCAL_TRACKS_POSITIONS"] = ["SpotifyImport:PlaylistLocalTracksPositions"],
 
             ["SPOTIFY_API_ENABLED"] = ["SpotifyApi:Enabled"],
             ["SPOTIFY_API_SESSION_COOKIE"] = ["SpotifyApi:SessionCookie"],
@@ -81,8 +92,8 @@ public static class RuntimeEnvConfiguration
             ["SQUIDWTF_QUALITY"] = ["SquidWTF:Quality"],
             ["SQUIDWTF_MIN_REQUEST_INTERVAL_MS"] = ["SquidWTF:MinRequestIntervalMs"],
 
-            ["APPLE_MUSIC_AIO_URL"] = ["AppleMusic:BaseUrl"],
-            ["APPLE_MUSIC_QUALITY"] = ["AppleMusic:Quality"],
+            ["APPLE_DOWNLOAD_URL"] = ["AppleDownload:BaseUrl"],
+            ["APPLE_DOWNLOAD_QUALITY"] = ["AppleDownload:Quality"],
 
             ["MUSICBRAINZ_ENABLED"] = ["MusicBrainz:Enabled"],
             ["MUSICBRAINZ_USERNAME"] = ["MusicBrainz:Username"],
@@ -95,6 +106,7 @@ public static class RuntimeEnvConfiguration
             ["MULTI_PROVIDER_LYRICS_ORDER"] = ["MULTI_PROVIDER_LYRICS_ORDER"],
             ["MULTI_PROVIDER_ENABLED_SEARCH"] = ["MULTI_PROVIDER_ENABLED_SEARCH"],
             ["MULTI_PROVIDER_ENABLED_PLAYLIST"] = ["MULTI_PROVIDER_ENABLED_PLAYLIST"],
+            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = ["MULTI_PROVIDER_DISABLED_PROVIDERS"],
             ["EXTENSION_REPOSITORIES"] = ["EXTENSION_REPOSITORIES"],
 
             ["CACHE_SEARCH_RESULTS_MINUTES"] = ["Cache:SearchResultsMinutes"],
@@ -125,8 +137,7 @@ public static class RuntimeEnvConfiguration
     {
         "DOWNLOAD_PATH",
         "KEPT_PATH",
-        "CACHE_PATH",
-        "REDIS_DATA_PATH"
+        "CACHE_PATH"
     };
 
     public static string ResolveEnvFilePath(IHostEnvironment environment)
@@ -138,30 +149,22 @@ public static class RuntimeEnvConfiguration
 
     public static void AddDotEnvOverrides(
         ConfigurationManager configuration,
-        IHostEnvironment environment,
-        TextWriter? logWriter = null)
+        IHostEnvironment environment)
     {
-        AddDotEnvOverrides(configuration, ResolveEnvFilePath(environment), logWriter);
+        AddDotEnvOverrides(configuration, ResolveEnvFilePath(environment));
     }
 
     public static void AddDotEnvOverrides(
         ConfigurationManager configuration,
-        string envFilePath,
-        TextWriter? logWriter = null)
+        string envFilePath)
     {
         var overrides = LoadDotEnvOverrides(envFilePath);
         if (overrides.Count == 0)
         {
-            if (File.Exists(envFilePath))
-            {
-                logWriter?.WriteLine($"No supported runtime overrides found in {envFilePath}");
-            }
-
             return;
         }
 
         configuration.AddInMemoryCollection(overrides);
-        logWriter?.WriteLine($"Loaded {overrides.Count} runtime override(s) from {envFilePath}");
     }
 
     public static Dictionary<string, string?> LoadDotEnvOverrides(string envFilePath)

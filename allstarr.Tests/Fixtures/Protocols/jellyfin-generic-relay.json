@@ -1,0 +1,51 @@
+[
+  {
+    "name": "head-binary-response",
+    "request": {
+      "method": "HEAD",
+      "path": "/Videos/item-1/master.m3u8?api_key=fixture-key"
+    },
+    "verificationPath": "/Users/Me?api_key=fixture-key",
+    "upstreamPath": "/Videos/item-1/master.m3u8?api_key=fixture-key",
+    "upstream": {
+      "status": 200,
+      "contentType": "application/vnd.apple.mpegurl",
+      "body": "playlist bytes",
+      "etag": "\"playlist-v1\""
+    },
+    "expectedBody": ""
+  },
+  {
+    "name": "patch-non-json-response",
+    "request": {
+      "method": "PATCH",
+      "path": "/Items/item-1?api_key=fixture-key&Fields=Name",
+      "body": "{\"Name\":\"Updated\"}",
+      "contentType": "application/merge-patch+json"
+    },
+    "verificationPath": "/Users/Me?api_key=fixture-key",
+    "upstreamPath": "/Items/item-1?api_key=fixture-key&Fields=Name",
+    "upstream": {
+      "status": 202,
+      "contentType": "text/plain",
+      "body": "accepted",
+      "location": "/Items/item-1"
+    },
+    "expectedBody": "accepted"
+  },
+  {
+    "name": "delete-empty-response",
+    "request": {
+      "method": "DELETE",
+      "path": "/Playlists/list-1/Items/item-2?api_key=fixture-key"
+    },
+    "verificationPath": "/Users/Me?api_key=fixture-key",
+    "upstreamPath": "/Playlists/list-1/Items/item-2?api_key=fixture-key",
+    "upstream": {
+      "status": 204,
+      "contentType": "application/octet-stream",
+      "body": ""
+    },
+    "expectedBody": ""
+  }
+]

@@ -1,4 +1,5 @@
 using allstarr.Services.Common;
+using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
 
@@ -13,6 +14,8 @@ public partial class JellyfinController
     /// </summary>
     [HttpGet("Items/{itemId}/Download")]
     [HttpGet("Items/{itemId}/File")]
+    [HttpHead("Items/{itemId}/Download")]
+    [HttpHead("Items/{itemId}/File")]
     public async Task<IActionResult> DownloadAudio(string itemId)
     {
         if (string.IsNullOrWhiteSpace(itemId))
@@ -46,6 +49,8 @@ public partial class JellyfinController
     /// </summary>
     [HttpGet("Audio/{itemId}/stream")]
     [HttpGet("Audio/{itemId}/stream.{container}")]
+    [HttpHead("Audio/{itemId}/stream")]
+    [HttpHead("Audio/{itemId}/stream.{container}")]
     public async Task<IActionResult> StreamAudio(string itemId, string? container = null)
     {
         if (string.IsNullOrWhiteSpace(itemId))
@@ -84,69 +89,40 @@ public partial class JellyfinController
 
         try
         {
-            var request = new HttpRequestMessage(HttpMethod.Get, jellyfinUrl);
+            var request = new HttpRequestMessage(
+                HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get,
+                jellyfinUrl);
 
             // Forward auth headers
             AuthHeaderHelper.ForwardAuthHeaders(Request.Headers, request);
 
-            // Forward Range header for seeking
-            if (Request.Headers.TryGetValue("Range", out var range))
-            {
-                request.Headers.TryAddWithoutValidation("Range", range.ToString());
-            }
+            _streamingResponseAdapter.ForwardRangeRequestHeaders(Request.Headers, request);
 
-            var response = await _proxyService.HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            var response = await _proxyService.HttpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                HttpContext.RequestAborted);
 
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("Jellyfin stream failed: {StatusCode} for {ItemId}", response.StatusCode, itemId);
-                return StatusCode((int)response.StatusCode);
+                var statusCode = (int)response.StatusCode;
+                response.Dispose();
+                return StatusCode(statusCode);
             }
-
-            // Set response status and headers
-            Response.StatusCode = (int)response.StatusCode;
-
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
-
-            // Forward caching headers for client-side caching
-            if (response.Headers.ETag != null)
-            {
-                Response.Headers["ETag"] = response.Headers.ETag.ToString();
-            }
-
-            if (response.Content.Headers.LastModified.HasValue)
-            {
-                Response.Headers["Last-Modified"] = response.Content.Headers.LastModified.Value.ToString("R");
-            }
-
-            if (response.Headers.CacheControl != null)
-            {
-                Response.Headers["Cache-Control"] = response.Headers.CacheControl.ToString();
-            }
-
-            // Forward range headers for seeking
-            if (response.Content.Headers.ContentRange != null)
-            {
-                Response.Headers["Content-Range"] = response.Content.Headers.ContentRange.ToString();
-            }
-
-            if (response.Headers.AcceptRanges != null)
-            {
-                Response.Headers["Accept-Ranges"] = string.Join(", ", response.Headers.AcceptRanges);
-            }
-
-            if (response.Content.Headers.ContentLength.HasValue)
-            {
-                Response.Headers["Content-Length"] = response.Content.Headers.ContentLength.Value.ToString();
-            }
-
-            var stream = await response.Content.ReadAsStreamAsync();
-            return File(stream, contentType);
+            return await _streamingResponseAdapter.CreateAsync(
+                HttpContext,
+                response,
+                HttpContext.RequestAborted,
+                enableRangeProcessing: false);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to proxy stream from Jellyfin for {ItemId}", itemId);
-            return StatusCode(500, new { error = "Streaming failed" });
+            return ProtocolStreamingResponseAdapter.CreateTransportFailure(
+                HttpContext.RequestAborted,
+                ex,
+                "Streaming failed");
         }
     }
 

@@ -341,7 +341,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         return _allServices.FirstOrDefault(s =>
             s.GetType().Name.StartsWith(normalizedName, StringComparison.OrdinalIgnoreCase) ||
             (normalizedName == "squidwtf" && s.GetType().Name.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase)) ||
-            (normalizedName == "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
+            (normalizedName is "apple-download" or "applemusic" && s.GetType().Name.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase))
         );
     }
 

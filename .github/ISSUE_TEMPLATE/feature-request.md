@@ -23,6 +23,12 @@ A clear and concise description of any alternative solutions or workarounds you'
 
 Add any other context or screenshots about the feature request here.
 
+## Relevant integrations
+
+- Backend: [Jellyfin / Navidrome / other Subsonic server / any]
+- Providers or sidecars involved:
+- Should this work per user, per library, or globally?
+
 ## Safe diagnostics from Allstarr (optional)
 
 - Sensitive values stay redacted in this block.
@@ -31,7 +37,8 @@ Add any other context or screenshots about the feature request here.
 - Music Service: [e.g. SquidWTF]
 - Storage Mode: [e.g. Cache]
 - Download Mode: [e.g. Track]
-- Redis Enabled: [e.g. Yes]
+- Storage: [Postgres version and readiness state]
+- Valkey Enabled: [e.g. Yes]
 - Spotify Import Enabled: [e.g. Yes]
 - Scrobbling Enabled: [e.g. Disabled]
 - Spotify Status: [e.g. Spotify Ready]

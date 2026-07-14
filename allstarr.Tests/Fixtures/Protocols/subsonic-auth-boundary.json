@@ -1,0 +1,167 @@
+[
+  {
+    "name": "search-missing-credentials",
+    "request": {
+      "method": "GET",
+      "path": "/rest/search3.view?v=1.16.1&c=fixture&f=json&query=blocked"
+    },
+    "verification": null,
+    "expected": {
+      "status": 401,
+      "contentType": "application/json",
+      "body": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 40, "message": "Missing authentication parameters" }
+        }
+      }
+    }
+  },
+  {
+    "name": "search-bad-password-json",
+    "request": {
+      "method": "GET",
+      "path": "/rest/search3.view?u=fixture&p=bad&v=1.16.1&c=fixture&f=json&query=blocked"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=bad&v=1.16.1&c=fixture&f=json",
+      "status": 200,
+      "contentType": "application/json",
+      "responseBody": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 40, "message": "Wrong username or password" }
+        }
+      }
+    },
+    "expected": {
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 40, "message": "Wrong username or password" }
+        }
+      }
+    }
+  },
+  {
+    "name": "search-bad-token-form-xml",
+    "request": {
+      "method": "POST",
+      "path": "/rest/search3.view?v=1.16.1&c=fixture&f=xml",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": "u=fixture&t=bad-hash&s=fixture-salt&query=blocked"
+    },
+    "verification": {
+      "method": "POST",
+      "pathAndQuery": "/rest/ping.view?v=1.16.1&c=fixture&f=xml",
+      "requestBody": "u=fixture&t=bad-hash&s=fixture-salt",
+      "status": 401,
+      "contentType": "application/xml",
+      "rawBody": "<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"failed\" version=\"1.16.1\"><error code=\"40\" message=\"Wrong username or password\"/></subsonic-response>"
+    },
+    "expected": {
+      "status": 401,
+      "contentType": "application/xml",
+      "rawBody": "<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"failed\" version=\"1.16.1\"><error code=\"40\" message=\"Wrong username or password\"/></subsonic-response>"
+    }
+  },
+  {
+    "name": "external-item-invalid-api-key",
+    "request": {
+      "method": "GET",
+      "path": "/rest/getSong.view?apiKey=bad-key&v=1.16.1&c=fixture&f=json&id=ext-deezer-song-123"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?apiKey=bad-key&v=1.16.1&c=fixture&f=json",
+      "status": 200,
+      "contentType": "application/json",
+      "responseBody": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 44, "message": "Invalid API key" }
+        }
+      }
+    },
+    "expected": {
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 44, "message": "Invalid API key" }
+        }
+      }
+    }
+  },
+  {
+    "name": "external-favorite-bad-password",
+    "request": {
+      "method": "GET",
+      "path": "/rest/star.view?u=fixture&p=bad&v=1.16.1&c=fixture&f=json&id=ext-playlist-deezer-123"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=bad&v=1.16.1&c=fixture&f=json",
+      "status": 403,
+      "contentType": "application/json",
+      "responseBody": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 50, "message": "User is not authorized" }
+        }
+      }
+    },
+    "expected": {
+      "status": 403,
+      "contentType": "application/json",
+      "body": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 50, "message": "User is not authorized" }
+        }
+      }
+    }
+  },
+  {
+    "name": "external-stream-bad-password",
+    "request": {
+      "method": "GET",
+      "path": "/rest/stream.view?u=fixture&p=bad&v=1.16.1&c=fixture&f=json&id=ext-deezer-song-123"
+    },
+    "verification": {
+      "method": "GET",
+      "pathAndQuery": "/rest/ping.view?u=fixture&p=bad&v=1.16.1&c=fixture&f=json",
+      "status": 401,
+      "contentType": "application/json",
+      "responseBody": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 40, "message": "Wrong username or password" }
+        }
+      }
+    },
+    "expected": {
+      "status": 401,
+      "contentType": "application/json",
+      "body": {
+        "subsonic-response": {
+          "status": "failed",
+          "version": "1.16.1",
+          "error": { "code": 40, "message": "Wrong username or password" }
+        }
+      }
+    }
+  }
+]

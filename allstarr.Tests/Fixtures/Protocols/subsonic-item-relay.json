@@ -1,0 +1,26 @@
+[
+  {
+    "name": "conditional-local-cover-art",
+    "requestPath": "/rest/getCoverArt.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=local-cover",
+    "upstreamPath": "/rest/getCoverArt.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=local-cover",
+    "status": 304,
+    "contentType": "image/jpeg",
+    "body": ""
+  },
+  {
+    "name": "local-song-protocol-error",
+    "requestPath": "/rest/getSong.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id=local-missing",
+    "upstreamPath": "/rest/getSong.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id=local-missing",
+    "status": 404,
+    "contentType": "application/json",
+    "body": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":70,\"message\":\"Song not found\"}}}"
+  },
+  {
+    "name": "generic-rate-limit-error",
+    "requestPath": "/rest/getLicense.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json",
+    "upstreamPath": "/rest/getLicense.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json",
+    "status": 429,
+    "contentType": "application/json",
+    "body": "{\"subsonic-response\":{\"status\":\"failed\",\"version\":\"1.16.1\",\"error\":{\"code\":0,\"message\":\"rate limited\"}}}"
+  }
+]

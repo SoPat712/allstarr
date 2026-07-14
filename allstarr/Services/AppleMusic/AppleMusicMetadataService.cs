@@ -12,26 +12,25 @@ namespace allstarr.Services.AppleMusic;
 public class AppleMusicMetadataService : IConcreteMetadataService
 {
     private readonly HttpClient _httpClient;
-    private readonly AppleMusicSettings _settings;
+    private readonly AppleDownloadSettings _settings;
     private readonly ILogger<AppleMusicMetadataService> _logger;
 
     public AppleMusicMetadataService(
         IHttpClientFactory httpClientFactory,
-        IOptions<AppleMusicSettings> settings,
+        IOptions<AppleDownloadSettings> settings,
         ILogger<AppleMusicMetadataService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("AppleMusic");
         _settings = settings.Value;
         _logger = logger;
         
-        _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
+        if (!TryEndpoint($"api/search?q={Uri.EscapeDataString(query)}&type=song&limit={limit}", out var url)) return [];
         try
         {
-            var url = $"api/search?q={Uri.EscapeDataString(query)}&type=song&limit={limit}";
             var results = await _httpClient.GetFromJsonAsync<List<GamdlSongResult>>(url, cancellationToken);
             
             if (results == null) return new List<Song>();
@@ -62,53 +61,14 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var url = $"api/search?q={Uri.EscapeDataString(query)}&type=album&limit={limit}";
-            var results = await _httpClient.GetFromJsonAsync<List<GamdlAlbumResult>>(url, cancellationToken);
-            
-            if (results == null) return new List<Album>();
-
-            return results.Select(r => new Album
-            {
-                Id = $"ext-applemusic-album-{r.Id}",
-                Title = r.Title,
-                Artist = r.Artist,
-                CoverArtUrl = r.CoverUrl,
-                Year = !string.IsNullOrEmpty(r.ReleaseDate) && DateTime.TryParse(r.ReleaseDate, out var dt) ? dt.Year : null,
-                ExternalProvider = "applemusic",
-                ExternalId = r.Id
-            }).ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to search Apple Music albums for query: {Query}", query);
-            return new List<Album>();
-        }
+        await Task.CompletedTask;
+        return [];
     }
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var url = $"api/search?q={Uri.EscapeDataString(query)}&type=artist&limit={limit}";
-            var results = await _httpClient.GetFromJsonAsync<List<GamdlArtistResult>>(url, cancellationToken);
-            
-            if (results == null) return new List<Artist>();
-
-            return results.Select(r => new Artist
-            {
-                Id = $"ext-applemusic-artist-{r.Id}",
-                Name = r.Name,
-                ExternalProvider = "applemusic",
-                ExternalId = r.Id
-            }).ToList();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to search Apple Music artists for query: {Query}", query);
-            return new List<Artist>();
-        }
+        await Task.CompletedTask;
+        return [];
     }
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
@@ -129,11 +89,11 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        if (externalProvider != "applemusic") return null;
+        if (externalProvider != "applemusic" ||
+            !TryEndpoint($"api/song/{Uri.EscapeDataString(externalId)}", out var url)) return null;
 
         try
         {
-            var url = $"api/song/{externalId}";
             var r = await _httpClient.GetFromJsonAsync<GamdlSongDetail>(url, cancellationToken);
             
             if (r == null) return null;
@@ -176,26 +136,14 @@ public class AppleMusicMetadataService : IConcreteMetadataService
 
     public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        // Stub: Apple Music albums contain tracks. In a complete provider we would fetch tracks from gamdl-aio
-        return new Album
-        {
-            Id = $"ext-applemusic-album-{externalId}",
-            Title = "Unknown Album",
-            Artist = "Unknown Artist",
-            ExternalProvider = "applemusic",
-            ExternalId = externalId
-        };
+        await Task.CompletedTask;
+        return null;
     }
 
     public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        return new Artist
-        {
-            Id = $"ext-applemusic-artist-{externalId}",
-            Name = "Unknown Artist",
-            ExternalProvider = "applemusic",
-            ExternalId = externalId
-        };
+        await Task.CompletedTask;
+        return null;
     }
 
     public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
@@ -221,6 +169,19 @@ public class AppleMusicMetadataService : IConcreteMetadataService
     public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         return new List<Song>();
+    }
+
+    private bool TryEndpoint(string relativePath, out Uri? endpoint)
+    {
+        endpoint = null;
+        if (!allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(
+                _settings.BaseUrl, out var baseUri, out _))
+        {
+            return false;
+        }
+
+        endpoint = new Uri(baseUri!, relativePath);
+        return true;
     }
 
     // --- JSON Mapping Helper Classes ---

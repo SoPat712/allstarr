@@ -17,10 +17,9 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private readonly ILogger<SpotifyMissingTracksFetcher> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
+    private readonly string _cacheDirectory;
     private bool _hasRunOnce = false;
     private Dictionary<string, string> _playlistIdToName = new();
-    private const string CacheDirectory = "/app/cache/spotify";
-
     public SpotifyMissingTracksFetcher(
         IOptions<SpotifyImportSettings> spotifySettings,
         IOptions<SpotifyApiSettings> spotifyApiSettings,
@@ -29,6 +28,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         RedisCacheService cache,
         IServiceProvider serviceProvider,
         SpotifySessionCookieService spotifySessionCookieService,
+        IConfiguration configuration,
         ILogger<SpotifyMissingTracksFetcher> logger)
     {
         _spotifySettings = spotifySettings;
@@ -38,6 +38,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         _cache = cache;
         _serviceProvider = serviceProvider;
         _spotifySessionCookieService = spotifySessionCookieService;
+        _cacheDirectory = configuration["Cache:SpotifyDirectory"] ?? "/app/cache/spotify";
         _logger = logger;
     }
 
@@ -54,9 +55,6 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     {
         _logger.LogInformation("========================================");
         _logger.LogInformation("SpotifyMissingTracksFetcher: Starting up...");
-
-        // Ensure cache directory exists
-        Directory.CreateDirectory(CacheDirectory);
 
         // If Spotify API has any configured cookie (global or user-scoped),
         // SpotifyPlaylistFetcher handles playlist loading and this legacy scraper can stay dormant.
@@ -85,6 +83,8 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             _logger.LogInformation("========================================");
             return;
         }
+
+        Directory.CreateDirectory(_cacheDirectory);
 
         _logger.LogInformation("Spotify Import ENABLED");
         _logger.LogInformation("Configured Playlists: {Count}", _spotifySettings.Value.Playlists.Count);
@@ -233,7 +233,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private string GetCacheFilePath(string playlistName)
     {
         var safeName = string.Join("_", playlistName.Split(Path.GetInvalidFileNameChars()));
-        return Path.Combine(CacheDirectory, $"{safeName}_missing.json");
+        return Path.Combine(_cacheDirectory, $"{safeName}_missing.json");
     }
 
     private async Task LoadFromFileCache(string playlistName)
@@ -282,6 +282,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
     private async Task FetchMissingTracksAsync(CancellationToken cancellationToken)
     {
+        Directory.CreateDirectory(_cacheDirectory);
         _logger.LogInformation("=== FETCHING MISSING TRACKS ===");
         _logger.LogDebug("Processing {Count} playlists", _playlistIdToName.Count);
 

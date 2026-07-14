@@ -1,200 +1,152 @@
+name: allstarr
+
 services:
-  valkey:
-    image: valkey/valkey:8
-    container_name: allstarr-valkey
+  postgres:
+    image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
     restart: unless-stopped
-    # Valkey is only accessible internally - no external port exposure
-    expose:
-      - "6379"
-    command: valkey-server --maxmemory 1gb --maxmemory-policy allkeys-lru --save 60 1 --appendonly yes
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-allstarr}
+      POSTGRES_USER: ${POSTGRES_USER:-allstarr}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql
     healthcheck:
-      # Use CMD-SHELL for broader compatibility in some environments
-      test: ["CMD-SHELL", "valkey-cli ping || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - allstarr
+    security_opt:
+      - no-new-privileges:true
+
+  valkey:
+    image: valkey/valkey:8.1.8-alpine3.23@sha256:cfe71288f087704b06be45e270afa7a2abbf820093d6b11a23762081f5ff321d
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --maxmemory
+      - ${VALKEY_MAX_MEMORY:-512mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - "60"
+      - "1"
+      - --appendonly
+      - "yes"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 20s
-    volumes:
-      - ${REDIS_DATA_PATH:-./redis-data}:/data
+      retries: 10
+      start_period: 10s
     networks:
-      - allstarr-network
-
-  # Spotify Lyrics API sidecar service
-  # Note: This image only supports AMD64. On ARM64 systems, Docker will use emulation.
-  spotify-lyrics:
-    image: akashrchandran/spotify-lyrics-api:latest
-    platform: linux/amd64
-    container_name: allstarr-spotify-lyrics
-    restart: unless-stopped
-    ports:
-      - "8365:8080"
-    environment:
-      - SP_DC=${SPOTIFY_API_SESSION_COOKIE:-}
-    networks:
-      - allstarr-network
+      - allstarr
+    security_opt:
+      - no-new-privileges:true
 
   allstarr:
-    # Use pre-built image from GitHub Container Registry
-    # For latest stable: ghcr.io/sopat712/allstarr:latest
-    # For beta/testing: ghcr.io/sopat712/allstarr:beta
-    # To build locally instead, uncomment the build section below
-    image: ghcr.io/sopat712/allstarr:latest
-
-    # Uncomment to build locally instead of using GHCR image:
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
-    # image: allstarr:local
-
-    container_name: allstarr
+    image: ${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.0.0-beta.1}
     restart: unless-stopped
-    ports:
-      - "5274:8080"
-      # Admin UI on port 5275 - for local/Tailscale access only
-      # DO NOT expose through reverse proxy - contains sensitive config
-      - "5275:5275"
     depends_on:
+      postgres:
+        condition: service_healthy
       valkey:
         condition: service_healthy
-      spotify-lyrics:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - allstarr-network
+    ports:
+      - ${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_PORT:-5274}:8080
+      - ${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-5275}:5275
+    extra_hosts:
+      - host.docker.internal:host-gateway
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      # Backend type: Subsonic or Jellyfin (default: Subsonic)
-      - Backend__Type=${BACKEND_TYPE:-Subsonic}
-      # Admin network controls (port 5275)
-      - Admin__BindAnyIp=${ADMIN_BIND_ANY_IP:-false}
-      - Admin__TrustedSubnets=${ADMIN_TRUSTED_SUBNETS:-}
+      ASPNETCORE_ENVIRONMENT: Production
+      Backend__Type: ${BACKEND_TYPE:-Subsonic}
+      Admin__BindAnyIp: ${ADMIN_BIND_ANY_IP:-false}
+      Admin__TrustedSubnets: ${ADMIN_TRUSTED_SUBNETS:-}
+      Admin__Containerized: "true"
+      Admin__ContainerGateway: auto
 
-      # ===== REDIS / VALKEY CACHE =====
-      - Redis__ConnectionString=valkey:6379
-      - Redis__Enabled=${REDIS_ENABLED:-true}
+      Storage__Provider: Postgres
+      Storage__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-allstarr};Username=${POSTGRES_USER:-allstarr};Include Error Detail=false
+      Storage__PasswordFile: /run/secrets/postgres_password
+      Storage__AutoMigrate: ${STORAGE_AUTO_MIGRATE:-true}
+      Storage__BackupDirectory: /app/state/backups
+      Storage__EnforceMutationGuard: "true"
+      Secrets__KeyRingPath: /run/secrets/allstarr_keyring
+      Identity__Mode: ${ALLSTARR_MULTI_USER_MODE:-Hybrid}
+      Identity__BackendInstanceId: ${ALLSTARR_BACKEND_INSTANCE_ID:-primary}
+      ProviderAccounts__ManagementMode: ${ALLSTARR_PROVIDER_ACCOUNT_MANAGEMENT_MODE:-Hybrid}
+      Readiness__RequireSecretKeyRing: "true"
+      Readiness__RequiredDirectories__0: /app/state
+      Readiness__RequiredDirectories__1: /app/downloads
+      Readiness__RequiredDirectories__2: /app/kept
 
-      # ===== CACHE TTL SETTINGS =====
-      - Cache__SearchResultsMinutes=${CACHE_SEARCH_RESULTS_MINUTES:-1}
-      - Cache__PlaylistImagesHours=${CACHE_PLAYLIST_IMAGES_HOURS:-168}
-      - Cache__SpotifyPlaylistItemsHours=${CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS:-168}
-      - Cache__SpotifyMatchedTracksDays=${CACHE_SPOTIFY_MATCHED_TRACKS_DAYS:-30}
-      - Cache__LyricsDays=${CACHE_LYRICS_DAYS:-14}
-      - Cache__GenreDays=${CACHE_GENRE_DAYS:-30}
-      - Cache__MetadataDays=${CACHE_METADATA_DAYS:-7}
-      - Cache__OdesliLookupDays=${CACHE_ODESLI_LOOKUP_DAYS:-60}
-      - Cache__ProxyImagesDays=${CACHE_PROXY_IMAGES_DAYS:-14}
-      - Cache__TranscodeCacheMinutes=${CACHE_TRANSCODE_MINUTES:-60}
+      Redis__ConnectionString: valkey:6379
+      Redis__Enabled: ${REDIS_ENABLED:-true}
+      Subsonic__Url: ${SUBSONIC_URL:-http://host.docker.internal:4533}
+      Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-true}
+      Jellyfin__Url: ${JELLYFIN_URL:-http://host.docker.internal:8096}
+      Jellyfin__ApiKey: ${JELLYFIN_API_KEY:-}
+      Jellyfin__UserId: ${JELLYFIN_USER_ID:-}
+      Jellyfin__LibraryId: ${JELLYFIN_LIBRARY_ID:-}
 
-      # ===== SUBSONIC BACKEND =====
-      - Subsonic__Url=${SUBSONIC_URL:-http://localhost:4533}
-      - Subsonic__ExplicitFilter=${EXPLICIT_FILTER:-ExplicitOnly}
-      - Subsonic__DownloadMode=${DOWNLOAD_MODE:-Track}
-      - Subsonic__MusicService=${MUSIC_SERVICE:-SquidWTF}
-      - Subsonic__StorageMode=${STORAGE_MODE:-Permanent}
-      - Subsonic__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
-      - Subsonic__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
-      - Subsonic__PlaylistsDirectory=${PLAYLISTS_DIRECTORY:-playlists}
+      Library__DownloadPath: /app/downloads
+      Library__KeptPath: /app/kept
+      Cache__GenreDirectory: /app/cache/genres
+      Extensions__Directory: /app/state/extensions
+      Admin__SessionStorePath: /app/state/admin-sessions.protected
+      Diagnostics__EndpointUsageDirectory: /app/state/endpoint-usage
 
-      # ===== JELLYFIN BACKEND =====
-      - Jellyfin__Url=${JELLYFIN_URL:-http://localhost:8096}
-      - Jellyfin__ApiKey=${JELLYFIN_API_KEY:-}
-      - Jellyfin__UserId=${JELLYFIN_USER_ID:-}
-      - Jellyfin__LibraryId=${JELLYFIN_LIBRARY_ID:-}
-      - Jellyfin__ClientUsername=${JELLYFIN_CLIENT_USERNAME:-}
-      - Jellyfin__ExplicitFilter=${EXPLICIT_FILTER:-ExplicitOnly}
-      - Jellyfin__DownloadMode=${DOWNLOAD_MODE:-Track}
-      - Jellyfin__MusicService=${MUSIC_SERVICE:-SquidWTF}
-      - Jellyfin__StorageMode=${STORAGE_MODE:-Permanent}
-      - Jellyfin__CacheDurationHours=${CACHE_DURATION_HOURS:-1}
-      - Jellyfin__EnableExternalPlaylists=${ENABLE_EXTERNAL_PLAYLISTS:-true}
-      - Jellyfin__PlaylistsDirectory=${PLAYLISTS_DIRECTORY:-playlists}
-
-      # ===== SPOTIFY PLAYLIST INJECTION (JELLYFIN ONLY) =====
-      - SpotifyImport__Enabled=${SPOTIFY_IMPORT_ENABLED:-false}
-      - SpotifyImport__SyncStartHour=${SPOTIFY_IMPORT_SYNC_START_HOUR:-16}
-      - SpotifyImport__SyncStartMinute=${SPOTIFY_IMPORT_SYNC_START_MINUTE:-15}
-      - SpotifyImport__SyncWindowHours=${SPOTIFY_IMPORT_SYNC_WINDOW_HOURS:-2}
-      - SpotifyImport__MatchingIntervalHours=${SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS:-24}
-      - SpotifyImport__Playlists=${SPOTIFY_IMPORT_PLAYLISTS:-}
-      - SpotifyImport__PlaylistIds=${SPOTIFY_IMPORT_PLAYLIST_IDS:-}
-      - SpotifyImport__PlaylistNames=${SPOTIFY_IMPORT_PLAYLIST_NAMES:-}
-      - SpotifyImport__PlaylistLocalTracksPositions=${SPOTIFY_IMPORT_PLAYLIST_LOCAL_TRACKS_POSITIONS:-}
-
-      # ===== SPOTIFY DIRECT API (for lyrics, ISRC matching, track ordering) =====
-      - SpotifyApi__Enabled=${SPOTIFY_API_ENABLED:-false}
-      - SpotifyApi__SessionCookie=${SPOTIFY_API_SESSION_COOKIE:-}
-      - SpotifyApi__SessionCookieSetDate=${SPOTIFY_API_SESSION_COOKIE_SET_DATE:-}
-      - SpotifyApi__CacheDurationMinutes=${SPOTIFY_API_CACHE_DURATION_MINUTES:-60}
-      - SpotifyApi__RateLimitDelayMs=${SPOTIFY_API_RATE_LIMIT_DELAY_MS:-100}
-      - SpotifyApi__PreferIsrcMatching=${SPOTIFY_API_PREFER_ISRC_MATCHING:-true}
-      # Spotify Lyrics API sidecar service URL (internal)
-      - SpotifyApi__LyricsApiUrl=${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}
-
-      # ===== SCROBBLING (LAST.FM, LISTENBRAINZ) =====
-      - Scrobbling__Enabled=${SCROBBLING_ENABLED:-false}
-      - Scrobbling__LocalTracksEnabled=${SCROBBLING_LOCAL_TRACKS_ENABLED:-false}
-      - Scrobbling__SyntheticLocalPlayedSignalEnabled=${SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED:-false}
-      - Scrobbling__LastFm__Enabled=${SCROBBLING_LASTFM_ENABLED:-false}
-      # Required when Last.fm is enabled — create at https://www.last.fm/api/account/create
-      - Scrobbling__LastFm__ApiKey=${SCROBBLING_LASTFM_API_KEY:-}
-      - Scrobbling__LastFm__SharedSecret=${SCROBBLING_LASTFM_SHARED_SECRET:-}
-      - Scrobbling__LastFm__SessionKey=${SCROBBLING_LASTFM_SESSION_KEY:-}
-      - Scrobbling__LastFm__Username=${SCROBBLING_LASTFM_USERNAME:-}
-      - Scrobbling__LastFm__Password=${SCROBBLING_LASTFM_PASSWORD:-}
-      - Scrobbling__ListenBrainz__Enabled=${SCROBBLING_LISTENBRAINZ_ENABLED:-false}
-      - Scrobbling__ListenBrainz__UserToken=${SCROBBLING_LISTENBRAINZ_USER_TOKEN:-}
-
-      # ===== DEBUG SETTINGS =====
-      - Debug__LogAllRequests=${DEBUG_LOG_ALL_REQUESTS:-false}
-      - Debug__RedactSensitiveRequestValues=${DEBUG_REDACT_SENSITIVE_REQUEST_VALUES:-false}
-
-      # ===== SHARED =====
-      - Library__DownloadPath=/app/downloads
-      - SquidWTF__Quality=${SQUIDWTF_QUALITY:-FLAC}
-      - SquidWTF__MinRequestIntervalMs=${SQUIDWTF_MIN_REQUEST_INTERVAL_MS:-200}
-      - Deezer__Arl=${DEEZER_ARL:-}
-      - Deezer__ArlFallback=${DEEZER_ARL_FALLBACK:-}
-      - Deezer__Quality=${DEEZER_QUALITY:-FLAC}
-      - Deezer__MinRequestIntervalMs=${DEEZER_MIN_REQUEST_INTERVAL_MS:-200}
-      - Qobuz__UserAuthToken=${QOBUZ_USER_AUTH_TOKEN:-}
-      - Qobuz__UserId=${QOBUZ_USER_ID:-}
-      - Qobuz__Quality=${QOBUZ_QUALITY:-FLAC}
-      - Qobuz__MinRequestIntervalMs=${QOBUZ_MIN_REQUEST_INTERVAL_MS:-200}
-      - MusicBrainz__Enabled=${MUSICBRAINZ_ENABLED:-true}
-      - MusicBrainz__Username=${MUSICBRAINZ_USERNAME:-}
-      - MusicBrainz__Password=${MUSICBRAINZ_PASSWORD:-}
-      # ===== APPLE MUSIC =====
-      - AppleMusic__BaseUrl=${APPLE_MUSIC_AIO_URL:-http://gamdl-aio:8000}
-      - AppleMusic__Quality=${APPLE_MUSIC_QUALITY:-alac-16-44}
+      SpotifyApi__Enabled: ${SPOTIFY_API_ENABLED:-false}
+      SpotifyApi__SessionCookie: ${SPOTIFY_API_SESSION_COOKIE:-}
+      SpotifyImport__Enabled: ${SPOTIFY_IMPORT_ENABLED:-false}
+      SpotifyImport__Playlists: ${SPOTIFY_IMPORT_PLAYLISTS:-}
+      Deezer__Arl: ${DEEZER_ARL:-}
+      Qobuz__UserAuthToken: ${QOBUZ_USER_AUTH_TOKEN:-}
+      Qobuz__UserId: ${QOBUZ_USER_ID:-}
+      MusicBrainz__Enabled: ${MUSICBRAINZ_ENABLED:-true}
+      Scrobbling__Enabled: ${SCROBBLING_ENABLED:-false}
+      Debug__LogAllRequests: ${DEBUG_LOG_ALL_REQUESTS:-false}
+    secrets:
+      - postgres_password
+      - allstarr_keyring
     volumes:
+      - allstarr-state:/app/state
+      - allstarr-cache:/app/cache
       - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
       - ${KEPT_PATH:-./kept}:/app/kept
-      - ${CACHE_PATH:-./cache}:/app/cache
-      # Mount .env file for runtime configuration updates from admin UI
-      - ./.env:/app/.env
-      # Docker socket for self-restart capability (admin UI only)
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
-  gamdl-aio:
-    build:
-      context: ./gamdl-aio
-    container_name: gamdl-aio
-    restart: unless-stopped
-    expose:
-      - "8000"
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./gamdl-data:/app/data
+      - ${ALLSTARR_ENV_FILE:-./.env}:/app/.env
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 45s
     networks:
-      - allstarr-network
+      - allstarr
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:-./secrets/postgres-password.txt}
+  allstarr_keyring:
+    file: ${ALLSTARR_KEYRING_FILE:-./secrets/allstarr-keyring.json}
+
+volumes:
+  postgres-data:
+  valkey-data:
+  allstarr-state:
+  allstarr-cache:
 
 networks:
-  allstarr-network:
-    name: allstarr-network
+  allstarr:
     driver: bridge

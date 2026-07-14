@@ -1,0 +1,20 @@
+[
+  {
+    "name": "successful-login",
+    "upstreamStatus": 200,
+    "upstreamBody": { "User": { "Id": "user-1", "Name": "Fixture User" }, "AccessToken": "fixture-token" },
+    "expectedStatus": 200
+  },
+  {
+    "name": "invalid-credentials",
+    "upstreamStatus": 401,
+    "upstreamBody": { "error": "invalid credentials" },
+    "expectedStatus": 401
+  },
+  {
+    "name": "forbidden-user",
+    "upstreamStatus": 403,
+    "upstreamBody": { "error": "user disabled" },
+    "expectedStatus": 403
+  }
+]

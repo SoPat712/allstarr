@@ -90,6 +90,76 @@ public class SubsonicResponseBuilder
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
+    public IActionResult CreateLyricsBySongIdResponse(
+        string format,
+        SubsonicStructuredLyrics? lyrics)
+    {
+        var hasContent = lyrics is { Lines.Count: > 0 };
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            object lyricsList = hasContent
+                ? new
+                {
+                    structuredLyrics = new[]
+                    {
+                        new
+                        {
+                            displayArtist = lyrics!.DisplayArtist,
+                            displayTitle = lyrics.DisplayTitle,
+                            lang = string.IsNullOrWhiteSpace(lyrics.Language) ? "xxx" : lyrics.Language,
+                            offset = lyrics.OffsetMilliseconds,
+                            synced = lyrics.Synced,
+                            line = lyrics.Lines.Select(line => lyrics.Synced
+                                ? (object)new { start = line.StartMilliseconds, value = line.Text }
+                                : new { value = line.Text }).ToList()
+                        }
+                    }
+                }
+                : new { };
+
+            return CreateJsonResponse(new
+            {
+                status = "ok",
+                version = SubsonicVersion,
+                lyricsList
+            });
+        }
+
+        var ns = XNamespace.Get(SubsonicNamespace);
+        var lyricsListElement = new XElement(ns + "lyricsList");
+        if (hasContent)
+        {
+            var structured = new XElement(ns + "structuredLyrics",
+                new XAttribute("displayArtist", lyrics!.DisplayArtist),
+                new XAttribute("displayTitle", lyrics.DisplayTitle),
+                new XAttribute("lang", string.IsNullOrWhiteSpace(lyrics.Language) ? "xxx" : lyrics.Language),
+                new XAttribute("offset", lyrics.OffsetMilliseconds),
+                new XAttribute("synced", lyrics.Synced.ToString().ToLowerInvariant()));
+            foreach (var line in lyrics.Lines)
+            {
+                var element = new XElement(ns + "line", line.Text);
+                if (lyrics.Synced)
+                {
+                    element.Add(new XAttribute("start", line.StartMilliseconds));
+                }
+
+                structured.Add(element);
+            }
+
+            lyricsListElement.Add(structured);
+        }
+
+        return new ContentResult
+        {
+            Content = new XDocument(
+                new XElement(ns + "subsonic-response",
+                    new XAttribute("status", "ok"),
+                    new XAttribute("version", SubsonicVersion),
+                    lyricsListElement)).ToString(),
+            ContentType = "application/xml"
+        };
+    }
+
     /// <summary>
     /// Creates a Subsonic response containing an album with songs.
     /// </summary>
@@ -291,16 +361,26 @@ public class SubsonicResponseBuilder
             ["artistId"] = song.ArtistId ?? "",
             ["duration"] = song.Duration ?? 0,
             ["track"] = song.Track ?? 0,
+            ["discNumber"] = song.DiscNumber ?? 0,
             ["year"] = song.Year ?? 0,
-            ["coverArt"] = song.Id,
-            ["suffix"] = song.IsLocal ? "mp3" : "Remote",
-            ["contentType"] = "audio/mpeg",
             ["type"] = "music",
             ["isVideo"] = false,
-            ["isExternal"] = !song.IsLocal
+            ["isExternal"] = !song.IsLocal,
+            ["displayArtist"] = song.Artist ?? "",
+            ["displayAlbumArtist"] = song.AlbumArtist ?? song.Artist ?? "",
+            ["displayComposer"] = song.Composer ?? ""
         };
-        
-        result["bitRate"] = song.IsLocal ? 128 : 0; // Default bitrate for local files
+
+        if (song.IsLocal || !string.IsNullOrWhiteSpace(song.CoverArtUrl))
+        {
+            result["coverArt"] = song.Id;
+        }
+
+        if (TryGetKnownMediaType(song.LocalPath, out var suffix, out var contentType))
+        {
+            result["suffix"] = suffix;
+            result["contentType"] = contentType;
+        }
         
         return result;
     }
@@ -310,17 +390,29 @@ public class SubsonicResponseBuilder
     /// </summary>
     public object ConvertAlbumToJson(Album album)
     {
-        return new
+        var result = new Dictionary<string, object?>
         {
-            id = album.Id,
-            name = album.Title,
-            artist = album.Artist,
-            artistId = album.ArtistId,
-            songCount = album.SongCount ?? 0,
-            year = album.Year ?? 0,
-            coverArt = album.Id,
-            isExternal = !album.IsLocal
+            ["id"] = album.Id,
+            ["name"] = album.Title,
+            ["artist"] = album.Artist,
+            ["artistId"] = album.ArtistId ?? "",
+            ["songCount"] = album.Songs.Count > 0 ? album.Songs.Count : album.SongCount ?? 0,
+            ["duration"] = album.Songs.Sum(song => song.Duration ?? 0),
+            ["year"] = album.Year ?? 0,
+            ["isExternal"] = !album.IsLocal,
+            ["displayArtist"] = album.Artist
         };
+        if (album.IsLocal || !string.IsNullOrWhiteSpace(album.CoverArtUrl))
+        {
+            result["coverArt"] = album.Id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(album.Genre))
+        {
+            result["genre"] = album.Genre;
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -328,14 +420,19 @@ public class SubsonicResponseBuilder
     /// </summary>
     public object ConvertArtistToJson(Artist artist)
     {
-        return new
+        var result = new Dictionary<string, object>
         {
-            id = artist.Id,
-            name = artist.Name,
-            albumCount = artist.AlbumCount ?? 0,
-            coverArt = artist.Id,
-            isExternal = !artist.IsLocal
+            ["id"] = artist.Id,
+            ["name"] = artist.Name,
+            ["albumCount"] = artist.AlbumCount ?? 0,
+            ["isExternal"] = !artist.IsLocal
         };
+        if (artist.IsLocal || !string.IsNullOrWhiteSpace(artist.ImageUrl))
+        {
+            result["coverArt"] = artist.Id;
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -343,17 +440,48 @@ public class SubsonicResponseBuilder
     /// </summary>
     public XElement ConvertSongToXml(Song song, XNamespace ns)
     {
-        return new XElement(ns + "song",
+        var element = new XElement(ns + "song",
             new XAttribute("id", song.Id),
+            new XAttribute("parent", song.AlbumId ?? ""),
+            new XAttribute("isDir", "false"),
             new XAttribute("title", song.Title),
             new XAttribute("album", song.Album ?? ""),
+            new XAttribute("albumId", song.AlbumId ?? ""),
             new XAttribute("artist", song.Artist ?? ""),
             new XAttribute("duration", song.Duration ?? 0),
             new XAttribute("track", song.Track ?? 0),
+            new XAttribute("discNumber", song.DiscNumber ?? 0),
             new XAttribute("year", song.Year ?? 0),
-            new XAttribute("coverArt", song.Id),
+            new XAttribute("type", "music"),
+            new XAttribute("isVideo", "false"),
+            new XAttribute("displayArtist", song.Artist ?? ""),
+            new XAttribute("displayAlbumArtist", song.AlbumArtist ?? song.Artist ?? ""),
+            new XAttribute("displayComposer", song.Composer ?? ""),
             new XAttribute("isExternal", (!song.IsLocal).ToString().ToLower())
         );
+
+        if (!string.IsNullOrWhiteSpace(song.ArtistId))
+        {
+            element.Add(new XAttribute("artistId", song.ArtistId));
+        }
+
+        if (song.IsLocal || !string.IsNullOrWhiteSpace(song.CoverArtUrl))
+        {
+            element.Add(new XAttribute("coverArt", song.Id));
+        }
+
+        if (!string.IsNullOrWhiteSpace(song.Genre))
+        {
+            element.Add(new XAttribute("genre", song.Genre));
+        }
+
+        if (TryGetKnownMediaType(song.LocalPath, out var suffix, out var contentType))
+        {
+            element.Add(new XAttribute("suffix", suffix));
+            element.Add(new XAttribute("contentType", contentType));
+        }
+
+        return element;
     }
 
     /// <summary>
@@ -361,15 +489,29 @@ public class SubsonicResponseBuilder
     /// </summary>
     public XElement ConvertAlbumToXml(Album album, XNamespace ns)
     {
-        return new XElement(ns + "album",
+        var element = new XElement(ns + "album",
             new XAttribute("id", album.Id),
             new XAttribute("name", album.Title),
             new XAttribute("artist", album.Artist ?? ""),
-            new XAttribute("songCount", album.SongCount ?? 0),
+            new XAttribute("artistId", album.ArtistId ?? ""),
+            new XAttribute("songCount", album.Songs.Count > 0 ? album.Songs.Count : album.SongCount ?? 0),
+            new XAttribute("duration", album.Songs.Sum(song => song.Duration ?? 0)),
             new XAttribute("year", album.Year ?? 0),
-            new XAttribute("coverArt", album.Id),
+            new XAttribute("displayArtist", album.Artist ?? ""),
             new XAttribute("isExternal", (!album.IsLocal).ToString().ToLower())
         );
+
+        if (album.IsLocal || !string.IsNullOrWhiteSpace(album.CoverArtUrl))
+        {
+            element.Add(new XAttribute("coverArt", album.Id));
+        }
+
+        if (!string.IsNullOrWhiteSpace(album.Genre))
+        {
+            element.Add(new XAttribute("genre", album.Genre));
+        }
+
+        return element;
     }
 
     /// <summary>
@@ -377,13 +519,18 @@ public class SubsonicResponseBuilder
     /// </summary>
     public XElement ConvertArtistToXml(Artist artist, XNamespace ns)
     {
-        return new XElement(ns + "artist",
+        var element = new XElement(ns + "artist",
             new XAttribute("id", artist.Id),
             new XAttribute("name", artist.Name),
             new XAttribute("albumCount", artist.AlbumCount ?? 0),
-            new XAttribute("coverArt", artist.Id),
             new XAttribute("isExternal", (!artist.IsLocal).ToString().ToLower())
         );
+        if (artist.IsLocal || !string.IsNullOrWhiteSpace(artist.ImageUrl))
+        {
+            element.Add(new XAttribute("coverArt", artist.Id));
+        }
+
+        return element;
     }
 
     /// <summary>
@@ -423,5 +570,24 @@ public class SubsonicResponseBuilder
             JsonValueKind.Null => null!,
             _ => value.ToString()
         };
+    }
+
+    private static bool TryGetKnownMediaType(
+        string? path,
+        out string suffix,
+        out string contentType)
+    {
+        suffix = Path.GetExtension(path ?? string.Empty).TrimStart('.').ToLowerInvariant();
+        contentType = suffix switch
+        {
+            "mp3" => "audio/mpeg",
+            "flac" => "audio/flac",
+            "ogg" => "audio/ogg",
+            "m4a" => "audio/mp4",
+            "aac" => "audio/aac",
+            "wav" => "audio/wav",
+            _ => string.Empty
+        };
+        return contentType.Length > 0;
     }
 }

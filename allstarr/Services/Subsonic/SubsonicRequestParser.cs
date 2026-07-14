@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.WebUtilities;
+using System.Net;
 using System.Text.Json;
 
 namespace allstarr.Services.Subsonic;
@@ -14,92 +14,123 @@ public class SubsonicRequestParser
     /// Supports multiple content types: application/x-www-form-urlencoded and application/json.
     /// </summary>
     /// <param name="request">The HTTP request to parse</param>
-    /// <returns>Dictionary containing all extracted parameters</returns>
-    public async Task<Dictionary<string, string>> ExtractAllParametersAsync(HttpRequest request)
+    /// <returns>Parameters with their original source and repetition preserved.</returns>
+    public async Task<SubsonicRequestParameters> ExtractAllParametersAsync(HttpRequest request)
     {
-        var parameters = new Dictionary<string, string>();
+        var parameters = new List<SubsonicParameter>();
 
-        // Get query parameters
-        foreach (var query in request.Query)
-        {
-            parameters[query.Key] = query.Value.ToString();
-        }
+        parameters.AddRange(ParseEncodedPairs(
+            request.QueryString.Value?.TrimStart('?'),
+            SubsonicParameterSource.Query));
 
-        // Get body parameters
+        string? rawBody = null;
+
         if (request.ContentLength > 0 || request.ContentType != null)
         {
-            // Handle application/x-www-form-urlencoded (OpenSubsonic formPost extension)
+            request.EnableBuffering();
+            if (request.Body.CanSeek)
+            {
+                request.Body.Position = 0;
+            }
+
+            using var reader = new StreamReader(request.Body, leaveOpen: true);
+            rawBody = await reader.ReadToEndAsync();
+            if (request.Body.CanSeek)
+            {
+                request.Body.Position = 0;
+            }
+
             if (request.HasFormContentType)
             {
-                await ExtractFormParametersAsync(request, parameters);
+                parameters.AddRange(ParseEncodedPairs(rawBody, SubsonicParameterSource.Form));
             }
-            // Handle application/json
             else if (request.ContentType?.Contains("application/json") == true)
             {
-                await ExtractJsonParametersAsync(request, parameters);
+                parameters.AddRange(ParseJsonParameters(rawBody));
             }
         }
 
-        return parameters;
+        return new SubsonicRequestParameters(
+            request.Method,
+            request.ContentType,
+            rawBody,
+            parameters);
     }
 
-    /// <summary>
-    /// Extracts parameters from form-encoded request body.
-    /// </summary>
-    private async Task ExtractFormParametersAsync(HttpRequest request, Dictionary<string, string> parameters)
+    private static IEnumerable<SubsonicParameter> ParseEncodedPairs(
+        string? encoded,
+        SubsonicParameterSource source)
     {
+        if (string.IsNullOrEmpty(encoded))
+        {
+            yield break;
+        }
+
+        foreach (var part in encoded.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pair = part.Split('=', 2);
+            var name = WebUtility.UrlDecode(pair[0]);
+            if (string.IsNullOrEmpty(name))
+            {
+                continue;
+            }
+
+            var value = pair.Length == 2 ? WebUtility.UrlDecode(pair[1]) : string.Empty;
+            yield return new SubsonicParameter(name, value, source);
+        }
+    }
+
+    private static IEnumerable<SubsonicParameter> ParseJsonParameters(string? body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            yield break;
+        }
+
+        JsonDocument document;
         try
         {
-            var form = await request.ReadFormAsync();
-            foreach (var field in form)
-            {
-                parameters[field.Key] = field.Value.ToString();
-            }
+            document = JsonDocument.Parse(body);
         }
-        catch
+        catch (JsonException)
         {
-            // Fall back to manual parsing if ReadFormAsync fails
-            request.EnableBuffering();
-            using var reader = new StreamReader(request.Body, leaveOpen: true);
-            var body = await reader.ReadToEndAsync();
-            request.Body.Position = 0;
-            
-            if (!string.IsNullOrEmpty(body))
+            yield break;
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                var formParams = QueryHelpers.ParseQuery(body);
-                foreach (var param in formParams)
+                yield break;
+            }
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Value.ValueKind == JsonValueKind.Array)
                 {
-                    parameters[param.Key] = param.Value.ToString();
+                    foreach (var item in property.Value.EnumerateArray())
+                    {
+                        yield return new SubsonicParameter(
+                            property.Name,
+                            JsonScalarValue(item),
+                            SubsonicParameterSource.Json);
+                    }
+
+                    continue;
                 }
+
+                yield return new SubsonicParameter(
+                    property.Name,
+                    JsonScalarValue(property.Value),
+                    SubsonicParameterSource.Json);
             }
         }
     }
 
-    /// <summary>
-    /// Extracts parameters from JSON request body.
-    /// </summary>
-    private async Task ExtractJsonParametersAsync(HttpRequest request, Dictionary<string, string> parameters)
+    private static string JsonScalarValue(JsonElement value) => value.ValueKind switch
     {
-        using var reader = new StreamReader(request.Body);
-        var body = await reader.ReadToEndAsync();
-        
-        if (!string.IsNullOrEmpty(body))
-        {
-            try
-            {
-                var bodyParams = JsonSerializer.Deserialize<Dictionary<string, object>>(body);
-                if (bodyParams != null)
-                {
-                    foreach (var param in bodyParams)
-                    {
-                        parameters[param.Key] = param.Value?.ToString() ?? "";
-                    }
-                }
-            }
-            catch (JsonException)
-            {
-                // Ignore JSON parsing errors
-            }
-        }
-    }
+        JsonValueKind.String => value.GetString() ?? string.Empty,
+        JsonValueKind.Null => string.Empty,
+        _ => value.ToString()
+    };
 }

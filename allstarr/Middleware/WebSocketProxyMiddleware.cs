@@ -14,24 +14,30 @@ public class WebSocketProxyMiddleware
     private readonly RequestDelegate _next;
     private readonly JellyfinSettings _settings;
     private readonly ILogger<WebSocketProxyMiddleware> _logger;
-    private readonly JellyfinSessionManager _sessionManager;
+    private readonly JellyfinSessionManager? _sessionManager;
 
     public WebSocketProxyMiddleware(
         RequestDelegate next,
         IOptions<JellyfinSettings> settings,
         ILogger<WebSocketProxyMiddleware> logger,
-        JellyfinSessionManager sessionManager)
+        IEnumerable<JellyfinSessionManager> sessionManagers)
     {
         _next = next;
         _settings = settings.Value;
         _logger = logger;
-        _sessionManager = sessionManager;
+        _sessionManager = sessionManagers.FirstOrDefault();
 
         _logger.LogInformation("🔧 WEBSOCKET: WebSocketProxyMiddleware initialized - Jellyfin URL: {Url}", _settings.Url);
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
+        if (_sessionManager == null)
+        {
+            await _next(context);
+            return;
+        }
+
         // Log ALL requests for debugging
         var path = context.Request.Path.Value ?? "";
         var isWebSocket = context.WebSockets.IsWebSocketRequest;
@@ -67,6 +73,8 @@ public class WebSocketProxyMiddleware
 
     private async Task HandleWebSocketProxyAsync(HttpContext context)
     {
+        var sessionManager = _sessionManager ??
+                             throw new InvalidOperationException("Jellyfin WebSocket support is unavailable.");
         ClientWebSocket? serverWebSocket = null;
         WebSocket? clientWebSocket = null;
         string? deviceId = null;
@@ -154,7 +162,7 @@ public class WebSocketProxyMiddleware
 
             if (!string.IsNullOrEmpty(deviceId))
             {
-                await _sessionManager.RegisterProxiedWebSocketAsync(deviceId);
+                await sessionManager.RegisterProxiedWebSocketAsync(deviceId);
             }
 
             // Start bidirectional proxying
@@ -201,7 +209,7 @@ public class WebSocketProxyMiddleware
         {
             if (!string.IsNullOrEmpty(deviceId))
             {
-                _sessionManager.UnregisterProxiedWebSocket(deviceId);
+                sessionManager.UnregisterProxiedWebSocket(deviceId);
             }
 
             // Clean up connections
@@ -236,7 +244,7 @@ public class WebSocketProxyMiddleware
             if (clientWebSocket != null && !string.IsNullOrEmpty(deviceId))
             {
                 _logger.LogInformation("🧹 WEBSOCKET: Client disconnected, removing session for device {DeviceId}", deviceId);
-                await _sessionManager.RemoveSessionAsync(deviceId);
+                await sessionManager.RemoveSessionAsync(deviceId);
             }
 
             _logger.LogDebug("🧹 WEBSOCKET: WebSocket connections cleaned up");

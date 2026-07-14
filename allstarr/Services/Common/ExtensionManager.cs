@@ -12,18 +12,25 @@ using allstarr.Services.Admin;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Core.Extensions;
+using allstarr.Core.Storage;
 
 namespace allstarr.Services.Common;
 
 public class ExtensionManager
 {
     private const string DisabledMarkerFile = ".disabled";
+    private const int MaximumExtensionIdLength = 128;
+    private static readonly Regex ExtensionIdPattern = new(
+        "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ExtensionManager> _logger;
     private readonly IConfiguration _configuration;
     private readonly AdminHelperService _adminHelperService;
     private readonly string _extensionsDir;
+    private readonly ExtensionControlPlaneService? _controlPlane;
 
     private readonly ConcurrentDictionary<string, ExtensionSandbox> _activeExtensions = new();
 
@@ -31,24 +38,29 @@ public class ExtensionManager
         IHttpClientFactory httpClientFactory,
         ILogger<ExtensionManager> logger,
         IConfiguration configuration,
-        AdminHelperService adminHelperService)
+        AdminHelperService adminHelperService,
+        ExtensionControlPlaneService? controlPlane = null)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _configuration = configuration;
         _adminHelperService = adminHelperService;
-        _extensionsDir = Path.Combine(Directory.GetCurrentDirectory(), "extensions");
+        _controlPlane = controlPlane;
+        _extensionsDir = Path.GetFullPath(
+            _configuration["Extensions:Directory"] ??
+            Path.Combine(Directory.GetCurrentDirectory(), "extensions"));
         
         if (!Directory.Exists(_extensionsDir))
         {
             Directory.CreateDirectory(_extensionsDir);
         }
 
-        // Boot installed extensions in background
-        Task.Run(BootInstalledExtensions);
     }
 
     public IReadOnlyCollection<ExtensionSandbox> GetActiveExtensions() => _activeExtensions.Values.ToList();
+
+    public bool RemoteInstallEnabled =>
+        _configuration.GetValue("Extensions:AllowRemoteInstall", false);
 
     public IReadOnlyCollection<InstalledExtensionInfo> GetInstalledExtensions()
     {
@@ -67,17 +79,24 @@ public class ExtensionManager
 
     public ExtensionSandbox? GetExtension(string id)
     {
-        return _activeExtensions.TryGetValue(NormalizeExtensionId(id), out var sandbox) ? sandbox : null;
+        return TryValidateExtensionId(id, out var validId) &&
+               _activeExtensions.TryGetValue(validId, out var sandbox)
+            ? sandbox
+            : null;
     }
 
     public List<string> GetConfiguredRepositories()
     {
         var repos = ReadExtensionRepositoriesFromEnvFile() ?? _configuration["EXTENSION_REPOSITORIES"];
-        if (string.IsNullOrWhiteSpace(repos))
-        {
-            repos = "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json";
-        }
-        return repos.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        return ParseRepositoryList(repos);
+    }
+
+    public static List<string> ParseRepositoryList(string? repositories)
+    {
+        return string.IsNullOrWhiteSpace(repositories)
+            ? []
+            : repositories.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
     }
 
     private string? ReadExtensionRepositoriesFromEnvFile()
@@ -121,25 +140,46 @@ public class ExtensionManager
     public async Task<ExtensionStoreResponse> FetchStoreCatalogAsync(CancellationToken cancellationToken = default)
     {
         var catalog = new ExtensionStoreResponse();
-        var repos = GetConfiguredRepositories();
-        catalog.Repositories.AddRange(repos);
+        var registries = _controlPlane == null
+            ? Array.Empty<ExtensionRegistryRecord>()
+            : (await _controlPlane.ListRegistriesAsync(cancellationToken)).Where(item => item.Enabled).ToArray();
+        var packages = _controlPlane == null
+            ? Array.Empty<ExtensionPackageRecord>()
+            : (await _controlPlane.ListPackagesAsync(cancellationToken: cancellationToken)).ToArray();
+        catalog.Repositories.AddRange(registries.Select(item => item.RegistryUrl));
 
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
         client.Timeout = TimeSpan.FromSeconds(5);
 
-        foreach (var repo in repos)
+        foreach (var registry in registries)
         {
+            var repo = registry.RegistryUrl;
             try
             {
-                var response = await client.GetAsync(repo, cancellationToken);
+                using var response = await client.GetAsync(repo, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!response.IsSuccessStatusCode) continue;
-
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
+                    throw new InvalidDataException("Extension registry exceeds 4 MiB.");
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                using var reader = new StreamReader(stream);
+                var buffer = new char[64 * 1024];
+                var jsonBuilder = new StringBuilder();
+                int read;
+                while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
+                {
+                    if (jsonBuilder.Length + read > 4 * 1024 * 1024)
+                        throw new InvalidDataException("Extension registry exceeds 4 MiB.");
+                    jsonBuilder.Append(buffer, 0, read);
+                }
+                var json = jsonBuilder.ToString();
                 var parsedItems = ParseStoreRegistry(json, repo);
                 foreach (var item in parsedItems)
                 {
-                    item.IsInstalled = IsExtensionInstalled(item.Id);
-                    item.IsEnabled = _activeExtensions.ContainsKey(item.Id.ToLowerInvariant());
+                    item.RegistryId = registry.Id;
+                    item.IsInstalled = packages.Any(package => package.ExtensionId == item.Id &&
+                                                               package.State != ExtensionPackageState.Uninstalled);
+                    item.IsEnabled = packages.Any(package => package.ExtensionId == item.Id &&
+                                                             package.State == ExtensionPackageState.Active);
                     catalog.Items.Add(item);
                 }
             }
@@ -165,67 +205,90 @@ public class ExtensionManager
 
     public async Task<bool> InstallExtensionAsync(string downloadUrl, CancellationToken cancellationToken = default)
     {
+        _logger.LogWarning("Blocked extension install without a mandatory registry package checksum");
+        await Task.CompletedTask;
+        return false;
+    }
+
+    public async Task<ExtensionPackageRecord> StageExtensionAsync(
+        string downloadUrl,
+        string expectedSha256,
+        Guid? registryId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!RemoteInstallEnabled)
+        {
+            throw new UnauthorizedAccessException(
+                "Remote extension installation requires Extensions:AllowRemoteInstall=true.");
+        }
+        if (_controlPlane == null) throw new InvalidOperationException("The extension control plane is unavailable.");
+        if (!OutboundRequestGuard.TryCreateSafeHttpUri(downloadUrl, out var packageUri, out _) ||
+            packageUri!.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(packageUri.Fragment))
+            throw new ArgumentException("An HTTPS package URL without credentials or a fragment is required.", nameof(downloadUrl));
+
+        string? stagingDirectory = null;
         try
         {
-            _logger.LogInformation("Downloading extension from {Url}...", downloadUrl);
-            using var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = TimeSpan.FromSeconds(15);
-
-            var zipBytes = await client.GetByteArrayAsync(downloadUrl, cancellationToken);
-            var tempFile = Path.GetTempFileName();
-            await File.WriteAllBytesAsync(tempFile, zipBytes, cancellationToken);
-
-            var tempDir = Path.Combine(Path.GetTempPath(), "allstarr-ext-" + Guid.NewGuid());
-            Directory.CreateDirectory(tempDir);
-            ZipFile.ExtractToDirectory(tempFile, tempDir, overwriteFiles: true);
-
-            var packageRoot = ResolveExtensionPackageRoot(tempDir);
-            var manifestPath = Path.Combine(packageRoot, "manifest.json");
-            var indexJsPath = Path.Combine(packageRoot, "index.js");
-
-            if (!File.Exists(manifestPath) || !File.Exists(indexJsPath))
+            var stagingName = $".install-{Guid.NewGuid():N}";
+            stagingDirectory = ResolveContainedPath(stagingName);
+            var archivePath = ResolveContainedPath(Path.Combine(stagingName, "package.zip"));
+            var extractedDirectory = ResolveContainedPath(Path.Combine(stagingName, "extracted"));
+            Directory.CreateDirectory(stagingDirectory);
+            using (var response = await client.GetAsync(packageUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
             {
-                throw new InvalidDataException("Missing manifest.json or index.js in package.");
+                response.EnsureSuccessStatusCode();
+                if (response.Content.Headers.ContentLength > ExtensionSdkV1.MaximumArchiveBytes)
+                    throw new ExtensionSdkValidationException("Extension archive exceeds the SDK v1 size limit.");
+                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using var target = new FileStream(archivePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                var buffer = new byte[64 * 1024];
+                long total = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    total += read;
+                    if (total > ExtensionSdkV1.MaximumArchiveBytes)
+                        throw new ExtensionSdkValidationException("Extension archive exceeds the SDK v1 size limit.");
+                    await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                }
             }
-
-            var manifestJson = await File.ReadAllTextAsync(manifestPath, cancellationToken);
-            using var doc = JsonDocument.Parse(manifestJson);
-            var id = NormalizeExtensionId(ReadString(doc.RootElement, "id", "name"));
-
-            if (string.IsNullOrEmpty(id))
-            {
-                throw new InvalidDataException("Invalid id/name in manifest.json.");
-            }
-
-            var targetFolder = Path.Combine(_extensionsDir, id);
-            if (Directory.Exists(targetFolder))
-            {
-                Directory.Delete(targetFolder, true);
-            }
-            Directory.CreateDirectory(targetFolder);
-
-            CopyDirectory(packageRoot, targetFolder);
-
-            File.Delete(tempFile);
-            Directory.Delete(tempDir, true);
-
-            // Load and initialize
-            await BootExtensionAsync(targetFolder);
-            return true;
+            var verified = ExtensionSdkV1.VerifyArchive(archivePath, expectedSha256, extractedDirectory);
+            var package = await _controlPlane.StageAsync(verified, registryId, cancellationToken);
+            File.Delete(archivePath);
+            stagingDirectory = null;
+            return package;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to install extension from {Url}", downloadUrl);
-            return false;
+            _logger.LogError(ex, "Failed to stage verified extension package");
+            throw;
+        }
+        finally
+        {
+            if (stagingDirectory != null && Directory.Exists(stagingDirectory))
+            {
+                try
+                {
+                    Directory.Delete(EnsureContainedPath(stagingDirectory), true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to clean extension staging directory {Path}", stagingDirectory);
+                }
+            }
         }
     }
 
     public bool UninstallExtension(string id)
     {
-        var normId = id.ToLowerInvariant();
-        _activeExtensions.TryRemove(normId, out _);
+        if (!TryResolveExtensionDirectory(id, out var folder))
+        {
+            return false;
+        }
 
-        var folder = Path.Combine(_extensionsDir, normId);
+        _activeExtensions.TryRemove(id, out _);
         if (Directory.Exists(folder))
         {
             try
@@ -244,36 +307,22 @@ public class ExtensionManager
 
     public bool DisableExtension(string id)
     {
-        var normId = id.ToLowerInvariant();
-        var folder = Path.Combine(_extensionsDir, normId);
-        if (!Directory.Exists(folder))
+        if (!TryResolveExtensionDirectory(id, out var folder) || !Directory.Exists(folder))
         {
             return false;
         }
 
-        _activeExtensions.TryRemove(normId, out _);
+        _activeExtensions.TryRemove(id, out _);
         File.WriteAllText(Path.Combine(folder, DisabledMarkerFile), DateTime.UtcNow.ToString("O"));
-        _logger.LogInformation("Disabled extension {ExtensionId}", normId);
+        _logger.LogInformation("Disabled extension {ExtensionId}", id);
         return true;
     }
 
     public async Task<bool> EnableExtensionAsync(string id)
     {
-        var normId = id.ToLowerInvariant();
-        var folder = Path.Combine(_extensionsDir, normId);
-        if (!Directory.Exists(folder))
-        {
-            return false;
-        }
-
-        var disabledMarker = Path.Combine(folder, DisabledMarkerFile);
-        if (File.Exists(disabledMarker))
-        {
-            File.Delete(disabledMarker);
-        }
-
-        await BootExtensionAsync(folder);
-        return _activeExtensions.ContainsKey(normId);
+        _logger.LogWarning("Blocked legacy folder activation for extension {ExtensionId}; stage and review an SDK v1 package instead", id);
+        await Task.CompletedTask;
+        return false;
     }
 
     private async Task BootInstalledExtensions()
@@ -302,21 +351,41 @@ public class ExtensionManager
     {
         try
         {
-            if (IsExtensionDisabled(folderPath))
+            if (!TryResolveInstalledExtensionFolder(folderPath, out var extensionId, out var safeFolderPath))
+            {
+                _logger.LogWarning("Skipping extension directory with an unsafe or ambiguous path: {Path}", folderPath);
+                return;
+            }
+
+            if (IsExtensionDisabled(safeFolderPath))
             {
                 return;
             }
 
-            var manifestPath = Path.Combine(folderPath, "manifest.json");
-            var indexJsPath = Path.Combine(folderPath, "index.js");
+            var manifestPath = Path.Combine(safeFolderPath, "manifest.json");
+            var indexJsPath = Path.Combine(safeFolderPath, "index.js");
 
             if (!File.Exists(manifestPath) || !File.Exists(indexJsPath)) return;
 
             var manifestJson = await File.ReadAllTextAsync(manifestPath);
             var indexJs = await File.ReadAllTextAsync(indexJsPath);
+            using var manifest = JsonDocument.Parse(manifestJson);
+            if (!TryValidateExtensionId(ReadString(manifest.RootElement, "id", "name"), out var manifestId) ||
+                !manifestId.Equals(extensionId, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "Extension manifest id must be valid and match its installation directory.");
+            }
 
-            var sandbox = new ExtensionSandbox(folderPath, manifestJson, indexJs, _httpClientFactory, _logger);
-            _activeExtensions[NormalizeExtensionId(sandbox.Id)] = sandbox;
+            var sandbox = new ExtensionSandbox(
+                safeFolderPath,
+                manifestJson,
+                indexJs,
+                _httpClientFactory,
+                _logger,
+                permissions: ExtensionRuntimePermissionSet.None,
+                runtimeStateDirectory: ResolveContainedPath(Path.Combine(".runtime", extensionId)));
+            _activeExtensions[extensionId] = sandbox;
             _logger.LogInformation("Loaded extension successfully: {DisplayName} ({Id}) v{Version}", sandbox.DisplayName, sandbox.Id, sandbox.Version);
         }
         catch (Exception ex)
@@ -327,8 +396,7 @@ public class ExtensionManager
 
     private bool IsExtensionInstalled(string id)
     {
-        var normId = id.ToLowerInvariant();
-        return Directory.Exists(Path.Combine(_extensionsDir, normId));
+        return TryResolveExtensionDirectory(id, out var folder) && Directory.Exists(folder);
     }
 
     private static bool IsExtensionDisabled(string folderPath)
@@ -340,7 +408,12 @@ public class ExtensionManager
     {
         try
         {
-            var manifestPath = Path.Combine(folderPath, "manifest.json");
+            if (!TryResolveInstalledExtensionFolder(folderPath, out var folderId, out var safeFolderPath))
+            {
+                return null;
+            }
+
+            var manifestPath = Path.Combine(safeFolderPath, "manifest.json");
             if (!File.Exists(manifestPath))
             {
                 return null;
@@ -349,10 +422,10 @@ public class ExtensionManager
             var manifestJson = File.ReadAllText(manifestPath);
             using var doc = JsonDocument.Parse(manifestJson);
             var root = doc.RootElement;
-            var id = NormalizeExtensionId(ReadString(root, "id", "name"));
-            if (string.IsNullOrWhiteSpace(id))
+            if (!TryValidateExtensionId(ReadString(root, "id", "name"), out var id) ||
+                !id.Equals(folderId, StringComparison.Ordinal))
             {
-                id = Path.GetFileName(folderPath).ToLowerInvariant();
+                return null;
             }
 
             var active = _activeExtensions.TryGetValue(id, out var sandbox);
@@ -371,7 +444,7 @@ public class ExtensionManager
                 Description = sandbox?.Description ?? ReadString(root, "description", "summary"),
                 Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
                 Types = sandbox?.Types.ToList() ?? ReadStringList(root, "types", "type", "capabilities", "capability"),
-                Enabled = active && !IsExtensionDisabled(folderPath)
+                Enabled = active && !IsExtensionDisabled(safeFolderPath)
             };
         }
         catch (Exception ex)
@@ -398,12 +471,20 @@ public class ExtensionManager
                 continue;
             }
 
-            var id = NormalizeExtensionId(ReadString(ext, "id", "name", "slug"));
+            if (!TryValidateExtensionId(ReadString(ext, "id", "name", "slug"), out var id))
+            {
+                continue;
+            }
+
             var name = ReadString(ext, "name", "id", "slug");
             var displayName = ReadString(ext, "displayName", "display_name", "title", "label", "name");
             var downloadUrl = ReadString(ext, "downloadUrl", "download_url", "zipUrl", "zip_url", "archiveUrl", "archive_url", "packageUrl", "package_url", "url");
+            var sha256 = ReadString(ext, "sha256", "checksum", "packageSha256", "package_sha256");
 
-            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(downloadUrl))
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(downloadUrl) ||
+                !Regex.IsMatch(sha256, "^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant) ||
+                !OutboundRequestGuard.TryCreateSafeHttpUri(downloadUrl, out var packageUri, out _) ||
+                packageUri!.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(packageUri.Fragment))
             {
                 continue;
             }
@@ -426,6 +507,7 @@ public class ExtensionManager
                 DisplayName = displayName,
                 Description = ReadString(ext, "description", "summary"),
                 DownloadUrl = downloadUrl,
+                Sha256 = sha256.ToLowerInvariant(),
                 Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
                 RepoUrl = repoUrl,
                 HomepageUrl = ReadString(ext, "homepage", "homepageUrl", "homepage_url", "repository", "repoUrl", "repo_url"),
@@ -513,14 +595,106 @@ public class ExtensionManager
         return [];
     }
 
-    private static string NormalizeExtensionId(string? raw)
+    private static bool TryValidateExtensionId(string? raw, out string id)
     {
-        if (string.IsNullOrWhiteSpace(raw))
+        id = raw ?? string.Empty;
+        if (id.Length == 0 || id.Length > MaximumExtensionIdLength)
         {
-            return string.Empty;
+            return false;
         }
 
-        return Regex.Replace(raw.Trim().ToLowerInvariant(), "[^a-z0-9._-]", "-");
+        return ExtensionIdPattern.IsMatch(id) &&
+               !Path.IsPathRooted(id) &&
+               id.IndexOf(Path.DirectorySeparatorChar) < 0 &&
+               id.IndexOf(Path.AltDirectorySeparatorChar) < 0;
+    }
+
+    private bool TryResolveExtensionDirectory(string id, out string folderPath)
+    {
+        folderPath = string.Empty;
+        if (!TryValidateExtensionId(id, out var validId))
+        {
+            return false;
+        }
+
+        folderPath = ResolveExtensionDirectory(validId);
+        return true;
+    }
+
+    private string ResolveExtensionDirectory(string id)
+    {
+        if (!TryValidateExtensionId(id, out var validId))
+        {
+            throw new InvalidDataException("Extension id must be a lowercase kebab-case identifier.");
+        }
+
+        return ResolveContainedPath(validId);
+    }
+
+    private bool TryResolveInstalledExtensionFolder(
+        string folderPath,
+        out string extensionId,
+        out string safeFolderPath)
+    {
+        extensionId = string.Empty;
+        safeFolderPath = string.Empty;
+
+        try
+        {
+            var candidate = EnsureContainedPath(folderPath);
+            var folderName = Path.GetFileName(Path.TrimEndingDirectorySeparator(candidate));
+            if (!TryValidateExtensionId(folderName, out extensionId))
+            {
+                return false;
+            }
+
+            var expected = ResolveExtensionDirectory(extensionId);
+            if (!PathsEqual(candidate, expected))
+            {
+                return false;
+            }
+
+            safeFolderPath = expected;
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidDataException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private string ResolveContainedPath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
+        {
+            throw new InvalidDataException("Extension path must be relative to the extension root.");
+        }
+
+        return EnsureContainedPath(Path.Combine(_extensionsDir, relativePath));
+    }
+
+    private string EnsureContainedPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var relativePath = Path.GetRelativePath(_extensionsDir, fullPath);
+        if (relativePath.Equals(".", StringComparison.Ordinal) ||
+            Path.IsPathRooted(relativePath) ||
+            relativePath.Equals("..", StringComparison.Ordinal) ||
+            relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+            relativePath.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Extension path escapes the configured extension root.");
+        }
+
+        return fullPath;
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return Path.GetFullPath(left).Equals(Path.GetFullPath(right), comparison);
     }
 
     private static string ResolveExtensionPackageRoot(string extractedDirectory)
@@ -544,16 +718,22 @@ public class ExtensionManager
         return extractedDirectory;
     }
 
-    private static void CopyDirectory(string sourceDirectory, string targetDirectory)
+    private void CopyDirectory(string sourceDirectory, string targetDirectory)
     {
-        foreach (var directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
+        var safeSourceDirectory = EnsureContainedPath(sourceDirectory);
+        var safeTargetDirectory = EnsureContainedPath(targetDirectory);
+
+        foreach (var directory in Directory.GetDirectories(safeSourceDirectory, "*", SearchOption.AllDirectories))
         {
-            Directory.CreateDirectory(directory.Replace(sourceDirectory, targetDirectory));
+            var relativePath = Path.GetRelativePath(safeSourceDirectory, directory);
+            var targetPath = EnsureContainedPath(Path.Combine(safeTargetDirectory, relativePath));
+            Directory.CreateDirectory(targetPath);
         }
 
-        foreach (var file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        foreach (var file in Directory.GetFiles(safeSourceDirectory, "*", SearchOption.AllDirectories))
         {
-            var targetFile = file.Replace(sourceDirectory, targetDirectory);
+            var relativePath = Path.GetRelativePath(safeSourceDirectory, file);
+            var targetFile = EnsureContainedPath(Path.Combine(safeTargetDirectory, relativePath));
             Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
             File.Copy(file, targetFile, overwrite: true);
         }
@@ -580,7 +760,9 @@ public class StoreExtensionItem
     public string DisplayName { get; set; } = "";
     public string Description { get; set; } = "";
     public string DownloadUrl { get; set; } = "";
+    public string Sha256 { get; set; } = "";
     public string Version { get; set; } = "";
+    public Guid? RegistryId { get; set; }
     public bool IsInstalled { get; set; }
     public bool IsEnabled { get; set; }
     public string RepoUrl { get; set; } = "";
@@ -599,8 +781,22 @@ public class InstalledExtensionInfo
     public List<string> Types { get; set; } = [];
 }
 
+public sealed record ExtensionRuntimePermissionSet(
+    IReadOnlySet<string> NetworkOrigins,
+    IReadOnlySet<string> CacheKeys,
+    IReadOnlySet<string> SecretKeys,
+    Func<string, string?>? SecretResolver = null,
+    Action<string, string>? LogSink = null)
+{
+    public static ExtensionRuntimePermissionSet None { get; } = new(
+        new HashSet<string>(StringComparer.Ordinal),
+        new HashSet<string>(StringComparer.Ordinal),
+        new HashSet<string>(StringComparer.Ordinal));
+}
+
 public class ExtensionSandbox
 {
+    private const int MaximumHookResultCharacters = 4 * 1024 * 1024;
     public string Id { get; }
     public string Name { get; }
     public string DisplayName { get; }
@@ -611,8 +807,16 @@ public class ExtensionSandbox
     private readonly Engine _engine;
     private readonly JsValue _extensionObj;
     private readonly ILogger _logger;
+    private readonly object _engineLock = new();
 
-    public ExtensionSandbox(string folderPath, string manifestJson, string indexJs, IHttpClientFactory httpClientFactory, ILogger logger)
+    public ExtensionSandbox(
+        string folderPath,
+        string manifestJson,
+        string indexJs,
+        IHttpClientFactory httpClientFactory,
+        ILogger logger,
+        ExtensionRuntimePermissionSet? permissions = null,
+        string? runtimeStateDirectory = null)
     {
         _logger = logger;
 
@@ -655,17 +859,24 @@ public class ExtensionSandbox
         _engine = new Engine(options =>
         {
             options.LimitRecursion(150);
+            options.LimitMemory(32L * 1024 * 1024);
+            options.MaxStatements(1_000_000);
             options.TimeoutInterval(TimeSpan.FromSeconds(12));
         });
 
-        var hostBridge = new ExtensionHostBridge(folderPath, httpClientFactory, logger);
+        var hostBridge = new ExtensionHostBridge(
+            runtimeStateDirectory ?? Path.Combine(Path.GetTempPath(), "allstarr-extension-runtime", Id),
+            httpClientFactory,
+            logger,
+            permissions ?? ExtensionRuntimePermissionSet.None);
         _engine.SetValue("host", hostBridge);
 
-        _engine.Execute("let _registeredExtension = null; function registerExtension(obj) { _registeredExtension = obj; }");
+        _engine.Execute("var _registeredExtension = null; function registerExtension(obj) { _registeredExtension = obj; }");
         _engine.Execute("const log = { info: function(...args) { host.Log('info', args.join(' ')); }, warn: function(...args) { host.Log('warn', args.join(' ')); }, error: function(...args) { host.Log('error', args.join(' ')); }, debug: function(...args) { host.Log('debug', args.join(' ')); } };");
         _engine.Execute("const storage = { get: function(key) { return host.StorageGet(key); }, set: function(key, val) { host.StorageSet(key, val); } };");
+        _engine.Execute("const secrets = { get: function(key) { return host.SecretGet(key); } };");
         _engine.Execute("const http = { get: function(url, headers) { return host.HttpGet(url, headers); }, post: function(url, body, headers) { return host.HttpPost(url, body, headers); } };");
-        _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); } };");
+        _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
 
         _engine.Execute(indexJs);
 
@@ -737,6 +948,34 @@ public class ExtensionSandbox
             _logger.LogError(ex, "JS getTrack failed on extension {Id}", Id);
             return null;
         }
+    }
+
+    /// <summary>Invokes an SDK v1 hook through a JSON-only boundary.</summary>
+    public string? InvokeJson(string hook, string requestJson)
+    {
+        if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
+        if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
+        lock (_engineLock)
+        {
+            var function = _extensionObj.Get(hook);
+            if (!function.IsCallable()) return null;
+
+            var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
+            var result = _engine.Invoke(function, request);
+            if (result.IsUndefined()) return null;
+            var serialized = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("stringify"), result).ToString();
+            if (serialized.Length > MaximumHookResultCharacters)
+                throw new InvalidOperationException("Extension response is too large.");
+            return serialized;
+        }
+    }
+
+    public bool HasCallableHook(string hook) =>
+        !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
+
+    private bool IsCallable(string hook)
+    {
+        lock (_engineLock) return _extensionObj.Get(hook).IsCallable();
     }
 
     public Album? GetAlbum(string id)
@@ -951,23 +1190,41 @@ public class ExtensionSandbox
 
 public class ExtensionHostBridge
 {
+    private const int MaximumCacheBytes = 4 * 1024 * 1024;
+    private const int MaximumCacheKeys = 256;
+    private const int MaximumLogEvents = 1_000;
+    private static readonly Regex SensitiveLogPattern = new(
+        "(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private readonly string _folderPath;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly Dictionary<string, string> _storage = new();
     private readonly string _storageFile;
+    private readonly ExtensionRuntimePermissionSet _permissions;
+    private int _logEvents;
 
-    public ExtensionHostBridge(string folderPath, IHttpClientFactory httpClientFactory, ILogger logger)
+    public ExtensionHostBridge(
+        string runtimeStateDirectory,
+        IHttpClientFactory httpClientFactory,
+        ILogger logger,
+        ExtensionRuntimePermissionSet permissions)
     {
-        _folderPath = folderPath;
+        _folderPath = Path.GetFullPath(runtimeStateDirectory);
+        Directory.CreateDirectory(_folderPath);
         _httpClientFactory = httpClientFactory;
         _logger = logger;
-        _storageFile = Path.Combine(folderPath, "storage.json");
+        _permissions = permissions;
+        _storageFile = Path.Combine(_folderPath, "storage.json");
         LoadStorage();
     }
 
     public void Log(string level, string message)
     {
+        if (Interlocked.Increment(ref _logEvents) > MaximumLogEvents) return;
+        message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]");
+        if (message.Length > 2_000) message = message[..2_000];
+        _permissions.LogSink?.Invoke(level, message);
         switch (level.ToLowerInvariant())
         {
             case "error": _logger.LogError("[JS EXT] {Message}", message); break;
@@ -977,12 +1234,32 @@ public class ExtensionHostBridge
         }
     }
 
-    public string? StorageGet(string key) => _storage.TryGetValue(key, out var val) ? val : null;
+    public string? StorageGet(string key)
+    {
+        EnsureCachePermission(key);
+        return _storage.TryGetValue(key, out var val) ? val : null;
+    }
 
     public void StorageSet(string key, string value)
     {
+        EnsureCachePermission(key);
+        if (value.Length > 256 * 1024) throw new InvalidOperationException("Extension cache values are limited to 256 KiB.");
+        if (!_storage.ContainsKey(key) && _storage.Count >= MaximumCacheKeys)
+            throw new InvalidOperationException("Extension cache key limit reached.");
+        var projectedBytes = _storage.Where(item => item.Key != key)
+            .Sum(item => Encoding.UTF8.GetByteCount(item.Key) + Encoding.UTF8.GetByteCount(item.Value)) +
+            Encoding.UTF8.GetByteCount(key) + Encoding.UTF8.GetByteCount(value);
+        if (projectedBytes > MaximumCacheBytes)
+            throw new InvalidOperationException("Extension cache is limited to 4 MiB.");
         _storage[key] = value;
         SaveStorage();
+    }
+
+    public string? SecretGet(string key)
+    {
+        if (!_permissions.SecretKeys.Contains(key) || _permissions.SecretResolver == null)
+            throw new UnauthorizedAccessException("Extension secret permission is not approved.");
+        return $"{{{{allstarr-secret:{key}}}}}";
     }
 
     public object HttpGet(string url, object? headers) => HttpCall("GET", url, null, headers);
@@ -997,6 +1274,14 @@ public class ExtensionHostBridge
         byte[] data = ConvertToByteArray(dataVal);
         using var hmac = new HMACSHA1(key);
         return hmac.ComputeHash(data);
+    }
+
+    public byte[] HmacSHA1Secret(string key, JsValue dataVal)
+    {
+        if (!_permissions.SecretKeys.Contains(key) || _permissions.SecretResolver?.Invoke(key) is not { } secret)
+            throw new UnauthorizedAccessException("Extension secret permission is not approved.");
+        using var hmac = new HMACSHA1(Encoding.UTF8.GetBytes(secret));
+        return hmac.ComputeHash(ConvertToByteArray(dataVal));
     }
 
     private byte[] ConvertToByteArray(JsValue val)
@@ -1026,14 +1311,18 @@ public class ExtensionHostBridge
     {
         try
         {
-            using var client = _httpClientFactory.CreateClient();
+            if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var safeUri, out _) ||
+                safeUri!.Scheme != Uri.UriSchemeHttps ||
+                !_permissions.NetworkOrigins.Contains(safeUri.GetLeftPart(UriPartial.Authority) + "/"))
+                throw new UnauthorizedAccessException("Extension network origin is not approved.");
+            using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = TimeSpan.FromSeconds(15);
             
-            var request = new HttpRequestMessage(new HttpMethod(method), url);
+            var request = new HttpRequestMessage(new HttpMethod(method), safeUri);
 
             if (body != null)
             {
-                request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+                request.Content = new StringContent(ResolveSecretMarkers(body), Encoding.UTF8, "application/json");
             }
 
             if (headersObj is Jint.Native.Object.ObjectInstance obj)
@@ -1041,10 +1330,14 @@ public class ExtensionHostBridge
                 foreach (var prop in obj.GetOwnProperties())
                 {
                     var headerKey = prop.Key.ToString();
-                    var headerVal = obj.Get(prop.Key).ToString();
+                    var headerVal = ResolveSecretMarkers(obj.Get(prop.Key).ToString());
                     
                     if (!string.IsNullOrEmpty(headerVal))
                     {
+                        if (headerKey.Contains('\r') || headerKey.Contains('\n') || headerVal.Contains('\r') || headerVal.Contains('\n') ||
+                            headerKey.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                            headerKey.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                            continue;
                         if (headerKey.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) && request.Content != null)
                         {
                             request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(headerVal);
@@ -1057,8 +1350,23 @@ public class ExtensionHostBridge
                 }
             }
 
-            using var response = client.Send(request);
-            var bodyText = new StreamReader(response.Content.ReadAsStream()).ReadToEnd();
+            using var response = client.SendAsync(request).GetAwaiter().GetResult();
+            if (response.RequestMessage?.RequestUri is { } finalUri &&
+                !_permissions.NetworkOrigins.Contains(finalUri.GetLeftPart(UriPartial.Authority) + "/"))
+                throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
+            if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
+                throw new InvalidOperationException("Extension response exceeds 4 MiB.");
+            using var reader = new StreamReader(response.Content.ReadAsStream());
+            var chars = new char[64 * 1024];
+            var bodyBuilder = new StringBuilder();
+            int charsRead;
+            while ((charsRead = reader.Read(chars, 0, chars.Length)) > 0)
+            {
+                if (bodyBuilder.Length + charsRead > 4 * 1024 * 1024)
+                    throw new InvalidOperationException("Extension response exceeds 4 MiB.");
+                bodyBuilder.Append(chars, 0, charsRead);
+            }
+            var bodyText = bodyBuilder.ToString();
 
             var respHeaders = response.Headers.ToDictionary(k => k.Key, v => (object)string.Join(", ", v.Value));
 
@@ -1073,9 +1381,28 @@ public class ExtensionHostBridge
             return new {
                 statusCode = 500,
                 body = "",
-                error = ex.Message
+                error = ex is UnauthorizedAccessException ? "permission_denied" : "extension_request_failed"
             };
         }
+    }
+
+    private void EnsureCachePermission(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || !_permissions.CacheKeys.Contains(key))
+            throw new UnauthorizedAccessException("Extension cache permission is not approved.");
+    }
+
+    private string ResolveSecretMarkers(string value)
+    {
+        foreach (var key in _permissions.SecretKeys)
+        {
+            var marker = $"{{{{allstarr-secret:{key}}}}}";
+            if (!value.Contains(marker, StringComparison.Ordinal)) continue;
+            var secret = _permissions.SecretResolver?.Invoke(key) ??
+                         throw new UnauthorizedAccessException("Extension account secret is unavailable.");
+            value = value.Replace(marker, secret, StringComparison.Ordinal);
+        }
+        return value;
     }
 
     private void LoadStorage()
@@ -1088,7 +1415,13 @@ public class ExtensionHostBridge
                 var data = JsonSerializer.Deserialize<Dictionary<string, string>>(txt);
                 if (data != null)
                 {
-                    foreach (var kp in data) _storage[kp.Key] = kp.Value;
+                    var approved = data.Where(item => _permissions.CacheKeys.Contains(item.Key) &&
+                                                       item.Value.Length <= 256 * 1024)
+                        .Take(MaximumCacheKeys).ToArray();
+                    var bytes = approved.Sum(item => Encoding.UTF8.GetByteCount(item.Key) +
+                                                     Encoding.UTF8.GetByteCount(item.Value));
+                    if (bytes <= MaximumCacheBytes)
+                        foreach (var item in approved) _storage[item.Key] = item.Value;
                 }
             }
             catch {}
@@ -1100,8 +1433,14 @@ public class ExtensionHostBridge
         try
         {
             var txt = JsonSerializer.Serialize(_storage);
-            File.WriteAllText(_storageFile, txt);
+            var temporary = _storageFile + ".tmp";
+            File.WriteAllText(temporary, txt);
+            File.Move(temporary, _storageFile, true);
         }
-        catch {}
+        catch
+        {
+            try { File.Delete(_storageFile + ".tmp"); } catch { }
+            throw;
+        }
     }
 }

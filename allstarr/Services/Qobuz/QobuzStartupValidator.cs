@@ -25,7 +25,6 @@ public class QobuzStartupValidator : BaseStartupValidator
         var userId = _qobuzSettings.Value.UserId;
         var quality = _qobuzSettings.Value.Quality;
 
-        Console.WriteLine();
 
         if (string.IsNullOrWhiteSpace(userAuthToken))
         {
@@ -115,15 +114,15 @@ public class QobuzStartupValidator : BaseStartupValidator
             WriteStatus(fieldName, "TIMEOUT", ConsoleColor.Yellow);
             WriteDetail("Could not reach Qobuz within 10 seconds");
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException)
         {
             WriteStatus(fieldName, "UNREACHABLE", ConsoleColor.Yellow);
-            WriteDetail(ex.Message);
+            WriteDetail("The Qobuz service could not be reached");
         }
         catch (Exception ex)
         {
             WriteStatus(fieldName, "ERROR", ConsoleColor.Red);
-            WriteDetail(ex.Message);
+            WriteDetail($"Qobuz validation failed ({ex.GetType().Name})");
         }
     }
 }

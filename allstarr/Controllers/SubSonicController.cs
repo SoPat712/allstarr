@@ -12,11 +12,17 @@ using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Services.Local;
 using allstarr.Services.Subsonic;
+using allstarr.Filters;
+using allstarr.Core.Protocols.Subsonic;
+using allstarr.Core.Protocols;
+using allstarr.Core.Favorites;
 
 namespace allstarr.Controllers;
 
 [ApiController]
 [Route("")]
+[ServiceFilter(typeof(SubsonicAuthFilter), Order = int.MinValue)]
+[ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
 public class SubsonicController : ControllerBase
 {
     private readonly SubsonicSettings _subsonicSettings;
@@ -27,9 +33,14 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicResponseBuilder _responseBuilder;
     private readonly SubsonicModelMapper _modelMapper;
     private readonly SubsonicProxyService _proxyService;
+    private readonly SubsonicLyricsProtocolAdapter _lyricsProtocolAdapter;
+    private readonly SubsonicRelayProtocolAdapter _relayProtocolAdapter;
+    private readonly SubsonicSearchProtocolAdapter _searchProtocolAdapter;
+    private readonly SubsonicVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly PlaylistSyncService? _playlistSyncService;
     private readonly RedisCacheService _cache;
     private readonly ILogger<SubsonicController> _logger;
+    private readonly IFavoriteActionPipeline? _favoriteActions;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -40,9 +51,14 @@ public class SubsonicController : ControllerBase
         SubsonicResponseBuilder responseBuilder,
         SubsonicModelMapper modelMapper,
         SubsonicProxyService proxyService,
+        SubsonicLyricsProtocolAdapter lyricsProtocolAdapter,
+        SubsonicRelayProtocolAdapter relayProtocolAdapter,
+        SubsonicSearchProtocolAdapter searchProtocolAdapter,
+        SubsonicVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
         RedisCacheService cache,
         ILogger<SubsonicController> logger,
-        PlaylistSyncService? playlistSyncService = null)
+        PlaylistSyncService? playlistSyncService = null,
+        IFavoriteActionPipeline? favoriteActions = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _metadataService = metadataService;
@@ -52,9 +68,14 @@ public class SubsonicController : ControllerBase
         _responseBuilder = responseBuilder;
         _modelMapper = modelMapper;
         _proxyService = proxyService;
+        _lyricsProtocolAdapter = lyricsProtocolAdapter;
+        _relayProtocolAdapter = relayProtocolAdapter;
+        _searchProtocolAdapter = searchProtocolAdapter;
+        _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
         _playlistSyncService = playlistSyncService;
         _cache = cache;
         _logger = logger;
+        _favoriteActions = favoriteActions;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
         {
@@ -62,11 +83,34 @@ public class SubsonicController : ControllerBase
         }
     }
 
-    // Extract all parameters (query + body)
-    private async Task<Dictionary<string, string>> ExtractAllParameters()
+    [HttpGet, HttpPost]
+    [Route("rest/getLyricsBySongId")]
+    [Route("rest/getLyricsBySongId.view")]
+    public async Task<IActionResult> GetLyricsBySongId()
     {
+        var parameters = await ExtractAllParameters();
+        return await _lyricsProtocolAdapter.GetLyricsBySongIdAsync(
+            parameters,
+            HttpContext.RequestAborted);
+    }
+
+    // Extract all parameters (query + body)
+    private async Task<SubsonicRequestParameters> ExtractAllParameters()
+    {
+        if (HttpContext.Items.TryGetValue(SubsonicAuthFilter.RequestParametersItemKey, out var value) &&
+            value is SubsonicRequestParameters verifiedParameters)
+        {
+            return verifiedParameters;
+        }
+
         return await _requestParser.ExtractAllParametersAsync(Request);
     }
+
+    private ProtocolExecutionContext CurrentProtocolContext =>
+        HttpContext.Items.TryGetValue(ProtocolExecutionContextFactory.HttpContextItemKey, out var value) &&
+        value is ProtocolExecutionContext context
+            ? context
+            : throw new InvalidOperationException("Authenticated Subsonic action has no protocol context.");
 
     /// <summary>
     /// Merges local and external search results.
@@ -77,43 +121,51 @@ public class SubsonicController : ControllerBase
     public async Task<IActionResult> Search3()
     {
         var parameters = await ExtractAllParameters();
-        var query = parameters.GetValueOrDefault("query", "");
         var format = parameters.GetValueOrDefault("f", "xml");
-
-        var cleanQuery = query.Trim().Trim('"');
+        var window = _searchProtocolAdapter.Parse(parameters, CurrentProtocolContext);
+        var cleanQuery = window.Query;
 
         if (string.IsNullOrWhiteSpace(cleanQuery))
         {
             try
             {
-                var result = await _proxyService.RelayAsync("rest/search3", parameters);
-                var contentType = result.ContentType ?? $"application/{format}";
-                return File(result.Body, contentType);
+                var result = await _proxyService.RelayRawAsync(
+                    "rest/search3",
+                    parameters,
+                    HttpContext.RequestAborted);
+                return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
             }
-            catch
+            catch (Exception ex)
             {
-                return _responseBuilder.CreateResponse(format, "searchResult3", new { });
+                _logger.LogWarning(
+                    "Subsonic empty-search relay failed ({ExceptionType})",
+                    ex.GetType().Name);
+                return StatusCode(StatusCodes.Status502BadGateway);
             }
         }
 
         var subsonicTask = _proxyService.RelaySafeAsync("rest/search3", parameters);
         var externalTask = _metadataService.SearchAllAsync(
             cleanQuery,
-            int.TryParse(parameters.GetValueOrDefault("songCount", "20"), out var sc) ? sc : 20,
-            int.TryParse(parameters.GetValueOrDefault("albumCount", "20"), out var ac) ? ac : 20,
-            int.TryParse(parameters.GetValueOrDefault("artistCount", "20"), out var arc) ? arc : 20
+            window.SongFetchCount,
+            window.AlbumFetchCount,
+            window.ArtistFetchCount,
+            HttpContext.RequestAborted
         );
 
         // Search playlists if enabled
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
-            ? _metadataService.SearchPlaylistsAsync(cleanQuery, ac) // Use same limit as albums
+            ? _metadataService.SearchPlaylistsAsync(
+                cleanQuery,
+                window.AlbumFetchCount,
+                HttpContext.RequestAborted)
             : Task.FromResult(new List<ExternalPlaylist>());
 
         await Task.WhenAll(subsonicTask, externalTask, playlistTask);
 
         var subsonicResult = await subsonicTask;
-        var externalResult = await externalTask;
-        var playlistResult = await playlistTask;
+        var externalResult = _searchProtocolAdapter.ApplyWindow(await externalTask, window);
+        var playlistResult = _searchProtocolAdapter.ApplyAlbumWindow(await playlistTask, window);
 
         return MergeSearchResults(subsonicResult, externalResult, playlistResult, format);
     }
@@ -121,7 +173,7 @@ public class SubsonicController : ControllerBase
     /// <summary>
     /// Downloads on-the-fly if needed.
     /// </summary>
-    [HttpGet, HttpPost]
+    [AcceptVerbs("GET", "POST", "HEAD")]
     [Route("rest/stream")]
     [Route("rest/stream.view")]
     public async Task<IActionResult> Stream()
@@ -226,9 +278,13 @@ public class SubsonicController : ControllerBase
 
         if (!isExternal)
         {
-            var result = await _proxyService.RelayAsync("rest/getSong", parameters);
-            var contentType = result.ContentType ?? $"application/{format}";
-            return File(result.Body, contentType);
+            var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getSong";
+            var result = await _proxyService.RelayRawAsync(
+                relayEndpoint,
+                parameters,
+                HttpContext.RequestAborted,
+                Request.Headers);
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
 
         var song = await _metadataService.GetSongAsync(provider!, externalId!);
@@ -396,6 +452,13 @@ public class SubsonicController : ControllerBase
         if (string.IsNullOrWhiteSpace(id))
         {
             return _responseBuilder.CreateError(format, 10, "Missing id parameter");
+        }
+
+        if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(id))
+        {
+            return await _virtualPlaylistProtocolAdapter.ReadAsync(
+                       CurrentProtocolContext, id, format, HttpContext.RequestAborted)
+                   ?? _responseBuilder.CreateError(format, 70, "Playlist not found");
         }
 
         // Check if this is an external playlist
@@ -576,6 +639,31 @@ public class SubsonicController : ControllerBase
     }
 
     /// <summary>
+    /// Reads an Allstarr virtual or hybrid playlist without writing it to the backend.
+    /// Native backend playlist IDs remain transparent relay requests.
+    /// </summary>
+    [HttpGet, HttpPost]
+    [Route("rest/getPlaylist")]
+    [Route("rest/getPlaylist.view")]
+    public async Task<IActionResult> GetPlaylist()
+    {
+        var parameters = await ExtractAllParameters();
+        var id = parameters.GetValueOrDefault("id", string.Empty);
+        var format = parameters.GetValueOrDefault("f", "xml");
+        if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(id))
+        {
+            return await _virtualPlaylistProtocolAdapter.ReadAsync(
+                       CurrentProtocolContext, id, format, HttpContext.RequestAborted)
+                   ?? _responseBuilder.CreateError(format, 70, "Playlist not found");
+        }
+
+        var endpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getPlaylist";
+        var result = await _proxyService.RelayRawAsync(
+            endpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+        return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
+    }
+
+    /// <summary>
     /// Proxies external covers. Uses type from ID to determine which API to call.
     /// Format: ext-{provider}-{type}-{id} (e.g., ext-deezer-artist-259, ext-deezer-album-96126)
     /// </summary>
@@ -644,9 +732,13 @@ public class SubsonicController : ControllerBase
         {
             try
             {
-                var result = await _proxyService.RelayAsync("rest/getCoverArt", parameters);
-                var contentType = result.ContentType ?? "image/jpeg";
-                return File(result.Body, contentType);
+                var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getCoverArt";
+                var result = await _proxyService.RelayRawAsync(
+                    relayEndpoint,
+                    parameters,
+                    HttpContext.RequestAborted,
+                    Request.Headers);
+                return _relayProtocolAdapter.CreateResult(result, "image/jpeg");
             }
             catch
             {
@@ -808,25 +900,15 @@ public class SubsonicController : ControllerBase
 
         if (!string.IsNullOrEmpty(playlistId) && PlaylistIdHelper.IsExternalPlaylist(playlistId))
         {
-            if (_playlistSyncService == null)
+            if (CurrentProtocolContext.Actor == null)
             {
-                return _responseBuilder.CreateError(format, 0, "Playlist functionality is not enabled");
+                return _responseBuilder.CreateError(
+                    format,
+                    40,
+                    "A linked Allstarr user is required for external favorite actions");
             }
 
-            _logger.LogInformation("Starring external playlist {PlaylistId}, triggering download", playlistId);
-
-            // Trigger playlist download in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _playlistSyncService.DownloadFullPlaylistAsync(playlistId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to download playlist {PlaylistId}", playlistId);
-                }
-            });
+            await RecordFavoriteEventSafelyAsync(playlistId, FavoriteOperation.Favorite);
 
             // Return success response immediately
             return _responseBuilder.CreateResponse(format, "starred", new { });
@@ -835,14 +917,106 @@ public class SubsonicController : ControllerBase
         // For non-playlist items, relay to real Subsonic server
         try
         {
-            var result = await _proxyService.RelayAsync("rest/star", parameters);
-            var contentType = result.ContentType ?? $"application/{format}";
-            return File(result.Body, contentType);
+            var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/star";
+            var result = await _proxyService.RelayRawAsync(
+                relayEndpoint,
+                parameters,
+                HttpContext.RequestAborted,
+                Request.Headers);
+            if ((int)result.StatusCode is >= 200 and < 300 && CurrentProtocolContext.Actor != null)
+            {
+                var itemId = parameters.GetValueOrDefault("id", "");
+                if (!string.IsNullOrWhiteSpace(itemId))
+                    await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
+            }
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Error connecting to Subsonic server for star operation");
+            _logger.LogError(
+                "Error connecting to Subsonic server for star operation ({ExceptionType})",
+                ex.GetType().Name);
             return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
+        }
+    }
+
+    [HttpGet, HttpPost]
+    [Route("rest/unstar")]
+    [Route("rest/unstar.view")]
+    public async Task<IActionResult> Unstar()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/unstar";
+        try
+        {
+            var result = await _proxyService.RelayRawAsync(
+                relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+            if ((int)result.StatusCode is >= 200 and < 300 && CurrentProtocolContext.Actor != null)
+            {
+                var itemId = parameters.GetValueOrDefault("id", "");
+                if (!string.IsNullOrWhiteSpace(itemId))
+                    await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
+            }
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError("Error connecting to Subsonic server for unstar operation ({ExceptionType})",
+                ex.GetType().Name);
+            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
+        }
+    }
+
+    [HttpGet, HttpPost]
+    [Route("rest/updatePlaylist")]
+    [Route("rest/updatePlaylist.view")]
+    public Task<IActionResult> UpdatePlaylist() => RelayMutation("rest/updatePlaylist");
+
+    [HttpGet, HttpPost]
+    [Route("rest/scrobble")]
+    [Route("rest/scrobble.view")]
+    public Task<IActionResult> Scrobble() => RelayMutation("rest/scrobble");
+
+    private async Task<IActionResult> RelayMutation(string endpoint)
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? endpoint;
+        try
+        {
+            var result = await _proxyService.RelayRawAsync(
+                relayEndpoint,
+                parameters,
+                HttpContext.RequestAborted,
+                Request.Headers);
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                "Error connecting to Subsonic server for {Endpoint} ({ExceptionType})",
+                relayEndpoint,
+                ex.GetType().Name);
+            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
+        }
+    }
+
+    private async Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation)
+    {
+        if (_favoriteActions == null) return;
+        try
+        {
+            var sourceRevision = Request.Headers["Idempotency-Key"].FirstOrDefault()
+                ?? Request.Headers["X-Allstarr-Source-Revision"].FirstOrDefault()
+                ?? "protocol-state-v1";
+            await _favoriteActions.RecordAsync(
+                new FavoriteMutationRequest(CurrentProtocolContext, itemId, operation, sourceRevision),
+                HttpContext.RequestAborted);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Favorite workflow recording failed ({ExceptionType})", ex.GetType().Name);
         }
     }
 
@@ -856,15 +1030,22 @@ public class SubsonicController : ControllerBase
 
         try
         {
-            var result = await _proxyService.RelayAsync(endpoint, parameters);
-            var contentType = result.ContentType ?? $"application/{format}";
-            return File(result.Body, contentType);
+            var result = await _proxyService.RelayRawAsync(
+                endpoint,
+                parameters,
+                HttpContext.RequestAborted,
+                Request.Headers);
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
         catch (HttpRequestException ex)
         {
             // Return Subsonic-compatible error response
-            _logger.LogError(ex, "Error connecting to Subsonic server for endpoint {Endpoint}", endpoint);
+            _logger.LogError(
+                "Error connecting to Subsonic server for endpoint {Endpoint} ({ExceptionType})",
+                endpoint,
+                ex.GetType().Name);
             return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
         }
     }
+
 }

@@ -1,0 +1,19 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/rest/search3.view",
+    "query": "u=fixture&t=hash&s=salt&v=1.16.1&c=fixture&f=json",
+    "contentType": "application/x-www-form-urlencoded",
+    "body": "query=&songCount=5"
+  },
+  "currentRelay": {
+    "upstreamMethod": "POST",
+    "contentType": "application/json",
+    "body": { "subsonic-response": { "status": "ok", "version": "1.16.1", "searchResult3": {} } }
+  },
+  "expected": {
+    "status": 200,
+    "contentType": "application/json"
+  },
+  "knownGap": "Resolved in Phase 0: form POST method and body source are preserved; paging and capability-core migration remain Phase 3 work."
+}

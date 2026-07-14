@@ -215,102 +215,15 @@ public partial class JellyfinController
             return NotFound(new { error = "Lyrics not found" });
         }
 
-        // Prefer synced lyrics, fall back to plain
-        var lyricsText = lyrics.SyncedLyrics ?? lyrics.PlainLyrics ?? "";
         var isSynced = !string.IsNullOrEmpty(lyrics.SyncedLyrics);
 
         _logger.LogInformation(
             "Lyrics for {Artist} - {Track}: synced={HasSynced}, plainLength={PlainLen}, syncedLength={SyncLen}",
             song.Artist, song.Title, isSynced, lyrics.PlainLyrics?.Length ?? 0, lyrics.SyncedLyrics?.Length ?? 0);
 
-        // Parse LRC format into individual lines for Jellyfin
-        var lyricLines = new List<Dictionary<string, object>>();
-
-        if (isSynced && !string.IsNullOrEmpty(lyrics.SyncedLyrics))
-        {
-            _logger.LogDebug("Parsing synced lyrics (LRC format)");
-            // Parse LRC format: [mm:ss.xx] text
-            // Skip ID tags like [ar:Artist], [ti:Title], etc.
-            var lines = lyrics.SyncedLyrics.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
-            {
-                // Match timestamp format [mm:ss.xx] or [mm:ss.xxx]
-                var match = System.Text.RegularExpressions.Regex.Match(line, @"^\[(\d+):(\d+)\.(\d+)\]\s*(.*)$");
-                if (match.Success)
-                {
-                    var minutes = int.Parse(match.Groups[1].Value);
-                    var seconds = int.Parse(match.Groups[2].Value);
-                    var centiseconds = int.Parse(match.Groups[3].Value);
-                    var text = match.Groups[4].Value;
-
-                    // Convert to ticks (100 nanoseconds)
-                    var totalMilliseconds = (minutes * 60 + seconds) * 1000 + centiseconds * 10;
-                    var ticks = totalMilliseconds * 10000L;
-
-                    // For synced lyrics, include Start timestamp
-                    lyricLines.Add(new Dictionary<string, object>
-                    {
-                        ["Text"] = text,
-                        ["Start"] = ticks
-                    });
-                }
-                // Skip ID tags like [ar:Artist], [ti:Title], [length:2:23], etc.
-            }
-
-            _logger.LogDebug("Parsed {Count} synced lyric lines (skipped ID tags)", lyricLines.Count);
-        }
-        else if (!string.IsNullOrEmpty(lyricsText))
-        {
-            _logger.LogInformation("Splitting plain lyrics into lines (no timestamps)");
-            // Plain lyrics - split by newlines and return each line separately
-            // IMPORTANT: Do NOT include "Start" field at all for unsynced lyrics
-            // Including it (even as null) causes clients to treat it as synced with timestamp 0:00
-            var lines = lyricsText.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
-            {
-                lyricLines.Add(new Dictionary<string, object>
-                {
-                    ["Text"] = line.Trim()
-                });
-            }
-
-            _logger.LogDebug("Split into {Count} plain lyric lines", lyricLines.Count);
-        }
-        else
-        {
-            _logger.LogWarning("No lyrics text available");
-            // No lyrics at all
-            lyricLines.Add(new Dictionary<string, object>
-            {
-                ["Text"] = ""
-            });
-        }
-
-        var response = new
-        {
-            Metadata = new
-            {
-                Artist = lyrics.ArtistName,
-                Album = lyrics.AlbumName,
-                Title = lyrics.TrackName,
-                Length = lyrics.Duration,
-                IsSynced = isSynced
-            },
-            Lyrics = lyricLines
-        };
-
-        _logger.LogDebug("Returning lyrics response: {LineCount} lines, synced={IsSynced}", lyricLines.Count, isSynced);
-
-        // Log a sample of the response for debugging
-        if (lyricLines.Count > 0)
-        {
-            var sampleLine = lyricLines[0];
-            var hasStart = sampleLine.ContainsKey("Start");
-            _logger.LogDebug("Sample line: Text='{Text}', HasStart={HasStart}",
-                sampleLine.GetValueOrDefault("Text"), hasStart);
-        }
-
-        return Ok(response);
+        var response = _lyricsProtocolAdapter.Shape(lyrics);
+        _logger.LogDebug("Returning lyrics response: synced={IsSynced}", isSynced);
+        return Content(response.Body, response.ContentType, System.Text.Encoding.UTF8);
     }
 
     /// <summary>

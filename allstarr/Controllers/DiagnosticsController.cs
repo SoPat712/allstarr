@@ -10,6 +10,7 @@ using allstarr.Services.Spotify;
 using allstarr.Services.Scrobbling;
 using allstarr.Services.SquidWTF;
 using System.Runtime;
+using allstarr.Core.Storage;
 
 namespace allstarr.Controllers;
 
@@ -29,6 +30,8 @@ public class DiagnosticsController : ControllerBase
     private readonly RedisCacheService _cache;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly List<string> _squidWtfApiUrls;
+    private readonly DurableStorageState _storageState;
+    private readonly ISafeJsonProxyClient _safeJsonProxyClient;
     private static int _urlIndex = 0;
     private static readonly object _urlIndexLock = new();
 
@@ -43,7 +46,9 @@ public class DiagnosticsController : ControllerBase
         IOptions<SquidWTFSettings> squidWtfSettings,
         SpotifySessionCookieService spotifySessionCookieService,
         SquidWtfEndpointCatalog squidWtfEndpointCatalog,
-        RedisCacheService cache)
+        RedisCacheService cache,
+        DurableStorageState storageState,
+        ISafeJsonProxyClient safeJsonProxyClient)
     {
         _logger = logger;
         _configuration = configuration;
@@ -56,6 +61,8 @@ public class DiagnosticsController : ControllerBase
         _spotifySessionCookieService = spotifySessionCookieService;
         _cache = cache;
         _squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
+        _storageState = storageState;
+        _safeJsonProxyClient = safeJsonProxyClient;
     }
 
     [HttpGet("status")]
@@ -89,11 +96,22 @@ public class DiagnosticsController : ControllerBase
             spotifyAuthStatus = "missing_cookie";
         }
 
+        var storage = _storageState.GetSnapshot();
         return Ok(new
         {
             version = AppVersion.Version,
             backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin",
-            jellyfinUrl = _jellyfinSettings.Url,
+            durableStorage = new
+            {
+                provider = storage.Provider.ToString(),
+                readiness = storage.Readiness.ToString(),
+                storage.SchemaVersion,
+                storage.ErrorCode,
+                storage.CheckedAt
+            },
+            jellyfinUrl = string.IsNullOrWhiteSpace(_jellyfinSettings.Url)
+                ? "Not configured"
+                : "Configured",
             spotify = new
             {
                 apiEnabled = _spotifyApiSettings.Enabled,
@@ -151,6 +169,24 @@ public class DiagnosticsController : ControllerBase
             return NotFound(new { error = "No SquidWTF base URLs configured" });
         }
 
+        return Ok(new { baseUrl = "/api/admin/squidwtf-browser-proxy" });
+    }
+
+    [HttpGet("squidwtf-browser-proxy/search")]
+    public async Task<IActionResult> SearchSquidWtf(
+        [FromQuery(Name = "s")] string search,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(search) || search.Length > 300)
+        {
+            return BadRequest(new { error = "A search value between 1 and 300 characters is required" });
+        }
+
+        if (_squidWtfApiUrls.Count == 0)
+        {
+            return NotFound(new { error = "No SquidWTF search endpoint is available" });
+        }
+
         string baseUrl;
         lock (_urlIndexLock)
         {
@@ -158,7 +194,55 @@ public class DiagnosticsController : ControllerBase
             _urlIndex = (_urlIndex + 1) % _squidWtfApiUrls.Count;
         }
 
-        return Ok(new { baseUrl });
+        try
+        {
+            if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                    baseUrl.TrimEnd('/') + "/",
+                    out var safeBaseUri,
+                    out _))
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new { error = "The provider search endpoint was unavailable" });
+            }
+
+            var endpoint = new Uri(
+                safeBaseUri!,
+                $"search/?s={Uri.EscapeDataString(search.Trim())}");
+            const long maximumResponseBytes = 2 * 1024 * 1024;
+            var result = await _safeJsonProxyClient.GetAsync(
+                endpoint,
+                maximumResponseBytes,
+                cancellationToken);
+            if (result.Outcome == SafeJsonProxyOutcome.Success && result.Payload.HasValue)
+            {
+                return new JsonResult(result.Payload.Value);
+            }
+
+            if (result.Outcome == SafeJsonProxyOutcome.ResponseTooLarge)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new { error = "The provider search response exceeded the safe size limit" });
+            }
+
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "The provider search endpoint was unavailable" });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                "SquidWTF browser search proxy failed ({ExceptionType})",
+                ex.GetType().Name);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { error = "The provider search endpoint was unavailable" });
+        }
     }
 
     /// <summary>
@@ -325,7 +409,7 @@ public class DiagnosticsController : ControllerBase
     {
         try
         {
-            var logFile = "/app/cache/endpoint-usage/endpoints.csv";
+            var logFile = EndpointUsagePathResolver.GetLogFile(_configuration);
 
             if (!System.IO.File.Exists(logFile))
             {
@@ -396,7 +480,7 @@ public class DiagnosticsController : ControllerBase
     {
         try
         {
-            var logFile = "/app/cache/endpoint-usage/endpoints.csv";
+            var logFile = EndpointUsagePathResolver.GetLogFile(_configuration);
 
             if (System.IO.File.Exists(logFile))
             {

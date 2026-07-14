@@ -258,7 +258,7 @@ public class SubsonicProxyServiceTests
         // Assert
         var fileResult = Assert.IsType<FileStreamResult>(result);
         Assert.Equal("audio/mpeg", fileResult.ContentType);
-        Assert.True(fileResult.EnableRangeProcessing);
+        Assert.False(fileResult.EnableRangeProcessing);
     }
 
     [Fact]
@@ -419,5 +419,24 @@ public class SubsonicProxyServiceTests
         // Assert
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(500, objectResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task RelayStreamAsync_ClientCancellation_Returns499()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        _mockHttpMessageHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new OperationCanceledException(source.Token));
+
+        var result = await _service.RelayStreamAsync(
+            new Dictionary<string, string> { ["id"] = "song123" },
+            source.Token);
+
+        var status = Assert.IsType<StatusCodeResult>(result);
+        Assert.Equal(499, status.StatusCode);
     }
 }

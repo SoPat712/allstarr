@@ -23,30 +23,25 @@ public abstract class BaseStartupValidator : IStartupValidator
     public abstract Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Writes a status line to the console with colored output
+    /// Retained for validator compatibility. The orchestrator owns structured output.
     /// </summary>
     protected static void WriteStatus(string label, string value, ConsoleColor valueColor)
     {
-        Console.Write($"  {label}: ");
-        var originalColor = Console.ForegroundColor;
-        Console.ForegroundColor = valueColor;
-        Console.WriteLine(value);
-        Console.ForegroundColor = originalColor;
+        _ = label;
+        _ = value;
+        _ = valueColor;
     }
 
     /// <summary>
-    /// Writes a detail line to the console in dark gray
+    /// Retained for validator compatibility. Details are returned, not printed directly.
     /// </summary>
     protected static void WriteDetail(string message)
     {
-        var originalColor = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"    -> {message}");
-        Console.ForegroundColor = originalColor;
+        _ = message;
     }
 
     /// <summary>
-    /// Masks a secret string for display, showing only the first few characters
+    /// Reports configuration without revealing any secret characters.
     /// </summary>
     protected static string MaskSecret(string secret)
     {
@@ -55,13 +50,7 @@ public abstract class BaseStartupValidator : IStartupValidator
             return "(empty)";
         }
 
-        const int visibleChars = 4;
-        if (secret.Length <= visibleChars)
-        {
-            return new string('*', secret.Length);
-        }
-
-        return secret[..visibleChars] + new string('*', Math.Min(secret.Length - visibleChars, 8));
+        return "<configured>";
     }
 
     /// <summary>
@@ -74,10 +63,13 @@ public abstract class BaseStartupValidator : IStartupValidator
             TaskCanceledException => ValidationResult.Failure("TIMEOUT", 
                 "Could not reach service within timeout period", ConsoleColor.Yellow),
             
-            HttpRequestException httpEx => ValidationResult.Failure("UNREACHABLE", 
-                httpEx.Message, ConsoleColor.Yellow),
+            HttpRequestException => ValidationResult.Failure("UNREACHABLE",
+                "The service could not be reached", ConsoleColor.Yellow),
             
-            _ => ValidationResult.Failure("ERROR", ex.Message, ConsoleColor.Red)
+            _ => ValidationResult.Failure(
+                "ERROR",
+                $"Validation failed ({ex.GetType().Name})",
+                ConsoleColor.Red)
         };
     }
 

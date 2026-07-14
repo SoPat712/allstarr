@@ -1,0 +1,12 @@
+{
+  "idFormat": "allstarr-vpl-{playlistLinkGuidN}",
+  "eligibleModes": ["virtual", "hybrid"],
+  "requiredScope": ["tenant", "ownerUser", "library", "protocol", "backendInstance"],
+  "includedMatchStates": ["accepted", "pinned"],
+  "excludedMatchStates": ["unresolved", "suggested", "rejected", "ambiguous"],
+  "order": "immutable source position",
+  "jellyfinRoutes": ["/Items/{id}", "/Playlists/{id}/Items"],
+  "subsonicRoutes": ["/rest/getPlaylist", "/rest/getPlaylist.view", "/rest/getAlbum", "/rest/getAlbum.view"],
+  "backendWriteAllowed": false,
+  "externalStreamFallback": false
+}

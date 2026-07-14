@@ -1,0 +1,29 @@
+{
+  "request": {
+    "path": "/Items?SearchTerm=fixture&IncludeItemTypes=Audio&StartIndex=1&Limit=2&api_key=fixture-valid-key"
+  },
+  "upstream": {
+    "body": {
+      "Items": [
+        { "Id": "local-1", "Name": "Fixture One", "Type": "Audio" },
+        { "Id": "local-2", "Name": "Fixture Two", "Type": "Audio" },
+        { "Id": "local-3", "Name": "Fixture Three", "Type": "Audio" },
+        { "Id": "local-4", "Name": "Fixture Four", "Type": "Audio" }
+      ],
+      "TotalRecordCount": 4,
+      "StartIndex": 0
+    }
+  },
+  "expected": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "Items": [
+        { "Id": "local-2", "Name": "Fixture Two", "Type": "Audio" },
+        { "Id": "local-3", "Name": "Fixture Three", "Type": "Audio" }
+      ],
+      "TotalRecordCount": 4,
+      "StartIndex": 1
+    }
+  }
+}

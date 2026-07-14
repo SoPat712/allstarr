@@ -1,7 +1,10 @@
 using allstarr.Filters;
+using allstarr.Core.Identity;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Admin;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -17,9 +20,12 @@ public class AdminUiController : ControllerBase
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWTFSettings _squidWtfSettings;
-    private readonly AppleMusicSettings _appleMusicSettings;
+    private readonly AppleDownloadSettings _appleMusicSettings;
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly ExtensionManager _extensionManager;
+    private readonly ProviderStatusManager _providerStatusManager;
+    private readonly ProviderAccountManagementMode _providerAccountManagementMode;
+    private readonly IProviderRegistry? _providerRegistry;
 
     public AdminUiController(
         IConfiguration configuration,
@@ -27,9 +33,12 @@ public class AdminUiController : ControllerBase
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
         IOptions<SquidWTFSettings> squidWtfSettings,
-        IOptions<AppleMusicSettings> appleMusicSettings,
+        IOptions<AppleDownloadSettings> appleMusicSettings,
         IOptions<MusicBrainzSettings> musicBrainzSettings,
-        ExtensionManager extensionManager)
+        ExtensionManager extensionManager,
+        ProviderStatusManager providerStatusManager,
+        ProviderAccountManagementOptions providerAccountManagementOptions,
+        IProviderRegistry? providerRegistry = null)
     {
         _configuration = configuration;
         _spotifyApiSettings = spotifyApiSettings.Value;
@@ -39,28 +48,44 @@ public class AdminUiController : ControllerBase
         _appleMusicSettings = appleMusicSettings.Value;
         _musicBrainzSettings = musicBrainzSettings.Value;
         _extensionManager = extensionManager;
+        _providerStatusManager = providerStatusManager;
+        _providerAccountManagementMode = providerAccountManagementOptions.ParseManagementMode();
+        _providerRegistry = providerRegistry;
     }
 
     [HttpGet("schema")]
     public IActionResult GetSchema()
     {
         var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
-        var repositories = _extensionManager.GetConfiguredRepositories();
-        var installedExtensionCount = _extensionManager.GetInstalledExtensions().Count;
+        if (!IsAdministratorSession())
+        {
+            return Ok(new AdminUiSchemaResponse
+            {
+                ActiveBackend = activeBackend,
+                ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
+                Routes =
+                [
+                    Route("sources", "#/sources", "Provider accounts", "sources"),
+                    Route("intelligence", "#/intelligence", "Intelligence", "intelligence")
+                ]
+            });
+        }
 
         var schema = new AdminUiSchemaResponse
         {
             ActiveBackend = activeBackend,
+            ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
             Routes = BuildRoutes(),
             Backends = BuildBackends(),
-            Providers = BuildProviders(installedExtensionCount),
-            MultiProviderCategories = ["metadata", "download", "playlist", "lyrics"],
+            Providers = BuildProviders(),
+            ProviderSupportMatrix = CurrentProviderSupportCatalog.All.ToList(),
+            MultiProviderCategories = ["metadata", "streaming", "download", "playlist", "lyrics", "enrichment"],
             PriorityGroups = BuildPriorityGroups(),
             ConfigSections = BuildConfigSections(),
             ExtensionStore = new AdminUiExtensionStore
             {
-                Repositories = repositories,
-                RegistryEnvKey = "EXTENSION_REPOSITORIES",
+                Repositories = [],
+                RegistryEnvKey = "",
                 StoreEndpoint = "/api/admin/extensions/store",
                 InstalledEndpoint = "/api/admin/extensions/installed"
             },
@@ -70,29 +95,29 @@ public class AdminUiController : ControllerBase
                 {
                     Id = "metadata",
                     Label = "Metadata and search",
-                    Description = "Installed extensions participate in multi-provider song, album, and artist search.",
+                    Description = "Enabled metadata extensions participate through the provider router.",
                     Supported = true
                 },
                 new()
                 {
                     Id = "playlist",
                     Label = "Playlist discovery",
-                    Description = "Built-in providers expose playlist search and track expansion through the provider contract.",
+                    Description = "Enabled playlist extensions use the same account-scoped provider contract as built-ins.",
                     Supported = true
                 },
                 new()
                 {
                     Id = "download",
                     Label = "Download providers",
-                    Description = "Download execution is currently limited to built-in provider services.",
-                    Supported = false
+                    Description = "Enabled download extensions run as durable, idempotent jobs in a managed workspace.",
+                    Supported = true
                 },
                 new()
                 {
                     Id = "lyrics",
                     Label = "Lyrics providers",
-                    Description = "Lyrics are routed through the built-in Spotify sidecar, LyricsPlus, and LRCLib orchestrator.",
-                    Supported = false
+                    Description = "Enabled lyrics extensions participate through the typed provider contract.",
+                    Supported = true
                 }
             ]
         };
@@ -100,12 +125,19 @@ public class AdminUiController : ControllerBase
         return Ok(schema);
     }
 
+    private bool IsAdministratorSession() =>
+        ControllerContext.HttpContext?.Items.TryGetValue(
+            AdminAuthSessionService.HttpContextSessionItemKey,
+            out var value) == true &&
+        value is AdminAuthSession { IsAdministrator: true };
+
     private static List<AdminUiRoute> BuildRoutes() =>
     [
         Route("home", "#/home", "Home", "home"),
         Route("library", "#/library", "Library", "library"),
         Route("sources", "#/sources", "Sources", "sources"),
         Route("activity", "#/activity", "Activity", "activity"),
+        Route("intelligence", "#/intelligence", "Intelligence", "intelligence"),
         Route("settings", "#/settings", "Settings", "settings")
     ];
 
@@ -122,7 +154,6 @@ public class AdminUiController : ControllerBase
             ConfigSchema =
             [
                 Field("SUBSONIC_URL", "Server URL", "url", "subsonic.url"),
-                Field("MUSIC_SERVICE", "Default music service", "select", "musicService", ["SquidWTF", "AppleMusic", "Deezer", "Qobuz"]),
                 Field("ENABLE_EXTERNAL_PLAYLISTS", "External playlists", "toggle", "enableExternalPlaylists")
             ]
         },
@@ -141,17 +172,19 @@ public class AdminUiController : ControllerBase
         }
     ];
 
-    private List<AdminUiProvider> BuildProviders(int installedExtensionCount) =>
-    [
+    private List<AdminUiProvider> BuildProviders()
+    {
+        List<AdminUiProvider> providers =
+        [
         new()
         {
             Id = "spotify",
             Name = "Spotify",
             Icon = "spotify",
-            Status = _spotifyApiSettings.Enabled
+            Status = ProviderStatus("spotify", _spotifyApiSettings.Enabled
                 ? (!string.IsNullOrWhiteSpace(_spotifyApiSettings.SessionCookie) ? "configured" : "needs_config")
-                : "disabled",
-            Categories = ["metadata", "playlist", "lyrics"],
+                : "disabled"),
+            Categories = ["playlist", "lyrics"],
             ConfigSchema =
             [
                 Field("SPOTIFY_API_ENABLED", "Enabled", "toggle", "spotifyApi.enabled"),
@@ -162,15 +195,15 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
-            Id = "applemusic",
-            Name = "Apple Music",
+            Id = "apple-download",
+            Name = "Apple download",
             Icon = "applemusic",
-            Status = string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "needs_login",
-            Categories = ["metadata", "download", "streaming", "playlist"],
+            Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown"),
+            Categories = ["metadata", "download", "streaming"],
             ConfigSchema =
             [
-                Field("APPLE_MUSIC_AIO_URL", "Sidecar URL", "url", "appleMusic.baseUrl"),
-                Field("APPLE_MUSIC_QUALITY", "Quality", "select", "appleMusic.quality", ["alac-16-44", "alac-24-48", "alac-24-96", "alac-24-192"])
+                Field("APPLE_DOWNLOAD_URL", "External provider URL", "url", "appleDownload.baseUrl"),
+                Field("APPLE_DOWNLOAD_QUALITY", "Quality", "select", "appleDownload.quality", ["alac-16-44", "alac-24-48", "alac-24-96", "alac-24-192"])
             ]
         },
         new()
@@ -178,7 +211,7 @@ public class AdminUiController : ControllerBase
             Id = "deezer",
             Name = "Deezer",
             Icon = "deezer",
-            Status = string.IsNullOrWhiteSpace(_deezerSettings.Arl) ? "needs_config" : "configured",
+            Status = ProviderStatus("deezer", string.IsNullOrWhiteSpace(_deezerSettings.Arl) ? "needs_config" : "configured"),
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
@@ -193,7 +226,7 @@ public class AdminUiController : ControllerBase
             Id = "qobuz",
             Name = "Qobuz",
             Icon = "qobuz",
-            Status = string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured",
+            Status = ProviderStatus("qobuz", string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured"),
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
@@ -208,8 +241,8 @@ public class AdminUiController : ControllerBase
             Id = "squidwtf",
             Name = "SquidWTF",
             Icon = "squidwtf",
-            Status = string.IsNullOrWhiteSpace(_squidWtfSettings.Quality) ? "unknown" : "configured",
-            Categories = ["metadata", "download", "streaming", "playlist"],
+            Status = ProviderStatus("squidwtf", string.IsNullOrWhiteSpace(_squidWtfSettings.Quality) ? "unknown" : "configured"),
+            Categories = ["metadata"],
             ConfigSchema =
             [
                 Field("SQUIDWTF_QUALITY", "Quality", "select", "squidWtf.quality", ["LOW", "HIGH", "LOSSLESS"]),
@@ -222,7 +255,7 @@ public class AdminUiController : ControllerBase
             Name = "MusicBrainz enrichment",
             Icon = "musicbrainz",
             Status = _musicBrainzSettings.Enabled ? "configured" : "disabled",
-            Categories = ["metadata"],
+            Categories = ["enrichment"],
             Notes = ["Genres only", "Optional enrichment"],
             ConfigSchema =
             [
@@ -230,15 +263,6 @@ public class AdminUiController : ControllerBase
                 Field("MUSICBRAINZ_USERNAME", "Username", "text", "musicBrainz.username"),
                 Field("MUSICBRAINZ_PASSWORD", "Password", "password", "musicBrainz.password", sensitive: true)
             ]
-        },
-        new()
-        {
-            Id = "extensions",
-            Name = "Installed extensions",
-            Icon = "extension",
-            Status = installedExtensionCount > 0 ? "configured" : "available",
-            Categories = ["metadata"],
-            Notes = [$"{installedExtensionCount} installed"]
         },
         new()
         {
@@ -256,18 +280,112 @@ public class AdminUiController : ControllerBase
             Status = "available",
             Categories = ["lyrics"]
         }
-    ];
+        ];
+
+        var runtimeStatuses = _providerStatusManager.GetAllStatuses();
+        if (_providerRegistry != null)
+        {
+            providers.AddRange(_providerRegistry.Providers
+                .Where(item => item.Origin == ProviderOrigin.Extension)
+                .Select(item => new AdminUiProvider
+                {
+                    Id = item.Id,
+                    Name = item.DisplayName,
+                    Icon = "extension",
+                    Status = "unknown",
+                    Categories = item.Capabilities.Where(capability => capability.HasUsableImplementation)
+                        .Select(capability => capability.Capability.ToString().ToLowerInvariant()).ToList(),
+                    Notes = [$"Extension SDK {item.SdkVersion}"]
+                }));
+        }
+        foreach (var provider in providers)
+        {
+            var statuses = runtimeStatuses
+                .Where(status => status.Provider.Equals(provider.Id, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (statuses.Count == 0)
+            {
+                continue;
+            }
+
+            provider.RuntimeCapabilities = statuses.Select(ToAdminRuntimeCapability).ToList();
+            provider.Status = AggregateProviderStatus(statuses);
+        }
+
+        return providers;
+    }
+
+    private static AdminUiProviderRuntimeCapability ToAdminRuntimeCapability(ProviderRuntimeStatus status) =>
+        new()
+        {
+            Id = status.Capability,
+            Supported = status.IsSupported,
+            Configuration = !status.IsSupported ? "unsupported" : status.Configuration switch
+            {
+                ProviderConfigurationState.NotRequired => "not_required",
+                ProviderConfigurationState.Configured => "configured",
+                _ => "needs_configuration"
+            },
+            Health = status.Health.ToString().ToLowerInvariant(),
+            Ready = status.IsReady,
+            CanAttempt = status.CanAttempt,
+            TestedAt = status.TestedAt,
+            ReasonCode = status.ReasonCode
+        };
+
+    private static string AggregateProviderStatus(IReadOnlyList<ProviderRuntimeStatus> statuses)
+    {
+        if (statuses.All(status => !status.IsSupported))
+        {
+            return "unsupported";
+        }
+
+        if (statuses.All(status => !status.IsEnabled))
+        {
+            return "disabled";
+        }
+
+        if (statuses.Any(status => status.Health == ProviderHealthState.Testing))
+        {
+            return "testing";
+        }
+
+        if (statuses.Any(status => status.Health == ProviderHealthState.Degraded))
+        {
+            return "degraded";
+        }
+
+        var enabledSupported = statuses.Where(status => status.IsEnabled && status.IsSupported).ToList();
+        if (enabledSupported.Count > 0 && enabledSupported.All(status =>
+                status.Configuration == ProviderConfigurationState.NeedsConfiguration || status.IsReady) &&
+            enabledSupported.Any(status => status.IsReady))
+        {
+            return "healthy";
+        }
+
+        if (statuses.All(status => !status.CanAttempt))
+        {
+            return "needs_config";
+        }
+
+        if (statuses.Any(status => status.Configuration == ProviderConfigurationState.NeedsConfiguration))
+        {
+            return "partial_config";
+        }
+
+        return "unknown";
+    }
 
     private List<AdminUiPriorityGroup> BuildPriorityGroups() =>
     [
         Priority("metadata", "Metadata search priority", "MULTI_PROVIDER_METADATA_ORDER", "MULTI_PROVIDER_ENABLED_SEARCH",
-            "spotify,applemusic,deezer,qobuz,squidwtf"),
+            "deezer,qobuz,squidwtf"),
         Priority("download", "Download priority", "MULTI_PROVIDER_DOWNLOAD_ORDER", null,
-            "applemusic,deezer,qobuz,squidwtf"),
+            "deezer,qobuz"),
         Priority("streaming", "Streaming priority", "MULTI_PROVIDER_STREAMING_ORDER", null,
-            "applemusic,deezer,qobuz,squidwtf"),
+            "deezer,qobuz"),
         Priority("playlist", "Playlist discovery priority", "MULTI_PROVIDER_PLAYLIST_ORDER", "MULTI_PROVIDER_ENABLED_PLAYLIST",
-            "spotify,applemusic,deezer,qobuz,squidwtf"),
+            "spotify,deezer,qobuz"),
         Priority("lyrics", "Lyrics priority", "MULTI_PROVIDER_LYRICS_ORDER", null,
             "spotify,lyricsplus,lrclib")
     ];
@@ -288,26 +406,34 @@ public class AdminUiController : ControllerBase
             EnabledEnvKey = enabledEnvKey,
             Providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(p => p.ToLowerInvariant())
+                .Where(p => id == "metadata" || p != "squidwtf")
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList()
         };
+    }
+
+    private string ProviderStatus(string id, string configuredStatus)
+    {
+        var disabled = (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(p => p.Equals(id, StringComparison.OrdinalIgnoreCase));
+        return disabled ? "disabled" : configuredStatus;
     }
 
     private static List<AdminUiConfigSection> BuildConfigSections() =>
     [
         Section("general", "General",
         [
-            Field("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
-            Field("MUSIC_SERVICE", "Primary music service", "select", "musicService", ["SquidWTF", "AppleMusic", "Deezer", "Qobuz"]),
+            DeploymentField("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
             Field("STORAGE_MODE", "Storage mode", "select", "library.storageMode", ["Permanent", "Cache"]),
             Field("DOWNLOAD_MODE", "Download mode", "select", "library.downloadMode", ["Track", "Album"]),
             Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
-            Field("REDIS_ENABLED", "Redis", "toggle", "redisEnabled")
+            DeploymentField("REDIS_ENABLED", "Valkey cache", "toggle", "redisEnabled")
         ]),
         Section("paths", "Library paths",
         [
-            Field("LIBRARY_DOWNLOAD_PATH", "Download path", "text", "library.downloadPath"),
-            Field("LIBRARY_KEPT_PATH", "Kept downloads path", "text", "library.keptPath"),
+            DeploymentField("LIBRARY_DOWNLOAD_PATH", "Download path", "text", "library.downloadPath"),
+            DeploymentField("LIBRARY_KEPT_PATH", "Kept downloads path", "text", "library.keptPath"),
             Field("PLAYLISTS_DIRECTORY", "Playlists directory", "text", "playlistsDirectory")
         ]),
         Section("cache", "Cache",
@@ -323,14 +449,14 @@ public class AdminUiController : ControllerBase
         ]),
         Section("network", "Network and security",
         [
-            Field("ADMIN_BIND_ANY_IP", "Bind admin on all interfaces", "toggle", "admin.bindAnyIp"),
-            Field("ADMIN_TRUSTED_SUBNETS", "Trusted admin subnets", "text", "admin.trustedSubnets"),
-            Field("DEBUG_LOG_ALL_REQUESTS", "Request usage logging", "toggle", "debug.logAllRequests")
+            DeploymentField("ADMIN_BIND_ANY_IP", "Bind admin on all interfaces", "toggle", "admin.bindAnyIp"),
+            DeploymentField("ADMIN_TRUSTED_SUBNETS", "Trusted admin subnets", "text", "admin.trustedSubnets"),
+            DeploymentField("DEBUG_LOG_ALL_REQUESTS", "Request usage logging", "toggle", "debug.logAllRequests")
         ]),
         Section("spotify-import", "Spotify import",
         [
             Field("SPOTIFY_IMPORT_ENABLED", "Enabled", "toggle", "spotifyImport.enabled"),
-            Field("SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS", "Matching interval hours", "number", "spotifyImport.matchingIntervalHours", min: 1)
+            Field("SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS", "Matching interval hours", "number", "spotifyImport.matchingIntervalHours", min: 0)
         ])
     ];
 
@@ -345,7 +471,10 @@ public class AdminUiController : ControllerBase
         List<string>? options = null,
         string? placeholder = null,
         bool sensitive = false,
-        bool requiresRestart = true,
+        bool requiresRestart = false,
+        string ownership = "durable",
+        bool readOnly = false,
+        string? helpText = null,
         int? min = null,
         int? max = null) =>
         new()
@@ -358,7 +487,26 @@ public class AdminUiController : ControllerBase
             Placeholder = placeholder,
             Sensitive = sensitive,
             RequiresRestart = requiresRestart,
+            Ownership = ownership,
+            ReadOnly = readOnly,
+            HelpText = helpText,
             Min = min,
             Max = max
         };
+
+    private static AdminUiConfigField DeploymentField(
+        string key,
+        string label,
+        string type,
+        string? valuePath,
+        List<string>? options = null) =>
+        Field(
+            key,
+            label,
+            type,
+            valuePath,
+            options,
+            ownership: "deployment",
+            readOnly: true,
+            helpText: "Edit in Compose/.env and recreate the container to apply this deployment-owned value.");
 }

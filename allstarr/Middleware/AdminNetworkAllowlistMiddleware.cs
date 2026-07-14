@@ -12,6 +12,7 @@ public class AdminNetworkAllowlistMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<AdminNetworkAllowlistMiddleware> _logger;
     private readonly List<IPNetwork> _trustedSubnets;
+    private readonly IReadOnlySet<IPAddress> _containerGateways;
 
     public AdminNetworkAllowlistMiddleware(
         RequestDelegate next,
@@ -21,6 +22,7 @@ public class AdminNetworkAllowlistMiddleware
         _next = next;
         _logger = logger;
         _trustedSubnets = AdminNetworkBindingPolicy.ParseTrustedSubnets(configuration);
+        _containerGateways = AdminNetworkBindingPolicy.ResolveContainerGateways(configuration);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -32,7 +34,9 @@ public class AdminNetworkAllowlistMiddleware
         }
 
         var remoteIp = context.Connection.RemoteIpAddress;
-        if (AdminNetworkBindingPolicy.IsRemoteIpAllowed(remoteIp, _trustedSubnets))
+        var normalizedRemoteIp = remoteIp == null ? null : AdminNetworkBindingPolicy.NormalizeAddress(remoteIp);
+        if (AdminNetworkBindingPolicy.IsRemoteIpAllowed(remoteIp, _trustedSubnets) ||
+            (normalizedRemoteIp != null && _containerGateways.Contains(normalizedRemoteIp)))
         {
             await _next(context);
             return;

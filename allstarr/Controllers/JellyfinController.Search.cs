@@ -522,21 +522,16 @@ public partial class JellyfinController
             (includesAlbums && (externalAlbumItems.Count > 0 || mergedPlaylistItems.Count > 0)) ||
             (includesArtists && externalArtistItems.Count > 0);
 
-        // Apply pagination
-        var pagedItems = items.Skip(startIndex).Take(limit).ToList();
+        var shapedResponse = _searchProtocolAdapter.ShapeItemsResponse(items, startIndex, limit);
 
-        _logger.LogDebug("Returning {Count} items (total: {Total})", pagedItems.Count, items.Count);
+        _logger.LogDebug(
+            "Returning protocol-shaped page starting at {StartIndex} (total: {Total})",
+            startIndex,
+            items.Count);
 
         try
         {
-            // Return with PascalCase - use ContentResult to bypass JSON serialization issues
-            var response = new
-            {
-                Items = pagedItems,
-                TotalRecordCount = items.Count,
-                StartIndex = startIndex
-            };
-            var json = SerializeSearchResponseJson(response);
+            var json = shapedResponse.Body;
 
             // Cache search results in Redis using the configured search TTL.
             if (!string.IsNullOrWhiteSpace(searchTerm) &&
@@ -566,22 +561,18 @@ public partial class JellyfinController
                 _logger.LogDebug("JSON response preview: {Json}", preview);
             }
 
-            return Content(json, "application/json");
+            return new ContentResult
+            {
+                Content = json,
+                ContentType = shapedResponse.ContentType,
+                StatusCode = shapedResponse.StatusCode
+            };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error serializing search response");
             throw;
         }
-    }
-
-    private static string SerializeSearchResponseJson<T>(T response) where T : class
-    {
-        return JsonSerializer.Serialize(response, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = null,
-            DictionaryKeyPolicy = null
-        });
     }
 
     /// <summary>

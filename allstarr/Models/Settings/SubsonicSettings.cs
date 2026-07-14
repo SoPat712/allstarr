@@ -94,7 +94,7 @@ public enum MusicService
 	SquidWTF,
 
 	/// <summary>
-	/// Apple Music via gamdl-aio sidecar
+	/// Apple catalog audio through an optional external download gateway
 	/// </summary>
 	AppleMusic
 }
@@ -102,6 +102,12 @@ public enum MusicService
 public class SubsonicSettings
 {
     public string? Url { get; set; }
+
+    /// <summary>
+    /// Global encrypted-secret reference used only for background playlist writes.
+    /// The referenced JSON contains a username and password; credentials never enter job payloads.
+    /// </summary>
+    public string? PlaylistCredentialReference { get; set; }
     
     /// <summary>
     /// Explicit content filter mode (default: All)

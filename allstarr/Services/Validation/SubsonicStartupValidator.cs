@@ -71,17 +71,21 @@ public class SubsonicStartupValidator : BaseStartupValidator
             WriteDetail("Could not reach server within 10 seconds");
             return ValidationResult.Failure("TIMEOUT", "Could not reach server within timeout period", ConsoleColor.Red);
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException)
         {
             WriteStatus("Subsonic server", "UNREACHABLE", ConsoleColor.Red);
-            WriteDetail(ex.Message);
-            return ValidationResult.Failure("UNREACHABLE", ex.Message, ConsoleColor.Red);
+            return ValidationResult.Failure(
+                "UNREACHABLE",
+                "The Subsonic server could not be reached",
+                ConsoleColor.Red);
         }
         catch (Exception ex)
         {
             WriteStatus("Subsonic server", "ERROR", ConsoleColor.Red);
-            WriteDetail(ex.Message);
-            return ValidationResult.Failure("ERROR", ex.Message, ConsoleColor.Red);
+            return ValidationResult.Failure(
+                "ERROR",
+                $"Subsonic validation failed ({ex.GetType().Name})",
+                ConsoleColor.Red);
         }
     }
 }

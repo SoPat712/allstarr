@@ -1,0 +1,63 @@
+[
+  {
+    "name": "local embedded lyrics win before fallback",
+    "requestPath": "/Audio/local-song/Lyrics?api_key=fixture-key",
+    "upstreamLyricsStatus": 200,
+    "upstreamLyricsBody": {
+      "Metadata": { "Title": "Embedded Fixture", "IsSynced": false },
+      "Lyrics": [{ "Text": "local first" }]
+    },
+    "expectedStatus": 200,
+    "expectedBodyKind": "upstream"
+  },
+  {
+    "name": "local embedded miss falls back to item lookup",
+    "requestPath": "/Audio/not-a-song/Lyrics?api_key=fixture-key",
+    "upstreamLyricsStatus": 404,
+    "upstreamLyricsBody": { "error": "missing" },
+    "itemBody": { "Id": "not-a-song", "Type": "Movie", "Name": "Not Audio" },
+    "expectedStatus": 404,
+    "expectedBody": { "error": "Song not found" }
+  },
+  {
+    "name": "local metadata falls through to a lyrics not found response",
+    "requestPath": "/Audio/no-lyrics/Lyrics?api_key=fixture-key",
+    "upstreamLyricsStatus": 404,
+    "upstreamLyricsBody": { "error": "missing" },
+    "itemBody": {
+      "Id": "no-lyrics",
+      "Type": "Audio",
+      "Name": "Fixture Song",
+      "AlbumArtist": "Fixture Artist",
+      "Album": "Fixture Album",
+      "RunTimeTicks": 1230000000,
+      "ProviderIds": {}
+    },
+    "expectedStatus": 404,
+    "expectedBody": { "error": "Lyrics not found" }
+  },
+  {
+    "name": "local embedded backend error retains current fallback behavior",
+    "requestPath": "/Audio/error-lyrics/Lyrics?api_key=fixture-key",
+    "upstreamLyricsStatus": 503,
+    "upstreamLyricsBody": { "error": "backend unavailable" },
+    "itemBody": {
+      "Id": "error-lyrics",
+      "Type": "Audio",
+      "Name": "Fixture Song",
+      "AlbumArtist": "Fixture Artist",
+      "Album": "Fixture Album",
+      "RunTimeTicks": 1230000000,
+      "ProviderIds": {}
+    },
+    "expectedStatus": 404,
+    "expectedBody": { "error": "Lyrics not found" }
+  },
+  {
+    "name": "missing external metadata is a protocol not found",
+    "requestPath": "/Items/ext-deezer-song-missing/Lyrics?api_key=fixture-key",
+    "external": true,
+    "expectedStatus": 404,
+    "expectedBody": { "error": "Song not found" }
+  }
+]

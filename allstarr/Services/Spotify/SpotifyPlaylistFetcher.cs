@@ -392,6 +392,10 @@ public class SpotifyPlaylistFetcher : BackgroundService
                 // Sleep for 1 hour before checking again
                 await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in playlist fetcher loop");

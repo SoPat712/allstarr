@@ -1,0 +1,202 @@
+[
+  {
+    "protocol": "jellyfin",
+    "feature": "authentication",
+    "currentStatus": "explicit",
+    "target": "Preserve upstream status/body and resolve a verified backend principal before synthesized work.",
+    "authBoundary": "Transparent Users/AuthenticateByName relay; non-public controller actions verify client credentials with Users/Me, resolve any linked canonical identity, and create a secret-free ProtocolExecutionContext before execution.",
+    "fixture": "jellyfin-authentication.json",
+    "testLocation": "ProtocolRouteFixtureTests; ProxyResponseResultFactoryTests; HostCompositionTests",
+    "notes": "The verification request forwards client auth headers plus api_key/access_token only and never substitutes the configured server credential."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "search-and-browse",
+    "currentStatus": "explicit-partial",
+    "target": "Authenticated, stable paging/order with local and eligible external results.",
+    "authBoundary": "Users/Me verifies a backend principal and the shared protocol filter creates a ProtocolExecutionContext before the action can read cache or call local/external search; unresolved users remain transparent but cannot authorize user-owned work.",
+    "fixture": "jellyfin-auth-boundary.json; jellyfin-search-shaping.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinSearchResponseSerializationTests; JellyfinSearchInterleaveTests; JellyfinControllerSearchLimitTests",
+    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and current paging semantics are fixture-covered behind the Jellyfin search protocol adapter. Repeated fields and double-paging remain parity gaps."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "item-metadata-and-images",
+    "currentStatus": "explicit-partial",
+    "target": "Typed external IDs and client-compatible metadata/images without fabricated stream facts.",
+    "authBoundary": "Direct local and external item actions require Users/Me verification; admin artwork uses a separately protected server credential adapter.",
+    "fixture": "jellyfin-auth-boundary.json; jellyfin-item-image-shaping.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinResponseStructureTests; JellyfinImageTagExtractionTests; JellyfinPlaybackMetadataResolverTests",
+    "notes": "External item, placeholder image, ETag, and conditional 304 shaping are fixture-covered behind Jellyfin protocol adapters. External codec/size/path facts are not yet verified."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "streaming-and-ranges",
+    "currentStatus": "explicit-partial",
+    "target": "Streaming lane with range, cancellation, expiry, and typed provider failure semantics.",
+    "authBoundary": "Users/Me verification and the shared ProtocolExecutionContext precede local or external stream actions; unresolved users cannot authorize user-owned provider work.",
+    "fixture": "jellyfin-auth-boundary.json; protocol-streaming-ranges.json",
+    "testLocation": "ProtocolRouteFixtureTests; ProtocolStreamingResponseAdapterTests; JellyfinProxyServiceTests",
+    "notes": "Local relay preserves GET/HEAD, Range, If-Range, 206/416 status, media type, validators, cache headers, and cancellation. Typed provider expiry and range-lease handling remain gaps."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "favorites",
+    "currentStatus": "explicit-partial",
+    "target": "Backend mutation first, then durable idempotent optional actions; unstar never deletes implicitly.",
+    "authBoundary": "Users/Me verifies the backend caller and ProtocolExecutionContext requires a resolved canonical actor before optional external favorite work; route/query userId values shape the backend request only.",
+    "fixture": "jellyfin-auth-boundary.json; jellyfin-favorite-playback.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; FavoriteFileSafetyTests",
+    "notes": "Backend status/body and the external UserItemDataDto shape are fixture-covered. Resolved-user Task.Run work must still be retired behind the Phase 6 durable pipeline; unfavorite preserves managed files."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "playlists",
+    "currentStatus": "explicit-partial",
+    "target": "Tenant-scoped virtual/materialized/hybrid playlist links with paging and idempotent writes.",
+    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact tenant owner, library, protocol, and backend instance before persisted snapshots or matches are read.",
+    "fixture": "jellyfin-playlist-order.json; provider-neutral-virtual-playlists.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; InjectedPlaylistItemHelperTests; VirtualPlaylistProtocolAdapterTests",
+    "notes": "External compatibility reads and provider-neutral virtual/hybrid reads preserve source order. The provider-neutral path exposes accepted or pinned local matches only and never invokes a backend playlist target."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "lyrics",
+    "currentStatus": "explicit-partial",
+    "target": "Local-first typed lyrics capability with client-compatible not-found/error shaping.",
+    "authBoundary": "Current external lookup is not user-account scoped.",
+    "fixture": "jellyfin-lyrics.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; LrclibServiceTests",
+    "notes": "Local embedded lyrics are preserved before fallback, missing songs and lyrics retain the current 404 shapes, and synced/plain response serialization is adapter-covered. External lookup is not yet user-account scoped."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "playback-and-scrobbling",
+    "currentStatus": "explicit-partial",
+    "target": "Verified identity, durable playback/scrobble events, and preserved protocol responses.",
+    "authBoundary": "Verified playback requests remain transparent, while scrobbling and synthetic played signals require a resolved canonical actor and cannot trust payload or route user IDs.",
+    "fixture": "jellyfin-favorite-playback.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinSessionManagerTests; PlaybackSessionTests; ScrobblingOrchestratorTests",
+    "notes": "Capabilities status mapping and progress best-effort 204 behavior are route-fixture covered. Durable playback/scrobble events remain later work."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "instant-mix",
+    "currentStatus": "explicit-partial",
+    "target": "All six OpenAPI item classes with deterministic recommendation policy.",
+    "authBoundary": "All routes require Users/Me verification; external synthesized provider work also requires a resolved canonical actor and cannot trust query userId.",
+    "fixture": "jellyfin-instant-mix-paths.json",
+    "testLocation": "ProtocolRouteFixtureTests; ProtocolSupportMatrixTests; JellyfinItemLyricsImageProtocolAdapterTests",
+    "notes": "All six pinned OpenAPI route classes are explicit and preserve local backend paths, queries, statuses, and bodies. Deterministic external recommendation policy remains Phase 7 work."
+  },
+  {
+    "protocol": "jellyfin",
+    "feature": "generic-relay",
+    "currentStatus": "explicit",
+    "target": "Method/body/query/status/header/content-type transparent relay for allowed routes.",
+    "authBoundary": "Forward client auth without substituting the server credential.",
+    "fixture": "jellyfin-generic-relay.json",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinProxyServiceTests; ProtocolRelayResponseResultTests; ProxyResponseResultFactoryTests",
+    "notes": "Allowed catch-all routes preserve GET/POST/PUT/PATCH/DELETE/HEAD, raw query and body, client authentication and end-to-end headers, upstream status, media type, binary/text body, and HEAD body suppression. Hop-by-hop transport headers are intentionally removed."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "authentication",
+    "currentStatus": "explicit-partial",
+    "target": "Preserve u+p, u+t+s, and apiKey boundaries and map a verified principal for synthesized work.",
+    "authBoundary": "A resource filter verifies u+p and u+t+s with backend ping, verifies apiKey with ping plus tokenInfo, rejects missing/conflicting mechanisms, resolves any linked canonical identity, and creates a secret-free ProtocolExecutionContext before synthesized work.",
+    "fixture": "subsonic-auth-boundary.json",
+    "testLocation": "ProtocolRouteFixtureTests",
+    "notes": "Missing and failed u+p/u+t+s/apiKey cases are fixture-covered, as is successful apiKey principal resolution; exhaustive protocol error-code mapping remains a gap."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "search3",
+    "currentStatus": "explicit-partial",
+    "target": "GET/form POST and XML/JSON with independent offsets/counts and stable order.",
+    "authBoundary": "Backend credentials are verified and the shared ProtocolExecutionContext is created before the merge can read cache or call external metadata; legacy synthesis does not yet select a provider account through ProviderRouter.",
+    "fixture": "subsonic-empty-search.json; subsonic-auth-boundary.json; subsonic-search-windows.json",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicProtocolAdapterTests; SubsonicRequestParserTests; SubsonicResponseBuilderTests; SubsonicModelMapperTests",
+    "notes": "GET/form POST, XML/JSON, empty-query relay, failed-auth blocking, and independent song/album/artist external offsets and counts are fixture-covered."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "item-metadata-and-cover-art",
+    "currentStatus": "explicit-partial",
+    "target": "Protocol-complete song/album/artist fields and safe conditional image relay.",
+    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede both relayed and synthesized item/image handling; legacy synthesis does not yet select a provider account through ProviderRouter.",
+    "fixture": "subsonic-auth-boundary.json; subsonic-item-relay.json",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicModelMapperTests; SubsonicResponseBuilderTests",
+    "notes": "Local item errors preserve the exact .view route, protocol body, and status. Conditional cover-art validators and end-to-end response headers are preserved. Several optional OpenSubsonic song fields remain incomplete."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "streaming-and-ranges",
+    "currentStatus": "explicit-partial",
+    "target": "Range/If-Range/HEAD/cancellation and Subsonic-compatible errors through the streaming lane.",
+    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede local relay or external provider work; unresolved users cannot authorize user-owned provider work.",
+    "fixture": "subsonic-auth-boundary.json; protocol-streaming-ranges.json",
+    "testLocation": "ProtocolRouteFixtureTests; ProtocolStreamingResponseAdapterTests; SubsonicProxyServiceTests",
+    "notes": "Local relay preserves GET/POST/HEAD, Range, If-Range, 206/416 status, media type, validators, cache headers, and maps client cancellation to 499. Upstream ranges are not processed a second time. Typed provider expiry and range leases remain gaps."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "star-and-unstar",
+    "currentStatus": "explicit-partial",
+    "target": "Repeated id/albumId/artistId values, backend-first mutation, durable optional work, no implicit deletion.",
+    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede star/unstar; external optional work is skipped unless BackendIdentityResolver produced a linked canonical actor.",
+    "fixture": "subsonic-auth-boundary.json; subsonic-relay-fidelity.json",
+    "testLocation": "ProtocolRouteFixtureTests; FavoriteFileSafetyTests",
+    "notes": "Backend star/unstar preserves .view routes, GET/form POST, repeated IDs, status, body, and headers. External playlist star requires a linked actor, but optional favorite work remains non-durable Phase 6 work."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "playlist-read",
+    "currentStatus": "explicit",
+    "target": "Tenant-scoped virtual/materialized/hybrid playlist links with ordered local matches and idempotent writes.",
+    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact tenant owner, library, Subsonic-compatible backend instance, and optional musicFolderId scope.",
+    "fixture": "provider-neutral-virtual-playlists.json",
+    "testLocation": "VirtualPlaylistProtocolAdapterTests; ProtocolSupportMatrixTests",
+    "notes": "getPlaylist and getPlaylist.view shape XML or JSON from the immutable source snapshot using accepted or pinned local backend IDs in source order. Native playlist IDs still relay, and virtual reads never mutate the backend or silently fall back to external streaming."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "playlist-update",
+    "currentStatus": "relay-partial",
+    "target": "Repeated ordered adds/removes and provider-neutral tenant-scoped links.",
+    "authBoundary": "Backend verification precedes relay; repeated ordered parameters retain query/form source, but canonical account scope is not resolved.",
+    "fixture": "subsonic-relay-fidelity.json",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests",
+    "notes": "Repeated adds/removes and GET/form POST fidelity are covered; provider-neutral tenant-scoped links remain target work."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "lyrics",
+    "currentStatus": "explicit",
+    "target": "OpenSubsonic getLyricsBySongId XML/JSON shaping through the lyrics capability.",
+    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede local relay or external structured-lyrics lookup; an unresolved user cannot authorize user-owned provider work.",
+    "fixture": "subsonic-structured-lyrics.json",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicLyricsProtocolAdapterTests; SubsonicResponseBuilderTests",
+    "notes": "Local IDs preserve upstream GET/form POST status, body, and content type. External IDs return OpenSubsonic XML/JSON with deterministic synced LRC parsing, plain-lyrics fallback, and a successful empty list when no lyrics exist."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "scrobble",
+    "currentStatus": "relay-partial",
+    "target": "Repeated id/time/submission events with durable provider-scoped idempotency.",
+    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede transparent scrobble relay; durable external-ID translation and provider-scoped idempotency remain later pipeline work.",
+    "fixture": "subsonic-relay-fidelity.json",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests",
+    "notes": "Repeated id/time/submission form pairs retain order and source and backend status/body/headers are preserved. Durable external scrobble translation remains later pipeline work."
+  },
+  {
+    "protocol": "subsonic",
+    "feature": "generic-relay",
+    "currentStatus": "explicit",
+    "target": "Method/form/query repetition/status/header/body transparent relay.",
+    "authBoundary": "Forward backend credentials without authorizing synthesized work from opaque values alone.",
+    "fixture": "subsonic-relay-fidelity.json; subsonic-item-relay.json",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicProxyServiceTests; SubsonicRequestParserTests",
+    "notes": "GET/form POST method, exact .view path, query/form source, repetition/order, body, content type, upstream status, conditional request headers, and end-to-end response headers are preserved. Hop-by-hop headers are intentionally removed."
+  }
+]

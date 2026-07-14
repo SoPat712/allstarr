@@ -1903,30 +1903,12 @@ public class PlaylistController : ControllerBase
 
     private string? ResolvePreferredExternalProvider(SpotifyTrackMapping mapping)
     {
-        var preferredProvider = GetCurrentMusicServiceProvider();
-        if (mapping.TryGetExternalTarget(preferredProvider, out var provider, out _))
+        if (mapping.TryGetExternalTarget(null, out var provider, out _))
         {
             return NormalizeExternalProviderForDisplay(provider);
         }
 
         return NormalizeExternalProviderForDisplay(mapping.ExternalProvider);
-    }
-
-    private string? GetCurrentMusicServiceProvider()
-    {
-        var backendType = _configuration.GetValue<BackendType>("Backend:Type");
-        var musicService = backendType == BackendType.Jellyfin
-            ? _configuration.GetValue<MusicService>("Jellyfin:MusicService")
-            : _configuration.GetValue<MusicService>("Subsonic:MusicService");
-
-        return musicService switch
-        {
-            MusicService.Deezer => "deezer",
-            MusicService.Qobuz => "qobuz",
-            MusicService.SquidWTF => "squidwtf",
-            MusicService.AppleMusic => "applemusic",
-            _ => null
-        };
     }
 
     /// <summary>
@@ -2039,6 +2021,47 @@ public class PlaylistController : ControllerBase
         };
 
         return await _helperService.UpdateEnvConfigAsync(updateRequest.Updates);
+    }
+
+    /// <summary>
+    /// Updates a playlist sync schedule independently of the selected media backend.
+    /// </summary>
+    [HttpPut("playlists/{name}/schedule")]
+    public async Task<IActionResult> UpdatePlaylistSchedule(
+        string name,
+        [FromBody] UpdateScheduleRequest request)
+    {
+        var decodedName = Uri.UnescapeDataString(name);
+        if (string.IsNullOrWhiteSpace(request.SyncSchedule))
+        {
+            return BadRequest(new { error = "SyncSchedule is required" });
+        }
+
+        var cronParts = request.SyncSchedule.Trim().Split(
+            new[] { ' ' },
+            StringSplitOptions.RemoveEmptyEntries);
+        if (cronParts.Length != 5)
+        {
+            return BadRequest(new
+            {
+                error = "Invalid cron format. Expected: minute hour day month dayofweek"
+            });
+        }
+
+        var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var playlist = currentPlaylists.FirstOrDefault(item =>
+            item.Name.Equals(decodedName, StringComparison.OrdinalIgnoreCase));
+        if (playlist == null)
+        {
+            return NotFound(new { error = $"Playlist '{decodedName}' not found" });
+        }
+
+        playlist.SyncSchedule = request.SyncSchedule.Trim();
+        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
+        return await _helperService.UpdateEnvConfigAsync(new Dictionary<string, string>
+        {
+            ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
+        });
     }
 
 

@@ -40,7 +40,6 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 	
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
-        Console.WriteLine();
 
         var quality = _settings.Quality?.ToUpperInvariant() switch
         {
@@ -55,7 +54,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         WriteStatus("SquidWTF Quality", quality, ConsoleColor.Cyan);
 
         WriteStatus("SquidWTF API Endpoints", _apiUrls.Count.ToString(), ConsoleColor.Cyan);
-        WriteStatus("SquidWTF Streaming Endpoints", _streamingUrls.Count.ToString(), ConsoleColor.Cyan);
+        WriteStatus("SquidWTF Streaming Endpoints", $"{_streamingUrls.Count} (optional)", ConsoleColor.Cyan);
 
         if (_apiUrls.Count == 0)
         {
@@ -69,19 +68,19 @@ public class SquidWTFStartupValidator : BaseStartupValidator
 
         if (_streamingUrls.Count == 0)
         {
-            WriteStatus("SquidWTF Streaming", "UNAVAILABLE", ConsoleColor.Yellow);
-            WriteDetail("No streaming endpoints were discovered from the uptime feeds");
+            WriteStatus("SquidWTF Streaming", "SKIPPED", ConsoleColor.Yellow);
+            WriteDetail("No streaming endpoints were discovered; SquidWTF is treated as metadata-only");
         }
         else
         {
             await BenchmarkEndpointPoolAsync("streaming", _streamingUrls, _streamingFallbackHelper, cancellationToken);
         }
 
-        if (_apiUrls.Count == 0 && _streamingUrls.Count == 0)
+        if (_apiUrls.Count == 0)
         {
             return ValidationResult.Failure(
                 "UNAVAILABLE",
-                "SquidWTF uptime feeds did not return any usable endpoints",
+                "SquidWTF uptime feeds did not return any usable API endpoints",
                 ConsoleColor.Yellow);
         }
 
@@ -134,7 +133,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             return streamingResult;
         }
 
-        return ValidationResult.Success("SquidWTF API and streaming validation completed");
+        return ValidationResult.Success("SquidWTF API validation completed");
     }
 
     private async Task BenchmarkEndpointPoolAsync(
@@ -263,7 +262,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         catch (Exception ex)
         {
             WriteStatus("Search Functionality", "ERROR", ConsoleColor.Yellow);
-            WriteDetail($"Could not verify search: {ex.Message}");
+            WriteDetail($"Search validation failed ({ex.GetType().Name})");
         }
     }
 }

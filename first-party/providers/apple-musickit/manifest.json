@@ -1,0 +1,18 @@
+{
+  "id": "apple-musickit",
+  "displayName": "Apple MusicKit",
+  "version": "1.0.0",
+  "sdkVersion": "1",
+  "entryPoint": "index.js",
+  "capabilities": [
+    {
+      "kind": "playlist",
+      "hooks": ["getUserPlaylists", "getPlaylistTracks"],
+      "accountScopes": ["user"]
+    }
+  ],
+  "permissions": [
+    { "kind": "network", "value": "https://api.music.apple.com/", "required": true },
+    { "kind": "secret", "value": "musickitcredentials", "required": true }
+  ]
+}

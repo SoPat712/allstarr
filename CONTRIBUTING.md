@@ -1,267 +1,87 @@
-# Contributing to Allstarr
+# Contributing To Allstarr
 
-We welcome contributions! Here's how to get started:
+Contributions are welcome. Allstarr sits in the middle of authentication, personal provider accounts, media files, and two compatibility surfaces, so a small-looking change can have a wide blast radius. Please keep changes focused and prove the behavior you touched.
 
 ## Development Setup
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/SoPat712/allstarr.git
-   cd allstarr
-   ```
-
-2. **Build and run locally**
-   
-   Using Docker (recommended for development):
-   ```bash
-   # Copy and configure environment
-   cp .env.example .env
-   vi .env
-   
-   # Build and start with local changes
-   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-   
-   # View logs
-   docker-compose logs -f
-   ```
-   
-   Or using .NET directly:
-   ```bash
-   # Restore dependencies
-   dotnet restore
-   
-   # Run the application
-   cd allstarr
-   dotnet run
-   ```
-
-3. **Run tests**
-   ```bash
-   dotnet test
-   ```
-
-## Making Changes
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests to ensure everything works
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to your fork (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
-## Code Style
-
-- Follow existing code patterns and conventions
-- Add tests for new features
-- Update documentation as needed
-- Keep commits feature focused
-
-## Testing
-
-All changes should include appropriate tests:
-```bash
-# Run all tests
-dotnet test
-
-# Run specific test file
-dotnet test --filter "FullyQualifiedName~SubsonicProxyServiceTests"
-
-# Run with coverage
-dotnet test --collect:"XPlat Code Coverage"
-```
-
-## Build
+Clone the repository and install the .NET SDK version pinned by the project. Standard Compose is the easiest way to run the full durable stack:
 
 ```bash
-dotnet build
+git clone https://github.com/SoPat712/allstarr.git
+cd allstarr
+cp .env.example .env
 ```
 
-## Run Tests
+Create the Postgres password and Allstarr key-ring files using the instructions in [README.md](README.md), review `.env`, then start the development Compose stack described by the checked-in Compose files.
+
+For a direct application run, use an explicitly configured local database and persistent paths. SQLite deliberately requires a one-shot bootstrap confirmation for a missing database. Follow [docs/operations/storage.md](docs/operations/storage.md); do not weaken that guard just to make a local run shorter.
 
 ```bash
-dotnet test
+dotnet restore allstarr.sln
+dotnet build allstarr.sln
+dotnet test allstarr.sln
 ```
 
-## Project Structure
+## Before You Change Code
 
-```
-allstarr/
-├── Controllers/
-│   ├── AdminController.cs                 # Admin health check
-│   ├── ConfigController.cs                # Configuration management
-│   ├── DiagnosticsController.cs           # System diagnostics & debugging
-│   ├── DownloadsController.cs             # Download management
-│   ├── JellyfinAdminController.cs         # Jellyfin admin operations
-│   ├── JellyfinController.cs              # Jellyfin API proxy
-│   ├── LyricsController.cs                # Lyrics management
-│   ├── MappingController.cs               # Track mapping management
-│   ├── PlaylistController.cs              # Playlist operations & CRUD
-│   ├── ScrobblingAdminController.cs       # Scrobbling configuration
-│   ├── SpotifyAdminController.cs          # Spotify admin operations
-│   └── SubSonicController.cs              # Subsonic API proxy
-├── Filters/
-│   ├── AdminPortFilter.cs                 # Admin port access control
-│   ├── ApiKeyAuthFilter.cs                # API key authentication
-│   └── JellyfinAuthFilter.cs              # Jellyfin authentication
-├── Middleware/
-│   ├── AdminStaticFilesMiddleware.cs      # Admin UI static file serving
-│   ├── GlobalExceptionHandler.cs          # Global error handling
-│   └── WebSocketProxyMiddleware.cs        # WebSocket proxying for Jellyfin
-├── Models/
-│   ├── Admin/                             # Admin request/response models
-│   │   └── AdminDtos.cs
-│   ├── Domain/                            # Domain entities
-│   │   ├── Album.cs
-│   │   ├── Artist.cs
-│   │   └── Song.cs
-│   ├── Download/                          # Download-related models
-│   │   ├── DownloadInfo.cs
-│   │   └── DownloadStatus.cs
-│   ├── Lyrics/
-│   │   └── LyricsInfo.cs
-│   ├── Scrobbling/                        # Scrobbling models
-│   │   ├── PlaybackSession.cs
-│   │   ├── ScrobbleResult.cs
-│   │   └── ScrobbleTrack.cs
-│   ├── Search/
-│   │   └── SearchResult.cs
-│   ├── Settings/                          # Configuration models
-│   │   ├── CacheSettings.cs
-│   │   ├── DeezerSettings.cs
-│   │   ├── JellyfinSettings.cs
-│   │   ├── MusicBrainzSettings.cs
-│   │   ├── QobuzSettings.cs
-│   │   ├── RedisSettings.cs
-│   │   ├── ScrobblingSettings.cs
-│   │   ├── SpotifyApiSettings.cs
-│   │   ├── SpotifyImportSettings.cs
-│   │   ├── SquidWTFSettings.cs
-│   │   └── SubsonicSettings.cs
-│   ├── Spotify/                           # Spotify-specific models
-│   │   ├── MissingTrack.cs
-│   │   ├── SpotifyPlaylistTrack.cs
-│   │   └── SpotifyTrackMapping.cs
-│   └── Subsonic/                          # Subsonic-specific models
-│       ├── ExternalPlaylist.cs
-│       └── ScanStatus.cs
-├── Services/
-│   ├── Admin/                             # Admin helper services
-│   │   └── AdminHelperService.cs
-│   ├── Common/                            # Shared utilities
-│   │   ├── AuthHeaderHelper.cs            # Auth header handling
-│   │   ├── BaseDownloadService.cs         # Template method base class
-│   │   ├── CacheCleanupService.cs         # Cache cleanup background service
-│   │   ├── CacheExtensions.cs             # Cache extension methods
-│   │   ├── CacheKeyBuilder.cs             # Type-safe cache key generation
-│   │   ├── CacheWarmingService.cs         # Startup cache warming
-│   │   ├── EndpointBenchmarkService.cs    # Endpoint performance benchmarking
-│   │   ├── EnvMigrationService.cs         # Environment migration utilities
-│   │   ├── Error.cs                       # Error types
-│   │   ├── ExplicitContentFilter.cs       # Explicit content filtering
-│   │   ├── FuzzyMatcher.cs                # Fuzzy string matching
-│   │   ├── GenreEnrichmentService.cs      # MusicBrainz genre enrichment
-│   │   ├── OdesliService.cs               # Odesli/song.link conversion
-│   │   ├── ParallelMetadataService.cs     # Parallel metadata fetching
-│   │   ├── PathHelper.cs                  # Path utilities
-│   │   ├── PlaylistIdHelper.cs            # Playlist ID helpers
-│   │   ├── RedisCacheService.cs           # Redis caching
-│   │   ├── RedisPersistenceService.cs     # Redis persistence monitoring
-│   │   ├── Result.cs                      # Result<T> pattern
-│   │   ├── RetryHelper.cs                 # Retry logic with exponential backoff
-│   │   └── RoundRobinFallbackHelper.cs    # Load balancing and failover
-│   ├── Deezer/                            # Deezer provider
-│   │   ├── DeezerDownloadService.cs
-│   │   ├── DeezerMetadataService.cs
-│   │   └── DeezerStartupValidator.cs
-│   ├── Jellyfin/                          # Jellyfin integration
-│   │   ├── JellyfinModelMapper.cs         # Model mapping
-│   │   ├── JellyfinProxyService.cs        # Request proxying
-│   │   ├── JellyfinResponseBuilder.cs     # Response building
-│   │   ├── JellyfinSessionManager.cs      # Session management
-│   │   └── JellyfinStartupValidator.cs    # Startup validation
-│   ├── Local/                             # Local library
-│   │   ├── ILocalLibraryService.cs
-│   │   └── LocalLibraryService.cs
-│   ├── Lyrics/                            # Lyrics services
-│   │   ├── LrclibService.cs               # LRCLIB lyrics
-│   │   ├── LyricsOrchestrator.cs          # Lyrics orchestration
-│   │   ├── LyricsPlusService.cs           # LyricsPlus multi-source
-│   │   ├── LyricsPrefetchService.cs       # Background lyrics prefetching
-│   │   ├── LyricsStartupValidator.cs      # Lyrics validation
-│   │   └── SpotifyLyricsService.cs        # Spotify lyrics
-│   ├── MusicBrainz/
-│   │   └── MusicBrainzService.cs          # MusicBrainz metadata
-│   ├── Qobuz/                             # Qobuz provider
-│   │   ├── QobuzBundleService.cs
-│   │   ├── QobuzDownloadService.cs
-│   │   ├── QobuzMetadataService.cs
-│   │   └── QobuzStartupValidator.cs
-│   ├── Scrobbling/                        # Scrobbling services
-│   │   ├── IScrobblingService.cs
-│   │   ├── LastFmScrobblingService.cs
-│   │   ├── ListenBrainzScrobblingService.cs
-│   │   ├── ScrobblingHelper.cs
-│   │   └── ScrobblingOrchestrator.cs
-│   ├── Spotify/                           # Spotify integration
-│   │   ├── SpotifyApiClient.cs            # Spotify API client
-│   │   ├── SpotifyMappingMigrationService.cs # Mapping migration
-│   │   ├── SpotifyMappingService.cs       # Mapping management
-│   │   ├── SpotifyMappingValidationService.cs # Mapping validation
-│   │   ├── SpotifyMissingTracksFetcher.cs # Missing tracks fetcher
-│   │   ├── SpotifyPlaylistFetcher.cs      # Playlist fetcher
-│   │   └── SpotifyTrackMatchingService.cs # Track matching
-│   ├── SquidWTF/                          # SquidWTF provider
-│   │   ├── SquidWTFDownloadService.cs
-│   │   ├── SquidWTFMetadataService.cs
-│   │   └── SquidWTFStartupValidator.cs
-│   ├── Subsonic/                          # Subsonic API logic
-│   │   ├── PlaylistSyncService.cs         # Playlist synchronization
-│   │   ├── SubsonicModelMapper.cs         # Model mapping
-│   │   ├── SubsonicProxyService.cs        # Request proxying
-│   │   ├── SubsonicRequestParser.cs       # Request parsing
-│   │   └── SubsonicResponseBuilder.cs     # Response building
-│   ├── Validation/                        # Startup validation
-│   │   ├── BaseStartupValidator.cs
-│   │   ├── IStartupValidator.cs
-│   │   ├── StartupValidationOrchestrator.cs
-│   │   ├── SubsonicStartupValidator.cs
-│   │   └── ValidationResult.cs
-│   ├── IDownloadService.cs                # Download interface
-│   ├── IMusicMetadataService.cs           # Metadata interface
-│   └── StartupValidationService.cs
-├── wwwroot/                               # Admin UI static files
-│   ├── js/                                # JavaScript modules
-│   ├── app.js                             # Main application logic
-│   ├── index.html                         # Admin dashboard
-│   ├── placeholder.png                    # Placeholder image
-│   ├── spotify-mappings.html              # Spotify mappings UI
-│   ├── spotify-mappings.js                # Spotify mappings logic
-│   └── styles.css                         # Stylesheet
-├── Program.cs                             # Application entry point
-└── appsettings.json                       # Configuration
+Read [OVERHAUL.md](OVERHAUL.md) for the locked product decisions, then read the relevant document under [`docs/steering`](docs/steering/INTRODUCTION.md). Those documents describe boundaries that are easy to break accidentally, including protocol relay behavior, account scope, provider routing, downloads, playlists, scrobbling, storage, and testing.
 
-allstarr.Tests/
-├── DeezerDownloadServiceTests.cs          # Deezer download tests
-├── DeezerMetadataServiceTests.cs          # Deezer metadata tests
-├── JellyfinResponseStructureTests.cs      # Jellyfin response tests
-├── LocalLibraryServiceTests.cs            # Local library tests
-├── QobuzDownloadServiceTests.cs           # Qobuz download tests
-├── SubsonicModelMapperTests.cs            # Model mapping tests
-├── SubsonicProxyServiceTests.cs           # Proxy service tests
-├── SubsonicRequestParserTests.cs          # Request parser tests
-└── SubsonicResponseBuilderTests.cs        # Response builder tests
+In particular:
+
+- one deployment serves one selected proxy protocol;
+- Postgres and SQLite contain control-plane state, never audio bytes;
+- original library files are read-only inputs;
+- user-owned work needs a verified backend identity and exact tenant scope;
+- provider credentials are secret references resolved just in time;
+- optional work belongs in durable jobs, not detached controller tasks;
+- streaming and downloading are separate provider capabilities;
+- optional external services degrade their own capability instead of breaking startup;
+- third-party extension packages are untrusted until verified.
+
+## Tests And Fixtures
+
+Every behavior change, bug fix, contract change, and migration rule needs focused coverage. Run the smallest relevant tests while iterating, then run the full Release suite before asking for review:
+
+```bash
+dotnet test allstarr.sln -c Release
 ```
 
-## Dependencies
+Useful focused examples:
 
-- **BouncyCastle.Cryptography** (v2.6.2) - Blowfish decryption for Deezer streams
-- **Cronos** (v0.11.1) - Cron expression parsing for scheduled tasks
-- **Microsoft.AspNetCore.OpenApi** (v9.0.4) - OpenAPI support
-- **Otp.NET** (v1.4.1) - One-time password generation for Last.fm authentication
-- **StackExchange.Redis** (v2.8.16) - Redis client for caching
-- **Swashbuckle.AspNetCore** (v9.0.4) - Swagger/OpenAPI documentation
-- **TagLibSharp** (v2.3.0) - ID3 tag and cover art embedding
-- **xUnit** - Unit testing framework
-- **Moq** - Mocking library for tests
-- **FluentAssertions** - Fluent assertion library for tests
+```bash
+dotnet test allstarr.Tests/allstarr.Tests.csproj -c Release --filter "FullyQualifiedName~Subsonic"
+dotnet test allstarr.Tests/allstarr.Tests.csproj -c Release --filter "FullyQualifiedName~Storage"
+```
+
+Protocol changes need real response/request fixtures for the affected Jellyfin or Subsonic support-matrix row.
+Provider and external-gateway tests use local fixtures, fake providers, or mocked HTTP. Do not add live credentials
+or live provider calls to the automated suite. Apple gateway tests must not assume wrapper-v2 itself implements the
+Allstarr search/download contract.
+
+Migration work must be checked against SQLite and Postgres. A passing SQLite test does not prove a Postgres migration, type, constraint, or locking claim.
+
+## Provider Extensions
+
+Provider SDK packages live outside the core implementation boundary and must declare their hooks, scope, network access, and secret permissions. Use the packaging and verification workflow documented in [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md). Do not add an activation shortcut that bypasses checksum, permission review, staged lifecycle, or rollback.
+
+First-party packages should pass the same SDK compatibility suite as third-party packages. Do not auto-enroll users in an external registry.
+
+## Documentation
+
+Update the owner document when behavior changes. Keep the root docs useful to operators and contributors; keep detailed invariants in the appropriate steering reference. Use the project's direct, normal voice. Prefer exact statements over promotional claims, and label planned behavior as planned.
+
+Check local Markdown links after renaming or removing files. Never paste real secrets, signed URLs, account names, or private library paths into examples.
+
+## Pull Requests
+
+1. Fork the repository and create a focused branch.
+2. Make the change with tests and any required fixtures or migrations.
+3. Run the focused tests and the full Release suite.
+4. Check Compose configuration if deployment files changed.
+5. Explain the user-visible behavior, compatibility risk, migration impact, and verification in the pull request.
+
+Keep commits small enough to review. Follow the existing code patterns, use clear names and explicit failure paths, and avoid drive-by formatting in unrelated files. If your work changes a client-visible contract, provider permission, durable schema, filesystem boundary, or recovery procedure, call that out directly.
+
+## Security And Bug Reports
+
+Use the repository issue templates for normal bugs and feature requests. Do not include credentials or private logs. If a report describes an exploitable secret, authentication, filesystem, package-verification, or cross-tenant problem, avoid publishing sensitive reproduction details in a public issue and use the repository's private security-reporting channel when available.

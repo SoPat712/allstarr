@@ -90,28 +90,6 @@ public class SpotifyImportSettings
     public List<SpotifyPlaylistConfig> Playlists { get; set; } = new();
 
     /// <summary>
-    /// Legacy: Comma-separated list of Jellyfin playlist IDs to inject
-    /// Deprecated: Use Playlists instead
-    /// </summary>
-    [Obsolete("Use Playlists instead")]
-    public List<string> PlaylistIds { get; set; } = new();
-
-    /// <summary>
-    /// Legacy: Comma-separated list of playlist names
-    /// Deprecated: Use Playlists instead
-    /// </summary>
-    [Obsolete("Use Playlists instead")]
-    public List<string> PlaylistNames { get; set; } = new();
-
-    /// <summary>
-    /// Legacy: Comma-separated list of local track positions ("first" or "last")
-    /// Deprecated: Use Playlists instead
-    /// Example: "first,last,first,first" (one per playlist)
-    /// </summary>
-    [Obsolete("Use Playlists instead")]
-    public List<string> PlaylistLocalTracksPositions { get; set; } = new();
-
-    /// <summary>
     /// Gets the playlist configuration by Jellyfin playlist ID.
     /// </summary>
     public SpotifyPlaylistConfig? GetPlaylistById(string playlistId) =>

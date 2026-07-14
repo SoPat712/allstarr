@@ -12,6 +12,9 @@ public sealed class AdminAuthSession
     public required string UserId { get; init; }
     public required string UserName { get; init; }
     public required bool IsAdministrator { get; init; }
+    public string BackendType { get; init; } = "Jellyfin";
+    public Guid? TenantId { get; init; }
+    public Guid? AllstarrUserId { get; init; }
     public required string JellyfinAccessToken { get; init; }
     public string? JellyfinServerId { get; init; }
     public bool IsPersistent { get; init; }
@@ -21,9 +24,8 @@ public sealed class AdminAuthSession
 
 /// <summary>
 /// Cookie-backed admin sessions for the local Web UI.
-/// Session IDs stay in the browser cookie, while the authenticated Jellyfin
-/// session details are protected and persisted on disk so brief app restarts
-/// do not force a relogin.
+/// Session IDs stay in the browser cookie, while the resolved backend identity
+/// is protected and persisted so brief app restarts do not force a relogin.
 /// </summary>
 public class AdminAuthSessionService
 {
@@ -42,11 +44,19 @@ public class AdminAuthSessionService
 
     public AdminAuthSessionService(
         IDataProtectionProvider dataProtectionProvider,
-        ILogger<AdminAuthSessionService> logger)
+        ILogger<AdminAuthSessionService> logger,
+        IConfiguration configuration)
         : this(
             dataProtectionProvider,
             logger,
-            "/app/cache/admin-auth/sessions.protected")
+            configuration["Admin:SessionStorePath"] ?? "/app/cache/admin-auth/sessions.protected")
+    {
+    }
+
+    public AdminAuthSessionService(
+        IDataProtectionProvider dataProtectionProvider,
+        ILogger<AdminAuthSessionService> logger)
+        : this(dataProtectionProvider, logger, "/app/cache/admin-auth/sessions.protected")
     {
     }
 
@@ -90,7 +100,10 @@ public class AdminAuthSessionService
         bool isAdministrator,
         string jellyfinAccessToken,
         string? jellyfinServerId,
-        bool isPersistent = false)
+        bool isPersistent = false,
+        string backendType = "Jellyfin",
+        Guid? tenantId = null,
+        Guid? allstarrUserId = null)
     {
         RemoveExpiredSessions();
 
@@ -101,6 +114,9 @@ public class AdminAuthSessionService
             UserId = userId,
             UserName = userName,
             IsAdministrator = isAdministrator,
+            BackendType = backendType,
+            TenantId = tenantId,
+            AllstarrUserId = allstarrUserId,
             JellyfinAccessToken = jellyfinAccessToken,
             JellyfinServerId = jellyfinServerId,
             IsPersistent = isPersistent,
@@ -193,10 +209,14 @@ public class AdminAuthSessionService
             var now = DateTime.UtcNow;
             foreach (var persisted in sessions)
             {
+                var backendType = string.IsNullOrWhiteSpace(persisted.BackendType)
+                    ? "Jellyfin"
+                    : persisted.BackendType;
                 if (string.IsNullOrWhiteSpace(persisted.SessionId) ||
                     string.IsNullOrWhiteSpace(persisted.UserId) ||
                     string.IsNullOrWhiteSpace(persisted.UserName) ||
-                    string.IsNullOrWhiteSpace(persisted.JellyfinAccessToken) ||
+                    (!backendType.Equals("Subsonic", StringComparison.OrdinalIgnoreCase) &&
+                     string.IsNullOrWhiteSpace(persisted.JellyfinAccessToken)) ||
                     persisted.ExpiresAtUtc <= now)
                 {
                     continue;
@@ -208,6 +228,9 @@ public class AdminAuthSessionService
                     UserId = persisted.UserId,
                     UserName = persisted.UserName,
                     IsAdministrator = persisted.IsAdministrator,
+                    BackendType = backendType,
+                    TenantId = persisted.TenantId,
+                    AllstarrUserId = persisted.AllstarrUserId,
                     JellyfinAccessToken = persisted.JellyfinAccessToken,
                     JellyfinServerId = persisted.JellyfinServerId,
                     IsPersistent = persisted.IsPersistent,
@@ -223,7 +246,9 @@ public class AdminAuthSessionService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load persisted admin auth sessions; starting with an empty session store");
+            _logger.LogWarning(
+                "Failed to load persisted admin auth sessions ({ExceptionType}); starting with an empty session store",
+                ex.GetType().Name);
             _sessions.Clear();
         }
     }
@@ -242,6 +267,9 @@ public class AdminAuthSessionService
                         UserId = session.UserId,
                         UserName = session.UserName,
                         IsAdministrator = session.IsAdministrator,
+                        BackendType = session.BackendType,
+                        TenantId = session.TenantId,
+                        AllstarrUserId = session.AllstarrUserId,
                         JellyfinAccessToken = session.JellyfinAccessToken,
                         JellyfinServerId = session.JellyfinServerId,
                         IsPersistent = session.IsPersistent,
@@ -256,7 +284,9 @@ public class AdminAuthSessionService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to persist admin auth sessions");
+                _logger.LogError(
+                    "Failed to persist admin auth sessions ({ExceptionType})",
+                    ex.GetType().Name);
             }
         }
     }
@@ -284,6 +314,9 @@ public class AdminAuthSessionService
         public required string UserId { get; init; }
         public required string UserName { get; init; }
         public required bool IsAdministrator { get; init; }
+        public string BackendType { get; init; } = "Jellyfin";
+        public Guid? TenantId { get; init; }
+        public Guid? AllstarrUserId { get; init; }
         public required string JellyfinAccessToken { get; init; }
         public string? JellyfinServerId { get; init; }
         public required bool IsPersistent { get; init; }

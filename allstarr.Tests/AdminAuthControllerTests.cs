@@ -4,10 +4,12 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using allstarr.Controllers;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
+using allstarr.Core.Identity;
 
 namespace allstarr.Tests;
 
@@ -106,6 +108,84 @@ public class AdminAuthControllerTests
     }
 
     [Fact]
+    public async Task Login_WithValidSubsonicAdmin_UsesFormPostAndStoresNoPassword()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        string? capturedBody = null;
+        var handler = new DelegateHttpMessageHandler(async (request, _) =>
+        {
+            capturedRequest = request;
+            capturedBody = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {
+                      "subsonic-response": {
+                        "status": "ok",
+                        "version": "1.16.1",
+                        "user": { "username": "alice", "adminRole": true }
+                      }
+                    }
+                    """)
+            };
+        });
+        var sessionService = new AdminAuthSessionService();
+        var httpContext = new DefaultHttpContext();
+        var controller = CreateController(
+            handler,
+            sessionService,
+            httpContext,
+            BackendType.Subsonic);
+
+        var result = await controller.Login(new AdminAuthController.LoginRequest
+        {
+            Username = "alice",
+            Password = "secret-pass"
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        Assert.Equal("Subsonic", payload.RootElement.GetProperty("backend").GetString());
+        Assert.True(payload.RootElement.GetProperty("user").GetProperty("isAdministrator").GetBoolean());
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
+        Assert.Equal("http://subsonic.local/rest/getUser.view", capturedRequest.RequestUri?.ToString());
+        Assert.DoesNotContain("secret-pass", capturedRequest.RequestUri?.ToString());
+        Assert.Contains("u=alice", capturedBody);
+        Assert.Contains("p=secret-pass", capturedBody);
+
+        var sessionId = ExtractCookieValue(httpContext.Response.Headers.SetCookie[0]!);
+        Assert.True(sessionService.TryGetValidSession(sessionId, out var session));
+        Assert.Equal("Subsonic", session.BackendType);
+        Assert.Equal(string.Empty, session.JellyfinAccessToken);
+    }
+
+    [Fact]
+    public async Task Login_WithSubsonicProtocolAuthFailure_ReturnsUnauthorized()
+    {
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {"subsonic-response":{"status":"failed","error":{"code":40,"message":"Wrong username or password"}}}
+                    """)
+            }));
+        var controller = CreateController(
+            handler,
+            new AdminAuthSessionService(),
+            new DefaultHttpContext(),
+            BackendType.Subsonic);
+
+        var result = await controller.Login(new AdminAuthController.LoginRequest
+        {
+            Username = "alice",
+            Password = "wrong"
+        });
+
+        Assert.IsType<UnauthorizedObjectResult>(result);
+    }
+
+    [Fact]
     public void GetCurrentSession_WithUnknownCookie_ReturnsUnauthenticated()
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
@@ -128,6 +208,32 @@ public class AdminAuthControllerTests
         var setCookieHeader = setCookies[0] ?? string.Empty;
         Assert.Contains($"{AdminAuthSessionService.SessionCookieName}=", setCookieHeader);
         Assert.Contains("expires=", setCookieHeader.ToLowerInvariant());
+    }
+
+    [Theory]
+    [InlineData(ProviderAccountManagementMode.AdminManaged)]
+    [InlineData(ProviderAccountManagementMode.UserManaged)]
+    [InlineData(ProviderAccountManagementMode.Hybrid)]
+    public void GetCurrentSession_ExposesOnlyTheNonSecretAccountManagementMode(
+        ProviderAccountManagementMode managementMode)
+    {
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        var controller = CreateController(
+            handler,
+            new AdminAuthSessionService(),
+            new DefaultHttpContext(),
+            managementMode: managementMode);
+
+        var result = Assert.IsType<OkObjectResult>(controller.GetCurrentSession());
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+
+        Assert.False(payload.RootElement.GetProperty("authenticated").GetBoolean());
+        Assert.Equal(
+            managementMode.ToString(),
+            payload.RootElement.GetProperty("providerAccountManagementMode").GetString());
+        Assert.False(payload.RootElement.TryGetProperty("secret", out _));
+        Assert.False(payload.RootElement.TryGetProperty("accounts", out _));
     }
 
     [Fact]
@@ -158,12 +264,17 @@ public class AdminAuthControllerTests
         Assert.Equal("user-42", payload.RootElement.GetProperty("user").GetProperty("id").GetString());
         Assert.Equal("alice", payload.RootElement.GetProperty("user").GetProperty("name").GetString());
         Assert.True(payload.RootElement.GetProperty("user").GetProperty("isAdministrator").GetBoolean());
+        Assert.Equal(
+            "Hybrid",
+            payload.RootElement.GetProperty("providerAccountManagementMode").GetString());
     }
 
     private static AdminAuthController CreateController(
         HttpMessageHandler handler,
         AdminAuthSessionService sessionService,
-        HttpContext httpContext)
+        HttpContext httpContext,
+        BackendType backendType = BackendType.Jellyfin,
+        ProviderAccountManagementMode managementMode = ProviderAccountManagementMode.Hybrid)
     {
         var jellyfinOptions = Options.Create(new JellyfinSettings
         {
@@ -174,11 +285,24 @@ public class AdminAuthControllerTests
         httpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(new HttpClient(handler));
 
         var logger = new Mock<ILogger<AdminAuthController>>();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Backend:Type"] = backendType.ToString()
+            })
+            .Build();
         var controller = new AdminAuthController(
             jellyfinOptions,
+            Options.Create(new SubsonicSettings { Url = "http://subsonic.local" }),
+            configuration,
             httpClientFactory.Object,
             sessionService,
-            logger.Object)
+            logger.Object,
+            identityResolver: null,
+            providerAccountManagementOptions: new ProviderAccountManagementOptions
+            {
+                ManagementMode = managementMode.ToString()
+            })
         {
             ControllerContext = new ControllerContext
             {

@@ -1,5 +1,5 @@
-# Development override for docker-compose
-# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# Local source-build override for the standard Postgres + Valkey deployment.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 services:
   allstarr:

@@ -12,9 +12,9 @@ namespace allstarr.Services.AppleMusic;
 public class AppleMusicDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
-    private readonly AppleMusicSettings _appleMusicSettings;
+    private readonly AppleDownloadSettings _appleMusicSettings;
 
-    protected override string ProviderName => "applemusic";
+    protected override string ProviderName => "apple-download";
 
     public AppleMusicDownloadService(
         IHttpClientFactory httpClientFactory,
@@ -22,7 +22,7 @@ public class AppleMusicDownloadService : BaseDownloadService
         ILocalLibraryService localLibraryService,
         IMusicMetadataService metadataService,
         IOptions<SubsonicSettings> subsonicSettings,
-        IOptions<AppleMusicSettings> appleMusicSettings,
+        IOptions<AppleDownloadSettings> appleMusicSettings,
         IServiceProvider serviceProvider,
         ILogger<AppleMusicDownloadService> logger)
         : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
@@ -36,9 +36,15 @@ public class AppleMusicDownloadService : BaseDownloadService
 
     public override async Task<bool> IsAvailableAsync()
     {
+        if (!Uri.TryCreate(_appleMusicSettings.BaseUrl, UriKind.Absolute, out var baseUri) ||
+            baseUri.Scheme is not ("http" or "https"))
+        {
+            return false;
+        }
+
         try
         {
-            var res = await _httpClient.GetAsync(_appleMusicSettings.BaseUrl.TrimEnd('/') + "/api/health");
+            var res = await _httpClient.GetAsync(new Uri(baseUri, "api/health"));
             return res.IsSuccessStatusCode;
         }
         catch
@@ -56,7 +62,7 @@ public class AppleMusicDownloadService : BaseDownloadService
     protected override async Task<string> DownloadTrackWithQualityAsync(
         string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
     {
-        // Map StreamQuality tier to gamdl-aio quality
+        // Map the client quality tier to the external gateway contract.
         var qualityStr = quality switch
         {
             StreamQuality.High => "aac-320",
@@ -70,20 +76,26 @@ public class AppleMusicDownloadService : BaseDownloadService
     private async Task<string> DownloadTrackWithQualityInternalAsync(
         string trackId, Song song, string quality, CancellationToken cancellationToken)
     {
+        if (!Uri.TryCreate(_appleMusicSettings.BaseUrl, UriKind.Absolute, out var baseUri) ||
+            baseUri.Scheme is not ("http" or "https"))
+        {
+            throw new InvalidOperationException("Apple download provider URL is not configured.");
+        }
+
         var songId = BuildTrackedSongId(trackId);
         var basePath = CurrentStorageMode == StorageMode.Cache 
             ? Path.Combine(DownloadPath, "cache") : Path.Combine(DownloadPath, "permanent");
 
         var artistForPath = song.AlbumArtist ?? song.Artist;
         
-        // gamdl-aio outputs FLAC audio stream
+        // The managed track-download route returns a FLAC artifact stream.
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, ".flac", "applemusic", trackId);
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
 
         outputPath = PathHelper.ResolveUniquePath(outputPath);
         
-        var streamUrl = $"{_appleMusicSettings.BaseUrl.TrimEnd('/')}/api/stream/{trackId}?quality={quality}";
+        var streamUrl = new Uri(baseUri, $"api/download/{Uri.EscapeDataString(trackId)}?quality={Uri.EscapeDataString(quality)}");
         Logger.LogInformation("Downloading Apple Music track {TrackId} at quality {Quality} from sidecar...", trackId, quality);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, streamUrl);

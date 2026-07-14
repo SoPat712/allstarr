@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Globalization;
 using allstarr.Models.Scrobbling;
+using allstarr.Core.Playback;
+using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -61,26 +63,12 @@ public partial class JellyfinController
 
             var (_, statusCode) = await _proxyService.PostJsonAsync(endpoint, body, Request.Headers);
 
-            if (statusCode == 204 || statusCode == 200)
-            {
-                _logger.LogDebug("✓ Session capabilities forwarded to Jellyfin ({StatusCode})", statusCode);
-                return NoContent();
-            }
-
-            if (statusCode == 401)
-            {
-                _logger.LogWarning("⚠ Jellyfin returned 401 for capabilities (token expired)");
-                return Unauthorized();
-            }
-
-            if (statusCode == 403)
-            {
-                _logger.LogWarning("⚠ Jellyfin returned 403 for capabilities");
-                return Forbid();
-            }
-
-            _logger.LogWarning("⚠ Jellyfin returned {StatusCode} for capabilities", statusCode);
-            return StatusCode(statusCode);
+            var responseStatus = _interactionProtocolAdapter.ShapeCapabilitiesStatus(statusCode);
+            _logger.LogDebug(
+                "Session capabilities forwarded to Jellyfin ({UpstreamStatusCode} -> {ResponseStatusCode})",
+                statusCode,
+                responseStatus);
+            return StatusCode(responseStatus);
         }
         catch (Exception ex)
         {
@@ -131,6 +119,7 @@ public partial class JellyfinController
             // Track the playing item for scrobbling on session cleanup (local tracks only)
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+
 
             // Only update session for local tracks - external tracks don't need session tracking
             if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId))
@@ -208,17 +197,6 @@ public partial class JellyfinController
                         trackName, provider, externalId);
 
                     // Proactively fetch lyrics in background for external tracks
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await PrefetchLyricsForTrackAsync(itemId, isExternal: true, provider, externalId, CancellationToken.None);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to prefetch lyrics for external track {ItemId}", itemId);
-                        }
-                    });
 
                     // Create a ghost/fake item to report to Jellyfin so "Now Playing" shows up
                     // Generate a deterministic UUID from the external ID
@@ -255,42 +233,17 @@ public partial class JellyfinController
                             ghostStatusCode);
                     }
 
+                    await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
+
                     // Scrobble external track playback start
                     _logger.LogDebug(
                         "Checking scrobbling: orchestrator={HasOrchestrator}, helper={HasHelper}, deviceId={DeviceId}",
                         _scrobblingOrchestrator != null, _scrobblingHelper != null, deviceId ?? "null");
 
-                    if (_scrobblingOrchestrator != null && _scrobblingHelper != null &&
+                    if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null &&
                         !string.IsNullOrEmpty(deviceId) && song != null)
                     {
                         _logger.LogDebug("Starting scrobble task for external track");
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                var track = _scrobblingHelper.CreateScrobbleTrackFromExternal(
-                                    title: song.Title,
-                                    artist: song.Artist,
-                                    album: song.Album,
-                                    albumArtist: song.AlbumArtist,
-                                    durationSeconds: song.Duration,
-                                    startPositionSeconds: ToPlaybackPositionSeconds(positionTicks)
-                                );
-
-                                if (track != null)
-                                {
-                                    await _scrobblingOrchestrator.OnPlaybackStartAsync(deviceId, track);
-                                }
-                                else
-                                {
-                                    _logger.LogWarning("Failed to create scrobble track from metadata");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Failed to scrobble external track playback start");
-                            }
-                        });
                     }
 
                     if (sessionReady)
@@ -303,17 +256,6 @@ public partial class JellyfinController
                 }
 
                 // Proactively fetch lyrics in background for local tracks
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await PrefetchLyricsForTrackAsync(itemId, isExternal: false, null, null, CancellationToken.None);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to prefetch lyrics for local track {ItemId}", itemId);
-                    }
-                });
             }
 
             if (!string.IsNullOrEmpty(itemId) &&
@@ -375,26 +317,10 @@ public partial class JellyfinController
                         _logger.LogDebug("✓ Playback start forwarded to Jellyfin ({StatusCode})", statusCode);
 
                         // Scrobble local track playback start (only if enabled)
-                        if (_scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
+                        if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
                             _scrobblingHelper != null && !string.IsNullOrEmpty(deviceId) &&
                             !string.IsNullOrEmpty(itemId))
                         {
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    var track = await _scrobblingHelper.GetScrobbleTrackFromItemIdAsync(itemId,
-                                        Request.Headers);
-                                    if (track != null)
-                                    {
-                                        await _scrobblingOrchestrator.OnPlaybackStartAsync(deviceId, track);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, "Failed to scrobble local track playback start");
-                                }
-                            });
                         }
                     }
                     else
@@ -429,6 +355,8 @@ public partial class JellyfinController
                         itemName ?? "Unknown", itemId ?? "unknown");
                 }
             }
+
+            await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
 
             // Ensure session exists for local playback regardless of start payload path taken.
             if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId))
@@ -497,6 +425,7 @@ public partial class JellyfinController
 
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
 
+
             if (string.IsNullOrWhiteSpace(itemId))
             {
                 _logger.LogWarning(
@@ -507,61 +436,8 @@ public partial class JellyfinController
             // Scrobble progress check (both local and external)
             if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId))
             {
-                if (_scrobblingOrchestrator != null && _scrobblingHelper != null && positionTicks.HasValue)
+                if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null && positionTicks.HasValue)
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
-
-                            // Skip local tracks if local scrobbling is disabled
-                            if (!isExternal && !_scrobblingSettings.LocalTracksEnabled)
-                            {
-                                return;
-                            }
-
-                            ScrobbleTrack? track = null;
-
-                            if (isExternal)
-                            {
-                                // For external tracks, fetch metadata from provider
-                                var song = await _metadataService.GetSongAsync(provider!, externalId!);
-                                if (song != null)
-                                {
-                                    track = _scrobblingHelper.CreateScrobbleTrackFromExternal(
-                                        title: song.Title,
-                                        artist: song.Artist,
-                                        album: song.Album,
-                                        albumArtist: song.AlbumArtist,
-                                        durationSeconds: song.Duration,
-                                        startPositionSeconds: ToPlaybackPositionSeconds(positionTicks)
-                                    );
-                                }
-                                else
-                                {
-                                    _logger.LogDebug("Could not fetch metadata for external track progress: {Provider}/{ExternalId}", 
-                                        provider, externalId);
-                                }
-                            }
-                            else
-                            {
-                                // For local tracks, fetch from Jellyfin
-                                track = await _scrobblingHelper.GetScrobbleTrackFromItemIdAsync(itemId,
-                                    Request.Headers);
-                            }
-
-                            if (track != null)
-                            {
-                                var positionSeconds = (int)(positionTicks.Value / TimeSpan.TicksPerSecond);
-                                await _scrobblingOrchestrator.OnPlaybackProgressAsync(deviceId, track, positionSeconds);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Failed to scrobble playback progress");
-                        }
-                    });
                 }
             }
 
@@ -615,6 +491,7 @@ public partial class JellyfinController
                         if (inferredStart &&
                             !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
                         {
+                            await QueuePlaybackSignalAsync(PlaybackTransition.InferredStart, itemId, deviceId, playSessionId, positionTicks);
                             var song = await _metadataService.GetSongAsync(provider!, externalId!);
                             var externalTrackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
                             _logger.LogInformation(
@@ -645,31 +522,9 @@ public partial class JellyfinController
                                     inferredStartStatusCode);
                             }
 
-                            if (_scrobblingOrchestrator != null && _scrobblingHelper != null &&
+                            if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null &&
                                 !string.IsNullOrEmpty(deviceId) && song != null)
                             {
-                                _ = Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        var track = _scrobblingHelper.CreateScrobbleTrackFromExternal(
-                                            title: song.Title,
-                                            artist: song.Artist,
-                                            album: song.Album,
-                                            albumArtist: song.AlbumArtist,
-                                            durationSeconds: song.Duration,
-                                            startPositionSeconds: ToPlaybackPositionSeconds(positionTicks));
-
-                                        if (track != null)
-                                        {
-                                            await _scrobblingOrchestrator.OnPlaybackStartAsync(deviceId, track);
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogError(ex, "Failed to scrobble inferred external track playback start");
-                                    }
-                                });
                             }
                         }
                         else if (inferredStart)
@@ -707,6 +562,8 @@ public partial class JellyfinController
                     // Forward to Jellyfin with ghost UUID
                     var (progressResult, progressStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Progress", progressJson, Request.Headers);
+
+                    await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
 
                     // Log progress occasionally for debugging (every ~30 seconds)
                     if (positionTicks.HasValue)
@@ -769,6 +626,7 @@ public partial class JellyfinController
                     if (inferredStart &&
                         !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
                     {
+                        await QueuePlaybackSignalAsync(PlaybackTransition.InferredStart, itemId, deviceId, playSessionId, positionTicks);
                         var trackName = await TryGetLocalTrackNameAsync(itemId);
                         _logger.LogInformation("🎵 Local track playback started (inferred from progress): {Name} (ID: {ItemId})",
                             trackName ?? "Unknown", itemId);
@@ -792,24 +650,9 @@ public partial class JellyfinController
                         }
 
                         // Scrobble local track playback start (only if enabled)
-                        if (_scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
+                        if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
                             _scrobblingHelper != null)
                         {
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    var track = await _scrobblingHelper.GetScrobbleTrackFromItemIdAsync(itemId, Request.Headers);
-                                    if (track != null)
-                                    {
-                                        await _scrobblingOrchestrator.OnPlaybackStartAsync(deviceId, track);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogError(ex, "Failed to scrobble inferred local track playback start");
-                                }
-                            });
                         }
                     }
                     else if (inferredStart)
@@ -850,6 +693,8 @@ public partial class JellyfinController
 
             var (result, statusCode) =
                 await _proxyService.PostJsonAsync("Sessions/Playing/Progress", body, Request.Headers);
+
+            await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
 
             if (statusCode != 204 && statusCode != 200)
             {
@@ -908,6 +753,8 @@ public partial class JellyfinController
             return;
         }
 
+        await QueuePlaybackSignalAsync(PlaybackTransition.InferredStop, previousItemId, deviceId, null, previousPositionTicks);
+
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(previousItemId);
 
         if (isExternal)
@@ -920,31 +767,9 @@ public partial class JellyfinController
                 provider,
                 externalId);
 
-            if (_scrobblingOrchestrator != null && _scrobblingHelper != null &&
+            if (CanRunOptionalUserScopedWork() && _scrobblingOrchestrator != null && _scrobblingHelper != null &&
                 !string.IsNullOrEmpty(deviceId) && previousPositionTicks.HasValue && song != null)
             {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        var track = _scrobblingHelper.CreateScrobbleTrackFromExternal(
-                            title: song.Title,
-                            artist: song.Artist,
-                            album: song.Album,
-                            albumArtist: song.AlbumArtist,
-                            durationSeconds: song.Duration);
-
-                        if (track != null)
-                        {
-                            var positionSeconds = (int)(previousPositionTicks.Value / TimeSpan.TicksPerSecond);
-                            await _scrobblingOrchestrator.OnPlaybackStopAsync(deviceId, track.Artist, track.Title, positionSeconds);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to scrobble inferred external track playback stop");
-                    }
-                });
             }
 
             var ghostUuid = GenerateUuidFromString(previousItemId);
@@ -976,25 +801,9 @@ public partial class JellyfinController
             previousItemId);
 
         // Scrobble local track playback stop (only if enabled)
-        if (_scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
+        if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
             _scrobblingHelper != null && previousPositionTicks.HasValue)
         {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var track = await _scrobblingHelper.GetScrobbleTrackFromItemIdAsync(previousItemId, Request.Headers);
-                    if (track != null)
-                    {
-                        var positionSeconds = (int)(previousPositionTicks.Value / TimeSpan.TicksPerSecond);
-                        await _scrobblingOrchestrator.OnPlaybackStopAsync(deviceId, track.Artist, track.Title, positionSeconds);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to scrobble inferred local track playback stop");
-                }
-            });
         }
 
         var inferredStopPayload = JsonSerializer.Serialize(new
@@ -1025,7 +834,8 @@ public partial class JellyfinController
         string itemId,
         long? positionTicks)
     {
-        if (!_scrobblingSettings.Enabled ||
+        if (!CanRunOptionalUserScopedWork() ||
+            !_scrobblingSettings.Enabled ||
             _scrobblingSettings.LocalTracksEnabled ||
             !_scrobblingSettings.SyntheticLocalPlayedSignalEnabled ||
             _scrobblingHelper == null)
@@ -1235,6 +1045,7 @@ public partial class JellyfinController
                 }
             }
 
+
             if (!string.IsNullOrEmpty(itemId))
             {
                 var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
@@ -1306,51 +1117,11 @@ public partial class JellyfinController
                     var (stopResult, stopStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, Request.Headers);
 
+                    await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
+
                     if (stopStatusCode == 204 || stopStatusCode == 200)
                     {
                         _logger.LogDebug("✓ Ghost playback stop forwarded to Jellyfin ({StatusCode})", stopStatusCode);
-                    }
-
-                    // Scrobble external track playback stop
-                    if (_scrobblingOrchestrator != null && _scrobblingHelper != null &&
-                        !string.IsNullOrEmpty(deviceId) && positionTicks.HasValue)
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                // Fetch full metadata from the provider for scrobbling
-                                var song = await _metadataService.GetSongAsync(provider!, externalId!);
-
-                                if (song != null)
-                                {
-                                    var track = _scrobblingHelper.CreateScrobbleTrackFromExternal(
-                                        title: song.Title,
-                                        artist: song.Artist,
-                                        album: song.Album,
-                                        albumArtist: song.AlbumArtist,
-                                        durationSeconds: song.Duration
-                                    );
-
-                                    if (track != null)
-                                    {
-                                        var positionSeconds = (int)(positionTicks.Value / TimeSpan.TicksPerSecond);
-                                        await _scrobblingOrchestrator.OnPlaybackStopAsync(deviceId, track.Artist,
-                                            track.Title, positionSeconds);
-                                    }
-                                }
-                                else
-                                {
-                                    _logger.LogWarning(
-                                        "Could not fetch metadata for external track scrobbling on stop: {Provider}/{ExternalId}",
-                                        provider, externalId);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Failed to scrobble external track playback stop");
-                            }
-                        });
                     }
 
                     if ((stopStatusCode == 200 || stopStatusCode == 204) && !string.IsNullOrWhiteSpace(deviceId))
@@ -1408,28 +1179,10 @@ public partial class JellyfinController
                 }
 
                 // Scrobble local track playback stop (only if enabled)
-                if (_scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
+                if (CanRunOptionalUserScopedWork() && _scrobblingSettings.LocalTracksEnabled && _scrobblingOrchestrator != null &&
                     _scrobblingHelper != null && !string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId) &&
                     positionTicks.HasValue)
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            var track = await _scrobblingHelper.GetScrobbleTrackFromItemIdAsync(itemId,
-                                Request.Headers);
-                            if (track != null)
-                            {
-                                var positionSeconds = (int)(positionTicks.Value / TimeSpan.TicksPerSecond);
-                                await _scrobblingOrchestrator.OnPlaybackStopAsync(deviceId, track.Artist, track.Title,
-                                    positionSeconds);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to scrobble local track playback stop");
-                        }
-                    });
                 }
             }
 
@@ -1474,6 +1227,8 @@ public partial class JellyfinController
 
             var (result, statusCode) =
                 await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", body, Request.Headers);
+
+            await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
 
             if (statusCode == 204 || statusCode == 200)
             {
@@ -1756,6 +1511,23 @@ public partial class JellyfinController
 
         return null;
     }
+
+    private async Task QueuePlaybackSignalAsync(PlaybackTransition transition, string? itemId,
+        string? deviceId, string? playSessionId, long? positionTicks)
+    {
+        if (_playbackSignals == null || string.IsNullOrWhiteSpace(itemId) || !CanRunOptionalUserScopedWork()) return;
+        try
+        {
+            await _playbackSignals.RecordAsync(new(HttpContext.RequireProtocolExecutionContext(), transition,
+                itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow), HttpContext.RequestAborted);
+        }
+        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested) { }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not durably record playback signal {Transition}", transition);
+        }
+    }
+
 
     private static string? ParsePlaybackItemName(JsonElement payload)
     {

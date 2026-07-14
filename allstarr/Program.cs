@@ -7,19 +7,83 @@ using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
 using allstarr.Services.Validation;
 using allstarr.Services.Subsonic;
+using allstarr.Core.Protocols.Subsonic;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Scrobbling;
 using allstarr.Middleware;
 using allstarr.Filters;
+using allstarr.Core.Storage;
+using allstarr.Core.Secrets;
+using allstarr.Core.Identity;
+using allstarr.Core.Jobs;
+using allstarr.Core.Health;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
+using allstarr.Core.Operations;
+using allstarr.Core.Providers.Deezer;
+using allstarr.Core.Providers.Spotify;
+using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Providers;
+using allstarr.Core.Protocols;
+using allstarr.Core.Protocols.Jellyfin;
+using allstarr.Core.Playlists;
+using allstarr.Core.Extensions;
+using allstarr.Core.Enrichment;
+using allstarr.Core.Favorites;
+using allstarr.Core.ManagedFiles;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Downloads;
+using allstarr.Core.Playback;
+using allstarr.Core.Settings;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Http;
 using System.Net;
 using System.IO;
 
 var builder = WebApplication.CreateBuilder(args);
-RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment, Console.Out);
+RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment);
+if (StorageOperatorCommand.IsStorageCommand(args))
+{
+    builder.Configuration["Logging:LogLevel:Default"] = "Warning";
+}
+builder.Logging.ClearProviders();
+builder.Logging.AddProvider(new RedactingConsoleLoggerProvider(builder.Configuration));
+builder.Services.AddDurableStorage(builder.Configuration, builder.Environment);
+builder.Services.AddDurableRuntimeSettings();
+builder.Services.AddEncryptedSecretStore(builder.Configuration);
+builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
+if (StorageOperatorCommand.IsStorageCommand(args))
+{
+    Environment.ExitCode = await StorageOperatorCommand.RunAsync(
+        builder.Services,
+        args,
+        Console.Out,
+        Console.Error);
+    return;
+}
+
+builder.Services.AddPlatformIdentity(builder.Configuration);
+builder.Services.AddHostedService<DefaultTenantRuntimeSettingsProjector>();
+builder.Services.AddProtocolExecution(builder.Configuration);
+builder.Services.AddScoped<ProtocolExecutionContextFilter>();
+builder.Services.AddDurableJobs(builder.Configuration);
+builder.Services.AddDurableProviderHealth(builder.Configuration);
+builder.Services.AddProviderCapabilities();
+builder.Services.AddTrackIdentity();
+builder.Services.AddBackendLibraryIndexing();
+builder.Services.AddMetadataEnrichment();
+builder.Services.AddManagedFilePlacement();
+builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
+builder.Services.AddFavoriteActions(builder.Configuration);
+builder.Services.AddIntelligenceCore();
+builder.Services.AddGeneratedSetMaterializers();
+builder.Services.AddFirstPartyRecommendationSources();
+builder.Services.AddDurablePlaybackSignals();
+builder.Services.AddPlaylistOrchestration();
+builder.Services.AddExtensionControlPlane();
+builder.Services.AddPlatformOperations(builder.Configuration);
 
 // Configure forwarded headers for reverse proxy support (nginx, etc.)
 // Trust should be explicit: set ForwardedHeaders__KnownProxies and/or
@@ -51,7 +115,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             }
             else
             {
-                Console.WriteLine($"⚠️ Invalid ForwardedHeaders known proxy ignored: {proxy}");
+                throw new InvalidOperationException(
+                    "ForwardedHeaders:KnownProxies contains an invalid IP address.");
             }
         }
 
@@ -63,7 +128,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             }
             else
             {
-                Console.WriteLine($"⚠️ Invalid ForwardedHeaders known network ignored: {network}");
+                throw new InvalidOperationException(
+                    "ForwardedHeaders:KnownNetworks contains an invalid network.");
             }
         }
     }
@@ -86,6 +152,81 @@ static List<string> ParseCsv(string? raw)
         .ToList();
 }
 
+static List<SpotifyPlaylistConfig> ParseSpotifyPlaylists(string json)
+{
+    string[][] entries;
+    try
+    {
+        entries = System.Text.Json.JsonSerializer.Deserialize<string[][]>(json) ?? [];
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        throw new InvalidOperationException(
+            "SpotifyImport:Playlists must be a JSON array of playlist arrays.");
+    }
+
+    var playlists = new List<SpotifyPlaylistConfig>(entries.Length);
+    foreach (var entry in entries)
+    {
+        if (entry.Length < 2 ||
+            string.IsNullOrWhiteSpace(entry[0]) ||
+            string.IsNullOrWhiteSpace(entry[1]))
+        {
+            throw new InvalidOperationException(
+                "Each SpotifyImport:Playlists entry requires a name and provider playlist ID.");
+        }
+
+        var jellyfinId = string.Empty;
+        var position = LocalTracksPosition.First;
+        var schedule = "0 8 * * *";
+        string? userId = null;
+        if (entry.Length >= 3)
+        {
+            var third = entry[2].Trim();
+            var thirdIsPosition = third.Equals("first", StringComparison.OrdinalIgnoreCase) ||
+                                  third.Equals("last", StringComparison.OrdinalIgnoreCase);
+            if (thirdIsPosition)
+            {
+                position = third.Equals("last", StringComparison.OrdinalIgnoreCase)
+                    ? LocalTracksPosition.Last
+                    : LocalTracksPosition.First;
+                schedule = entry.Length >= 4 && !string.IsNullOrWhiteSpace(entry[3])
+                    ? entry[3].Trim()
+                    : schedule;
+                userId = entry.Length >= 5 && !string.IsNullOrWhiteSpace(entry[4])
+                    ? entry[4].Trim()
+                    : null;
+            }
+            else
+            {
+                jellyfinId = third;
+                position = entry.Length >= 4 &&
+                           entry[3].Trim().Equals("last", StringComparison.OrdinalIgnoreCase)
+                    ? LocalTracksPosition.Last
+                    : LocalTracksPosition.First;
+                schedule = entry.Length >= 5 && !string.IsNullOrWhiteSpace(entry[4])
+                    ? entry[4].Trim()
+                    : schedule;
+                userId = entry.Length >= 6 && !string.IsNullOrWhiteSpace(entry[5])
+                    ? entry[5].Trim()
+                    : null;
+            }
+        }
+
+        playlists.Add(new SpotifyPlaylistConfig
+        {
+            Name = entry[0].Trim(),
+            Id = entry[1].Trim(),
+            JellyfinId = jellyfinId,
+            LocalTracksPosition = position,
+            SyncSchedule = schedule,
+            UserId = userId
+        });
+    }
+
+    return playlists;
+}
+
 static string? GetConfiguredValue(IConfiguration configuration, params string[] keys)
 {
     foreach (var key in keys)
@@ -105,7 +246,7 @@ var backendType = builder.Configuration.GetValue<BackendType>("Backend:Type");
 
 // Configure Kestrel for large responses over VPN/Tailscale
 // Also configure admin port on 5275 (internal only, not exposed)
-var bindAdminAnyIp = AdminNetworkBindingPolicy.ShouldBindAdminAnyIp(builder.Configuration);
+var listenAdminAnyIp = AdminNetworkBindingPolicy.ShouldListenAdminAnyIp(builder.Configuration);
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
     serverOptions.Limits.MaxResponseBufferSize = null; // Disable response buffering limit
@@ -117,14 +258,12 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 
     // Admin UI port defaults to localhost-only.
     // Override with Admin:BindAnyIp=true if required by your deployment.
-    if (bindAdminAnyIp)
+    if (listenAdminAnyIp)
     {
-        Console.WriteLine("⚠️ Admin UI binding override enabled: listening on 0.0.0.0:5275");
         serverOptions.ListenAnyIP(5275);
     }
     else
     {
-        Console.WriteLine("Admin UI listening on localhost:5275 (default)");
         serverOptions.ListenLocalhost(5275);
     }
 });
@@ -159,12 +298,44 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("ExtensionSdkV1")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        MaxConnectionsPerServer = 8,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+    });
 builder.Services.AddHttpClient("SquidWTF");
-builder.Services.AddHttpClient("AppleMusic");
+builder.Services.AddHttpClient("AppleMusic")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        MaxConnectionsPerServer = 4,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+    });
+builder.Services.AddHttpClient("AppleDownloadDiscovery", client =>
+    client.Timeout = TimeSpan.FromSeconds(5))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+        MaxConnectionsPerServer = 4,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+    });
+builder.Services.AddSingleton<IPublicEndpointDnsResolver, SystemPublicEndpointDnsResolver>();
+builder.Services.AddSingleton<IResolvedIpConnector, SocketResolvedIpConnector>();
+builder.Services.AddSingleton<PublicEndpointConnector>();
+builder.Services.AddSingleton<ISafeProxyTransportFactory, SafeProxyTransportFactory>();
+builder.Services.AddSingleton<ISafeJsonProxyClient, SafeJsonProxyClient>();
 builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 {
     options.HttpMessageHandlerBuilderActions.Add(builder =>
     {
+        if (builder.Name is "AppleDownloadDiscovery" or "AppleMusic")
+        {
+            return;
+        }
         builder.PrimaryHandler = new HttpClientHandler
         {
             AllowAutoRedirect = true,
@@ -198,7 +369,10 @@ builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
-var dataProtectionKeysDirectory = new DirectoryInfo("/app/cache/data-protection");
+var dataProtectionKeysPath = builder.Environment.IsEnvironment("Testing")
+    ? Path.Combine(Path.GetTempPath(), "allstarr-tests", "data-protection")
+    : "/app/cache/data-protection";
+var dataProtectionKeysDirectory = new DirectoryInfo(dataProtectionKeysPath);
 dataProtectionKeysDirectory.Create();
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(dataProtectionKeysDirectory)
@@ -226,334 +400,53 @@ builder.Services.Configure<QobuzSettings>(
     builder.Configuration.GetSection("Qobuz"));
 builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
-builder.Services.Configure<AppleMusicSettings>(
-    builder.Configuration.GetSection("AppleMusic"));
+builder.Services.Configure<AppleDownloadSettings>(
+    builder.Configuration.GetSection("AppleDownload"));
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("Redis"));
 builder.Services.Configure<CacheSettings>(
     builder.Configuration.GetSection("Cache"));
-// Configure Spotify Import settings with custom playlist parsing from env var
 builder.Services.Configure<SpotifyImportSettings>(options =>
 {
     builder.Configuration.GetSection("SpotifyImport").Bind(options);
-
-    // Debug: Check what Bind() populated
-    Console.WriteLine($"DEBUG: After Bind(), Playlists.Count = {options.Playlists.Count}");
-#pragma warning disable CS0618 // Type or member is obsolete
-    Console.WriteLine($"DEBUG: After Bind(), PlaylistIds.Count = {options.PlaylistIds.Count}");
-    Console.WriteLine($"DEBUG: After Bind(), PlaylistNames.Count = {options.PlaylistNames.Count}");
-#pragma warning restore CS0618
-
-    // Parse SPOTIFY_IMPORT_PLAYLISTS env var (JSON array format)
-    // Format: [["Name","SpotifyId","JellyfinId","first|last","cronSchedule","UserId?"],...]
-    var playlistsEnv = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
-    if (!string.IsNullOrWhiteSpace(playlistsEnv))
+    var playlistJson = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
+    if (!string.IsNullOrWhiteSpace(playlistJson) && playlistJson.TrimStart().StartsWith("[", StringComparison.Ordinal))
     {
-        Console.WriteLine($"Found SPOTIFY_IMPORT_PLAYLISTS env var: {playlistsEnv.Length} chars");
-        try
-        {
-            // Parse as JSON array of arrays
-            var playlistArrays = System.Text.Json.JsonSerializer.Deserialize<string[][]>(playlistsEnv);
-            if (playlistArrays != null && playlistArrays.Length > 0)
-            {
-                // Clear any playlists that Bind() may have incorrectly populated
-                options.Playlists.Clear();
-
-                Console.WriteLine($"Parsed {playlistArrays.Length} playlists from JSON format");
-                foreach (var arr in playlistArrays)
-                {
-                    if (arr.Length >= 2)
-                    {
-                        var jellyfinId = string.Empty;
-                        var localTracksPosition = LocalTracksPosition.First;
-                        var syncSchedule = "0 8 * * *";
-                        string? userId = null;
-
-                        if (arr.Length >= 3)
-                        {
-                            var third = arr[2].Trim();
-                            var thirdIsPosition = third.Equals("first", StringComparison.OrdinalIgnoreCase) ||
-                                                  third.Equals("last", StringComparison.OrdinalIgnoreCase);
-
-                            if (thirdIsPosition)
-                            {
-                                localTracksPosition = third.Equals("last", StringComparison.OrdinalIgnoreCase)
-                                    ? LocalTracksPosition.Last
-                                    : LocalTracksPosition.First;
-
-                                if (arr.Length >= 4 && !string.IsNullOrWhiteSpace(arr[3]))
-                                {
-                                    syncSchedule = arr[3].Trim();
-                                }
-
-                                if (arr.Length >= 5 && !string.IsNullOrWhiteSpace(arr[4]))
-                                {
-                                    userId = arr[4].Trim();
-                                }
-                            }
-                            else
-                            {
-                                jellyfinId = third;
-
-                                if (arr.Length >= 4)
-                                {
-                                    localTracksPosition = arr[3].Trim().Equals("last", StringComparison.OrdinalIgnoreCase)
-                                        ? LocalTracksPosition.Last
-                                        : LocalTracksPosition.First;
-                                }
-
-                                if (arr.Length >= 5 && !string.IsNullOrWhiteSpace(arr[4]))
-                                {
-                                    syncSchedule = arr[4].Trim();
-                                }
-
-                                if (arr.Length >= 6 && !string.IsNullOrWhiteSpace(arr[5]))
-                                {
-                                    userId = arr[5].Trim();
-                                }
-                            }
-                        }
-
-                        var config = new SpotifyPlaylistConfig
-                        {
-                            Name = arr[0].Trim(),
-                            Id = arr[1].Trim(),
-                            JellyfinId = jellyfinId,
-                            LocalTracksPosition = localTracksPosition,
-                            SyncSchedule = syncSchedule,
-                            UserId = userId
-                        };
-                        options.Playlists.Add(config);
-                        var ownerDisplay = string.IsNullOrWhiteSpace(config.UserId) ? "global" : config.UserId;
-                        Console.WriteLine($"  Added: {config.Name} (Spotify: {config.Id}, Jellyfin: {config.JellyfinId}, Position: {config.LocalTracksPosition}, Schedule: {config.SyncSchedule}, Owner: {ownerDisplay})");
-                    }
-                }
-            }
-            else
-            {
-                Console.WriteLine("JSON format was empty or invalid, will try legacy format");
-            }
-        }
-        catch (System.Text.Json.JsonException ex)
-        {
-            Console.WriteLine($"Warning: Failed to parse SPOTIFY_IMPORT_PLAYLISTS: {ex.Message}");
-            Console.WriteLine("Expected format: [[\"Name\",\"SpotifyId\",\"JellyfinId\",\"first|last\",\"cronSchedule\",\"UserId?\"],...]");
-            Console.WriteLine("Will try legacy format instead");
-        }
-    }
-    else
-    {
-        Console.WriteLine("No SPOTIFY_IMPORT_PLAYLISTS env var found, will try legacy format");
-    }
-
-    // Legacy support: Parse old SPOTIFY_IMPORT_PLAYLIST_IDS/NAMES env vars
-    // Only used if new Playlists format is not configured
-    // Check if we have legacy env vars to parse
-    var playlistIdsEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistIds");
-    var playlistNamesEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistNames");
-    var hasLegacyConfig = !string.IsNullOrWhiteSpace(playlistIdsEnv) || !string.IsNullOrWhiteSpace(playlistNamesEnv);
-
-    if (hasLegacyConfig && options.Playlists.Count == 0)
-    {
-        Console.WriteLine("Parsing legacy Spotify playlist format...");
-
-#pragma warning disable CS0618 // Type or member is obsolete
-
-        // Clear any auto-bound values from the Bind() call above
-        // The auto-binder doesn't handle comma-separated strings correctly
-        options.PlaylistIds.Clear();
-        options.PlaylistNames.Clear();
-        options.PlaylistLocalTracksPositions.Clear();
-
-        if (!string.IsNullOrWhiteSpace(playlistIdsEnv))
-        {
-            options.PlaylistIds = playlistIdsEnv
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(id => id.Trim())
-                .Where(id => !string.IsNullOrEmpty(id))
-                .ToList();
-            Console.WriteLine($"  Parsed {options.PlaylistIds.Count} playlist IDs from env var");
-        }
-
-        if (!string.IsNullOrWhiteSpace(playlistNamesEnv))
-        {
-            options.PlaylistNames = playlistNamesEnv
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(name => name.Trim())
-                .Where(name => !string.IsNullOrEmpty(name))
-                .ToList();
-            Console.WriteLine($"  Parsed {options.PlaylistNames.Count} playlist names from env var");
-        }
-
-        var playlistPositionsEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistLocalTracksPositions");
-        if (!string.IsNullOrWhiteSpace(playlistPositionsEnv))
-        {
-            options.PlaylistLocalTracksPositions = playlistPositionsEnv
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(pos => pos.Trim())
-                .Where(pos => !string.IsNullOrEmpty(pos))
-                .ToList();
-            Console.WriteLine($"  Parsed {options.PlaylistLocalTracksPositions.Count} playlist positions from env var");
-        }
-        else
-        {
-            Console.WriteLine("  No playlist positions env var found, will use defaults");
-        }
-
-        // Convert legacy format to new Playlists array
-        Console.WriteLine($"  Converting {options.PlaylistIds.Count} playlists to new format...");
-        for (int i = 0; i < options.PlaylistIds.Count; i++)
-        {
-            var name = i < options.PlaylistNames.Count ? options.PlaylistNames[i] : options.PlaylistIds[i];
-            var position = LocalTracksPosition.First; // Default
-
-            // Parse position if provided
-            if (i < options.PlaylistLocalTracksPositions.Count)
-            {
-                var posStr = options.PlaylistLocalTracksPositions[i];
-                if (posStr.Equals("last", StringComparison.OrdinalIgnoreCase))
-                {
-                    position = LocalTracksPosition.Last;
-                }
-            }
-
-            options.Playlists.Add(new SpotifyPlaylistConfig
-            {
-                Name = name,
-                Id = options.PlaylistIds[i],
-                LocalTracksPosition = position
-            });
-            Console.WriteLine($"    [{i}] {name} (ID: {options.PlaylistIds[i]}, Position: {position})");
-        }
-#pragma warning restore CS0618
-    }
-    else if (hasLegacyConfig && options.Playlists.Count > 0)
-    {
-        // Bind() incorrectly populated Playlists from legacy env vars
-        // Clear it and re-parse properly
-        Console.WriteLine($"DEBUG: Bind() incorrectly populated {options.Playlists.Count} playlists, clearing and re-parsing...");
-        options.Playlists.Clear();
-
-#pragma warning disable CS0618 // Type or member is obsolete
-        options.PlaylistIds.Clear();
-        options.PlaylistNames.Clear();
-        options.PlaylistLocalTracksPositions.Clear();
-
-        Console.WriteLine("Parsing legacy Spotify playlist format...");
-
-        if (!string.IsNullOrWhiteSpace(playlistIdsEnv))
-        {
-            options.PlaylistIds = playlistIdsEnv
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(id => id.Trim())
-                .Where(id => !string.IsNullOrEmpty(id))
-                .ToList();
-            Console.WriteLine($"  Parsed {options.PlaylistIds.Count} playlist IDs from env var");
-        }
-
-        if (!string.IsNullOrWhiteSpace(playlistNamesEnv))
-        {
-            options.PlaylistNames = playlistNamesEnv
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(name => name.Trim())
-                .Where(name => !string.IsNullOrEmpty(name))
-                .ToList();
-            Console.WriteLine($"  Parsed {options.PlaylistNames.Count} playlist names from env var");
-        }
-
-        var playlistPositionsEnv = builder.Configuration.GetValue<string>("SpotifyImport:PlaylistLocalTracksPositions");
-        if (!string.IsNullOrWhiteSpace(playlistPositionsEnv))
-        {
-            options.PlaylistLocalTracksPositions = playlistPositionsEnv
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(pos => pos.Trim())
-                .Where(pos => !string.IsNullOrEmpty(pos))
-                .ToList();
-            Console.WriteLine($"  Parsed {options.PlaylistLocalTracksPositions.Count} playlist positions from env var");
-        }
-        else
-        {
-            Console.WriteLine("  No playlist positions env var found, will use defaults");
-        }
-
-        // Convert legacy format to new Playlists array
-        Console.WriteLine($"  Converting {options.PlaylistIds.Count} playlists to new format...");
-        for (int i = 0; i < options.PlaylistIds.Count; i++)
-        {
-            var name = i < options.PlaylistNames.Count ? options.PlaylistNames[i] : options.PlaylistIds[i];
-            var position = LocalTracksPosition.First; // Default
-
-            // Parse position if provided
-            if (i < options.PlaylistLocalTracksPositions.Count)
-            {
-                var posStr = options.PlaylistLocalTracksPositions[i];
-                if (posStr.Equals("last", StringComparison.OrdinalIgnoreCase))
-                {
-                    position = LocalTracksPosition.Last;
-                }
-            }
-
-            options.Playlists.Add(new SpotifyPlaylistConfig
-            {
-                Name = name,
-                Id = options.PlaylistIds[i],
-                LocalTracksPosition = position
-            });
-            Console.WriteLine($"    [{i}] {name} (ID: {options.PlaylistIds[i]}, Position: {position})");
-        }
-#pragma warning restore CS0618
-    }
-    else
-    {
-        Console.WriteLine($"Using new Playlists format: {options.Playlists.Count} playlists configured");
-    }
-
-    // Log configuration at startup
-    Console.WriteLine($"Spotify Import: Enabled={options.Enabled}, MatchingInterval={options.MatchingIntervalHours}h");
-    Console.WriteLine($"Spotify Import Playlists: {options.Playlists.Count} configured");
-    foreach (var playlist in options.Playlists)
-    {
-        Console.WriteLine($"  - {playlist.Name} (ID: {playlist.Id}, LocalTracks: {playlist.LocalTracksPosition})");
+        options.Playlists = ParseSpotifyPlaylists(playlistJson);
     }
 });
 
-// Get shared settings from the active backend config
-MusicService musicService;
-bool enableExternalPlaylists;
-
-if (backendType == BackendType.Jellyfin)
-{
-    musicService = builder.Configuration.GetValue<MusicService>("Jellyfin:MusicService");
-    enableExternalPlaylists = builder.Configuration.GetValue<bool>("Jellyfin:EnableExternalPlaylists", true);
-}
-else
-{
-    // Default to Subsonic
-    musicService = builder.Configuration.GetValue<MusicService>("Subsonic:MusicService");
-    enableExternalPlaylists = builder.Configuration.GetValue<bool>("Subsonic:EnableExternalPlaylists", true);
-}
-
 // Discover SquidWTF endpoints for multi-provider usage
-var squidWtfEndpointCatalog = await SquidWtfEndpointDiscovery.DiscoverAsync();
+var squidWtfEndpointCatalog = builder.Environment.IsEnvironment("Testing")
+    ? new SquidWtfEndpointCatalog([], [])
+    : await SquidWtfEndpointDiscovery.DiscoverAsync();
 var squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
 var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
 
 // Business services - shared across backends
 builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<RedisCacheService>();
-builder.Services.AddSingleton<FavoritesMigrationService>();
+builder.Services.AddSingleton<IRedisConnectionFactory, RedisConnectionFactory>();
 builder.Services.AddSingleton<OdesliService>();
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
+builder.Services.AddSingleton<ProtocolStreamingResponseAdapter>();
+builder.Services.AddSingleton<JellyfinProxyService>();
 
 // Register backend-specific services
 if (backendType == BackendType.Jellyfin)
 {
     // Jellyfin services
     builder.Services.AddSingleton<JellyfinResponseBuilder>();
+    builder.Services.AddSingleton<IJellyfinSearchProtocolAdapter, JellyfinSearchProtocolAdapter>();
+    builder.Services.AddSingleton<IJellyfinItemProtocolAdapter, JellyfinItemProtocolAdapter>();
+    builder.Services.AddSingleton<IJellyfinImageProtocolAdapter, JellyfinImageProtocolAdapter>();
+    builder.Services.AddSingleton<IJellyfinLyricsProtocolAdapter, JellyfinLyricsProtocolAdapter>();
+    builder.Services.AddSingleton<IJellyfinInteractionProtocolAdapter, JellyfinInteractionProtocolAdapter>();
     builder.Services.AddSingleton<JellyfinModelMapper>();
-    builder.Services.AddScoped<JellyfinProxyService>();
     builder.Services.AddSingleton<JellyfinSessionManager>();
+    builder.Services.AddSingleton<IPlaybackActivitySource, JellyfinPlaybackActivitySource>();
+    builder.Services.AddSingleton<IPlaybackMetadataResolver, JellyfinPlaybackMetadataResolver>();
     builder.Services.AddScoped<JellyfinAuthFilter>();
 
     // Register JellyfinController as a service for dependency injection
@@ -565,7 +458,12 @@ else
     builder.Services.AddSingleton<SubsonicRequestParser>();
     builder.Services.AddSingleton<SubsonicResponseBuilder>();
     builder.Services.AddSingleton<SubsonicModelMapper>();
+    builder.Services.AddSingleton<ISubsonicLyricsLookup, SubsonicLyricsLookup>();
     builder.Services.AddScoped<SubsonicProxyService>();
+    builder.Services.AddScoped<SubsonicLyricsProtocolAdapter>();
+    builder.Services.AddSingleton<SubsonicRelayProtocolAdapter>();
+    builder.Services.AddSingleton<SubsonicSearchProtocolAdapter>();
+    builder.Services.AddScoped<SubsonicAuthFilter>();
 }
 
 // ----------------------------------------------------
@@ -574,9 +472,12 @@ else
 builder.Services.AddSingleton<QobuzBundleService>();
 
 // 1. Concrete Metadata Services
-builder.Services.AddSingleton<IConcreteMetadataService, DeezerMetadataService>();
+builder.Services.AddSingleton<DeezerMetadataService>();
+builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
+    provider.GetRequiredService<DeezerMetadataService>());
 builder.Services.AddSingleton<IConcreteMetadataService, QobuzMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService, AppleMusicMetadataService>();
+builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
     new SquidWTFMetadataService(
         sp.GetRequiredService<IHttpClientFactory>(),
@@ -586,6 +487,10 @@ builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
         sp.GetRequiredService<RedisCacheService>(),
         squidWtfApiUrls,
         sp.GetService<GenreEnrichmentService>()));
+builder.Services.AddDeezerMetadataCapability();
+builder.Services.AddSpotifyPlaylistCapability();
+builder.Services.AddAppleMusicKitPlaylistCapability();
+builder.Services.AddLegacyBuiltInProviderDescriptors();
 
 // 2. Concrete Download Services
 builder.Services.AddSingleton<IConcreteDownloadService, DeezerDownloadService>();
@@ -629,23 +534,36 @@ else
 // Register endpoint benchmark service
 builder.Services.AddSingleton<EndpointBenchmarkService>();
 
-builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
-builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
-if (musicService == MusicService.SquidWTF)
+var probeOptionalProvidersAtStartup =
+    builder.Configuration.GetValue<bool>("StartupValidation:ProbeOptionalProviders");
+if (probeOptionalProvidersAtStartup)
 {
-    builder.Services.AddSingleton<IStartupValidator>(sp =>
-        new SquidWTFStartupValidator(
-            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
-            sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
-            squidWtfApiUrls,
-            squidWtfStreamingUrls,
-            sp.GetRequiredService<EndpointBenchmarkService>(),
-            sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
+    builder.Services.AddSingleton<IStartupValidator, DeezerStartupValidator>();
+    builder.Services.AddSingleton<IStartupValidator, QobuzStartupValidator>();
+    var disabledProviders = ParseCsv(builder.Configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"])
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var enabledMetadataProviders = ParseCsv(
+        builder.Configuration["MULTI_PROVIDER_ENABLED_SEARCH"] ?? "deezer,qobuz,squidwtf");
+    if (!disabledProviders.Contains("squidwtf") &&
+        enabledMetadataProviders.Contains("squidwtf", StringComparer.OrdinalIgnoreCase))
+    {
+        builder.Services.AddSingleton<IStartupValidator>(sp =>
+            new SquidWTFStartupValidator(
+                sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("SquidWTF"),
+                squidWtfApiUrls,
+                squidWtfStreamingUrls,
+                sp.GetRequiredService<EndpointBenchmarkService>(),
+                sp.GetRequiredService<ILogger<SquidWTFStartupValidator>>()));
+    }
+    builder.Services.AddSingleton<IStartupValidator, LyricsStartupValidator>();
 }
-builder.Services.AddSingleton<IStartupValidator, LyricsStartupValidator>();
 
-// Register orchestrator as hosted service
-builder.Services.AddHostedService<StartupValidationOrchestrator>();
+// Tests and local contract hosts must never call live providers during startup.
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddHostedService<StartupValidationOrchestrator>();
+}
 
 // Register cache cleanup service (only runs when StorageMode is Cache)
 builder.Services.AddHostedService<CacheCleanupService>();
@@ -693,13 +611,6 @@ builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options 
         options.PreferIsrcMatching = preferIsrc.Equals("true", StringComparison.OrdinalIgnoreCase);
     }
 
-    // Log configuration (mask sensitive values)
-    Console.WriteLine($"SpotifyApi Configuration:");
-    Console.WriteLine($"  Enabled: {options.Enabled}");
-    Console.WriteLine($"  SessionCookie: {(string.IsNullOrEmpty(options.SessionCookie) ? "(not set)" : "***" + options.SessionCookie[^8..])}");
-    Console.WriteLine($"  SessionCookieSetDate: {options.SessionCookieSetDate ?? "(not set)"}");
-    Console.WriteLine($"  CacheDurationMinutes: {options.CacheDurationMinutes}");
-    Console.WriteLine($"  PreferIsrcMatching: {options.PreferIsrcMatching}");
 });
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClient>();
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClientFactory>();
@@ -721,9 +632,6 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>()
 // Register Spotify mapping validation service (validates and upgrades mappings)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingValidationService>();
 
-// Register Spotify mapping migration service (migrates legacy per-playlist mappings to global format)
-builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMappingMigrationService>();
-
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
@@ -734,7 +642,6 @@ builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMissingTracks
 // Register Spotify track matching service (pre-matches tracks with rate limiting)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyTrackMatchingService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyTrackMatchingService>());
-builder.Services.AddHostedService<VersionUpgradeRebuildService>();
 
 // Register lyrics prefetch service (prefetches lyrics for all playlist tracks)
 // DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast
@@ -776,16 +683,6 @@ builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options 
     options.ListenBrainz.Enabled = listenBrainzEnabled;
     options.ListenBrainz.UserToken = listenBrainzUserToken;
 
-    // Debug logging
-    Console.WriteLine($"Scrobbling Configuration:");
-    Console.WriteLine($"  Enabled: {options.Enabled}");
-    Console.WriteLine($"  Local Tracks Enabled: {options.LocalTracksEnabled}");
-    Console.WriteLine($"  Synthetic Local Played Signal Enabled: {options.SyntheticLocalPlayedSignalEnabled}");
-    Console.WriteLine($"  Last.fm Enabled: {options.LastFm.Enabled}");
-    Console.WriteLine($"  Last.fm Username: {options.LastFm.Username ?? "(not set)"}");
-    Console.WriteLine($"  Last.fm Session Key: {(string.IsNullOrEmpty(options.LastFm.SessionKey) ? "(not set)" : "***" + options.LastFm.SessionKey[^8..])}");
-    Console.WriteLine($"  ListenBrainz Enabled: {options.ListenBrainz.Enabled}");
-    Console.WriteLine($"  ListenBrainz Token: {(string.IsNullOrEmpty(options.ListenBrainz.UserToken) ? "(not set)" : "***" + options.ListenBrainz.UserToken[^8..])}");
 });
 
 // Register Last.fm HTTP client with proper User-Agent
@@ -808,48 +705,25 @@ builder.Services.AddSingleton<IScrobblingService, ListenBrainzScrobblingService>
 builder.Services.AddSingleton<ScrobblingOrchestrator>();
 builder.Services.AddSingleton<ScrobblingHelper>();
 
-// Register MusicBrainz service for metadata enrichment (only if enabled)
-var musicBrainzEnabled = builder.Configuration.GetValue<bool>("MusicBrainz:Enabled", false);
-var musicBrainzEnabledEnv = builder.Configuration.GetValue<string>("MusicBrainz:Enabled");
-if (!string.IsNullOrEmpty(musicBrainzEnabledEnv))
+// Register the capability unconditionally. MusicBrainzSettings.Enabled gates every
+// outbound lookup, which lets the durable runtime setting change without rebuilding DI.
+builder.Services.Configure<allstarr.Models.Settings.MusicBrainzSettings>(options =>
 {
-    musicBrainzEnabled = musicBrainzEnabledEnv.Equals("true", StringComparison.OrdinalIgnoreCase);
-}
+    builder.Configuration.GetSection("MusicBrainz").Bind(options);
 
-if (musicBrainzEnabled)
-{
-    builder.Services.Configure<allstarr.Models.Settings.MusicBrainzSettings>(options =>
+    var enabled = builder.Configuration.GetValue<string>("MusicBrainz:Enabled");
+    if (!string.IsNullOrEmpty(enabled))
     {
-        builder.Configuration.GetSection("MusicBrainz").Bind(options);
+        options.Enabled = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
 
-        // Override from environment variables
-        var enabled = builder.Configuration.GetValue<string>("MusicBrainz:Enabled");
-        if (!string.IsNullOrEmpty(enabled))
-        {
-            options.Enabled = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
-        }
-
-        var username = builder.Configuration.GetValue<string>("MusicBrainz:Username");
-        if (!string.IsNullOrEmpty(username))
-        {
-            options.Username = username;
-        }
-
-        var password = builder.Configuration.GetValue<string>("MusicBrainz:Password");
-        if (!string.IsNullOrEmpty(password))
-        {
-            options.Password = password;
-        }
-    });
-    builder.Services.AddSingleton<allstarr.Services.MusicBrainz.MusicBrainzService>();
-    builder.Services.AddSingleton<allstarr.Services.Common.GenreEnrichmentService>();
-
-    Console.WriteLine("✅ MusicBrainz genre enrichment enabled");
-}
-else
-{
-    Console.WriteLine("⏭️ MusicBrainz genre enrichment disabled");
-}
+    var username = builder.Configuration.GetValue<string>("MusicBrainz:Username");
+    if (!string.IsNullOrEmpty(username)) options.Username = username;
+    var password = builder.Configuration.GetValue<string>("MusicBrainz:Password");
+    if (!string.IsNullOrEmpty(password)) options.Password = password;
+});
+builder.Services.AddSingleton<allstarr.Services.MusicBrainz.MusicBrainzService>();
+builder.Services.AddSingleton<allstarr.Services.Common.GenreEnrichmentService>();
 
 builder.Services.AddCors(options =>
 {
@@ -914,26 +788,8 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Run one-time favorites/deletions migration if using Redis
-using (var scope = app.Services.CreateScope())
-{
-    var migrationService = scope.ServiceProvider.GetRequiredService<FavoritesMigrationService>();
-    await migrationService.MigrateAsync();
-}
-
 // Initialize cache settings for static access
 CacheExtensions.InitializeCacheSettings(app.Services);
-
-// Migrate old .env file format on startup
-try
-{
-    var migrationService = new EnvMigrationService(app.Services.GetRequiredService<ILogger<EnvMigrationService>>());
-    migrationService.MigrateEnvFile();
-}
-catch (Exception ex)
-{
-    app.Logger.LogWarning(ex, "Failed to run .env migration");
-}
 
 // Configure the HTTP request pipeline.
 
@@ -948,6 +804,11 @@ app.UseMiddleware<BotProbeBlockMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
 
 app.UseExceptionHandler(); // Use registered GlobalExceptionHandler
+
+app.UseMiddleware<CorrelationMiddleware>();
+
+// Never mutate against a fallback store when the selected durable database is unavailable.
+app.UseMiddleware<DurableMutationGuardMiddleware>();
 
 // Enable response compression EARLY in the pipeline
 app.UseResponseCompression();
@@ -984,10 +845,44 @@ app.UseCors();
 
 app.MapControllers();
 
-// Health check endpoint for monitoring
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+app.MapGet("/health/live", () => Results.Ok(new
+{
+    status = "live",
+    timestamp = DateTimeOffset.UtcNow
+}));
+
+static async Task<IResult> StorageReadinessResult(
+    PlatformReadinessService readinessService,
+    CancellationToken cancellationToken)
+{
+    var snapshot = await readinessService.CheckAsync(cancellationToken);
+    return snapshot.Ready
+        ? Results.Ok(snapshot)
+        : Results.Json(snapshot, statusCode: StatusCodes.Status503ServiceUnavailable);
+}
+
+app.MapGet("/health/ready", StorageReadinessResult);
+app.MapGet("/health", StorageReadinessResult);
+app.MapGet("/metrics", async (
+    HttpContext context,
+    allstarr.Core.Operations.OperationalMetricsService metrics,
+    CancellationToken cancellationToken) =>
+{
+    if (context.Connection.LocalPort != 5275)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Text(
+        await metrics.RenderPrometheusAsync(cancellationToken),
+        "text/plain; version=0.0.4; charset=utf-8");
+});
 
 app.Run();
+
+public partial class Program
+{
+}
 
 /// <summary>
 /// Controller feature provider that conditionally registers controllers based on backend type.
@@ -1007,14 +902,19 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
 
-        // All admin controllers should always be registered for the admin UI.
+        // Backend-neutral admin controllers are registered for every deployment.
+        // Backend-specific admin surfaces are composed only with their backend.
+        if (typeInfo.Name == "JellyfinAdminController")
+        {
+            return _backendType == BackendType.Jellyfin;
+        }
+
         if (typeInfo.Name == "AdminController" ||
             typeInfo.Name == "AdminAuthController" ||
             typeInfo.Name == "ConfigController" ||
             typeInfo.Name == "DiagnosticsController" ||
             typeInfo.Name == "DownloadsController" ||
             typeInfo.Name == "PlaylistController" ||
-            typeInfo.Name == "JellyfinAdminController" ||
             typeInfo.Name == "SpotifyAdminController" ||
             typeInfo.Name == "LyricsController" ||
             typeInfo.Name == "MappingController" ||
@@ -1022,7 +922,10 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
             typeInfo.Name == "AppleMusicController" ||
             typeInfo.Name == "ExtensionController" ||
             typeInfo.Name == "AdminUiController" ||
-            typeInfo.Name == "DownloadActivityController")
+            typeInfo.Name == "DownloadActivityController" ||
+            typeInfo.Name == "JobsController" ||
+            typeInfo.Name == "ProviderAccountsController" ||
+            typeInfo.Name == "StorageController")
         {
             return true;
         }
