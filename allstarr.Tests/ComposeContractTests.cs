@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace allstarr.Tests;
 
@@ -111,6 +112,10 @@ public sealed class ComposeContractTests
             StringComparison.Ordinal);
         Assert.Contains("ALLSTARR_TEST_POSTGRES:", workflow, StringComparison.Ordinal);
         Assert.Contains("postgresql-client-18", workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal",
+            workflow,
+            StringComparison.Ordinal);
         Assert.Contains("dotnet test --configuration Release --no-build", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml config --quiet", workflow, StringComparison.Ordinal);
         Assert.Contains(
@@ -132,7 +137,12 @@ public sealed class ComposeContractTests
         var dotnetTestIndex = workflow.IndexOf(
             "dotnet test --configuration Release --no-build",
             StringComparison.Ordinal);
-        var imagePushIndex = workflow.IndexOf("docker/build-push-action@v6", StringComparison.Ordinal);
+        var smokeBuildIndex = workflow.IndexOf("name: Build smoke-test image", StringComparison.Ordinal);
+        var smokeTestIndex = workflow.IndexOf("name: Smoke test built image", StringComparison.Ordinal);
+        var imagePushIndex = workflow.IndexOf("id: publish", StringComparison.Ordinal);
+        var digestVerificationIndex = workflow.IndexOf(
+            "name: Verify published manifest digest",
+            StringComparison.Ordinal);
 
         Assert.Contains("DOTNET_VERSION: \"10.0.301\"", workflow, StringComparison.Ordinal);
         Assert.Contains(
@@ -141,6 +151,10 @@ public sealed class ComposeContractTests
             StringComparison.Ordinal);
         Assert.Contains("ALLSTARR_TEST_POSTGRES:", workflow, StringComparison.Ordinal);
         Assert.Contains("postgresql-client-18", workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal",
+            workflow,
+            StringComparison.Ordinal);
         Assert.Contains("dotnet test --configuration Release --no-build", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml config --quiet", workflow, StringComparison.Ordinal);
         Assert.Contains(
@@ -152,10 +166,33 @@ public sealed class ComposeContractTests
             workflow,
             StringComparison.Ordinal);
         Assert.Contains("needs: build-and-test", workflow, StringComparison.Ordinal);
+        Assert.Contains(
+            "uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7",
+            workflow,
+            StringComparison.Ordinal);
+        Assert.Contains("curl --fail --silent http://127.0.0.1:8080/health/ready", workflow, StringComparison.Ordinal);
+        Assert.Contains("PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("docker buildx imagetools inspect", workflow, StringComparison.Ordinal);
         Assert.True(dotnetTestIndex >= 0 && publishJobIndex > dotnetTestIndex);
-        Assert.True(imagePushIndex > publishJobIndex);
+        Assert.True(smokeBuildIndex > publishJobIndex);
+        Assert.True(smokeTestIndex > smokeBuildIndex);
+        Assert.True(imagePushIndex > smokeTestIndex);
+        Assert.True(digestVerificationIndex > imagePushIndex);
         Assert.Equal(1, workflow.Split("push: true", StringSplitOptions.None).Length - 1);
         Assert.DoesNotContain("continue-on-error: true", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Workflows_PinEveryThirdPartyActionToACommitSha()
+    {
+        foreach (var file in new[] { "ci.yml", "docker.yml" })
+        {
+            var workflow = File.ReadAllText(Path.Combine(_repositoryRoot, ".github", "workflows", file));
+            var actionReferences = Regex.Matches(workflow, @"(?m)^\s*uses:\s*[^\s@]+@([^\s#]+)");
+            Assert.NotEmpty(actionReferences);
+            Assert.All(actionReferences.Cast<Match>(), match =>
+                Assert.Matches("^[0-9a-f]{40}$", match.Groups[1].Value));
+        }
     }
 
     private static string FindRepositoryRoot()

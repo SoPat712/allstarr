@@ -20,7 +20,9 @@
         <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
         <PackageReference Include="Cronos" Version="0.11.1" />
         <PackageReference Include="Jint" Version="4.11.0" />
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.4" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+        <!-- Keep the OpenAPI object model on the current compatible 2.x security line used by Swashbuckle. -->
+        <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.9">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -29,7 +31,9 @@
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.2" />
         <PackageReference Include="Otp.NET" Version="1.4.1" />
         <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
-        <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.4" />
+        <!-- Override EF's older native SQLite bundle, which contains a vulnerable SQLite build. -->
+        <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
         <PackageReference Include="TagLibSharp" Version="2.3.0" />
     </ItemGroup>
 

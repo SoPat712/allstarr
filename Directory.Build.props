@@ -5,5 +5,12 @@
       Re-enable explicitly with: dotnet test -p:NuGetAudit=true
     -->
     <NuGetAudit Condition="'$(NuGetAudit)' == ''">false</NuGetAudit>
+    <NuGetAuditMode Condition="'$(NuGetAudit)' == 'true'">all</NuGetAuditMode>
+    <WarningsAsErrors Condition="'$(NuGetAudit)' == 'true'">$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
+
+    <!-- Keep compiler and SDK analyzer warnings release-blocking without coupling builds to formatting debt. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
   </PropertyGroup>
 </Project>

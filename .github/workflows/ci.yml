@@ -31,15 +31,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
 
@@ -69,10 +69,16 @@ jobs:
           pg_restore --version
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore -p:NuGetAudit=true
+
+      - name: Test first-party bundle integrity
+        run: python -m unittest discover -s tools/tests -v
+
+      - name: Verify C# formatting and analyzers
+        run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal

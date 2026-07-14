@@ -32,15 +32,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
 
@@ -70,10 +70,16 @@ jobs:
           pg_restore --version
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore -p:NuGetAudit=true
+
+      - name: Test first-party bundle integrity
+        run: python -m unittest discover -s tools/tests -v
+
+      - name: Verify C# formatting and analyzers
+        run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
@@ -99,16 +105,71 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build smoke-test image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          push: false
+          tags: allstarr:release-smoke
+          cache-from: type=gha
+
+      - name: Smoke test built image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          smoke_dir="${RUNNER_TEMP}/allstarr-release-smoke"
+          container_name="allstarr-release-smoke"
+          mkdir -p "${smoke_dir}/state"
+          printf '%s\n' 'create-new-allstarr-database' > "${smoke_dir}/sqlite-bootstrap-confirmation"
+
+          cleanup() {
+            docker logs "${container_name}" || true
+            docker rm --force "${container_name}" >/dev/null 2>&1 || true
+            rm -rf "${smoke_dir}"
+          }
+          trap cleanup EXIT
+
+          docker run --detach \
+            --name "${container_name}" \
+            --volume "${smoke_dir}:/smoke" \
+            --env 'ASPNETCORE_ENVIRONMENT=Production' \
+            --env 'Redis__Enabled=false' \
+            --env 'Readiness__RequireSecretKeyRing=false' \
+            --env 'Storage__Provider=Sqlite' \
+            --env 'Storage__ConnectionString=Data Source=/smoke/state/allstarr.db' \
+            --env 'Storage__SqliteBootstrapConfirmationFile=/smoke/sqlite-bootstrap-confirmation' \
+            allstarr:release-smoke
+
+          for attempt in {1..60}; do
+            if docker exec "${container_name}" \
+              curl --fail --silent http://127.0.0.1:8080/health/ready >/dev/null; then
+              exit 0
+            fi
+
+            if [ "$(docker inspect --format '{{.State.Running}}' "${container_name}")" != 'true' ]; then
+              echo 'Smoke-test container exited before becoming ready.' >&2
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+          echo 'Smoke-test container did not become ready within 120 seconds.' >&2
+          exit 1
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -116,7 +177,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -129,7 +190,8 @@ jobs:
             type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        id: publish
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -138,3 +200,36 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify published manifest digest
+        shell: bash
+        env:
+          PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
+          PUBLISHED_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t published_tags < <(printf '%s\n' "${PUBLISHED_TAGS}" | sed '/^[[:space:]]*$/d')
+          if [ "${#published_tags[@]}" -eq 0 ] || [[ ! "${PUBLISHED_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo 'Publish action did not return a usable tag and digest.' >&2
+            exit 1
+          fi
+
+          for published_tag in "${published_tags[@]}"; do
+            verified=false
+            for attempt in {1..12}; do
+              manifest_output="$(docker buildx imagetools inspect "${published_tag}" 2>/dev/null || true)"
+              remote_digest="$(printf '%s\n' "${manifest_output}" | awk '/^Digest:/ { print $2; exit }')"
+              if [ "${remote_digest}" = "${PUBLISHED_DIGEST}" ]; then
+                printf 'Verified %s at %s\n' "${published_tag}" "${PUBLISHED_DIGEST}"
+                verified=true
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "${verified}" != 'true' ]; then
+              echo "Published tag ${published_tag} did not resolve to ${PUBLISHED_DIGEST}." >&2
+              exit 1
+            fi
+          done
