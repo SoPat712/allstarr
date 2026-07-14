@@ -3,6 +3,7 @@ using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
+using System.Reflection;
 
 namespace allstarr.Tests;
 
@@ -55,6 +56,15 @@ public sealed class PlaylistLinksControllerContractTests
         };
         var forbidden = Assert.IsType<ObjectResult>(await controller.List("music", CancellationToken.None));
         Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public void List_AllowsAnOmittedLibraryScopeFilter()
+    {
+        var parameter = typeof(PlaylistLinksController).GetMethod(nameof(PlaylistLinksController.List))!
+            .GetParameters().Single(item => item.Name == "libraryScopeId");
+
+        Assert.True(new NullabilityInfoContext().Create(parameter).ReadState == NullabilityState.Nullable);
     }
 
     [Fact]

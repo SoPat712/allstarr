@@ -28,7 +28,7 @@ public sealed class PlaylistLinksController(
 {
     private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string libraryScopeId, CancellationToken cancellationToken)
+    public async Task<IActionResult> List([FromQuery] string? libraryScopeId, CancellationToken cancellationToken)
     {
         return await Execute(async session =>
         {
@@ -250,7 +250,7 @@ public sealed class PlaylistLinksController(
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
     }
 
-    private async Task<ProtocolExecutionContext> CreateExecutionAsync(AdminAuthSession session, string libraryScopeId, CancellationToken cancellationToken)
+    private async Task<ProtocolExecutionContext> CreateExecutionAsync(AdminAuthSession session, string? libraryScopeId, CancellationToken cancellationToken)
     {
         var tenantId = session.TenantId!.Value; var userId = session.AllstarrUserId!.Value;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -263,7 +263,8 @@ public sealed class PlaylistLinksController(
             identity.PrincipalId, session.UserName, session.IsAdministrator);
         return new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.PrincipalId, principal,
             HttpContext.TraceIdentifier.Length <= 100 ? HttpContext.TraceIdentifier : HttpContext.TraceIdentifier[..100],
-            clock.UtcNow.AddMinutes(5), cancellationToken, libraryScopeId: Required(libraryScopeId, nameof(libraryScopeId)));
+            clock.UtcNow.AddMinutes(5), cancellationToken,
+            libraryScopeId: string.IsNullOrWhiteSpace(libraryScopeId) ? null : libraryScopeId.Trim());
     }
 
     private async Task<PlaylistLinkRecord> LoadScopedLink(AdminAuthSession session, Guid id, CancellationToken cancellationToken)

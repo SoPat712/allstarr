@@ -224,7 +224,7 @@ public sealed record PlaylistRunEntryInput(Guid SourceEntryId, Guid? TrackMatchI
 public interface IPlaylistPersistenceService
 {
     Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<PlaylistLinkRecord>> ListLinksAsync(ProtocolExecutionContext context, string libraryScopeId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PlaylistLinkRecord>> ListLinksAsync(ProtocolExecutionContext context, string? libraryScopeId = null, CancellationToken cancellationToken = default);
     Task<PlaylistLinkRecord> GetLinkAsync(ProtocolExecutionContext context, Guid linkId, CancellationToken cancellationToken = default);
     Task<PlaylistLinkRecord> UpdateLinkAsync(ProtocolExecutionContext context, Guid linkId, PlaylistLinkUpdate update, CancellationToken cancellationToken = default);
     Task<PlaylistSourceSnapshotRecord> CaptureSourceSnapshotAsync(ProtocolExecutionContext context, Guid linkId, PlaylistSourceSnapshotInput input, CancellationToken cancellationToken = default);
@@ -278,12 +278,18 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         db.PlaylistLinks.Add(record); await db.SaveChangesAsync(cancellationToken); return record;
     }
 
-    public async Task<IReadOnlyList<PlaylistLinkRecord>> ListLinksAsync(ProtocolExecutionContext context, string libraryScopeId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PlaylistLinkRecord>> ListLinksAsync(ProtocolExecutionContext context, string? libraryScopeId = null, CancellationToken cancellationToken = default)
     {
-        var (_, actor) = PersistenceGuard.Require(context, libraryScopeId); await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var query = db.PlaylistLinks.AsNoTracking().Where(item => item.TenantId == actor.TenantId && item.LibraryScopeId == libraryScopeId);
+        var actor = context.RequireActor();
+        _ = context.Principal ?? throw new UnauthorizedAccessException("A linked actor is required.");
+        if (!actor.EffectiveUserId.HasValue) throw new UnauthorizedAccessException("A user owner is required.");
+        var normalizedLibraryScopeId = string.IsNullOrWhiteSpace(libraryScopeId) ? null : libraryScopeId.Trim();
+        if (normalizedLibraryScopeId != null) PersistenceGuard.RequireLibrary(context, normalizedLibraryScopeId);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var query = db.PlaylistLinks.AsNoTracking().Where(item => item.TenantId == actor.TenantId);
+        if (normalizedLibraryScopeId != null) query = query.Where(item => item.LibraryScopeId == normalizedLibraryScopeId);
         if (actor.Kind != ProviderActorKind.Administrator) query = query.Where(item => item.OwnerUserId == actor.EffectiveUserId);
-        return await query.OrderBy(item => item.CreatedAt).ToListAsync(cancellationToken);
+        return await query.OrderBy(item => item.LibraryScopeId).ThenBy(item => item.CreatedAt).ToListAsync(cancellationToken);
     }
 
     public async Task<PlaylistLinkRecord> GetLinkAsync(ProtocolExecutionContext context, Guid linkId, CancellationToken cancellationToken = default)

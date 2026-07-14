@@ -99,9 +99,50 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         Assert.DoesNotContain("data:audio", await File.ReadAllTextAsync(_path), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ListLinks_WithoutLibraryFilter_RemainsTenantAndOwnerScoped()
+    {
+        var owned = await _playlists.CreateLinkAsync(Context(_userA, "principal-a"), Link());
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PlaylistLinks.Add(new PlaylistLinkRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                OwnerUserId = _userB,
+                ProviderAccountId = _accountA,
+                LibraryScopeId = "other-library",
+                SourceProviderId = "fixture",
+                SourcePlaylistId = "other-playlist",
+                SourcePlaylistIdHash = Hash("other-playlist"),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "backend",
+                Mode = PlaylistLinkMode.Virtual,
+                MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                PreserveManualEntries = true,
+                SyncName = true,
+                SyncDescription = true,
+                SyncArtwork = true,
+                RuleVersion = "rules-v1",
+                PolicyVersion = "policy-v1",
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var userContext = ContextWithoutLibrary(_userA, "principal-a");
+        Assert.Equal(owned.Id, Assert.Single(await _playlists.ListLinksAsync(userContext)).Id);
+
+        var administratorContext = ContextWithoutLibrary(_userA, "principal-a", admin: true);
+        Assert.Equal(2, (await _playlists.ListLinksAsync(administratorContext)).Count);
+        Assert.Single(await _playlists.ListLinksAsync(administratorContext, "music"));
+    }
+
     private ExternalSnapshotInput Snapshot(int version, string id) => new(_accountA, "fixture", "music", "track", Hash(id), version, $"rev-{id}", $"{{\"title\":\"{id}\"}}", Hash($"payload-{id}"));
     private PlaylistLinkInput Link() => new(_accountA, "fixture", "playlist-1", Hash("playlist-1"), "music", "jellyfin", "backend", PlaylistLinkMode.Materialized, PlaylistMaterializationMode.Reconcile, "rules-v1", "policy-v1");
     private ProtocolExecutionContext Context(Guid user, string principal, bool admin = false) => new(ProtocolKind.Jellyfin, "backend", principal, new AllstarrPrincipal(_tenant, user, "jellyfin", "backend", principal, principal, admin), "correlation", _now.AddMinutes(1), CancellationToken.None, libraryScopeId: "music");
+    private ProtocolExecutionContext ContextWithoutLibrary(Guid user, string principal, bool admin = false) => new(ProtocolKind.Jellyfin, "backend", principal, new AllstarrPrincipal(_tenant, user, "jellyfin", "backend", principal, principal, admin), "correlation", _now.AddMinutes(1), CancellationToken.None);
     private PlatformUserRecord User(Guid id, string name) => new() { Id = id, TenantId = _tenant, DisplayName = name, Status = PlatformUserStatus.Active, CreatedAt = _now, UpdatedAt = _now };
     private BackendIdentityRecord Identity(Guid user, string principal) => new() { Id = Guid.CreateVersion7(), TenantId = _tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = principal, CreatedAt = _now, LastSeenAt = _now };
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
