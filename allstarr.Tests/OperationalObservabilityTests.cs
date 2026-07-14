@@ -2,6 +2,8 @@ using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Middleware;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Configuration;
@@ -258,6 +260,66 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
         Assert.Contains("redacted", log, StringComparison.Ordinal);
         Assert.DoesNotContain("opaque-private-token", log, StringComparison.Ordinal);
         Assert.DoesNotContain("raw upstream account payload", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RuntimeLogger_HonorsLongestCategoryOverride()
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        using var provider = new RedactingConsoleLoggerProvider(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Logging:LogLevel:Default"] = "Information",
+                ["Logging:LogLevel:Microsoft.EntityFrameworkCore"] = "Warning",
+                ["Logging:LogLevel:Microsoft.EntityFrameworkCore.Database.Command"] = "Error"
+            }).Build(),
+            output,
+            error);
+        var logger = provider.CreateLogger("Microsoft.EntityFrameworkCore.Database.Command");
+
+        logger.LogInformation("Routine database command");
+        logger.LogWarning("Routine database warning");
+        logger.LogError("Database command failed");
+
+        Assert.Empty(output.ToString());
+        Assert.DoesNotContain("Routine database warning", error.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Database command failed", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GlobalExceptionHandler_LogsSafeRoutePatternAndErrorClassification()
+    {
+        var error = new StringWriter();
+        var provider = new RedactingConsoleLoggerProvider(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Logging:LogLevel:Default"] = "Information"
+            }).Build(),
+            TextWriter.Null,
+            error);
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.ClearProviders();
+            builder.AddProvider(provider);
+        });
+        var handler = new GlobalExceptionHandler(loggerFactory.CreateLogger<GlobalExceptionHandler>());
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask,
+            RoutePatternFactory.Parse("api/admin/extensions/registries"),
+            order: 0,
+            EndpointMetadataCollection.Empty,
+            displayName: "fixture"));
+
+        await handler.TryHandleAsync(context, new InvalidOperationException("private detail"), default);
+
+        var log = error.ToString();
+        Assert.Contains("InvalidOperationException", log, StringComparison.Ordinal);
+        Assert.Contains("api/admin/extensions/registries", log, StringComparison.Ordinal);
+        Assert.Contains("400", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("private detail", log, StringComparison.Ordinal);
     }
 
     public Task DisposeAsync()

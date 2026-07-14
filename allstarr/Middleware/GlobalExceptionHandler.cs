@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Routing;
 
 namespace allstarr.Middleware;
 
@@ -19,9 +20,14 @@ public class GlobalExceptionHandler : IExceptionHandler
         Exception exception,
         CancellationToken cancellationToken)
     {
-        _logger.LogError(exception, "Unhandled exception occurred: {Message}", exception.Message);
-
         var (statusCode, subsonicErrorCode, errorMessage) = MapExceptionToResponse(exception);
+        var routePattern = (httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+        _logger.LogError(
+            exception,
+            "Unhandled {ErrorKind} on route {RoutePattern}; returning {StatusCode}",
+            exception.GetType().Name,
+            routePattern,
+            statusCode);
 
         httpContext.Response.StatusCode = statusCode;
         httpContext.Response.ContentType = "application/json";
