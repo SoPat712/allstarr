@@ -2,7 +2,8 @@ import { LitElement, html, nothing } from "/js/lit-3.3.3.js";
 
 const THEME_KEY = "allstarr-theme";
 const DEFAULT_ROUTE = "/home";
-const MIGRATION_PROMPT_DISMISSED_KEY = "allstarr-env-migration-prompt-dismissed";
+const SETUP_GUIDE_DISMISSED_KEY = "allstarr-setup-guide-dismissed";
+const SETUP_GUIDE_STEP_KEY = "allstarr-setup-guide-step";
 
 function normalizeRoute(hash = window.location.hash) {
   const route = hash.replace(/^#/, "") || DEFAULT_ROUTE;
@@ -187,13 +188,15 @@ function appleAuthFeedback(value, operation) {
 async function readErrorMessage(response, fallback) {
   try {
     const data = await response.clone().json();
-    return data.detail || data.error || data.message || fallback;
+    const protocolError = data?.["subsonic-response"]?.error?.message;
+    const directError = typeof data.error === "string" ? data.error : data.error?.message;
+    return data.detail || directError || data.message || protocolError || `${fallback} (HTTP ${response.status})`;
   } catch {
     try {
       const text = await response.text();
-      return text || fallback;
+      return text || `${fallback} (HTTP ${response.status})`;
     } catch {
-      return fallback;
+      return `${fallback} (HTTP ${response.status})`;
     }
   }
 }
@@ -472,7 +475,9 @@ class AllstarrApp extends LitElement {
     priorityDrag: { state: true },
     envMigration: { state: true },
     envMigrationStatus: { state: true },
-    migrationPromptDismissed: { state: true },
+    setupGuideOpen: { state: true },
+    setupStep: { state: true },
+    loadFailures: { state: true },
   };
 
   constructor() {
@@ -522,7 +527,9 @@ class AllstarrApp extends LitElement {
     this.priorityDrag = null;
     this.envMigration = { state: "idle", sourceName: "", preview: null, result: null, error: "" };
     this.envMigrationStatus = null;
-    this.migrationPromptDismissed = sessionStorage.getItem(MIGRATION_PROMPT_DISMISSED_KEY) === "1";
+    this.setupGuideOpen = localStorage.getItem(SETUP_GUIDE_DISMISSED_KEY) !== "1";
+    this.setupStep = Math.max(0, Math.min(3, Number(localStorage.getItem(SETUP_GUIDE_STEP_KEY)) || 0));
+    this.loadFailures = {};
     this.playlistLinkFilters = { libraryScopeId: "" };
     this.mappingFilters = { page: 1, pageSize: 50, state: "", libraryScopeId: "", search: "" };
     this.externalPlaylistProvider = "deezer";
@@ -558,8 +565,8 @@ class AllstarrApp extends LitElement {
   }
 
   updated() {
-    if (!this.shouldPromptForEnvMigration()) return;
-    const dialog = this.querySelector(".migration-prompt");
+    if (!this.shouldShowSetupGuide()) return;
+    const dialog = this.querySelector(".setup-guide");
     if (dialog && !dialog.contains(document.activeElement)) {
       dialog.querySelector("[autofocus]")?.focus();
     }
@@ -623,11 +630,47 @@ class AllstarrApp extends LitElement {
   }
 
   async loadConfig() {
-    this.config = await API.config();
+    try {
+      this.config = await API.config();
+      this.clearLoadFailure("config");
+    } catch (error) {
+      this.recordLoadFailure("config", "Configuration", error);
+      throw error;
+    }
   }
 
   async loadStatus() {
-    this.status = await API.status();
+    try {
+      this.status = await API.status();
+      this.clearLoadFailure("status");
+    } catch (error) {
+      this.recordLoadFailure("status", "Runtime status", error);
+      throw error;
+    }
+  }
+
+  recordLoadFailure(key, label, error) {
+    this.loadFailures = { ...this.loadFailures, [key]: { label, message: error?.message || "This information could not be loaded." } };
+  }
+
+  clearLoadFailure(key) {
+    if (!this.loadFailures[key]) return;
+    const next = { ...this.loadFailures };
+    delete next[key];
+    this.loadFailures = next;
+  }
+
+  async retryLoadFailure(key) {
+    try {
+      if (key === "config") await this.loadConfig();
+      else if (key === "status") await this.loadStatus();
+      else if (key === "playlistLinks") await this.loadPlaylistLinks();
+      else if (key === "extensionRegistries") await this.loadExtensionControlPlane();
+      else await this.loadForRoute(true);
+      this.toast("Information loaded");
+    } catch (error) {
+      this.toast(error.message, "error");
+    }
   }
 
   async loadEnvMigrationStatus() {
@@ -661,6 +704,7 @@ class AllstarrApp extends LitElement {
       return;
     }
     this.routeLoadKey = routeKey;
+    this.clearLoadFailure(`route:${routeKey}`);
 
     const [zone, sub] = routeParts(this.route);
     try {
@@ -692,6 +736,7 @@ class AllstarrApp extends LitElement {
         await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]);
       }
     } catch (error) {
+      this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || "page")} data`, error);
       this.toast(error.message, "error");
     }
   }
@@ -800,15 +845,21 @@ class AllstarrApp extends LitElement {
   }
 
   async loadPlaylistLinks() {
-    const response = await API.playlistLinks(this.playlistLinkFilters.libraryScopeId);
-    this.playlistLinks = asArray(response?.playlistLinks || response?.PlaylistLinks || response?.links || response?.Links || response);
-    if (this.selectedPlaylistLinkId && !this.playlistLinks.some((link) =>
-      String(link.id || link.Id) === String(this.selectedPlaylistLinkId))) {
-      this.selectedPlaylistLinkId = "";
-      this.playlistLinkPreview = null;
-    }
-    if (!this.providerAccounts.length) {
-      await this.loadProviderAccounts();
+    try {
+      const response = await API.playlistLinks(this.playlistLinkFilters.libraryScopeId);
+      this.playlistLinks = asArray(response?.playlistLinks || response?.PlaylistLinks || response?.links || response?.Links || response);
+      this.clearLoadFailure("playlistLinks");
+      if (this.selectedPlaylistLinkId && !this.playlistLinks.some((link) =>
+        String(link.id || link.Id) === String(this.selectedPlaylistLinkId))) {
+        this.selectedPlaylistLinkId = "";
+        this.playlistLinkPreview = null;
+      }
+      if (!this.providerAccounts.length) {
+        await this.loadProviderAccounts();
+      }
+    } catch (error) {
+      this.recordLoadFailure("playlistLinks", "Playlist links", error);
+      throw error;
     }
   }
 
@@ -942,14 +993,27 @@ class AllstarrApp extends LitElement {
   }
 
   async loadExtensionControlPlane() {
-    const [registries, packages, logs] = await Promise.all([
+    const [registries, packages, logs] = await Promise.allSettled([
       API.extensionRegistries(),
       API.extensionPackages(),
       API.extensionLogs(),
     ]);
-    this.extensionRegistries = asArray(registries?.items || registries?.Items || registries);
-    this.extensionPackages = asArray(packages?.items || packages?.Items || packages);
-    this.extensionLogs = asArray(logs?.items || logs?.Items || logs);
+    if (registries.status === "fulfilled") {
+      this.extensionRegistries = asArray(registries.value?.items || registries.value?.Items || registries.value);
+      this.clearLoadFailure("extensionRegistries");
+    } else {
+      this.recordLoadFailure("extensionRegistries", "Extension registries", registries.reason);
+    }
+    if (packages.status === "fulfilled") {
+      this.extensionPackages = asArray(packages.value?.items || packages.value?.Items || packages.value);
+    } else {
+      this.recordLoadFailure("extensionPackages", "Extension packages", packages.reason);
+    }
+    if (logs.status === "fulfilled") {
+      this.extensionLogs = asArray(logs.value?.items || logs.value?.Items || logs.value);
+    } else {
+      this.recordLoadFailure("extensionLogs", "Extension logs", logs.reason);
+    }
   }
 
   async loadExtensionStore() {
@@ -1238,12 +1302,15 @@ class AllstarrApp extends LitElement {
         ${this.renderSidebar()}
         <div class="main-shell">
           ${this.renderTopbar()}
-          <main class="content">${this.renderRoute()}</main>
+          <main class="content">
+            ${this.renderLoadFailures()}
+            ${this.renderRoute()}
+          </main>
         </div>
       </div>
       ${administrator ? this.renderRestartBar() : nothing}
       ${administrator ? this.renderNowPlaying() : nothing}
-      ${administrator ? this.renderMigrationFirstLoginPrompt() : nothing}
+      ${administrator ? this.renderSetupGuide() : nothing}
       ${this.renderToasts()}
     `;
   }
@@ -1273,6 +1340,17 @@ class AllstarrApp extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  renderLoadFailures() {
+    const failures = Object.entries(this.loadFailures);
+    if (!failures.length) return nothing;
+    return html`<div class="load-failure-stack" aria-live="polite">
+      ${failures.map(([key, failure]) => html`<div class="load-failure" role="alert">
+        <div><strong>${display(failure.label)} could not load</strong><p>${display(failure.message)}</p></div>
+        <button @click=${() => this.retryLoadFailure(key)}>Retry</button>
+      </div>`)}
+    </div>`;
   }
 
   renderSidebar() {
@@ -1422,6 +1500,14 @@ class AllstarrApp extends LitElement {
             <span class="metric-label">Active tasks</span>
             <span class="metric-value">${this.activity.length}</span>
           </div>
+        </div>
+
+        <div class="setup-launcher">
+          <div>
+            <h3>Need a hand getting everything connected?</h3>
+            <p>Open the setup guide again at any time. It will walk through your media server, sources, and the optional Allstarr 2.x import.</p>
+          </div>
+          <button @click=${() => this.openSetupGuide()}>Open setup guide</button>
         </div>
 
         <div class="wide-grid">
@@ -2903,6 +2989,10 @@ class AllstarrApp extends LitElement {
           </div>
           <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
         </div>
+        <div class="setup-launcher">
+          <div><h3>Setup guide</h3><p>Revisit the media server, sources, and first playlist steps whenever you need them.</p></div>
+          <button @click=${() => this.openSetupGuide()}>Open setup guide</button>
+        </div>
         ${this.renderEnvMigrationWizard()}
         <div class="panel">
           <h3>Danger zone</h3>
@@ -2915,30 +3005,56 @@ class AllstarrApp extends LitElement {
     `;
   }
 
-  shouldPromptForEnvMigration() {
+  canOfferEnvMigration() {
     const status = this.envMigrationStatus || {};
     const available = status.eligible ?? status.Eligible ?? status.firstRun ?? status.FirstRun ??
       status.available ?? status.Available ?? false;
-    return !this.migrationPromptDismissed &&
-      Boolean(available) &&
+    return Boolean(available) &&
       !Boolean(status.completed ?? status.Completed);
   }
 
+  shouldShowSetupGuide() {
+    return this.setupGuideOpen && Boolean(this.schema) && Boolean(this.config);
+  }
+
+  openSetupGuide() {
+    this.setupStep = Math.max(0, Math.min(3, Number(localStorage.getItem(SETUP_GUIDE_STEP_KEY)) || 0));
+    this.setupGuideOpen = true;
+    this.updateComplete.then(() => this.querySelector("#setup-guide-title")?.focus());
+  }
+
+  closeSetupGuide() {
+    localStorage.setItem(SETUP_GUIDE_DISMISSED_KEY, "1");
+    localStorage.removeItem(SETUP_GUIDE_STEP_KEY);
+    this.setupGuideOpen = false;
+  }
+
+  setSetupStep(step) {
+    this.setupStep = Math.max(0, Math.min(3, Number(step) || 0));
+    localStorage.setItem(SETUP_GUIDE_STEP_KEY, String(this.setupStep));
+    this.updateComplete.then(() => this.querySelector("#setup-guide-title")?.focus());
+  }
+
+  async refreshSetupChecks() {
+    this.serviceResults = { ...this.serviceResults, setup: { state: "running", message: "Refreshing media server and provider readiness..." } };
+    try {
+      await Promise.all([this.loadStatus(), this.loadProviderAccounts(), this.loadProviderHealth()]);
+      this.serviceResults = { ...this.serviceResults, setup: { state: "success", message: "Readiness refreshed. Review anything marked as needing setup before you finish." } };
+    } catch (error) {
+      this.serviceResults = { ...this.serviceResults, setup: { state: "error", message: error.message } };
+    }
+  }
+
   openEnvMigrationSettings() {
-    this.migrationPromptDismissed = true;
+    this.closeSetupGuide();
     this.navigate("/settings");
     this.updateComplete.then(() => this.querySelector("#env-migration-title")?.focus());
   }
 
-  dismissMigrationPromptForSession() {
-    sessionStorage.setItem(MIGRATION_PROMPT_DISMISSED_KEY, "1");
-    this.migrationPromptDismissed = true;
-  }
-
-  handleMigrationPromptKeydown(event) {
+  handleSetupGuideKeydown(event) {
     if (event.key === "Escape") {
       event.preventDefault();
-      this.dismissMigrationPromptForSession();
+      this.closeSetupGuide();
       return;
     }
     if (event.key !== "Tab") return;
@@ -2955,18 +3071,88 @@ class AllstarrApp extends LitElement {
     }
   }
 
-  renderMigrationFirstLoginPrompt() {
-    if (!this.shouldPromptForEnvMigration()) return nothing;
+  renderSetupGuide() {
+    if (!this.shouldShowSetupGuide()) return nothing;
+    const steps = ["Welcome", "Media server", "Sources", "Ready"];
+    const activeBackendName = display(this.schema?.activeBackend || this.config?.backendType, "media server");
+    const activeBackend = asArray(this.schema?.backends).find((backend) =>
+      String(backend.id).toLowerCase() === String(activeBackendName).toLowerCase());
+    const backendFields = asArray(activeBackend?.configSchema);
+    const backendUrl = getPathValue(this.config, String(activeBackendName).toLowerCase() === "subsonic" ? "subsonic.url" : "jellyfin.url", "");
+    const providers = asArray(this.schema?.providers).filter((provider) => provider.status !== "disabled").slice(0, 6);
+    const stepBody = [
+      html`
+        <h2 id="setup-guide-title" tabindex="-1" autofocus>Welcome to your music hub</h2>
+        <p>Allstarr sits between your music apps, your local library, and the services you choose. Let’s connect the important parts first. You can fine-tune everything later.</p>
+        <div class="setup-choice-grid">
+          ${asArray(this.schema?.backends).map((backend) => {
+            const active = String(backend.id).toLowerCase() === String(activeBackendName).toLowerCase();
+            return html`<div class="setup-choice ${active ? "active" : ""}">
+              <strong>${display(backend.name)}</strong>
+              <span class="status-chip ${active ? "configured" : "disabled"}">${active ? "Active" : "Available"}</span>
+              <small>${active ? "This is the media server selected by your Compose setup." : "You can switch backends later through your deployment configuration."}</small>
+            </div>`;
+          })}
+        </div>
+        ${this.canOfferEnvMigration() ? html`<div class="setup-legacy-path">
+          <strong>Upgrading from Allstarr 2.x?</strong>
+          <p>Import your old <code>.env</code> through a safe preview. Nothing is applied until you review and confirm it.</p>
+          <button class="ghost" @click=${() => this.openEnvMigrationSettings()}>Import an Allstarr 2.x .env</button>
+        </div>` : nothing}
+      `,
+      html`
+        <h2 id="setup-guide-title" tabindex="-1" autofocus>Connect ${display(activeBackend?.name, activeBackendName)}</h2>
+        <p>Check the server details below. Editable values save when you leave the field. Deployment-owned choices stay read-only so this screen cannot quietly rewrite your Compose setup.</p>
+        <div class="setup-field-grid">
+          ${backendFields.length ? backendFields.map((field) => this.renderConfigField(field)) : html`<div class="empty">No media server fields are available.</div>`}
+        </div>
+        <div class="setup-legacy-path">
+          <div class="actions"><span class="status-chip ${backendUrl ? "configured" : "needs_config"}">${backendUrl ? "Server URL configured" : "Server URL needed"}</span><button @click=${() => this.refreshSetupChecks()}>Refresh readiness</button></div>
+          ${this.serviceResults.setup ? html`<div class="callout ${this.serviceResults.setup.state}" role="status">${this.serviceResults.setup.message}</div>` : nothing}
+        </div>
+      `,
+      html`
+        <h2 id="setup-guide-title" tabindex="-1" autofocus>Choose how Allstarr finds music</h2>
+        <p>You only need the services you actually use. Accounts are encrypted and can be shared by an administrator or kept per user.</p>
+        <div class="setup-choice-grid">
+          ${providers.map((provider) => {
+            const observed = this.providerHealth.filter((item) => String(item.provider || item.Provider || item.providerId || item.ProviderId).toLowerCase() === String(provider.id).toLowerCase());
+            const healthy = observed.some((item) => String(item.health || item.Health).toLowerCase() === "healthy");
+            const state = healthy ? "healthy" : provider.status;
+            return html`<div class="setup-choice">
+              <strong>${display(provider.name)}</strong>
+              <span class="status-chip ${state}">${healthy ? "Observed healthy" : titleCase(provider.status)}</span>
+              <small>${asArray(provider.categories).map(titleCase).join(" · ") || "Optional music source"}</small>
+            </div>`;
+          })}
+        </div>
+        <div class="setup-legacy-path"><p>Provider logins, health tests, and source priority live together on the Sources screen.</p><div class="actions"><button @click=${() => this.refreshSetupChecks()}>Refresh health</button><button @click=${() => { this.closeSetupGuide(); this.navigate("/sources"); }}>Configure sources now</button></div>${this.serviceResults.setup ? html`<div class="callout ${this.serviceResults.setup.state}" role="status">${this.serviceResults.setup.message}</div>` : nothing}</div>
+      `,
+      html`
+        <h2 id="setup-guide-title" tabindex="-1" autofocus>Your hub is ready to shape</h2>
+        <p>The basics are in place. Allstarr will keep your original music files in their library folders while its database stores settings, matches, jobs, and other durable state.</p>
+        <div class="setup-summary">
+          <div class="setup-summary-item"><strong>${display(activeBackend?.name, activeBackendName)}</strong><small>${backendUrl ? "Server URL configured" : "Server URL still needs attention"}</small></div>
+          <div class="setup-summary-item"><strong>Sources</strong><small>Connect only the providers you want, then drag them into your preferred order.</small></div>
+          <div class="setup-summary-item"><strong>Playlists</strong><small>Link external playlists when you are ready. Preview matching before the first run.</small></div>
+        </div>
+      `,
+    ][this.setupStep];
     return html`
-      <div class="modal-backdrop migration-prompt-backdrop" @keydown=${(event) => this.handleMigrationPromptKeydown(event)}>
-        <section class="panel migration-prompt" role="dialog" aria-modal="true" aria-labelledby="migration-prompt-title" aria-describedby="migration-prompt-description">
-          <span class="status-chip warning">Optional setup</span>
-          <h2 id="migration-prompt-title">Upgrading from Allstarr 2.x?</h2>
-          <p id="migration-prompt-description">If you have an older install, you can safely preview its <code>.env</code> now. The review separates durable configuration, disabled shared accounts, deployment work, user reconnects, and playlist ownership handoffs. Nothing changes until you provide a file and confirm its preview.</p>
-          <div class="actions">
-            <button class="primary" type="button" autofocus @click=${() => this.openEnvMigrationSettings()}>Review legacy migration</button>
-            <button type="button" @click=${() => this.dismissMigrationPromptForSession()}>Not now</button>
-          </div>
+      <div class="modal-backdrop setup-guide-backdrop" @keydown=${(event) => this.handleSetupGuideKeydown(event)}>
+        <section class="setup-guide" role="dialog" aria-modal="true" aria-labelledby="setup-guide-title">
+          <header class="setup-guide-header">
+            <div class="setup-guide-brand"><strong>Allstarr setup</strong><button class="ghost" @click=${() => this.closeSetupGuide()} aria-label="Close setup guide">Close</button></div>
+            <ol class="setup-progress" aria-label="Setup progress">${steps.map((label, index) => html`<li class=${index === this.setupStep ? "active" : index < this.setupStep ? "complete" : ""} aria-current=${index === this.setupStep ? "step" : nothing}><span>${label}</span></li>`)}</ol>
+          </header>
+          <div class="setup-guide-body">${stepBody}</div>
+          <footer class="setup-guide-footer">
+            <button class="ghost" @click=${() => this.closeSetupGuide()}>Skip for now</button>
+            <div class="actions">
+              ${this.setupStep > 0 ? html`<button @click=${() => this.setSetupStep(this.setupStep - 1)}>Back</button>` : nothing}
+              ${this.setupStep < 3 ? html`<button class="primary" @click=${() => this.setSetupStep(this.setupStep + 1)}>Continue</button>` : html`<button class="primary" @click=${() => this.closeSetupGuide()}>Finish setup</button>`}
+            </div>
+          </footer>
         </section>
       </div>
     `;

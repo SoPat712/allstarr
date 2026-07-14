@@ -48,23 +48,23 @@ public sealed class WebUiEnvMigrationContractTests
 
 
     [Fact]
-    public void EligibleFirstAdministratorLogin_OffersTheWizardWithoutForcingIt()
+    public void FirstRunGuide_OffersLegacyImportWithoutRepeatingAfterDismissal()
     {
-        Assert.Contains("shouldPromptForEnvMigration", _script, StringComparison.Ordinal);
+        Assert.Contains("canOfferEnvMigration", _script, StringComparison.Ordinal);
         Assert.Contains("status.eligible ?? status.Eligible ?? status.firstRun ?? status.FirstRun", _script, StringComparison.Ordinal);
         Assert.Contains("!Boolean(status.completed ?? status.Completed)", _script, StringComparison.Ordinal);
         Assert.Contains("role=\"dialog\" aria-modal=\"true\"", _script, StringComparison.Ordinal);
-        Assert.Contains("Review legacy migration", _script, StringComparison.Ordinal);
-        Assert.Contains("Not now", _script, StringComparison.Ordinal);
+        Assert.Contains("Import an Allstarr 2.x .env", _script, StringComparison.Ordinal);
+        Assert.Contains("Skip for now", _script, StringComparison.Ordinal);
         Assert.Contains("Upgrading from Allstarr 2.x?", _script, StringComparison.Ordinal);
-        Assert.Contains("preview its <code>.env</code> now", _script, StringComparison.Ordinal);
-        Assert.DoesNotContain("preview its `.env` now", _script, StringComparison.Ordinal);
+        Assert.Contains("Import your old <code>.env</code> through a safe preview", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("found an eligible legacy migration", _script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("event.key === \"Escape\"", _script, StringComparison.Ordinal);
         Assert.Contains("event.key !== \"Tab\"", _script, StringComparison.Ordinal);
         Assert.Contains("dialog.querySelector(\"[autofocus]\")?.focus()", _script, StringComparison.Ordinal);
-        Assert.Contains("sessionStorage.setItem(MIGRATION_PROMPT_DISMISSED_KEY, \"1\")", _script, StringComparison.Ordinal);
-        Assert.Contains("sessionStorage.getItem(MIGRATION_PROMPT_DISMISSED_KEY) === \"1\"", _script, StringComparison.Ordinal);
+        Assert.Contains("localStorage.setItem(SETUP_GUIDE_DISMISSED_KEY, \"1\")", _script, StringComparison.Ordinal);
+        Assert.Contains("localStorage.getItem(SETUP_GUIDE_DISMISSED_KEY) !== \"1\"", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("sessionStorage.setItem(MIGRATION_PROMPT_DISMISSED_KEY", _script, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class WebUiEnvMigrationContractTests
         Assert.Contains("grid-template-columns: minmax(0, 1fr);", _css, StringComparison.Ordinal);
         Assert.Contains(".env-migration-progress progress", _css, StringComparison.Ordinal);
         Assert.Contains(".modal-backdrop", _css, StringComparison.Ordinal);
-        Assert.Contains("width: min(620px, 100%);", _css, StringComparison.Ordinal);
+        Assert.Contains("width: min(780px, 100%);", _css, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] path)

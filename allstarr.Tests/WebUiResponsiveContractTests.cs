@@ -38,6 +38,85 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void MusicalTheme_UsesLayeredAccentTokensWithoutSacrificingStatusColors()
+    {
+        var tokens = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "tokens.css"));
+
+        Assert.Contains("--accent-gradient:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--accent-action-gradient:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--accent-action-hover-gradient:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--accent-secondary:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--surface-glass:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--success:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--warning:", tokens, StringComparison.Ordinal);
+        Assert.Contains("--error:", tokens, StringComparison.Ordinal);
+        Assert.Contains(":root[data-theme=\"light\"]", tokens, StringComparison.Ordinal);
+
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+        Assert.Contains("background: var(--accent-action-gradient);", css, StringComparison.Ordinal);
+        Assert.Contains("-webkit-background-clip: text;", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptionRows_KeepCheckboxesAndLabelsAlignedInsteadOfRunningTogether()
+    {
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains(".toggle-list", css, StringComparison.Ordinal);
+        Assert.Contains(".toggle-row,\nfieldset.form-row > label", css, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: 18px minmax(0, 1fr);", css, StringComparison.Ordinal);
+        Assert.Contains(".toggle-row > span", css, StringComparison.Ordinal);
+        Assert.Contains("overflow-wrap: anywhere;", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SetupGuide_IsKeyboardAccessiblePersistentAndReopenable()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains("SETUP_GUIDE_DISMISSED_KEY", script, StringComparison.Ordinal);
+        Assert.Contains("localStorage.setItem(SETUP_GUIDE_DISMISSED_KEY, \"1\")", script, StringComparison.Ordinal);
+        Assert.Contains("openSetupGuide()", script, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Setup progress\"", script, StringComparison.Ordinal);
+        Assert.Contains("aria-current=${index === this.setupStep ? \"step\" : nothing}", script, StringComparison.Ordinal);
+        Assert.Contains("handleSetupGuideKeydown", script, StringComparison.Ordinal);
+        Assert.Contains("Import an Allstarr 2.x .env", script, StringComparison.Ordinal);
+        Assert.Contains("SETUP_GUIDE_STEP_KEY", script, StringComparison.Ordinal);
+        Assert.Contains("localStorage.setItem(SETUP_GUIDE_STEP_KEY, String(this.setupStep))", script, StringComparison.Ordinal);
+        Assert.Contains("Refresh readiness", script, StringComparison.Ordinal);
+        Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoadFailures_StayVisibleOfferRetryAndReadProtocolErrorMessages()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains("loadFailures", script, StringComparison.Ordinal);
+        Assert.Contains("renderLoadFailures()", script, StringComparison.Ordinal);
+        Assert.Contains("role=\"alert\"", script, StringComparison.Ordinal);
+        Assert.Contains("retryLoadFailure(key)", script, StringComparison.Ordinal);
+        Assert.Contains("recordLoadFailure(\"config\"", script, StringComparison.Ordinal);
+        Assert.Contains("recordLoadFailure(\"playlistLinks\"", script, StringComparison.Ordinal);
+        Assert.Contains("recordLoadFailure(\"extensionRegistries\"", script, StringComparison.Ordinal);
+        Assert.Contains("data?.[\"subsonic-response\"]?.error?.message", script, StringComparison.Ordinal);
+        Assert.Contains("${fallback} (HTTP ${response.status})", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SmallScreens_UseFullHeightSetupAndCoarsePointerTouchTargets()
+    {
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("@media (max-width: 620px)", css, StringComparison.Ordinal);
+        Assert.Contains("height: 100dvh;", css, StringComparison.Ordinal);
+        Assert.Contains("@media (hover: none), (pointer: coarse)", css, StringComparison.Ordinal);
+        Assert.Contains("min-height: 44px;", css, StringComparison.Ordinal);
+        Assert.Contains("env(safe-area-inset-bottom)", css, StringComparison.Ordinal);
+        Assert.Contains("@media (prefers-reduced-motion: reduce)", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProviderCards_SeparateConfigurationFromObservedHealth()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
