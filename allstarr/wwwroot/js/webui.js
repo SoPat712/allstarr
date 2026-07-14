@@ -574,7 +574,19 @@ class AllstarrApp extends LitElement {
       this.authenticated = true;
       await this.loadSchema();
       if (this.isAdministrator()) {
-        await Promise.all([this.loadConfig(), this.loadStatus(), this.loadEnvMigrationStatus()]);
+        const [configResult, statusResult] = await Promise.allSettled([
+          this.loadConfig(),
+          this.loadStatus(),
+          this.loadEnvMigrationStatus(),
+        ]);
+        if (configResult.status === "rejected") {
+          this.config = {};
+          this.toast(configResult.reason?.message || "Failed to load config", "error");
+        }
+        if (statusResult.status === "rejected") {
+          this.status = {};
+          this.toast(statusResult.reason?.message || "Failed to load status", "error");
+        }
         this.startActivityStream();
       } else {
         this.config = {};
@@ -587,8 +599,11 @@ class AllstarrApp extends LitElement {
       }
       await this.loadForRoute();
     } catch (error) {
-      this.authenticated = false;
-      this.session = null;
+      // A confirmed session must not be discarded because a later UI bootstrap
+      // request failed. Only the auth check itself can leave us unauthenticated.
+      if (!this.authenticated) {
+        this.session = null;
+      }
       if (!String(error.message).includes("Authentication")) {
         this.toast(error.message, "error");
       }
