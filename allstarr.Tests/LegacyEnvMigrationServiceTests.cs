@@ -91,6 +91,38 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PreviewAndApply_DuplicateAssignmentsUseLastValueAndOnlyWarnWithSourceLines()
+    {
+        var service = CreateService();
+        var preview = await service.PreviewAsync(Source("""
+            CACHE_LYRICS_DAYS=7
+            DEEZER_ARL=first-private-value
+            CACHE_LYRICS_DAYS=21
+            DEEZER_ARL=second-private-value
+            """), Actor());
+
+        Assert.True(preview.CanApply);
+        Assert.Equal(2, preview.Warnings.Count);
+        Assert.All(preview.Warnings, warning => Assert.Contains("last active assignment", warning));
+        Assert.Contains(preview.Warnings, warning => warning.Contains("CACHE_LYRICS_DAYS", StringComparison.Ordinal));
+        Assert.Contains(preview.Warnings, warning => warning.Contains("DEEZER_ARL", StringComparison.Ordinal));
+        var serializedPreview = JsonSerializer.Serialize(preview);
+        Assert.DoesNotContain("first-private-value", serializedPreview, StringComparison.Ordinal);
+        Assert.DoesNotContain("second-private-value", serializedPreview, StringComparison.Ordinal);
+
+        await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal("21", Assert.Single(await db.TenantRuntimeSettings.ToListAsync()).ValueJson);
+        var deezer = Assert.Single(await db.ProviderAccounts.ToListAsync());
+        using var lease = await CreateSecretStore().OpenAsync(
+            deezer.SecretReferenceId!.Value,
+            new SecretAccessContext(null, AllowGlobal: true));
+        using var secret = JsonDocument.Parse(lease.Value);
+        Assert.Equal("second-private-value", secret.RootElement.GetProperty("arl").GetString());
+    }
+
+    [Fact]
     public async Task Apply_AtomicallyCreatesSettingsDisabledAccountsAuditAndIdempotentReplay()
     {
         var service = CreateService();

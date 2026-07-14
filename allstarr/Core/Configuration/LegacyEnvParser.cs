@@ -25,7 +25,8 @@ public sealed record LegacyEnvEntry(
     string Reason,
     bool Sensitive,
     string? DurableKey = null,
-    string? ProviderId = null);
+    string? ProviderId = null,
+    IReadOnlyList<int>? OverriddenLineNumbers = null);
 
 public sealed record LegacyPlaylistHandoff(
     string Name,
@@ -45,7 +46,7 @@ public sealed class LegacyEnvParseException(string message) : Exception(message)
 
 public static class LegacyEnvParser
 {
-    public const string ParserVersion = "legacy-env-v1";
+    public const string ParserVersion = "legacy-env-v2";
     public const int MaxBytes = 1024 * 1024;
     private const int MaxEntries = 1000;
     private const int MaxValueCharacters = 64 * 1024;
@@ -180,8 +181,9 @@ public static class LegacyEnvParser
             var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             var text = new UTF8Encoding(false, true).GetString(bytes);
             var entries = new List<LegacyEnvEntry>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var entryIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var playlists = new List<LegacyPlaylistHandoff>();
+            var assignmentCount = 0;
             var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
             for (var index = 0; index < lines.Length; index++)
             {
@@ -209,27 +211,34 @@ public static class LegacyEnvParser
                     throw new LegacyEnvParseException($"Line {index + 1} contains an invalid key.");
                 }
 
-                if (!seen.Add(key))
-                {
-                    throw new LegacyEnvParseException($"The key {key} appears more than once.");
-                }
-
                 var value = ParseValue(trimmed[(separator + 1)..], index + 1);
                 if (value.Length > MaxValueCharacters)
                 {
                     throw new LegacyEnvParseException($"The value on line {index + 1} is too large.");
                 }
 
-                var entry = Classify(key, value, index + 1);
-                entries.Add(entry);
-                if (key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase) && value.Length > 0)
-                {
-                    playlists.AddRange(ParsePlaylists(value));
-                }
-
-                if (entries.Count > MaxEntries)
+                assignmentCount++;
+                if (assignmentCount > MaxEntries)
                 {
                     throw new LegacyEnvParseException($"The .env file contains more than {MaxEntries} settings.");
+                }
+
+                var entry = Classify(key, value, index + 1);
+                if (entryIndexes.TryGetValue(key, out var priorIndex))
+                {
+                    var prior = entries[priorIndex];
+                    entry = entry with
+                    {
+                        OverriddenLineNumbers = prior.OverriddenLineNumbers is { Count: > 0 } priorLines
+                            ? [.. priorLines, prior.LineNumber]
+                            : [prior.LineNumber]
+                    };
+                    entries[priorIndex] = entry;
+                }
+                else
+                {
+                    entryIndexes.Add(key, entries.Count);
+                    entries.Add(entry);
                 }
             }
 
@@ -239,6 +248,12 @@ public static class LegacyEnvParser
             }
 
             ApplyProviderBundleCompleteness(entries);
+            var playlistEntry = entries.SingleOrDefault(entry =>
+                entry.Key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase));
+            if (playlistEntry is { Value.Length: > 0 })
+            {
+                playlists.AddRange(ParsePlaylists(playlistEntry.Value));
+            }
             return new LegacyEnvDocument(hash, entries, playlists);
         }
         catch (DecoderFallbackException)

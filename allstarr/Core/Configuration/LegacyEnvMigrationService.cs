@@ -51,7 +51,8 @@ public sealed record LegacyEnvMigrationPreview(
     IReadOnlyList<LegacyEnvPreviewItem> Items,
     IReadOnlyList<LegacyProviderAccountPreview> ProviderAccounts,
     IReadOnlyList<LegacyPlaylistHandoff> PlaylistHandoffs,
-    IReadOnlyList<string> Conflicts);
+    IReadOnlyList<string> Conflicts,
+    IReadOnlyList<string> Warnings);
 
 public sealed record LegacyEnvMigrationApplyResult(
     bool Success,
@@ -230,7 +231,8 @@ public sealed class LegacyEnvMigrationService
             previewItems,
             accountPreviews,
             document.Playlists,
-            conflicts);
+            conflicts,
+            DuplicateAssignmentWarnings(document));
     }
 
     public async Task<LegacyEnvMigrationApplyResult> ApplyAsync(
@@ -561,7 +563,8 @@ public sealed class LegacyEnvMigrationService
 
     private static byte[] BuildProviderSecret(LegacyEnvDocument document, string providerId)
     {
-        string? Value(string key) => document.Entries.SingleOrDefault(item => item.Key == key)?.Value;
+        string? Value(string key) => document.Entries.SingleOrDefault(item =>
+            item.Key.Equals(key, StringComparison.OrdinalIgnoreCase))?.Value;
         object payload = providerId switch
         {
             "deezer" => new { arl = Value("DEEZER_ARL"), arlFallback = Value("DEEZER_ARL_FALLBACK") },
@@ -668,6 +671,16 @@ public sealed class LegacyEnvMigrationService
         bool.TryParse(entry.Value, out var enabled) && enabled
             ? "Local scrobbling can duplicate plays if the backend or another client also scrobbles them. Review per-user scrobbling targets before enabling it."
             : null;
+
+    private static IReadOnlyList<string> DuplicateAssignmentWarnings(LegacyEnvDocument document) =>
+        document.Entries
+            .Where(entry => entry.OverriddenLineNumbers is { Count: > 0 })
+            .Select(entry =>
+                $"{entry.Key} is assigned more than once. The last active assignment on line {entry.LineNumber} is used; " +
+                $"earlier active assignment{(entry.OverriddenLineNumbers!.Count == 1 ? string.Empty : "s")} on " +
+                $"line{(entry.OverriddenLineNumbers.Count == 1 ? string.Empty : "s")} " +
+                $"{string.Join(", ", entry.OverriddenLineNumbers)} {(entry.OverriddenLineNumbers.Count == 1 ? "is" : "are")} ignored.")
+            .ToArray();
 
     private static bool IsValidRuntimeValue(string key, string raw, out string error)
     {

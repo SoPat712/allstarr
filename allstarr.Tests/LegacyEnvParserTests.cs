@@ -133,7 +133,6 @@ public sealed class LegacyEnvParserTests
     }
 
     [Theory]
-    [InlineData("DUPLICATE=one\nDUPLICATE=two", "appears more than once")]
     [InlineData("NOT AN ASSIGNMENT", "KEY=VALUE")]
     [InlineData("SPOTIFY_IMPORT_PLAYLISTS=not-json", "invalid JSON")]
     [InlineData("SPOTIFY_IMPORT_PLAYLISTS=[[\"name\",\"\",\"target\"]]", "are required")]
@@ -141,6 +140,30 @@ public sealed class LegacyEnvParserTests
     {
         var error = Assert.Throws<LegacyEnvParseException>(() => Parse(source));
         Assert.Contains(expected, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Parse_DuplicateAssignmentsUseTheLastActiveValueAndRecordSourceLines()
+    {
+        var document = Parse("""
+            CACHE_LYRICS_DAYS=7
+            SPOTIFY_IMPORT_PLAYLISTS=[["Old","old-source"]]
+            # SPOTIFY_IMPORT_PLAYLISTS=[["Commented","ignored-source"]]
+            CACHE_LYRICS_DAYS=30
+            SPOTIFY_IMPORT_PLAYLISTS=[["Current","current-source"]]
+            """);
+
+        Assert.Equal(2, document.Entries.Count);
+        var cache = Assert.Single(document.Entries, entry => entry.Key == "CACHE_LYRICS_DAYS");
+        Assert.Equal("30", cache.Value);
+        Assert.Equal(4, cache.LineNumber);
+        Assert.Equal([1], cache.OverriddenLineNumbers);
+        var playlistEntry = Assert.Single(document.Entries, entry => entry.Key == "SPOTIFY_IMPORT_PLAYLISTS");
+        Assert.Equal(5, playlistEntry.LineNumber);
+        Assert.Equal([2], playlistEntry.OverriddenLineNumbers);
+        var playlist = Assert.Single(document.Playlists);
+        Assert.Equal("Current", playlist.Name);
+        Assert.Equal("current-source", playlist.SourcePlaylistId);
     }
 
     [Fact]

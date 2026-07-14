@@ -122,7 +122,10 @@ The dry-run report is the source of truth for operator review. It includes the s
 Apply follows these rules:
 
 1. The source fingerprint and target-state revision must match the reviewed preview token.
-2. Duplicate active definitions of a recognized key are a hard error, even if their text is identical. Commented definitions do not count.
+2. Key matching is case-insensitive. When a hand-edited file contains duplicate active assignments, the last active
+   assignment wins, matching common `.env` loading behavior. The preview identifies the winning and ignored source
+   line numbers without displaying either value. Commented definitions do not count. Review every duplicate warning
+   before applying because an earlier assignment may have been retained accidentally.
 3. Malformed lines, invalid UTF-8, invalid JSON, and invalid recognized values block apply. Unknown keys are reported for manual review and are never imported.
 4. Deployment-only, manual, ignored, and unknown keys never write durable data.
 5. A durable setting is inserted only when its exact target scope/key is absent. Existing values are kept and reported as non-blocking conflicts. The migration wizard has no bulk replacement mode.
@@ -138,7 +141,8 @@ to a freshly bootstrapped tenant without weakening conflicts around identities, 
 
 ## Minimum Verification
 
-Coverage must remain in place for every classification row or key group, duplicate keys, empty values, malformed
+Coverage must remain in place for every classification row or key group, deterministic duplicate-key handling and
+redacted duplicate warnings, empty values, malformed
 JSON, partial credential bundles, secret redaction, unknown keys, dry-run/apply hash mismatch, idempotent reapply
 rejection, setting conflicts, account conflicts, transaction rollback, tenant scope, encryption/key rotation
 compatibility, and absence of startup import behavior.
