@@ -33,7 +33,7 @@ public class QobuzDownloadServiceTests : IDisposable
 
         _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_httpMessageHandlerMock.Object);
-        
+
         _httpClientFactoryMock = new Mock<IHttpClientFactory>();
         _httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
 
@@ -62,7 +62,7 @@ public class QobuzDownloadServiceTests : IDisposable
     }
 
     private QobuzDownloadService CreateService(
-        string? userAuthToken = null, 
+        string? userAuthToken = null,
         string? userId = null,
         string? quality = null,
         DownloadMode downloadMode = DownloadMode.Track)
@@ -74,11 +74,11 @@ public class QobuzDownloadServiceTests : IDisposable
             })
             .Build();
 
-        var subsonicSettings = Options.Create(new SubsonicSettings 
-        { 
-            DownloadMode = downloadMode 
+        var subsonicSettings = Options.Create(new SubsonicSettings
+        {
+            DownloadMode = downloadMode
         });
-        
+
         var qobuzSettings = Options.Create(new QobuzSettings
         {
             UserAuthToken = userAuthToken,
@@ -153,14 +153,14 @@ public class QobuzDownloadServiceTests : IDisposable
             StatusCode = HttpStatusCode.OK,
             Content = new StringContent(@"<html><script src=""/resources/1.0.3-b001/bundle.js""></script></html>")
         };
-        
+
         _httpMessageHandlerMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
                 "SendAsync",
                 ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("qobuz.com")),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
-        
+
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
         // Act
@@ -178,14 +178,14 @@ public class QobuzDownloadServiceTests : IDisposable
         {
             StatusCode = HttpStatusCode.ServiceUnavailable
         };
-        
+
         _httpMessageHandlerMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
-        
+
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
         // Act
@@ -206,7 +206,7 @@ public class QobuzDownloadServiceTests : IDisposable
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
         // Act & Assert
-        await Assert.ThrowsAsync<NotSupportedException>(() => 
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
             service.DownloadSongAsync("spotify", "123456"));
     }
 
@@ -245,9 +245,9 @@ public class QobuzDownloadServiceTests : IDisposable
         var service = CreateService(userAuthToken: "test-token", userId: "123");
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<Exception>(() => 
+        var exception = await Assert.ThrowsAsync<Exception>(() =>
             service.DownloadSongAsync("qobuz", "999999"));
-        
+
         Assert.Equal("Song not found", exception.Message);
     }
 
@@ -277,7 +277,7 @@ public class QobuzDownloadServiceTests : IDisposable
     {
         // Arrange
         var service = CreateService(
-            userAuthToken: "test-token", 
+            userAuthToken: "test-token",
             userId: "123",
             downloadMode: DownloadMode.Album);
 
@@ -303,13 +303,13 @@ public class QobuzDownloadServiceTests : IDisposable
             });
 
         var service = CreateService(
-            userAuthToken: "test-token", 
+            userAuthToken: "test-token",
             userId: "123",
             downloadMode: DownloadMode.Album);
 
         // Act - Should not throw (fire-and-forget)
         service.DownloadRemainingAlbumTracksInBackground("qobuz", "123456", "111");
-        
+
         // Assert - Just verify it doesn't throw, actual download is async
         Assert.True(true);
     }
@@ -351,7 +351,7 @@ public class QobuzDownloadServiceTests : IDisposable
     {
         // Arrange & Act
         var service = CreateService(
-            userAuthToken: "test-token", 
+            userAuthToken: "test-token",
             userId: "123",
             quality: "FLAC");
 
@@ -364,7 +364,7 @@ public class QobuzDownloadServiceTests : IDisposable
     {
         // Arrange & Act
         var service = CreateService(
-            userAuthToken: "test-token", 
+            userAuthToken: "test-token",
             userId: "123",
             quality: "MP3_320");
 
@@ -377,7 +377,7 @@ public class QobuzDownloadServiceTests : IDisposable
     {
         // Arrange & Act
         var service = CreateService(
-            userAuthToken: "test-token", 
+            userAuthToken: "test-token",
             userId: "123",
             quality: null);
 

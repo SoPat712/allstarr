@@ -61,22 +61,57 @@ public sealed class IntelligenceController(
                 latestRun?.State == RecommendationRunState.Failed || missingProvider ? "degraded" : "configured";
             return Ok(new
             {
-                state, scope = PublicScope(scope), message = latestRun?.ErrorCode,
-                policy = policy == null ? null : new { policy.Enabled, policy.RetentionDays, policy.Revision,
-                    policy.TargetCredentialReferenceId, targetCredentialConfigured = policy.TargetCredentialReferenceId.HasValue },
+                state,
+                scope = PublicScope(scope),
+                message = latestRun?.ErrorCode,
+                policy = policy == null ? null : new
+                {
+                    policy.Enabled,
+                    policy.RetentionDays,
+                    policy.Revision,
+                    policy.TargetCredentialReferenceId,
+                    targetCredentialConfigured = policy.TargetCredentialReferenceId.HasValue
+                },
                 availableSignalTypes = SignalCatalog.Select(id => new { id, label = Label(id), enabled = enabledSignals.Contains(id) }),
-                providers = providerIds.Select(id => { var status = readinessById.TryGetValue(id, out var found) ? found : new RecommendationProviderReadiness(id, RecommendationProviderReadinessState.Unsupported, "provider_not_registered"); var available = status.State == RecommendationProviderReadinessState.Ready;
-                    return new { id, label = Label(id), description = SourceDescription(id), enabled = enabledProviders.Contains(id),
-                        available, state = ReadinessState(status.State), reasonCode = status.SafeReasonCode }; }),
-                actions = new { canRun = policy?.Enabled == true && enabledProviders.Any(id => readinessById.TryGetValue(id, out var item) && item.State == RecommendationProviderReadinessState.Ready),
-                    canGenerate = latestRun?.State == RecommendationRunState.Succeeded, latestRunId = latestRun?.Id },
-                candidates = candidates.Select(item => new { item.TrackKey, item.Score, item.Source,
-                    explanations = ParseSignals(item.SignalsJson) }),
-                generatedSets = sets.Select(item => new { item.Id, item.Name, item.CreatedAt,
+                providers = providerIds.Select(id =>
+                {
+                    var status = readinessById.TryGetValue(id, out var found) ? found : new RecommendationProviderReadiness(id, RecommendationProviderReadinessState.Unsupported, "provider_not_registered"); var available = status.State == RecommendationProviderReadinessState.Ready;
+                    return new
+                    {
+                        id,
+                        label = Label(id),
+                        description = SourceDescription(id),
+                        enabled = enabledProviders.Contains(id),
+                        available,
+                        state = ReadinessState(status.State),
+                        reasonCode = status.SafeReasonCode
+                    };
+                }),
+                actions = new
+                {
+                    canRun = policy?.Enabled == true && enabledProviders.Any(id => readinessById.TryGetValue(id, out var item) && item.State == RecommendationProviderReadinessState.Ready),
+                    canGenerate = latestRun?.State == RecommendationRunState.Succeeded,
+                    latestRunId = latestRun?.Id
+                },
+                candidates = candidates.Select(item => new
+                {
+                    item.TrackKey,
+                    item.Score,
+                    item.Source,
+                    explanations = ParseSignals(item.SignalsJson)
+                }),
+                generatedSets = sets.Select(item => new
+                {
+                    item.Id,
+                    item.Name,
+                    item.CreatedAt,
                     trackCount = setCounts.GetValueOrDefault(item.Id),
-                    state = item.MaterializationState.ToString().ToLowerInvariant(), item.BackendPlaylistId,
-                    item.TargetRevision, errorCode = item.LastErrorCode,
-                    materialized = item.MaterializationState == GeneratedSetMaterializationState.Succeeded }),
+                    state = item.MaterializationState.ToString().ToLowerInvariant(),
+                    item.BackendPlaylistId,
+                    item.TargetRevision,
+                    errorCode = item.LastErrorCode,
+                    materialized = item.MaterializationState == GeneratedSetMaterializationState.Succeeded
+                }),
                 visualization = ProfileValues(profile?.ProfileJson)
             });
         }
@@ -100,8 +135,11 @@ public sealed class IntelligenceController(
             var requestedReadiness = request.EnabledProviders.Select(id => readinessValues.SingleOrDefault(item => item.ProviderId == id.Trim().ToLowerInvariant()) ??
                 new RecommendationProviderReadiness(id, RecommendationProviderReadinessState.Unsupported, "provider_not_registered")).ToArray();
             if (requestedReadiness.Any(item => item.State != RecommendationProviderReadinessState.Ready))
-                return Conflict(new { error = "recommendation_provider_not_ready",
-                    providers = requestedReadiness.Select(item => new { id = item.ProviderId, state = ReadinessState(item.State), reasonCode = item.SafeReasonCode }) });
+                return Conflict(new
+                {
+                    error = "recommendation_provider_not_ready",
+                    providers = requestedReadiness.Select(item => new { id = item.ProviderId, state = ReadinessState(item.State), reasonCode = item.SafeReasonCode })
+                });
             var current = await policies.GetAsync(scope, cancellationToken);
             if (current != null && request.ExpectedRevision != current.Revision)
                 return Conflict(new { error = "intelligence_policy_revision_conflict" });
@@ -181,9 +219,18 @@ public sealed class IntelligenceController(
             new { key = "skips", label = "Skips", value = (double)value.SkipCount / total },
             new { key = "favorites", label = "Favorites", value = (double)value.FavoriteCount / total }];
     }
-    private static object State(string state, IntelligenceScope scope, string message) => new { state, scope = PublicScope(scope), message,
-        availableSignalTypes = Array.Empty<object>(), providers = Array.Empty<object>(), candidates = Array.Empty<object>(),
-        generatedSets = Array.Empty<object>(), visualization = Array.Empty<object>(), actions = new { canRun = false, canGenerate = false } };
+    private static object State(string state, IntelligenceScope scope, string message) => new
+    {
+        state,
+        scope = PublicScope(scope),
+        message,
+        availableSignalTypes = Array.Empty<object>(),
+        providers = Array.Empty<object>(),
+        candidates = Array.Empty<object>(),
+        generatedSets = Array.Empty<object>(),
+        visualization = Array.Empty<object>(),
+        actions = new { canRun = false, canGenerate = false }
+    };
     private static object PublicScope(IntelligenceScope scope) => new { scope.Protocol, scope.BackendInstanceId, scope.LibraryScopeId };
     private static string Label(string value) => string.Join(' ', value.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries)
         .Select(item => char.ToUpperInvariant(item[0]) + item[1..]));

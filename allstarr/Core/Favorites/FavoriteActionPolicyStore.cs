@@ -118,9 +118,17 @@ public sealed class FavoriteActionPolicyStore(IDbContextFactory<AllstarrDbContex
         var now = clock.UtcNow;
         if (record == null)
         {
-            record = new() { Id = Guid.CreateVersion7(), TenantId = key.TenantId, OwnerUserId = key.OwnerUserId,
-                Scope = scope, Protocol = key.Protocol, BackendInstanceId = key.BackendInstanceId,
-                LibraryScopeId = key.LibraryScopeId, CreatedAt = now };
+            record = new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = key.TenantId,
+                OwnerUserId = key.OwnerUserId,
+                Scope = scope,
+                Protocol = key.Protocol,
+                BackendInstanceId = key.BackendInstanceId,
+                LibraryScopeId = key.LibraryScopeId,
+                CreatedAt = now
+            };
             db.FavoriteActionPolicies.Add(record);
         }
         record.AddToVirtualLiked = values.AddToVirtualLiked; record.MatchLocalLibrary = values.MatchLocalLibrary;

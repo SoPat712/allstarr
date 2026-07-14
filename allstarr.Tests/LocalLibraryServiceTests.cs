@@ -34,14 +34,14 @@ public class LocalLibraryServiceTests : IDisposable
         // Mock HttpClient
         var mockHandler = new Mock<HttpMessageHandler>();
         mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>("SendAsync", 
-                ItExpr.IsAny<HttpRequestMessage>(), 
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"subsonic-response\":{\"status\":\"ok\",\"scanStatus\":{\"scanning\":false,\"count\":100}}}")
             });
-        
+
         var httpClient = new HttpClient(mockHandler.Object);
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
@@ -120,7 +120,7 @@ public class LocalLibraryServiceTests : IDisposable
             ExternalId = "123456"
         };
         var localPath = Path.Combine(_testDownloadPath, "test-song.mp3");
-        
+
         // Create the file
         await File.WriteAllTextAsync(localPath, "fake audio content");
 
@@ -146,7 +146,7 @@ public class LocalLibraryServiceTests : IDisposable
             ExternalId = "999999"
         };
         var localPath = Path.Combine(_testDownloadPath, "deleted-song.mp3");
-        
+
         // Create and then delete the file
         await File.WriteAllTextAsync(localPath, "fake audio content");
         await _service.RegisterDownloadedSongAsync(song, localPath);

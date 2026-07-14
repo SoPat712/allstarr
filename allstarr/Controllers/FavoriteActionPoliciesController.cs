@@ -34,8 +34,15 @@ public sealed class FavoriteActionPoliciesController(
         var global = session.IsAdministrator ? await db.FavoriteActionPolicies.AsNoTracking().SingleOrDefaultAsync(item =>
             item.TenantId == tenant && item.Scope == FavoriteActionPolicyScope.Global && item.Protocol == key.Protocol &&
             item.BackendInstanceId == key.BackendInstanceId && item.LibraryScopeId == key.LibraryScopeId, cancellationToken) : null;
-        return Ok(new { scope = key, managementMode = _mode.ToString(), canOverride = _mode != ProviderAccountManagementMode.AdminManaged,
-            effective, ownOverride = own == null ? null : Values(own), globalPolicy = global == null ? null : Values(global) });
+        return Ok(new
+        {
+            scope = key,
+            managementMode = _mode.ToString(),
+            canOverride = _mode != ProviderAccountManagementMode.AdminManaged,
+            effective,
+            ownOverride = own == null ? null : Values(own),
+            globalPolicy = global == null ? null : Values(global)
+        });
     }
 
     [HttpPut("me")]
@@ -53,8 +60,11 @@ public sealed class FavoriteActionPoliciesController(
             return Ok(new { policy = Values(record) });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = "favorite_policy_values_invalid", message = exception.Message }); }
-        catch (UnauthorizedAccessException) { return StatusCode(StatusCodes.Status403Forbidden,
-            new { error = "favorite_policy_credential_scope_denied" }); }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+            new { error = "favorite_policy_credential_scope_denied" });
+        }
     }
 
     [HttpPut("global")]
@@ -73,8 +83,11 @@ public sealed class FavoriteActionPoliciesController(
             return Ok(new { policy = Values(record) });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = "favorite_policy_values_invalid", message = exception.Message }); }
-        catch (UnauthorizedAccessException) { return StatusCode(StatusCodes.Status403Forbidden,
-            new { error = "favorite_policy_credential_scope_denied" }); }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+            new { error = "favorite_policy_credential_scope_denied" });
+        }
     }
 
     private async Task<bool> HasExactBackendIdentity(Guid tenant, Guid user, string protocol, string backend, CancellationToken token)
@@ -102,10 +115,20 @@ public sealed class FavoriteActionPoliciesController(
         { session = current; error = null; return true; }
         session = null!; error = Unauthorized(new { error = "Authentication required" }); return false;
     }
-    private static object Values(FavoriteActionPolicyRecord item) => new { item.Id, scope = item.Scope.ToString(),
-        item.AddToVirtualLiked, item.MatchLocalLibrary, item.AutoDownload, item.EnrichMetadata,
-        item.PlaceManagedFile, item.RefreshBackendLibrary, item.TargetCredentialReferenceId,
-        item.Revision, item.UpdatedAt };
+    private static object Values(FavoriteActionPolicyRecord item) => new
+    {
+        item.Id,
+        scope = item.Scope.ToString(),
+        item.AddToVirtualLiked,
+        item.MatchLocalLibrary,
+        item.AutoDownload,
+        item.EnrichMetadata,
+        item.PlaceManagedFile,
+        item.RefreshBackendLibrary,
+        item.TargetCredentialReferenceId,
+        item.Revision,
+        item.UpdatedAt
+    };
 }
 
 public class FavoriteActionPolicyScopeRequest

@@ -27,7 +27,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledSearchProviders();
-        
+
         var tasks = providers.Select(async p =>
         {
             var service = GetMetadataServiceByName(p);
@@ -219,7 +219,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledSearchProviders();
-        
+
         var tasks = providers.Select(async p =>
         {
             var service = GetMetadataServiceByName(p);

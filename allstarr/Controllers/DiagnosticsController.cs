@@ -276,13 +276,16 @@ public class DiagnosticsController : ControllerBase
             // Get process memory info
             var process = System.Diagnostics.Process.GetCurrentProcess();
 
-            return Ok(new {
+            return Ok(new
+            {
                 Timestamp = DateTime.UtcNow,
-                BeforeGC = new {
+                BeforeGC = new
+                {
                     GCMemoryBytes = memoryBeforeGC,
                     GCMemoryMB = Math.Round(memoryBeforeGC / (1024.0 * 1024.0), 2)
                 },
-                AfterGC = new {
+                AfterGC = new
+                {
                     GCMemoryBytes = memoryAfterGC,
                     GCMemoryMB = Math.Round(memoryAfterGC / (1024.0 * 1024.0), 2)
                 },
@@ -293,7 +296,8 @@ public class DiagnosticsController : ControllerBase
                 ProcessPrivateMemoryMB = Math.Round(process.PrivateMemorySize64 / (1024.0 * 1024.0), 2),
                 ProcessVirtualMemoryBytes = process.VirtualMemorySize64,
                 ProcessVirtualMemoryMB = Math.Round(process.VirtualMemorySize64 / (1024.0 * 1024.0), 2),
-                GCCollections = new {
+                GCCollections = new
+                {
                     Gen0Before = gen0Before,
                     Gen0After = gen0After,
                     Gen0Triggered = gen0After - gen0Before,
@@ -334,7 +338,8 @@ public class DiagnosticsController : ControllerBase
             var memoryAfter = GC.GetTotalMemory(false);
             var processAfter = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
 
-            return Ok(new {
+            return Ok(new
+            {
                 Timestamp = DateTime.UtcNow,
                 MemoryFreedMB = Math.Round((memoryBefore - memoryAfter) / (1024.0 * 1024.0), 2),
                 ProcessMemoryFreedMB = Math.Round((processBefore - processAfter) / (1024.0 * 1024.0), 2),
@@ -413,7 +418,8 @@ public class DiagnosticsController : ControllerBase
 
             if (!System.IO.File.Exists(logFile))
             {
-                return Ok(new {
+                return Ok(new
+                {
                     message = "No endpoint usage data available",
                     endpoints = new object[0]
                 });
@@ -457,7 +463,8 @@ public class DiagnosticsController : ControllerBase
                 .Select(kv => new { endpoint = kv.Key, count = kv.Value })
                 .ToArray();
 
-            return Ok(new {
+            return Ok(new
+            {
                 totalEndpoints = usage.Count,
                 totalRequests = usage.Values.Sum(),
                 since = since,
@@ -487,14 +494,16 @@ public class DiagnosticsController : ControllerBase
                 System.IO.File.Delete(logFile);
                 _logger.LogDebug("Cleared endpoint usage log via admin endpoint");
 
-                return Ok(new {
+                return Ok(new
+                {
                     message = "Endpoint usage log cleared successfully",
                     timestamp = DateTime.UtcNow
                 });
             }
             else
             {
-                return Ok(new {
+                return Ok(new
+                {
                     message = "No endpoint usage log file found",
                     timestamp = DateTime.UtcNow
                 });

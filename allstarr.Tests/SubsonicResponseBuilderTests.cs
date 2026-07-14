@@ -88,7 +88,7 @@ public class SubsonicResponseBuilderTests
         // Assert
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
-        
+
         // Serialize and deserialize to check structure
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
@@ -105,7 +105,7 @@ public class SubsonicResponseBuilderTests
         // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
-        
+
         var doc = XDocument.Parse(contentResult.Content!);
         var root = doc.Root!;
         Assert.Equal("subsonic-response", root.Name.LocalName);
@@ -124,7 +124,7 @@ public class SubsonicResponseBuilderTests
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var response = doc.RootElement.GetProperty("subsonic-response");
-        
+
         Assert.Equal("failed", response.GetProperty("status").GetString());
         Assert.Equal(70, response.GetProperty("error").GetProperty("code").GetInt32());
         Assert.Equal("Test error message", response.GetProperty("error").GetProperty("message").GetString());
@@ -139,11 +139,11 @@ public class SubsonicResponseBuilderTests
         // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
-        
+
         var doc = XDocument.Parse(contentResult.Content!);
         var root = doc.Root!;
         Assert.Equal("failed", root.Attribute("status")?.Value);
-        
+
         var ns = root.GetDefaultNamespace();
         var errorElement = root.Element(ns + "error");
         Assert.NotNull(errorElement);
@@ -176,7 +176,7 @@ public class SubsonicResponseBuilderTests
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var songData = doc.RootElement.GetProperty("subsonic-response").GetProperty("song");
-        
+
         Assert.Equal("song123", songData.GetProperty("id").GetString());
         Assert.Equal("Test Song", songData.GetProperty("title").GetString());
         Assert.Equal("Test Artist", songData.GetProperty("artist").GetString());
@@ -202,7 +202,7 @@ public class SubsonicResponseBuilderTests
         // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
-        
+
         var doc = XDocument.Parse(contentResult.Content!);
         var ns = doc.Root!.GetDefaultNamespace();
         var songElement = doc.Root!.Element(ns + "song");
@@ -267,7 +267,7 @@ public class SubsonicResponseBuilderTests
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var albumData = doc.RootElement.GetProperty("subsonic-response").GetProperty("album");
-        
+
         Assert.Equal("album123", albumData.GetProperty("id").GetString());
         Assert.Equal("Test Album", albumData.GetProperty("name").GetString());
         Assert.Equal(2, albumData.GetProperty("songCount").GetInt32());
@@ -297,7 +297,7 @@ public class SubsonicResponseBuilderTests
         // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
-        
+
         var doc = XDocument.Parse(contentResult.Content!);
         var ns = doc.Root!.GetDefaultNamespace();
         var albumElement = doc.Root!.Element(ns + "album");
@@ -329,7 +329,7 @@ public class SubsonicResponseBuilderTests
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var artistData = doc.RootElement.GetProperty("subsonic-response").GetProperty("artist");
-        
+
         Assert.Equal("artist123", artistData.GetProperty("id").GetString());
         Assert.Equal("Test Artist", artistData.GetProperty("name").GetString());
         Assert.Equal(2, artistData.GetProperty("albumCount").GetInt32());
@@ -356,7 +356,7 @@ public class SubsonicResponseBuilderTests
         // Assert
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("application/xml", contentResult.ContentType);
-        
+
         var doc = XDocument.Parse(contentResult.Content!);
         var ns = doc.Root!.GetDefaultNamespace();
         var artistElement = doc.Root!.Element(ns + "artist");
@@ -385,7 +385,7 @@ public class SubsonicResponseBuilderTests
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var songData = doc.RootElement.GetProperty("subsonic-response").GetProperty("song");
-        
+
         Assert.Equal("song123", songData.GetProperty("id").GetString());
         Assert.Equal("Test Song", songData.GetProperty("title").GetString());
     }
@@ -410,7 +410,7 @@ public class SubsonicResponseBuilderTests
         var json = JsonSerializer.Serialize(jsonResult.Value);
         var doc = JsonDocument.Parse(json);
         var albumData = doc.RootElement.GetProperty("subsonic-response").GetProperty("album");
-        
+
         Assert.Equal(0, albumData.GetProperty("songCount").GetInt32());
         Assert.Equal(0, albumData.GetProperty("duration").GetInt32());
     }

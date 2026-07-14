@@ -53,13 +53,13 @@ public class QobuzStartupValidator : BaseStartupValidator
     private async Task ValidateQobuzTokenAsync(string userAuthToken, string userId, CancellationToken cancellationToken)
     {
         const string fieldName = "Qobuz credentials";
-        
+
         try
         {
             // First, get the app ID from bundle service (simple check)
             var bundleUrl = "https://play.qobuz.com/login";
             var bundleResponse = await _httpClient.GetAsync(bundleUrl, cancellationToken);
-            
+
             if (!bundleResponse.IsSuccessStatusCode)
             {
                 WriteStatus(fieldName, "UNABLE TO VERIFY", ConsoleColor.Yellow);
@@ -71,7 +71,7 @@ public class QobuzStartupValidator : BaseStartupValidator
             // We'll use the user favorites endpoint which requires authentication
             var appId = "798273057"; // Fallback app ID
             var apiUrl = $"https://www.qobuz.com/api.json/0.2/favorite/getUserFavorites?user_id={userId}&app_id={appId}";
-            
+
             using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
             request.Headers.Add("X-App-Id", appId);
             request.Headers.Add("X-User-Auth-Token", userAuthToken);
@@ -96,7 +96,7 @@ public class QobuzStartupValidator : BaseStartupValidator
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            
+
             // If we got a successful response, credentials are valid
             if (!string.IsNullOrEmpty(json) && !json.Contains("\"error\""))
             {

@@ -71,7 +71,7 @@ public sealed class TrackMatchesController(IDbContextFactory<AllstarrDbContext> 
                 review = rows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous)
             },
             pagination = new { page, pageSize, total, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) }
-            }
+        }
         );
     }
 
@@ -90,16 +90,28 @@ public sealed class TrackMatchesController(IDbContextFactory<AllstarrDbContext> 
         var metadata = Metadata(snapshot.PayloadJson);
         var value = new
         {
-            externalSnapshotId = snapshot.Id, snapshot.ProviderId, snapshot.ProviderAccountId, snapshot.LibraryScopeId,
-            state = state.ToString().ToLowerInvariant(), decision?.Confidence, decision?.Threshold, decision?.DecisionVersion,
-            canonicalRecordingId = canonicalId, libraryTrackId = trackId, overrideId = manual?.Id,
+            externalSnapshotId = snapshot.Id,
+            snapshot.ProviderId,
+            snapshot.ProviderAccountId,
+            snapshot.LibraryScopeId,
+            state = state.ToString().ToLowerInvariant(),
+            decision?.Confidence,
+            decision?.Threshold,
+            decision?.DecisionVersion,
+            canonicalRecordingId = canonicalId,
+            libraryTrackId = trackId,
+            overrideId = manual?.Id,
             overrideRevision = manual?.Revision,
-            title = metadata.Title, artist = metadata.Artist, album = metadata.Album,
+            title = metadata.Title,
+            artist = metadata.Artist,
+            album = metadata.Album,
             localTrack = track == null ? null : new { track.Id, track.BackendItemId, track.Title, track.Artist, track.Album },
             providerIdentities,
             candidates = ParseCandidates(decision?.CandidateResultsJson),
-            reasons = ParseArray(decision?.ReasonsJson), warnings = ParseArray(decision?.WarningsJson),
-            decidedAt = decision?.DecidedAt, reviewedAt = manual?.CreatedAt
+            reasons = ParseArray(decision?.ReasonsJson),
+            warnings = ParseArray(decision?.WarningsJson),
+            decidedAt = decision?.DecidedAt,
+            reviewedAt = manual?.CreatedAt
         };
         return new(state, $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}", value);
     }

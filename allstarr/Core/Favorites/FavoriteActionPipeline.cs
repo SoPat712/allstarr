@@ -157,8 +157,12 @@ public sealed class FavoriteActionPipeline(
             SourceRevision = sourceRevision,
             EventKey = eventKey,
             CorrelationId = request.ExecutionContext.CorrelationId,
-            PolicySnapshotJson = JsonSerializer.Serialize(new { actions = actionTypes,
-                policySource = effectivePolicy.Source, targetCredentialReferenceId = effectivePolicy.TargetCredentialReferenceId }),
+            PolicySnapshotJson = JsonSerializer.Serialize(new
+            {
+                actions = actionTypes,
+                policySource = effectivePolicy.Source,
+                targetCredentialReferenceId = effectivePolicy.TargetCredentialReferenceId
+            }),
             TargetCredentialReferenceId = effectivePolicy.TargetCredentialReferenceId,
             JobId = job.JobId,
             State = FavoriteEventState.Pending,

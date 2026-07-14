@@ -94,17 +94,17 @@ public class JellyfinResponseBuilder
     /// Creates a response for a playlist represented as an album.
     /// </summary>
     public IActionResult CreatePlaylistAsAlbumResponse(ExternalPlaylist playlist, List<Song> tracks)
+    {
+        var totalDuration = tracks.Sum(s => s.Duration ?? 0);
+
+        var curatorName = !string.IsNullOrEmpty(playlist.CuratorName)
+            ? playlist.CuratorName
+            : playlist.Provider;
+
+        // Create artist items for the curator
+        var artistId = $"ext-{playlist.Provider}-curator-{curatorName.ToLowerInvariant().Replace(" ", "-")}";
+        var artistItems = new[]
         {
-            var totalDuration = tracks.Sum(s => s.Duration ?? 0);
-
-            var curatorName = !string.IsNullOrEmpty(playlist.CuratorName)
-                ? playlist.CuratorName
-                : playlist.Provider;
-
-            // Create artist items for the curator
-            var artistId = $"ext-{playlist.Provider}-curator-{curatorName.ToLowerInvariant().Replace(" ", "-")}";
-            var artistItems = new[]
-            {
                 new Dictionary<string, object>
                 {
                     ["Name"] = curatorName,
@@ -112,86 +112,86 @@ public class JellyfinResponseBuilder
                 }
             };
 
-            // Aggregate unique genres from all tracks
-            var genres = tracks
-                .Where(s => !string.IsNullOrEmpty(s.Genre))
-                .Select(s => s.Genre!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+        // Aggregate unique genres from all tracks
+        var genres = tracks
+            .Where(s => !string.IsNullOrEmpty(s.Genre))
+            .Select(s => s.Genre!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-            // If no genres found, fallback to "Playlist"
-            if (genres.Count == 0)
-            {
-                genres.Add("Playlist");
-            }
-
-            var genreItems = genres.Select(g => new Dictionary<string, object>
-            {
-                ["Name"] = g,
-                ["Id"] = $"genre-{g.ToLowerInvariant()}"
-            }).ToArray();
-
-            var albumItem = new Dictionary<string, object?>
-            {
-                ["Id"] = playlist.Id,
-                ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
-                ["Type"] = "MusicAlbum",  // Must be MusicAlbum for Jellyfin clients
-                ["ServerId"] = "allstarr",
-                ["ChannelId"] = null,
-                ["IsFolder"] = true,
-                ["PremiereDate"] = playlist.CreatedDate?.ToString("o"),
-                ["ProductionYear"] = playlist.CreatedDate?.Year,
-                ["Genres"] = genres.ToArray(),
-                ["GenreItems"] = genreItems,
-                ["Artists"] = new[] { curatorName },
-                ["ArtistItems"] = artistItems,
-                ["AlbumArtist"] = curatorName,
-                ["AlbumArtists"] = artistItems,
-                ["ParentLogoItemId"] = artistId,
-                ["ParentBackdropItemId"] = artistId,
-                ["ParentBackdropImageTags"] = new string[0],
-                ["ChildCount"] = tracks.Count,
-                ["RunTimeTicks"] = totalDuration * TimeSpan.TicksPerSecond,
-                ["ImageTags"] = new Dictionary<string, string>
-                {
-                    ["Primary"] = playlist.Id
-                },
-                ["BackdropImageTags"] = new string[0],
-                ["ParentLogoImageTag"] = artistId,
-                ["ImageBlurHashes"] = new Dictionary<string, object>(),
-                ["LocationType"] = "FileSystem",  // Must be FileSystem for Jellyfin to show artist albums
-                ["MediaType"] = "Unknown",
-                ["UserData"] = new Dictionary<string, object>
-                {
-                    ["PlaybackPositionTicks"] = 0,
-                    ["PlayCount"] = 0,
-                    ["IsFavorite"] = false,
-                    ["Played"] = false,
-                    ["Key"] = $"{curatorName}-{playlist.Name}",
-                    ["ItemId"] = playlist.Id
-                },
-                ["ProviderIds"] = new Dictionary<string, string>
-                {
-                    [playlist.Provider] = playlist.ExternalId
-                },
-                ["Children"] = tracks.Select(song =>
-                {
-                    var item = ConvertSongToJellyfinItem(song);
-                    // Override ParentId and AlbumId to be the playlist ID
-                    // This makes all tracks appear to be from the same "album" (the playlist)
-                    item["ParentId"] = playlist.Id;
-                    item["AlbumId"] = playlist.Id;
-                    item["AlbumPrimaryImageTag"] = playlist.Id;
-                    item["ParentLogoItemId"] = playlist.Id;
-                    item["ParentLogoImageTag"] = playlist.Id;
-                    item["ParentBackdropItemId"] = playlist.Id;
-                    return item;
-                }).ToList()
-            };
-
-            // Return album object directly (not wrapped) - same as CreateAlbumResponse
-            return CreateJsonResponse(albumItem);
+        // If no genres found, fallback to "Playlist"
+        if (genres.Count == 0)
+        {
+            genres.Add("Playlist");
         }
+
+        var genreItems = genres.Select(g => new Dictionary<string, object>
+        {
+            ["Name"] = g,
+            ["Id"] = $"genre-{g.ToLowerInvariant()}"
+        }).ToArray();
+
+        var albumItem = new Dictionary<string, object?>
+        {
+            ["Id"] = playlist.Id,
+            ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
+            ["Type"] = "MusicAlbum",  // Must be MusicAlbum for Jellyfin clients
+            ["ServerId"] = "allstarr",
+            ["ChannelId"] = null,
+            ["IsFolder"] = true,
+            ["PremiereDate"] = playlist.CreatedDate?.ToString("o"),
+            ["ProductionYear"] = playlist.CreatedDate?.Year,
+            ["Genres"] = genres.ToArray(),
+            ["GenreItems"] = genreItems,
+            ["Artists"] = new[] { curatorName },
+            ["ArtistItems"] = artistItems,
+            ["AlbumArtist"] = curatorName,
+            ["AlbumArtists"] = artistItems,
+            ["ParentLogoItemId"] = artistId,
+            ["ParentBackdropItemId"] = artistId,
+            ["ParentBackdropImageTags"] = new string[0],
+            ["ChildCount"] = tracks.Count,
+            ["RunTimeTicks"] = totalDuration * TimeSpan.TicksPerSecond,
+            ["ImageTags"] = new Dictionary<string, string>
+            {
+                ["Primary"] = playlist.Id
+            },
+            ["BackdropImageTags"] = new string[0],
+            ["ParentLogoImageTag"] = artistId,
+            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["LocationType"] = "FileSystem",  // Must be FileSystem for Jellyfin to show artist albums
+            ["MediaType"] = "Unknown",
+            ["UserData"] = new Dictionary<string, object>
+            {
+                ["PlaybackPositionTicks"] = 0,
+                ["PlayCount"] = 0,
+                ["IsFavorite"] = false,
+                ["Played"] = false,
+                ["Key"] = $"{curatorName}-{playlist.Name}",
+                ["ItemId"] = playlist.Id
+            },
+            ["ProviderIds"] = new Dictionary<string, string>
+            {
+                [playlist.Provider] = playlist.ExternalId
+            },
+            ["Children"] = tracks.Select(song =>
+            {
+                var item = ConvertSongToJellyfinItem(song);
+                // Override ParentId and AlbumId to be the playlist ID
+                // This makes all tracks appear to be from the same "album" (the playlist)
+                item["ParentId"] = playlist.Id;
+                item["AlbumId"] = playlist.Id;
+                item["AlbumPrimaryImageTag"] = playlist.Id;
+                item["ParentLogoItemId"] = playlist.Id;
+                item["ParentLogoImageTag"] = playlist.Id;
+                item["ParentBackdropItemId"] = playlist.Id;
+                return item;
+            }).ToList()
+        };
+
+        // Return album object directly (not wrapped) - same as CreateAlbumResponse
+        return CreateJsonResponse(albumItem);
+    }
 
     /// <summary>
     /// Creates a search hints response (Jellyfin search format).

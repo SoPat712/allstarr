@@ -42,8 +42,12 @@ public sealed partial class ExtensionControlPlaneService
         var now = _clock.UtcNow;
         var record = new ExtensionRegistryRecord
         {
-            Id = Guid.CreateVersion7(), Name = input.Name.Trim(), RegistryUrl = canonical,
-            Enabled = input.Enabled, CreatedAt = now, UpdatedAt = now
+            Id = Guid.CreateVersion7(),
+            Name = input.Name.Trim(),
+            RegistryUrl = canonical,
+            Enabled = input.Enabled,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         db.ExtensionRegistries.Add(record);
         await db.SaveChangesAsync(cancellationToken);
@@ -144,10 +148,15 @@ public sealed partial class ExtensionControlPlaneService
         var now = _clock.UtcNow;
         var package = new ExtensionPackageRecord
         {
-            Id = Guid.CreateVersion7(), RegistryId = registryId, PreviousPackageId = previous?.Id,
-            ExtensionId = verified.Manifest.Id, DisplayName = verified.Manifest.DisplayName,
-            Version = verified.Manifest.Version, SdkVersion = verified.Manifest.SdkVersion,
-            Sha256 = verified.Sha256, ContentSha256 = verified.ContentSha256,
+            Id = Guid.CreateVersion7(),
+            RegistryId = registryId,
+            PreviousPackageId = previous?.Id,
+            ExtensionId = verified.Manifest.Id,
+            DisplayName = verified.Manifest.DisplayName,
+            Version = verified.Manifest.Version,
+            SdkVersion = verified.Manifest.SdkVersion,
+            Sha256 = verified.Sha256,
+            ContentSha256 = verified.ContentSha256,
             PackagePath = Path.GetFullPath(verified.PackageRoot),
             ManifestJson = File.ReadAllText(Path.Combine(verified.PackageRoot, "manifest.json")),
             State = verified.Manifest.Permissions.Count == 0
@@ -159,10 +168,13 @@ public sealed partial class ExtensionControlPlaneService
         db.ExtensionPermissionReviews.AddRange(verified.Manifest.Permissions.Select(permission =>
             new ExtensionPermissionReviewRecord
             {
-                Id = Guid.CreateVersion7(), ExtensionPackageId = package.Id,
+                Id = Guid.CreateVersion7(),
+                ExtensionPackageId = package.Id,
                 PermissionKind = permission.Kind.ToString().ToLowerInvariant(),
-                PermissionValue = permission.Value, Required = permission.Required,
-                Decision = ExtensionPermissionDecision.Pending, CreatedAt = now
+                PermissionValue = permission.Value,
+                Required = permission.Required,
+                Decision = ExtensionPermissionDecision.Pending,
+                CreatedAt = now
             }));
         await AddLogAsync(db, package, "information", "package.staged", "Package staged for permission review.", "extension-stage", now);
         await db.SaveChangesAsync(cancellationToken);
@@ -353,9 +365,14 @@ public sealed partial class ExtensionControlPlaneService
         var safeMessage = SecretPattern().Replace(message ?? string.Empty, "$1=[redacted]");
         db.ExtensionLogs.Add(new ExtensionLogRecord
         {
-            Id = Guid.CreateVersion7(), ExtensionPackageId = package.Id, ExtensionId = package.ExtensionId,
-            Level = Normalize(level, 20), EventCode = Normalize(eventCode, 100),
-            Message = Normalize(safeMessage, 2000), CorrelationId = Normalize(correlationId, 100), CreatedAt = now
+            Id = Guid.CreateVersion7(),
+            ExtensionPackageId = package.Id,
+            ExtensionId = package.ExtensionId,
+            Level = Normalize(level, 20),
+            EventCode = Normalize(eventCode, 100),
+            Message = Normalize(safeMessage, 2000),
+            CorrelationId = Normalize(correlationId, 100),
+            CreatedAt = now
         });
         return Task.CompletedTask;
     }

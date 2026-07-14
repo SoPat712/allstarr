@@ -15,18 +15,18 @@ public class LastFmSignatureTests
     {
         var sorted = parameters.OrderBy(kvp => kvp.Key);
         var signatureString = new StringBuilder();
-        
+
         foreach (var kvp in sorted)
         {
             signatureString.Append(kvp.Key);
             signatureString.Append(kvp.Value);
         }
-        
+
         signatureString.Append(sharedSecret);
-        
+
         var bytes = Encoding.UTF8.GetBytes(signatureString.ToString());
         var hash = MD5.HashData(bytes);
-        
+
         // Convert to UPPERCASE hex string (Last.fm requires uppercase)
         var sb = new StringBuilder();
         foreach (byte b in hash)

@@ -90,7 +90,7 @@ public sealed class RecommendationSourceAdapterTests
     public async Task BackendWithoutInstantMixReportsUnsupportedInsteadOfEmptySuccess()
     {
         var result = await new JellyfinInstantMixRecommendationProvider(new FakeClient
-            { Failure = new NotSupportedException("backend version details") }).RecommendAsync(Request(true));
+        { Failure = new NotSupportedException("backend version details") }).RecommendAsync(Request(true));
         Assert.Equal(RecommendationProviderState.Unsupported, result.State);
         Assert.Equal("jellyfin_instant_mix_unsupported", result.SafeErrorCode);
     }
@@ -232,7 +232,7 @@ public sealed class RecommendationSourceAdapterTests
         {
             Calls++; Requests.Add(request.RequestUri!);
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                { Content = new StringContent(responses.Dequeue(), Encoding.UTF8, "application/json") });
+            { Content = new StringContent(responses.Dequeue(), Encoding.UTF8, "application/json") });
         }
     }
 }

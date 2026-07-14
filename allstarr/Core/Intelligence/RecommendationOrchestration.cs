@@ -28,14 +28,31 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
         var profile = new ListeningProfile(scope.TenantId, scope.OwnerUserId, scope.BackendInstanceId,
             scope.LibraryScopeId, signals.Count(x => x.SignalType is "play" or "complete"), signals.Count(x => x.SignalType == "skip"),
             signals.Count(x => x.SignalType == "favorite"), new Dictionary<string, double>(), start, clock.UtcNow)
-            { TopTrackKeys = weighted.Select(x => x.Track).ToArray() };
-        db.ListeningProfiles.Add(new() { Id = Guid.CreateVersion7(), TenantId = scope.TenantId, OwnerUserId = scope.OwnerUserId,
-            Protocol = scope.Protocol, BackendInstanceId = scope.BackendInstanceId, LibraryScopeId = scope.LibraryScopeId,
-            ProfileJson = JsonSerializer.Serialize(profile), WindowStart = start, WindowEnd = clock.UtcNow, CreatedAt = clock.UtcNow });
+        { TopTrackKeys = weighted.Select(x => x.Track).ToArray() };
+        db.ListeningProfiles.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            ProfileJson = JsonSerializer.Serialize(profile),
+            WindowStart = start,
+            WindowEnd = clock.UtcNow,
+            CreatedAt = clock.UtcNow
+        });
         await db.SaveChangesAsync(cancellationToken); return profile;
     }
-    private static double SignalWeight(string type) => type switch { "favorite" => 2, "complete" => 1.5,
-        "playlist" => 1.2, "play" => 1, "skip" => -1.5, _ => 0 };
+    private static double SignalWeight(string type) => type switch
+    {
+        "favorite" => 2,
+        "complete" => 1.5,
+        "playlist" => 1.2,
+        "play" => 1,
+        "skip" => -1.5,
+        _ => 0
+    };
 }
 
 public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
@@ -50,15 +67,35 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         if (existing != null) { await EnqueueMaterialization(existing, cancellationToken); return existing.Id; }
         if (!await IntelligencePolicyService.ScopedRuns(db, scope).AnyAsync(x => x.Id == runId && x.State == RecommendationRunState.Succeeded, cancellationToken)) throw new UnauthorizedAccessException("The recommendation run is outside this scope or incomplete.");
         var completedRun = await IntelligencePolicyService.ScopedRuns(db, scope).AsNoTracking().SingleAsync(x => x.Id == runId, cancellationToken);
-        var set = new GeneratedSetRecord { Id = Guid.CreateVersion7(), RunId = runId, TenantId = scope.TenantId,
-            OwnerUserId = scope.OwnerUserId, Protocol = scope.Protocol, BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId, Name = name, TargetCredentialReferenceId = completedRun.TargetCredentialReferenceId,
-            MaterializationState = GeneratedSetMaterializationState.Pending, CreatedAt = clock.UtcNow,
-            UpdatedAt = clock.UtcNow, Revision = 1 }; db.GeneratedSets.Add(set);
-        for (var i = 0; i < candidates.Count; i++) db.GeneratedSetEntries.Add(new() { Id = Guid.CreateVersion7(),
-            GeneratedSetId = set.Id, TenantId = scope.TenantId, OwnerUserId = scope.OwnerUserId, Position = i,
-            TrackKey = candidates[i].TrackKey, Score = candidates[i].Score, Source = candidates[i].Source,
-            ExplanationJson = JsonSerializer.Serialize(candidates[i].Signals), IdentityJson = JsonSerializer.Serialize(candidates[i].Identity) });
+        var set = new GeneratedSetRecord
+        {
+            Id = Guid.CreateVersion7(),
+            RunId = runId,
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            Name = name,
+            TargetCredentialReferenceId = completedRun.TargetCredentialReferenceId,
+            MaterializationState = GeneratedSetMaterializationState.Pending,
+            CreatedAt = clock.UtcNow,
+            UpdatedAt = clock.UtcNow,
+            Revision = 1
+        }; db.GeneratedSets.Add(set);
+        for (var i = 0; i < candidates.Count; i++) db.GeneratedSetEntries.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            GeneratedSetId = set.Id,
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Position = i,
+            TrackKey = candidates[i].TrackKey,
+            Score = candidates[i].Score,
+            Source = candidates[i].Source,
+            ExplanationJson = JsonSerializer.Serialize(candidates[i].Signals),
+            IdentityJson = JsonSerializer.Serialize(candidates[i].Identity)
+        });
         await db.SaveChangesAsync(cancellationToken); await EnqueueMaterialization(set, cancellationToken); return set.Id;
     }
     private Task<DurableJobEnqueueResult> EnqueueMaterialization(GeneratedSetRecord set, CancellationToken token) =>
@@ -88,11 +125,24 @@ public sealed class RecommendationRunService(IDbContextFactory<AllstarrDbContext
         var runId = Guid.CreateVersion7(); var job = await jobs.EnqueueInExistingTransactionAsync(db,
             new DurableJobEnqueueRequest<RecommendationRunPayload>("recommendation.generate", idempotencyKey,
                 new(runId), scope.TenantId, scope.OwnerUserId, LibraryScopeId: scope.LibraryScopeId), cancellationToken);
-        db.RecommendationRuns.Add(new() { Id = runId, TenantId = scope.TenantId, OwnerUserId = scope.OwnerUserId,
-            Protocol = scope.Protocol, BackendInstanceId = scope.BackendInstanceId, LibraryScopeId = scope.LibraryScopeId,
-            JobId = job.JobId, IdempotencyKey = idempotencyKey, PolicySnapshotJson = JsonSerializer.Serialize(new RecommendationPolicySnapshot(policy.Revision, enabledProviders, policy.RetentionDays, policy.TargetCredentialReferenceId)),
-            SeedTrackKeysJson = JsonSerializer.Serialize(seeds), Limit = limit, TargetCredentialReferenceId = policy.TargetCredentialReferenceId, State = RecommendationRunState.Pending,
-            CreatedAt = clock.UtcNow, UpdatedAt = clock.UtcNow }); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
+        db.RecommendationRuns.Add(new()
+        {
+            Id = runId,
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            JobId = job.JobId,
+            IdempotencyKey = idempotencyKey,
+            PolicySnapshotJson = JsonSerializer.Serialize(new RecommendationPolicySnapshot(policy.Revision, enabledProviders, policy.RetentionDays, policy.TargetCredentialReferenceId)),
+            SeedTrackKeysJson = JsonSerializer.Serialize(seeds),
+            Limit = limit,
+            TargetCredentialReferenceId = policy.TargetCredentialReferenceId,
+            State = RecommendationRunState.Pending,
+            CreatedAt = clock.UtcNow,
+            UpdatedAt = clock.UtcNow
+        }); await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
         return new(runId, job.JobId, true, RecommendationRunState.Pending);
     }
 }

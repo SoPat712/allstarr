@@ -92,9 +92,16 @@ public class ExtensionController : ControllerBase
             var reviews = await _controlPlane.ListPermissionReviewsAsync(packageId, cancellationToken);
             return Ok(reviews.Select(item => new
             {
-                item.Id, item.ExtensionPackageId, item.PermissionKind, item.PermissionValue,
-                item.Required, decision = item.Decision.ToString().ToLowerInvariant(),
-                item.ReviewedByUserId, item.CreatedAt, item.ReviewedAt, item.Revision
+                item.Id,
+                item.ExtensionPackageId,
+                item.PermissionKind,
+                item.PermissionValue,
+                item.Required,
+                decision = item.Decision.ToString().ToLowerInvariant(),
+                item.ReviewedByUserId,
+                item.CreatedAt,
+                item.ReviewedAt,
+                item.Revision
             }));
         }
         catch (Exception exception) { return ControlPlaneError(exception); }
@@ -127,9 +134,12 @@ public class ExtensionController : ControllerBase
     public async Task<IActionResult> Activate(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try { return Ok(PackageResponse(_runtime == null
+        try
+        {
+            return Ok(PackageResponse(_runtime == null
             ? await _controlPlane.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken)
-            : await _runtime.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken))); }
+            : await _runtime.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken)));
+        }
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
@@ -137,9 +147,12 @@ public class ExtensionController : ControllerBase
     public async Task<IActionResult> Rollback(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
-        try { return Ok(PackageResponse(_runtime == null
+        try
+        {
+            return Ok(PackageResponse(_runtime == null
             ? await _controlPlane.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken)
-            : await _runtime.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken))); }
+            : await _runtime.RollbackAsync(packageId, request.ExpectedRevision, cancellationToken)));
+        }
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
@@ -183,8 +196,14 @@ public class ExtensionController : ControllerBase
             var logs = await _controlPlane.ListLogsAsync(packageId, extensionId, limit, cancellationToken);
             return Ok(logs.Select(item => new
             {
-                item.Id, item.ExtensionPackageId, item.ExtensionId, item.Level,
-                item.EventCode, item.Message, item.CorrelationId, item.CreatedAt
+                item.Id,
+                item.ExtensionPackageId,
+                item.ExtensionId,
+                item.Level,
+                item.EventCode,
+                item.Message,
+                item.CorrelationId,
+                item.CreatedAt
             }));
         }
         catch (Exception exception) { return ControlPlaneError(exception); }
@@ -360,16 +379,32 @@ public class ExtensionController : ControllerBase
 
     private static object RegistryResponse(ExtensionRegistryRecord item) => new
     {
-        item.Id, item.Name, item.RegistryUrl, item.Enabled,
-        item.CreatedAt, item.UpdatedAt, item.Revision
+        item.Id,
+        item.Name,
+        item.RegistryUrl,
+        item.Enabled,
+        item.CreatedAt,
+        item.UpdatedAt,
+        item.Revision
     };
 
     private static object PackageResponse(ExtensionPackageRecord item) => new
     {
-        item.Id, item.RegistryId, item.PreviousPackageId, item.ExtensionId,
-        item.DisplayName, item.Version, item.SdkVersion, item.Sha256,
-        state = item.State.ToString().ToLowerInvariant(), item.FailureCode,
-        item.StagedAt, item.ReviewedAt, item.ActivatedAt, item.DisabledAt, item.Revision
+        item.Id,
+        item.RegistryId,
+        item.PreviousPackageId,
+        item.ExtensionId,
+        item.DisplayName,
+        item.Version,
+        item.SdkVersion,
+        item.Sha256,
+        state = item.State.ToString().ToLowerInvariant(),
+        item.FailureCode,
+        item.StagedAt,
+        item.ReviewedAt,
+        item.ActivatedAt,
+        item.DisabledAt,
+        item.Revision
     };
 }
 

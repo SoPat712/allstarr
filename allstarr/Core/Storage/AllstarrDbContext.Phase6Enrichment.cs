@@ -24,7 +24,11 @@ public sealed partial class AllstarrDbContext
             entity.Property(item => item.PathValuesJson).IsRequired();
             entity.HasAlternateKey(item => new
             {
-                item.Id, item.TenantId, item.OwnerUserId, item.ManagedArtifactId, item.LineageJobId
+                item.Id,
+                item.TenantId,
+                item.OwnerUserId,
+                item.ManagedArtifactId,
+                item.LineageJobId
             }).HasName("AK_enrichment_plan_scope");
             entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.ManagedArtifactId, item.Fingerprint })
                 .IsUnique().HasDatabaseName("IX_enrichment_plan_fingerprint");
@@ -60,11 +64,19 @@ public sealed partial class AllstarrDbContext
             entity.HasOne<MetadataEnrichmentPlanRecord>().WithMany()
                 .HasForeignKey(item => new
                 {
-                    item.PlanId, item.TenantId, item.OwnerUserId, item.ManagedArtifactId, item.LineageJobId
+                    item.PlanId,
+                    item.TenantId,
+                    item.OwnerUserId,
+                    item.ManagedArtifactId,
+                    item.LineageJobId
                 })
                 .HasPrincipalKey(item => new
                 {
-                    item.Id, item.TenantId, item.OwnerUserId, item.ManagedArtifactId, item.LineageJobId
+                    item.Id,
+                    item.TenantId,
+                    item.OwnerUserId,
+                    item.ManagedArtifactId,
+                    item.LineageJobId
                 }).HasConstraintName("FK_enrichment_application_plan").OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(item => item.LineageJobId).OnDelete(DeleteBehavior.Restrict);
         });

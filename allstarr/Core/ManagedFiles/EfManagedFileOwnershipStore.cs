@@ -95,5 +95,6 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
     private static ManagedFileRecord? Map(ManagedFileOwnershipEntity? item) => item is null ? null : new(
         item.Id, item.RootId, item.CanonicalPath, item.ContentSha256, item.Length, item.PlacementMethod,
         item.TenantId, item.OwnerUserId, item.LibraryScopeId, item.SourceJobId, item.ScopeKey,
-        item.ReferenceCount, item.IsManaged, item.CreatedAt) { TargetRootPath = item.TargetRootPath };
+        item.ReferenceCount, item.IsManaged, item.CreatedAt)
+    { TargetRootPath = item.TargetRootPath };
 }

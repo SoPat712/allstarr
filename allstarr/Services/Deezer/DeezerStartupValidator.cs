@@ -36,7 +36,7 @@ public class DeezerStartupValidator : BaseStartupValidator
         }
 
         WriteStatus("Deezer ARL", MaskSecret(arl), ConsoleColor.Cyan);
-        
+
         if (!string.IsNullOrWhiteSpace(arlFallback))
         {
             WriteStatus("Deezer ARL Fallback", MaskSecret(arlFallback), ConsoleColor.Cyan);
@@ -46,7 +46,7 @@ public class DeezerStartupValidator : BaseStartupValidator
 
         // Validate ARL by calling Deezer API
         await ValidateArlTokenAsync(arl, "primary", cancellationToken);
-        
+
         if (!string.IsNullOrWhiteSpace(arlFallback))
         {
             await ValidateArlTokenAsync(arlFallback, "fallback", cancellationToken);
@@ -58,12 +58,12 @@ public class DeezerStartupValidator : BaseStartupValidator
     private async Task ValidateArlTokenAsync(string arl, string label, CancellationToken cancellationToken)
     {
         var fieldName = $"Deezer ARL ({label})";
-        
+
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post,
                 "https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=null");
-            
+
             request.Headers.Add("Cookie", $"arl={arl}");
             request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
 
@@ -83,8 +83,8 @@ public class DeezerStartupValidator : BaseStartupValidator
             {
                 if (user.TryGetProperty("USER_ID", out var userId))
                 {
-                    var userIdValue = userId.ValueKind == JsonValueKind.Number 
-                        ? userId.GetInt64() 
+                    var userIdValue = userId.ValueKind == JsonValueKind.Number
+                        ? userId.GetInt64()
                         : long.TryParse(userId.GetString(), out var parsed) ? parsed : 0;
 
                     if (userIdValue > 0)
@@ -95,15 +95,15 @@ public class DeezerStartupValidator : BaseStartupValidator
                             : user.TryGetProperty("NAME", out var name) && name.GetString() is string n && !string.IsNullOrEmpty(n)
                                 ? n
                                 : "Unknown";
-                        
+
                         var offerName = GetOfferName(user);
-                        
+
                         WriteStatus(fieldName, "VALID", ConsoleColor.Green);
                         WriteDetail($"Logged in as {userName} ({offerName})");
                         return;
                     }
                 }
-                
+
                 WriteStatus(fieldName, "INVALID", ConsoleColor.Red);
                 WriteDetail("Token is expired or invalid");
             }
@@ -145,12 +145,12 @@ public class DeezerStartupValidator : BaseStartupValidator
         {
             return "Premium+ (Lossless)";
         }
-        
+
         if (hasHq)
         {
             return "Premium (HQ)";
         }
-        
+
         return "Free";
     }
 }

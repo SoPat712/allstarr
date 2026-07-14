@@ -409,42 +409,42 @@ public partial class JellyfinController : ControllerBase
             .ToList();
     }
     private async Task<IActionResult> GetCuratorPlaylists(string provider, string externalId, string? includeItemTypes, CancellationToken cancellationToken = default)
+    {
+        var itemTypes = ParseItemTypes(includeItemTypes);
+
+        _logger.LogDebug("GetCuratorPlaylists: provider={Provider}, curatorId={CuratorId}, itemTypes={ItemTypes}",
+            provider, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
+
+        // Extract curator name from externalId (format: "curator-{name}")
+        var curatorName = externalId.Replace("curator-", "", StringComparison.OrdinalIgnoreCase);
+
+        // Search for playlists by this curator
+        // Since we don't have a direct "get playlists by curator" method, we'll search for the curator name
+        // and filter the results
+        var playlists = await _metadataService.SearchPlaylistsAsync(curatorName, 50, cancellationToken);
+
+        // Filter to only playlists from this curator (case-insensitive match)
+        var curatorPlaylists = playlists
+            .Where(p => !string.IsNullOrEmpty(p.CuratorName) &&
+                       p.CuratorName.Equals(curatorName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        _logger.LogDebug("Found {Count} playlists for curator '{CuratorName}'", curatorPlaylists.Count, curatorName);
+
+        // Convert playlists to album items
+        var albumItems = curatorPlaylists
+            .Select(p => _responseBuilder.ConvertPlaylistToAlbumItem(p))
+            .ToList();
+
+        var response = new Dictionary<string, object>
         {
-            var itemTypes = ParseItemTypes(includeItemTypes);
+            ["Items"] = albumItems,
+            ["TotalRecordCount"] = albumItems.Count,
+            ["StartIndex"] = 0
+        };
 
-            _logger.LogDebug("GetCuratorPlaylists: provider={Provider}, curatorId={CuratorId}, itemTypes={ItemTypes}",
-                provider, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
-
-            // Extract curator name from externalId (format: "curator-{name}")
-            var curatorName = externalId.Replace("curator-", "", StringComparison.OrdinalIgnoreCase);
-
-            // Search for playlists by this curator
-            // Since we don't have a direct "get playlists by curator" method, we'll search for the curator name
-            // and filter the results
-            var playlists = await _metadataService.SearchPlaylistsAsync(curatorName, 50, cancellationToken);
-
-            // Filter to only playlists from this curator (case-insensitive match)
-            var curatorPlaylists = playlists
-                .Where(p => !string.IsNullOrEmpty(p.CuratorName) &&
-                           p.CuratorName.Equals(curatorName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            _logger.LogDebug("Found {Count} playlists for curator '{CuratorName}'", curatorPlaylists.Count, curatorName);
-
-            // Convert playlists to album items
-            var albumItems = curatorPlaylists
-                .Select(p => _responseBuilder.ConvertPlaylistToAlbumItem(p))
-                .ToList();
-
-            var response = new Dictionary<string, object>
-            {
-                ["Items"] = albumItems,
-                ["TotalRecordCount"] = albumItems.Count,
-                ["StartIndex"] = 0
-            };
-
-            return new JsonResult(response);
-        }
+        return new JsonResult(response);
+    }
 
 
 

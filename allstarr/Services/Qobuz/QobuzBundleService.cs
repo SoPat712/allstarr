@@ -11,19 +11,19 @@ public class QobuzBundleService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<QobuzBundleService> _logger;
-    
+
     private const string BaseUrl = "https://play.qobuz.com";
     private const string LoginPageUrl = "https://play.qobuz.com/login";
-    
+
     // Regex patterns to extract bundle URL and App ID
     private static readonly Regex BundleUrlRegex = new(
         @"<script src=""(/resources/\d+\.\d+\.\d+-[a-z]\d{3}/bundle\.js)""></script>",
         RegexOptions.Compiled);
-    
+
     private static readonly Regex AppIdRegex = new(
         @"production:\{api:\{appId:""(?<app_id>\d{9})"",appSecret:""\w{32}""",
         RegexOptions.Compiled);
-    
+
     // Cached values (valid for the lifetime of the application)
     private string? _cachedAppId;
     private List<string>? _cachedSecrets;
@@ -32,7 +32,7 @@ public class QobuzBundleService
     public QobuzBundleService(IHttpClientFactory httpClientFactory, ILogger<QobuzBundleService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
+        _httpClient.DefaultRequestHeaders.Add("User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
         _logger = logger;
     }
@@ -63,7 +63,7 @@ public class QobuzBundleService
         var secrets = await GetSecretsAsync();
         if (index < 0 || index >= secrets.Count)
         {
-            throw new ArgumentOutOfRangeException(nameof(index), 
+            throw new ArgumentOutOfRangeException(nameof(index),
                 $"Secret index {index} out of range (0-{secrets.Count - 1})");
         }
         return secrets[index];
@@ -118,10 +118,10 @@ public class QobuzBundleService
     {
         var response = await _httpClient.GetAsync(LoginPageUrl);
         response.EnsureSuccessStatusCode();
-        
+
         var html = await response.Content.ReadAsStringAsync();
         var match = BundleUrlRegex.Match(html);
-        
+
         if (!match.Success)
         {
             throw new Exception("Could not find bundle URL in Qobuz login page");
@@ -146,7 +146,7 @@ public class QobuzBundleService
     private string ExtractAppId(string bundleJs)
     {
         var match = AppIdRegex.Match(bundleJs);
-        
+
         if (!match.Success)
         {
             throw new Exception("Could not extract App ID from bundle");
@@ -163,20 +163,20 @@ public class QobuzBundleService
     private List<string> ExtractSecrets(string bundleJs)
     {
         var secrets = new Dictionary<string, List<string>>();
-        
+
         // Step 1: Extract seed and timezone pairs
         // Pattern: [a-z].initialSeed("base64string",window.utimezone.timezone)
         var seedTimezonePattern = new Regex(
             @"[a-z]\.initialSeed\(""(?<seed>[\w=]+)"",window\.utimezone\.(?<timezone>[a-z]+)\)",
             RegexOptions.IgnoreCase);
-        
+
         var seedMatches = seedTimezonePattern.Matches(bundleJs);
-        
+
         foreach (Match match in seedMatches)
         {
             var seed = match.Groups["seed"].Value;
             var timezone = match.Groups["timezone"].Value.ToLower();
-            
+
             if (!secrets.ContainsKey(timezone))
             {
                 secrets[timezone] = new List<string>();
@@ -208,21 +208,21 @@ public class QobuzBundleService
 
         // Step 3: Extract info and extras for each timezone
         // Pattern: name:"\w+/(Timezone)",info:"base64",extras:"base64"
-        var timezones = string.Join("|", secrets.Keys.Select(tz => 
+        var timezones = string.Join("|", secrets.Keys.Select(tz =>
             char.ToUpper(tz[0]) + tz.Substring(1)));
-        
+
         var infoExtrasPattern = new Regex(
             $@"name:""\w+/(?<timezone>{timezones})"",info:""(?<info>[\w=]+)"",extras:""(?<extras>[\w=]+)""",
             RegexOptions.IgnoreCase);
-        
+
         var infoExtrasMatches = infoExtrasPattern.Matches(bundleJs);
-        
+
         foreach (Match match in infoExtrasMatches)
         {
             var timezone = match.Groups["timezone"].Value.ToLower();
             var info = match.Groups["info"].Value;
             var extras = match.Groups["extras"].Value;
-            
+
             if (secrets.ContainsKey(timezone))
             {
                 secrets[timezone].Add(info);
@@ -233,17 +233,17 @@ public class QobuzBundleService
         // Step 4: Decode the secrets
         // Concatenate all base64 strings for each timezone, remove last 44 chars, then decode
         var decodedSecrets = new List<string>();
-        
+
         foreach (var kvp in secrets)
         {
             var concatenated = string.Join("", kvp.Value);
-            
+
             // Remove last 44 characters as per Python implementation
             if (concatenated.Length > 44)
             {
                 concatenated = concatenated.Substring(0, concatenated.Length - 44);
             }
-            
+
             try
             {
                 var bytes = Convert.FromBase64String(concatenated);
@@ -271,7 +271,7 @@ public class QobuzBundleService
     private bool TryDecodeBase64(string input, out string decoded)
     {
         decoded = string.Empty;
-        
+
         try
         {
             var bytes = Convert.FromBase64String(input);

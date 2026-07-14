@@ -336,8 +336,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             }
             var payload = JsonSerializer.Serialize(new
             {
-                entry.ProviderTrackIdHash, entry.Title, entry.Artists, entry.Album,
-                durationSeconds = entry.Duration?.TotalSeconds, entry.Isrc, entry.IsExplicit,
+                entry.ProviderTrackIdHash,
+                entry.Title,
+                entry.Artists,
+                entry.Album,
+                durationSeconds = entry.Duration?.TotalSeconds,
+                entry.Isrc,
+                entry.IsExplicit,
                 entry.CanonicalRecordingId
             });
             var payloadHash = Hash(payload);
@@ -360,14 +365,24 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
                 external = new ExternalMetadataSnapshotRecord
                 {
-                    Id = Guid.CreateVersion7(), TenantId = link.TenantId, OwnerUserId = link.OwnerUserId,
-                    ProviderAccountId = link.ProviderAccountId, SourceJobId = jobId,
-                    LibraryScopeId = link.LibraryScopeId, BackendInstanceId = link.TargetBackendInstanceId,
-                    BackendPrincipalId = execution.VerifiedBackendPrincipalId, Protocol = link.TargetProtocol,
-                    ProviderId = link.SourceProviderId, ResourceKind = "track",
-                    ExternalIdHash = entry.ProviderTrackIdHash, SnapshotVersion = externalVersion,
-                    ProviderRevision = collected.SourceRevision, PayloadJson = payload,
-                    PayloadSha256 = payloadHash, CorrelationId = execution.CorrelationId, RetrievedAt = now
+                    Id = Guid.CreateVersion7(),
+                    TenantId = link.TenantId,
+                    OwnerUserId = link.OwnerUserId,
+                    ProviderAccountId = link.ProviderAccountId,
+                    SourceJobId = jobId,
+                    LibraryScopeId = link.LibraryScopeId,
+                    BackendInstanceId = link.TargetBackendInstanceId,
+                    BackendPrincipalId = execution.VerifiedBackendPrincipalId,
+                    Protocol = link.TargetProtocol,
+                    ProviderId = link.SourceProviderId,
+                    ResourceKind = "track",
+                    ExternalIdHash = entry.ProviderTrackIdHash,
+                    SnapshotVersion = externalVersion,
+                    ProviderRevision = collected.SourceRevision,
+                    PayloadJson = payload,
+                    PayloadSha256 = payloadHash,
+                    CorrelationId = execution.CorrelationId,
+                    RetrievedAt = now
                 };
                 db.ExternalMetadataSnapshots.Add(external);
             }
@@ -376,24 +391,37 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         }
         var playlistPayload = JsonSerializer.Serialize(new
         {
-            collected.SourceRevision, collected.Name, collected.Description,
+            collected.SourceRevision,
+            collected.Name,
+            collected.Description,
             collected.ArtworkReferenceKey,
             entries = collected.Entries.Select(item => new { item.SourcePosition, item.SourceEntryIdHash, item.ProviderTrackIdHash })
         });
         var snapshot = new PlaylistSourceSnapshotRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = link.TenantId, OwnerUserId = link.OwnerUserId,
-            PlaylistLinkId = link.Id, ProviderAccountId = link.ProviderAccountId, SourceJobId = jobId,
-            SnapshotVersion = version, ProviderRevision = collected.SourceRevision, ETag = collected.SourceETag,
-            Name = collected.Name, Description = collected.Description,
-            ArtworkReferenceKey = collected.ArtworkReferenceKey, PayloadSha256 = Hash(playlistPayload),
-            CorrelationId = execution.CorrelationId, RetrievedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = link.TenantId,
+            OwnerUserId = link.OwnerUserId,
+            PlaylistLinkId = link.Id,
+            ProviderAccountId = link.ProviderAccountId,
+            SourceJobId = jobId,
+            SnapshotVersion = version,
+            ProviderRevision = collected.SourceRevision,
+            ETag = collected.SourceETag,
+            Name = collected.Name,
+            Description = collected.Description,
+            ArtworkReferenceKey = collected.ArtworkReferenceKey,
+            PayloadSha256 = Hash(playlistPayload),
+            CorrelationId = execution.CorrelationId,
+            RetrievedAt = now
         };
         db.PlaylistSourceSnapshots.Add(snapshot);
         db.PlaylistSourceEntries.AddRange(collected.Entries.OrderBy(item => item.SourcePosition).Select(entry =>
             new PlaylistSourceEntryRecord
             {
-                Id = Guid.CreateVersion7(), TenantId = link.TenantId, PlaylistSourceSnapshotId = snapshot.Id,
+                Id = Guid.CreateVersion7(),
+                TenantId = link.TenantId,
+                PlaylistSourceSnapshotId = snapshot.Id,
                 ExternalMetadataSnapshotId = externalBySourceEntry[entry.SourceEntryIdHash].Id,
                 SourcePosition = entry.SourcePosition,
                 SourceEntryIdHash = entry.SourceEntryIdHash
@@ -449,13 +477,22 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     source, candidates.Select(ToCandidate).ToArray());
                 stored = new TrackMatchRecord
                 {
-                    Id = Guid.CreateVersion7(), TenantId = link.TenantId, OwnerUserId = link.OwnerUserId,
-                    ExternalSnapshotId = external.Id, LibraryTrackId = match.SelectedLibraryTrackId,
+                    Id = Guid.CreateVersion7(),
+                    TenantId = link.TenantId,
+                    OwnerUserId = link.OwnerUserId,
+                    ExternalSnapshotId = external.Id,
+                    LibraryTrackId = match.SelectedLibraryTrackId,
                     CanonicalRecordingId = candidates.SingleOrDefault(item => item.Id == match.SelectedLibraryTrackId)?.CanonicalRecordingId,
-                    LibraryScopeId = link.LibraryScopeId, State = ToStorageState(match.State), Confidence = match.Confidence,
-                    Threshold = .88, DecisionVersion = match.PolicyVersion, PolicyVersion = link.PolicyVersion,
-                    CandidateResultsJson = JsonSerializer.Serialize(match.Candidates), ReasonsJson = JsonSerializer.Serialize(match.Reasons),
-                    WarningsJson = JsonSerializer.Serialize(match.Warnings), CorrelationId = snapshot.CorrelationId,
+                    LibraryScopeId = link.LibraryScopeId,
+                    State = ToStorageState(match.State),
+                    Confidence = match.Confidence,
+                    Threshold = .88,
+                    DecisionVersion = match.PolicyVersion,
+                    PolicyVersion = link.PolicyVersion,
+                    CandidateResultsJson = JsonSerializer.Serialize(match.Candidates),
+                    ReasonsJson = JsonSerializer.Serialize(match.Reasons),
+                    WarningsJson = JsonSerializer.Serialize(match.Warnings),
+                    CorrelationId = snapshot.CorrelationId,
                     DecidedAt = _clock.UtcNow
                 };
                 db.TrackMatches.Add(stored);
@@ -517,9 +554,16 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             var membership = memberships.SingleOrDefault(item => item.LibraryTrackId == entry.LibraryTrackId);
             if (membership == null)
             {
-                membership = new PlaylistTargetMembershipRecord { Id = Guid.CreateVersion7(), TenantId = link.TenantId,
-                    PlaylistLinkId = link.Id, LibraryTrackId = entry.LibraryTrackId!.Value, CreatedBySyncRunId = run.Id,
-                    TargetEntryId = entry.BackendItemId!, CreatedAt = _clock.UtcNow };
+                membership = new PlaylistTargetMembershipRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = link.TenantId,
+                    PlaylistLinkId = link.Id,
+                    LibraryTrackId = entry.LibraryTrackId!.Value,
+                    CreatedBySyncRunId = run.Id,
+                    TargetEntryId = entry.BackendItemId!,
+                    CreatedAt = _clock.UtcNow
+                };
                 db.PlaylistTargetMemberships.Add(membership);
             }
             membership.LastKnownPosition = entry.TargetPosition!.Value; membership.Active = true;
@@ -550,26 +594,47 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private PlaylistSyncRunRecord NewRun(PlaylistOrchestrationRequest request, PlaylistLinkRecord link,
         PlaylistSourceSnapshotRecord snapshot, PlaylistMaterializationPlan plan, PlaylistSyncState state,
         string? before, string? after, string? conflict = null) => new()
-    {
-        Id = Guid.CreateVersion7(), TenantId = link.TenantId, OwnerUserId = link.OwnerUserId,
-        PlaylistLinkId = link.Id, PlaylistSourceSnapshotId = snapshot.Id, ScheduleId = request.ScheduleId,
-        JobId = request.JobId, Generation = request.Generation, IdempotencyKey = plan.IdempotencyKey,
-        RuleVersion = link.RuleVersion, MaterializationMode = link.MaterializationMode, State = state,
-        TargetRevisionBefore = before, TargetRevisionAfter = after, ConflictCode = conflict,
-        StartedAt = _clock.UtcNow, CompletedAt = _clock.UtcNow
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = link.TenantId,
+            OwnerUserId = link.OwnerUserId,
+            PlaylistLinkId = link.Id,
+            PlaylistSourceSnapshotId = snapshot.Id,
+            ScheduleId = request.ScheduleId,
+            JobId = request.JobId,
+            Generation = request.Generation,
+            IdempotencyKey = plan.IdempotencyKey,
+            RuleVersion = link.RuleVersion,
+            MaterializationMode = link.MaterializationMode,
+            State = state,
+            TargetRevisionBefore = before,
+            TargetRevisionAfter = after,
+            ConflictCode = conflict,
+            StartedAt = _clock.UtcNow,
+            CompletedAt = _clock.UtcNow
+        };
 
     private static IEnumerable<PlaylistSyncEntryResultRecord> ToRunEntries(Guid tenantId, Guid runId,
         PlaylistMaterializationPlan plan, IReadOnlyDictionary<Guid, Guid?> decisionIds) => plan.Entries.Select(entry => new PlaylistSyncEntryResultRecord
-    {
-        Id = Guid.CreateVersion7(), TenantId = tenantId, PlaylistSyncRunId = runId,
-        PlaylistSourceEntryId = entry.SourceEntryId, TrackMatchId = decisionIds[entry.SourceEntryId],
-        LibraryTrackId = entry.LibraryTrackId, SourcePosition = entry.SourcePosition, TargetPosition = entry.TargetPosition,
-        Outcome = entry.Status switch { PlaylistPreviewEntryStatus.Included => PlaylistEntryOutcome.Added,
-            PlaylistPreviewEntryStatus.Duplicate => PlaylistEntryOutcome.Skipped,
-            PlaylistPreviewEntryStatus.Rejected => PlaylistEntryOutcome.Rejected, _ => PlaylistEntryOutcome.Skipped },
-        OutcomeCode = entry.Status.ToString().ToLowerInvariant(), DetailsJson = JsonSerializer.Serialize(new { entry.Reasons, entry.Warnings })
-    });
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            PlaylistSyncRunId = runId,
+            PlaylistSourceEntryId = entry.SourceEntryId,
+            TrackMatchId = decisionIds[entry.SourceEntryId],
+            LibraryTrackId = entry.LibraryTrackId,
+            SourcePosition = entry.SourcePosition,
+            TargetPosition = entry.TargetPosition,
+            Outcome = entry.Status switch
+            {
+                PlaylistPreviewEntryStatus.Included => PlaylistEntryOutcome.Added,
+                PlaylistPreviewEntryStatus.Duplicate => PlaylistEntryOutcome.Skipped,
+                PlaylistPreviewEntryStatus.Rejected => PlaylistEntryOutcome.Rejected,
+                _ => PlaylistEntryOutcome.Skipped
+            },
+            OutcomeCode = entry.Status.ToString().ToLowerInvariant(),
+            DetailsJson = JsonSerializer.Serialize(new { entry.Reasons, entry.Warnings })
+        });
 
     private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item)
     {
@@ -581,13 +646,23 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     }
 
     private static TrackMatchState ToStorageState(TrackMatchReviewState state) => state switch
-    { TrackMatchReviewState.Accepted => TrackMatchState.Accepted, TrackMatchReviewState.Pinned => TrackMatchState.Pinned,
-      TrackMatchReviewState.Suggested => TrackMatchState.Suggested, TrackMatchReviewState.Rejected => TrackMatchState.Rejected,
-      TrackMatchReviewState.Ambiguous => TrackMatchState.Ambiguous, _ => TrackMatchState.Unresolved };
+    {
+        TrackMatchReviewState.Accepted => TrackMatchState.Accepted,
+        TrackMatchReviewState.Pinned => TrackMatchState.Pinned,
+        TrackMatchReviewState.Suggested => TrackMatchState.Suggested,
+        TrackMatchReviewState.Rejected => TrackMatchState.Rejected,
+        TrackMatchReviewState.Ambiguous => TrackMatchState.Ambiguous,
+        _ => TrackMatchState.Unresolved
+    };
     private static TrackMatchReviewState ToReviewState(TrackMatchState state) => state switch
-    { TrackMatchState.Accepted => TrackMatchReviewState.Accepted, TrackMatchState.Pinned => TrackMatchReviewState.Pinned,
-      TrackMatchState.Suggested => TrackMatchReviewState.Suggested, TrackMatchState.Rejected => TrackMatchReviewState.Rejected,
-      TrackMatchState.Ambiguous => TrackMatchReviewState.Ambiguous, _ => TrackMatchReviewState.Unresolved };
+    {
+        TrackMatchState.Accepted => TrackMatchReviewState.Accepted,
+        TrackMatchState.Pinned => TrackMatchReviewState.Pinned,
+        TrackMatchState.Suggested => TrackMatchReviewState.Suggested,
+        TrackMatchState.Rejected => TrackMatchReviewState.Rejected,
+        TrackMatchState.Ambiguous => TrackMatchReviewState.Ambiguous,
+        _ => TrackMatchReviewState.Unresolved
+    };
     private static IReadOnlyList<string> DeserializeStrings(string json) =>
         JsonSerializer.Deserialize<string[]>(json) ?? [];
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

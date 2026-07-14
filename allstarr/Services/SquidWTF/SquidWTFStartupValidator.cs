@@ -21,8 +21,8 @@ public class SquidWTFStartupValidator : BaseStartupValidator
     public override string ServiceName => "SquidWTF";
 
     public SquidWTFStartupValidator(
-        IOptions<SquidWTFSettings> settings, 
-        HttpClient httpClient, 
+        IOptions<SquidWTFSettings> settings,
+        HttpClient httpClient,
         List<string> apiUrls,
         List<string> streamingUrls,
         EndpointBenchmarkService benchmarkService,
@@ -36,8 +36,8 @@ public class SquidWTFStartupValidator : BaseStartupValidator
         _streamingFallbackHelper = new RoundRobinFallbackHelper(_streamingUrls, logger, "SquidWTF Streaming");
         _benchmarkService = benchmarkService;
     }
-    
-	
+
+
     public override async Task<ValidationResult> ValidateAsync(CancellationToken cancellationToken)
     {
 
@@ -212,14 +212,14 @@ public class SquidWTFStartupValidator : BaseStartupValidator
             {
                 var json = await searchResponse.Content.ReadAsStringAsync(cancellationToken);
                 var doc = JsonDocument.Parse(json);
-                
+
                 if (doc.RootElement.TryGetProperty("data", out var data) &&
                     data.TryGetProperty("items", out var items))
                 {
                     var itemCount = items.GetArrayLength();
                     WriteStatus("Search Functionality", "WORKING", ConsoleColor.Green);
                     WriteDetail($"Test search for '22' by Taylor Swift returned {itemCount} results");
-                    
+
                     // Check if we found the actual song
                     bool foundTaylorSwift22 = false;
                     foreach (var item in items.EnumerateArray())
@@ -229,10 +229,10 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                             artists.GetArrayLength() > 0)
                         {
                             var titleStr = title.GetString() ?? "";
-                            var artistName = artists[0].TryGetProperty("name", out var name) 
-                                ? name.GetString() ?? "" 
+                            var artistName = artists[0].TryGetProperty("name", out var name)
+                                ? name.GetString() ?? ""
                                 : "";
-                            
+
                             if (titleStr.Contains("22", StringComparison.OrdinalIgnoreCase) &&
                                 artistName.Contains("Taylor Swift", StringComparison.OrdinalIgnoreCase))
                             {
@@ -243,7 +243,7 @@ public class SquidWTFStartupValidator : BaseStartupValidator
                             }
                         }
                     }
-                    
+
                     if (!foundTaylorSwift22)
                     {
                         WriteDetail("⚠ Could not find exact match for '22' by Taylor Swift in results");

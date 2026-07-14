@@ -268,7 +268,8 @@ public class SpotifyAdminController : ControllerBase
                 }
             });
 
-            return Ok(new {
+            return Ok(new
+            {
                 message = "Spotify sync started in background",
                 timestamp = DateTime.UtcNow
             });
@@ -330,7 +331,8 @@ public class SpotifyAdminController : ControllerBase
                 }
             });
 
-            return Ok(new {
+            return Ok(new
+            {
                 message = "Spotify track matching started in background",
                 timestamp = DateTime.UtcNow
             });
@@ -371,7 +373,8 @@ public class SpotifyAdminController : ControllerBase
 
             _logger.LogDebug("Cleared Spotify cache for {Count} keys via admin endpoint", clearedKeys.Count);
 
-            return Ok(new {
+            return Ok(new
+            {
                 message = "Spotify cache cleared successfully",
                 clearedKeys = clearedKeys,
                 timestamp = DateTime.UtcNow

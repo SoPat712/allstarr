@@ -187,17 +187,17 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Guid userId,
         string principalId,
         DateTimeOffset now) => new()
-    {
-        Id = id,
-        TenantId = _tenantId,
-        UserId = userId,
-        BackendType = "jellyfin",
-        BackendInstanceId = "backend",
-        PrincipalId = principalId,
-        DisplayName = principalId,
-        CreatedAt = now,
-        LastSeenAt = now
-    };
+        {
+            Id = id,
+            TenantId = _tenantId,
+            UserId = userId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            PrincipalId = principalId,
+            DisplayName = principalId,
+            CreatedAt = now,
+            LastSeenAt = now
+        };
 
     public Task DisposeAsync()
     {

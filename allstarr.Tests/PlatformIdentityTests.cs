@@ -207,17 +207,17 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
         ProviderAccountScope scope,
         Guid? tenantId,
         Guid? ownerId) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        ProviderId = provider,
-        DisplayName = $"{provider} fixture",
-        Scope = scope,
-        TenantId = tenantId,
-        OwnerUserId = ownerId,
-        Enabled = true,
-        CreatedAt = DateTimeOffset.UtcNow,
-        UpdatedAt = DateTimeOffset.UtcNow
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            ProviderId = provider,
+            DisplayName = $"{provider} fixture",
+            Scope = scope,
+            TenantId = tenantId,
+            OwnerUserId = ownerId,
+            Enabled = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
 
     private async Task AddAccounts(params ProviderAccountRecord[] accounts)
     {

@@ -23,7 +23,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
         _httpClient = httpClientFactory.CreateClient("AppleMusic");
         _settings = settings.Value;
         _logger = logger;
-        
+
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
@@ -32,7 +32,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
         try
         {
             var results = await _httpClient.GetFromJsonAsync<List<GamdlSongResult>>(url, cancellationToken);
-            
+
             if (results == null) return new List<Song>();
 
             return results.Select(r => new Song
@@ -95,7 +95,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
         try
         {
             var r = await _httpClient.GetFromJsonAsync<GamdlSongDetail>(url, cancellationToken);
-            
+
             if (r == null) return null;
 
             return new Song
@@ -185,7 +185,7 @@ public class AppleMusicMetadataService : IConcreteMetadataService
     }
 
     // --- JSON Mapping Helper Classes ---
-    
+
     private class GamdlSongResult
     {
         [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;

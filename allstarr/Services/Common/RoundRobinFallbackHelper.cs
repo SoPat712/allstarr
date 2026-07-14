@@ -13,7 +13,7 @@ public class RoundRobinFallbackHelper
     private readonly ILogger _logger;
     private readonly string _serviceName;
     private readonly HttpClient _healthCheckClient;
-    
+
     // Cache health check results for 30 seconds to avoid excessive checks
     private readonly Dictionary<string, (bool isHealthy, DateTime checkedAt)> _healthCache = new();
     private readonly object _healthCacheLock = new object();
@@ -56,68 +56,68 @@ public class RoundRobinFallbackHelper
                 }
             }
         }
-        
+
         // Perform health check
         try
         {
             var response = await _healthCheckClient.GetAsync(baseUrl, HttpCompletionOption.ResponseHeadersRead);
             var isHealthy = response.IsSuccessStatusCode;
-            
+
             // Cache result
             lock (_healthCacheLock)
             {
                 _healthCache[baseUrl] = (isHealthy, DateTime.UtcNow);
             }
-            
+
             if (!isHealthy)
             {
-                _logger.LogDebug("{Service} endpoint {Endpoint} health check failed: {StatusCode}", 
+                _logger.LogDebug("{Service} endpoint {Endpoint} health check failed: {StatusCode}",
                     _serviceName, baseUrl, response.StatusCode);
             }
-            
+
             return isHealthy;
         }
         catch (TaskCanceledException)
         {
             // Timeouts are expected when checking multiple mirrors - log at debug level
             _logger.LogDebug("{Service} endpoint {Endpoint} health check timed out", _serviceName, baseUrl);
-            
+
             // Cache as unhealthy
             lock (_healthCacheLock)
             {
                 _healthCache[baseUrl] = (false, DateTime.UtcNow);
             }
-            
+
             return false;
         }
         catch (HttpRequestException ex)
         {
             // Connection errors (refused, DNS failures, etc.) - log at debug level
             _logger.LogDebug("{Service} endpoint {Endpoint} health check failed: {Message}", _serviceName, baseUrl, ex.Message);
-            
+
             // Cache as unhealthy
             lock (_healthCacheLock)
             {
                 _healthCache[baseUrl] = (false, DateTime.UtcNow);
             }
-            
+
             return false;
         }
         catch (Exception ex)
         {
             // Unexpected errors - still log at debug level for health checks
             _logger.LogDebug(ex, "{Service} endpoint {Endpoint} health check failed", _serviceName, baseUrl);
-            
+
             // Cache as unhealthy
             lock (_healthCacheLock)
             {
                 _healthCache[baseUrl] = (false, DateTime.UtcNow);
             }
-            
+
             return false;
         }
     }
-    
+
     /// <summary>
     /// Gets a list of healthy endpoints, checking them in parallel.
     /// Falls back to all endpoints if none are healthy.
@@ -134,19 +134,19 @@ public class RoundRobinFallbackHelper
             Url = url,
             IsHealthy = await IsEndpointHealthyAsync(url)
         }).ToList();
-        
+
         var results = await Task.WhenAll(healthCheckTasks);
         var healthyEndpoints = results.Where(r => r.IsHealthy).Select(r => r.Url).ToList();
-        
+
         if (healthyEndpoints.Count == 0)
         {
             _logger.LogWarning("{Service} health check: no healthy endpoints found, will try all", _serviceName);
             return _apiUrls;
         }
-        
-        _logger.LogDebug("{Service} health check: {Healthy}/{Total} endpoints healthy", 
+
+        _logger.LogDebug("{Service} health check: {Healthy}/{Total} endpoints healthy",
             _serviceName, healthyEndpoints.Count, _apiUrls.Count);
-        
+
         return healthyEndpoints;
     }
 
@@ -193,7 +193,7 @@ public class RoundRobinFallbackHelper
         {
             // Reorder _apiUrls to match the benchmarked order
             var reordered = orderedEndpoints.Where(e => _apiUrls.Contains(e)).ToList();
-            
+
             // Add any endpoints that weren't benchmarked (shouldn't happen, but be safe)
             foreach (var url in _apiUrls.Where(u => !reordered.Contains(u)))
             {
@@ -204,7 +204,7 @@ public class RoundRobinFallbackHelper
             _apiUrls.AddRange(reordered);
             _currentUrlIndex = 0;
 
-            _logger.LogDebug("📊 {Service} endpoints reordered by benchmark: {Endpoints}", 
+            _logger.LogDebug("📊 {Service} endpoints reordered by benchmark: {Endpoints}",
                 _serviceName, string.Join(", ", _apiUrls.Take(3)));
         }
     }
@@ -226,33 +226,33 @@ public class RoundRobinFallbackHelper
         var healthyEndpoints = await GetHealthyEndpointsAsync();
 
         // Try healthy endpoints first, then fall back to all if needed
-        var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count 
+        var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count
             ? healthyEndpoints.Concat(_apiUrls.Except(healthyEndpoints)).ToList()
             : healthyEndpoints;
 
         var orderedEndpoints = BuildTryOrder(endpointsToTry);
-        
+
         // Try preferred fast endpoints first, then full fallback pool.
         for (int attempt = 0; attempt < orderedEndpoints.Count; attempt++)
         {
             var baseUrl = orderedEndpoints[attempt];
-            
+
             try
             {
-                _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})", 
+                _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})",
                     _serviceName, baseUrl, attempt + 1, orderedEndpoints.Count);
                 return await action(baseUrl);
             }
             catch (Exception ex)
             {
                 LogEndpointFailure(baseUrl, ex, willRetry: attempt < orderedEndpoints.Count - 1);
-                
+
                 // Mark as unhealthy in cache
                 lock (_healthCacheLock)
                 {
                     _healthCache[baseUrl] = (false, DateTime.UtcNow);
                 }
-                
+
                 if (attempt == orderedEndpoints.Count - 1)
                 {
                     _logger.LogError("All {Count} {Service} endpoints failed", orderedEndpoints.Count, _serviceName);
@@ -353,36 +353,36 @@ public class RoundRobinFallbackHelper
         var healthyEndpoints = await GetHealthyEndpointsAsync();
 
         // Try healthy endpoints first, then fall back to all if needed
-        var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count 
+        var endpointsToTry = healthyEndpoints.Count < _apiUrls.Count
             ? healthyEndpoints.Concat(_apiUrls.Except(healthyEndpoints)).ToList()
             : healthyEndpoints;
 
         var orderedEndpoints = BuildTryOrder(endpointsToTry);
-        
+
         // Try preferred fast endpoints first, then full fallback pool.
         for (int attempt = 0; attempt < orderedEndpoints.Count; attempt++)
         {
             var baseUrl = orderedEndpoints[attempt];
-            
+
             try
             {
-                _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})", 
+                _logger.LogDebug("Trying {Service} endpoint {Endpoint} (attempt {Attempt}/{Total})",
                     _serviceName, baseUrl, attempt + 1, orderedEndpoints.Count);
                 return await action(baseUrl);
             }
             catch (Exception ex)
             {
                 LogEndpointFailure(baseUrl, ex, willRetry: attempt < orderedEndpoints.Count - 1);
-                
+
                 // Mark as unhealthy in cache
                 lock (_healthCacheLock)
                 {
                     _healthCache[baseUrl] = (false, DateTime.UtcNow);
                 }
-                
+
                 if (attempt == orderedEndpoints.Count - 1)
                 {
-                    _logger.LogError("All {Count} {Service} endpoints failed, returning default value", 
+                    _logger.LogError("All {Count} {Service} endpoints failed, returning default value",
                         orderedEndpoints.Count, _serviceName);
                     return defaultValue;
                 }
@@ -500,7 +500,7 @@ public class RoundRobinFallbackHelper
     /// <summary>
     /// Processes multiple items in parallel across all available endpoints.
     /// Each endpoint processes items sequentially. Failed endpoints are blacklisted.
-     /// </summary>
+    /// </summary>
     public async Task<List<TResult>> ProcessInParallelAsync<TItem, TResult>(
         List<TItem> items,
         Func<string, TItem, CancellationToken, Task<TResult>> action,
@@ -553,32 +553,32 @@ public class RoundRobinFallbackHelper
                 try
                 {
                     var result = await action(endpoint, item, cancellationToken);
-                    
+
                     lock (resultsLock)
                     {
                         results.Add(result);
                     }
-                    
-                    _logger.LogDebug("✓ {Service} endpoint {Endpoint} processed item ({Completed}/{Total})", 
+
+                    _logger.LogDebug("✓ {Service} endpoint {Endpoint} processed item ({Completed}/{Total})",
                         _serviceName, endpoint, results.Count, items.Count);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "✗ {Service} endpoint {Endpoint} failed, blacklisting", 
+                    _logger.LogWarning(ex, "✗ {Service} endpoint {Endpoint} failed, blacklisting",
                         _serviceName, endpoint);
-                    
+
                     // Blacklist this endpoint
                     lock (blacklistLock)
                     {
                         blacklistedEndpoints.Add(endpoint);
                     }
-                    
+
                     // Put item back in queue for another endpoint to try
                     lock (queueLock)
                     {
                         itemQueue.Enqueue(item);
                     }
-                    
+
                     return; // Exit this endpoint's task
                 }
             }

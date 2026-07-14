@@ -49,35 +49,35 @@ public class JellyfinResponseStructureTests
         Assert.Equal("Audio", result["Type"]);
         Assert.NotNull(result["MediaType"]);
         Assert.Equal("Audio", result["MediaType"]);
-        
+
         // Assert - Metadata fields
         Assert.NotNull(result["Container"]);
         Assert.Equal("flac", result["Container"]);
         Assert.NotNull(result["HasLyrics"]);
         Assert.False((bool)result["HasLyrics"]!);
-        
+
         // Assert - Genres (must be array, never null)
         Assert.NotNull(result["Genres"]);
         Assert.IsType<string[]>(result["Genres"]);
         Assert.NotNull(result["GenreItems"]);
         Assert.IsAssignableFrom<System.Collections.IEnumerable>(result["GenreItems"]);
-        
+
         // Assert - UserData
         Assert.NotNull(result["UserData"]);
         var userData = result["UserData"] as Dictionary<string, object>;
         Assert.NotNull(userData);
         Assert.Contains("ItemId", userData.Keys);
         Assert.Contains("Key", userData.Keys);
-        
+
         // Assert - Image fields
         Assert.NotNull(result["ImageTags"]);
         Assert.NotNull(result["BackdropImageTags"]);
         Assert.NotNull(result["ImageBlurHashes"]);
-        
+
         // Assert - Location
         Assert.NotNull(result["LocationType"]);
         Assert.Equal("FileSystem", result["LocationType"]);
-        
+
         // Assert - Parent references
         Assert.NotNull(result["ParentLogoItemId"]);
         Assert.NotNull(result["ParentBackdropItemId"]);
@@ -108,10 +108,10 @@ public class JellyfinResponseStructureTests
         var mediaSources = result["MediaSources"] as object[];
         Assert.NotNull(mediaSources);
         Assert.Single(mediaSources);
-        
+
         var mediaSource = mediaSources[0] as Dictionary<string, object?>;
         Assert.NotNull(mediaSource);
-        
+
         // Assert - Required MediaSource fields
         Assert.Contains("Protocol", mediaSource.Keys);
         Assert.Contains("Id", mediaSource.Keys);
@@ -121,7 +121,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("Bitrate", mediaSource.Keys);
         Assert.Contains("ETag", mediaSource.Keys);
         Assert.Contains("RunTimeTicks", mediaSource.Keys);
-        
+
         // Assert - Boolean flags
         Assert.Contains("IsRemote", mediaSource.Keys);
         Assert.Contains("IsInfiniteStream", mediaSource.Keys);
@@ -138,7 +138,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("GenPtsInput", mediaSource.Keys);
         Assert.Contains("UseMostCompatibleTranscodingProfile", mediaSource.Keys);
         Assert.Contains("HasSegments", mediaSource.Keys);
-        
+
         // Assert - Arrays (must not be null)
         Assert.Contains("MediaStreams", mediaSource.Keys);
         Assert.NotNull(mediaSource["MediaStreams"]);
@@ -148,7 +148,7 @@ public class JellyfinResponseStructureTests
         Assert.NotNull(mediaSource["Formats"]);
         Assert.Contains("RequiredHttpHeaders", mediaSource.Keys);
         Assert.NotNull(mediaSource["RequiredHttpHeaders"]);
-        
+
         // Assert - Other fields
         Assert.Contains("TranscodingSubProtocol", mediaSource.Keys);
         Assert.Contains("DefaultAudioStreamIndex", mediaSource.Keys);
@@ -172,14 +172,14 @@ public class JellyfinResponseStructureTests
         var mediaSources = result["MediaSources"] as object[];
         var mediaSource = mediaSources![0] as Dictionary<string, object?>;
         var mediaStreams = mediaSource!["MediaStreams"] as object[];
-        
+
         // Assert
         Assert.NotNull(mediaStreams);
         Assert.Single(mediaStreams);
-        
+
         var audioStream = mediaStreams[0] as Dictionary<string, object?>;
         Assert.NotNull(audioStream);
-        
+
         // Assert - Required audio stream fields
         Assert.Contains("Codec", audioStream.Keys);
         Assert.Equal("flac", audioStream["Codec"]);
@@ -192,16 +192,16 @@ public class JellyfinResponseStructureTests
         Assert.Contains("ChannelLayout", audioStream.Keys);
         Assert.Contains("TimeBase", audioStream.Keys);
         Assert.Contains("DisplayTitle", audioStream.Keys);
-        
+
         // Assert - Video-related fields (required even for audio)
         Assert.Contains("VideoRange", audioStream.Keys);
         Assert.Contains("VideoRangeType", audioStream.Keys);
         Assert.Contains("AudioSpatialFormat", audioStream.Keys);
-        
+
         // Assert - Localization
         Assert.Contains("LocalizedDefault", audioStream.Keys);
         Assert.Contains("LocalizedExternal", audioStream.Keys);
-        
+
         // Assert - Boolean flags
         Assert.Contains("IsInterlaced", audioStream.Keys);
         Assert.Contains("IsAVC", audioStream.Keys);
@@ -211,7 +211,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("IsExternal", audioStream.Keys);
         Assert.Contains("IsTextSubtitleStream", audioStream.Keys);
         Assert.Contains("SupportsExternalStream", audioStream.Keys);
-        
+
         // Assert - Index and Level
         Assert.Contains("Index", audioStream.Keys);
         Assert.Contains("Level", audioStream.Keys);
@@ -244,18 +244,18 @@ public class JellyfinResponseStructureTests
         Assert.True((bool)result["IsFolder"]!);
         Assert.NotNull(result["MediaType"]);
         Assert.Equal("Unknown", result["MediaType"]);
-        
+
         // Assert - Genres
         Assert.NotNull(result["Genres"]);
         Assert.IsType<string[]>(result["Genres"]);
         Assert.NotNull(result["GenreItems"]);
-        
+
         // Assert - Artists
         Assert.NotNull(result["Artists"]);
         Assert.NotNull(result["ArtistItems"]);
         Assert.NotNull(result["AlbumArtist"]);
         Assert.NotNull(result["AlbumArtists"]);
-        
+
         // Assert - Parent references
         Assert.NotNull(result["ParentLogoItemId"]);
         Assert.NotNull(result["ParentBackdropItemId"]);
@@ -287,16 +287,16 @@ public class JellyfinResponseStructureTests
         Assert.True((bool)result["IsFolder"]!);
         Assert.NotNull(result["MediaType"]);
         Assert.Equal("Unknown", result["MediaType"]);
-        
+
         // Assert - Genres (empty array for artists)
         Assert.NotNull(result["Genres"]);
         Assert.IsType<string[]>(result["Genres"]);
         Assert.NotNull(result["GenreItems"]);
-        
+
         // Assert - Album count
         Assert.NotNull(result["AlbumCount"]);
         Assert.Equal(5, result["AlbumCount"]);
-        
+
         // Assert - RunTimeTicks
         Assert.NotNull(result["RunTimeTicks"]);
         Assert.Equal(0, result["RunTimeTicks"]);

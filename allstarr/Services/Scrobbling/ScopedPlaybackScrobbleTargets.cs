@@ -19,8 +19,11 @@ public sealed class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedR
             var method = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart ? "track.updateNowPlaying" : "track.scrobble";
             var values = new SortedDictionary<string, string>(StringComparer.Ordinal)
             {
-                ["api_key"] = Required(secret, "apiKey"), ["artist"] = track.Artist, ["method"] = method,
-                ["sk"] = Required(secret, "sessionKey"), ["track"] = track.Title
+                ["api_key"] = Required(secret, "apiKey"),
+                ["artist"] = track.Artist,
+                ["method"] = method,
+                ["sk"] = Required(secret, "sessionKey"),
+                ["track"] = track.Title
             };
             if (method == "track.scrobble") values["timestamp"] = observedAt.ToUnixTimeSeconds().ToString();
             values["api_sig"] = Sign(values, Required(secret, "sharedSecret")); values["format"] = "json";
@@ -45,9 +48,13 @@ public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IS
             var playing = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart;
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.listenbrainz.org/1/submit-listens");
             request.Headers.Authorization = new("Token", Required(secret, "token"));
-            request.Content = JsonContent.Create(new { listen_type = playing ? "playing_now" : "single", payload = new[] { new
+            request.Content = JsonContent.Create(new
+            {
+                listen_type = playing ? "playing_now" : "single",
+                payload = new[] { new
             { listened_at = playing ? (long?)null : observedAt.ToUnixTimeSeconds(), track_metadata = new { artist_name = track.Artist,
-                track_name = track.Title, release_name = track.Album, additional_info = new { duration_ms = track.DurationMilliseconds, submission_client = "Allstarr", submission_client_version = AppVersion.Version } } } } });
+                track_name = track.Title, release_name = track.Album, additional_info = new { duration_ms = track.DurationMilliseconds, submission_client = "Allstarr", submission_client_version = AppVersion.Version } } } }
+            });
             using var response = await http.SendAsync(request, ct);
             if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden) throw new UnauthorizedAccessException();
             response.EnsureSuccessStatusCode(); return true;

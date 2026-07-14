@@ -24,21 +24,21 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     protected readonly SubsonicSettings SubsonicSettings;
     protected readonly ILogger Logger;
     private readonly IServiceProvider _serviceProvider;
-    
+
     protected readonly string DownloadPath;
     protected readonly string CachePath;
-    
+
     protected readonly ConcurrentDictionary<string, DownloadInfo> ActiveDownloads = new();
-    
+
     // Concurrency and state locking
     protected readonly SemaphoreSlim _stateSemaphore = new(1, 1);
     protected readonly SemaphoreSlim _concurrencySemaphore;
-    
+
     // Rate limiting fields
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private DateTime _lastRequestTime = DateTime.MinValue;
     protected int _minRequestIntervalMs = 200;
-    
+
     protected StorageMode CurrentStorageMode
     {
         get
@@ -78,12 +78,12 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             return _playlistSyncService;
         }
     }
-    
+
     /// <summary>
     /// Provider name (e.g., "deezer", "qobuz")
     /// </summary>
     protected abstract string ProviderName { get; }
-    
+
     protected BaseDownloadService(
         IConfiguration configuration,
         ILocalLibraryService localLibraryService,
@@ -98,15 +98,15 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         SubsonicSettings = subsonicSettings;
         _serviceProvider = serviceProvider;
         Logger = logger;
-        
+
         DownloadPath = configuration["Library:DownloadPath"] ?? "./downloads";
         CachePath = PathHelper.GetCachePath();
-        
+
         if (!Directory.Exists(DownloadPath))
         {
             Directory.CreateDirectory(DownloadPath);
         }
-        
+
         if (!Directory.Exists(CachePath))
         {
             Directory.CreateDirectory(CachePath);
@@ -119,9 +119,9 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
         _concurrencySemaphore = new SemaphoreSlim(maxDownloads, maxDownloads);
     }
-    
+
     #region IDownloadService Implementation
-    
+
     /// <summary>
     /// Downloads a song and returns the local file path.
     /// This method respects the cancellation token for user-initiated downloads (e.g., playlist downloads).
@@ -137,77 +137,77 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             cancellationToken);
     }
 
-    
+
     public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
+    {
+        // If a quality override is requested (not Original), use the quality override path
+        // This downloads to a temp file at the requested quality and streams it without caching
+        if (qualityOverride.HasValue && qualityOverride.Value != StreamQuality.Original)
         {
-            // If a quality override is requested (not Original), use the quality override path
-            // This downloads to a temp file at the requested quality and streams it without caching
-            if (qualityOverride.HasValue && qualityOverride.Value != StreamQuality.Original)
-            {
-                return await DownloadAndStreamWithQualityOverrideAsync(externalProvider, externalId, qualityOverride.Value, cancellationToken);
-            }
-
-            // Standard path: use .env quality, cache the result
-            var startTime = DateTime.UtcNow;
-
-            // Check if already downloaded locally
-            var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
-            if (localPath != null && IOFile.Exists(localPath))
-            {
-                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
-
-                // Update write time for cache cleanup (extends cache lifetime)
-                if (CurrentStorageMode == StorageMode.Cache)
-                {
-                    IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
-                }
-
-                // Start background Odesli conversion for lyrics (if not already cached)
-                StartBackgroundOdesliConversion(externalProvider, externalId);
-
-                return IOFile.OpenRead(localPath);
-            }
-
-            // Download to disk first to ensure complete file with metadata
-            // This is necessary because:
-            // 1. Clients may seek to arbitrary positions (requires full file)
-            // 2. Metadata embedding requires complete file
-            // 3. Caching for future plays
-            Logger.LogInformation("Downloading song for streaming: {Provider}:{ExternalId}", externalProvider, externalId);
-
-            try
-            {
-                // IMPORTANT: Use CancellationToken.None for the actual download
-                // This ensures downloads complete server-side even if the client cancels the request
-                // The client can request the file again later once it's ready
-                localPath = await DownloadSongInternalAsync(
-                    externalProvider,
-                    externalId,
-                    triggerAlbumDownload: true,
-                    requestedForStreaming: true,
-                    CancellationToken.None);
-                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
-
-                // Start background Odesli conversion for lyrics (after stream starts)
-                StartBackgroundOdesliConversion(externalProvider, externalId);
-
-                return IOFile.OpenRead(localPath);
-            }
-            catch (OperationCanceledException)
-            {
-                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                Logger.LogWarning("Download cancelled by client after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-                Logger.LogError(ex, "Download failed after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
-                throw;
-            }
+            return await DownloadAndStreamWithQualityOverrideAsync(externalProvider, externalId, qualityOverride.Value, cancellationToken);
         }
+
+        // Standard path: use .env quality, cache the result
+        var startTime = DateTime.UtcNow;
+
+        // Check if already downloaded locally
+        var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
+        if (localPath != null && IOFile.Exists(localPath))
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogInformation("Streaming from local cache ({ElapsedMs}ms): {Path}", elapsed, localPath);
+
+            // Update write time for cache cleanup (extends cache lifetime)
+            if (CurrentStorageMode == StorageMode.Cache)
+            {
+                IOFile.SetLastWriteTime(localPath, DateTime.UtcNow);
+            }
+
+            // Start background Odesli conversion for lyrics (if not already cached)
+            StartBackgroundOdesliConversion(externalProvider, externalId);
+
+            return IOFile.OpenRead(localPath);
+        }
+
+        // Download to disk first to ensure complete file with metadata
+        // This is necessary because:
+        // 1. Clients may seek to arbitrary positions (requires full file)
+        // 2. Metadata embedding requires complete file
+        // 3. Caching for future plays
+        Logger.LogInformation("Downloading song for streaming: {Provider}:{ExternalId}", externalProvider, externalId);
+
+        try
+        {
+            // IMPORTANT: Use CancellationToken.None for the actual download
+            // This ensures downloads complete server-side even if the client cancels the request
+            // The client can request the file again later once it's ready
+            localPath = await DownloadSongInternalAsync(
+                externalProvider,
+                externalId,
+                triggerAlbumDownload: true,
+                requestedForStreaming: true,
+                CancellationToken.None);
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogInformation("Download completed, starting stream ({ElapsedMs}ms total): {Path}", elapsed, localPath);
+
+            // Start background Odesli conversion for lyrics (after stream starts)
+            StartBackgroundOdesliConversion(externalProvider, externalId);
+
+            return IOFile.OpenRead(localPath);
+        }
+        catch (OperationCanceledException)
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogWarning("Download cancelled by client after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+            Logger.LogError(ex, "Download failed after {ElapsedMs}ms for {Provider}:{ExternalId}", elapsed, externalProvider, externalId);
+            throw;
+        }
+    }
 
     /// <summary>
     /// Downloads and streams with a quality override.
@@ -268,7 +268,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
     }
 
-    
+
     /// <summary>
     /// Starts background Odesli conversion for lyrics support.
     /// This is called AFTER streaming starts so it doesn't block the client.
@@ -288,7 +288,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             }
         });
     }
-    
+
     /// <summary>
     /// Converts external track ID to Spotify ID for lyrics support.
     /// Override in provider-specific services if needed.
@@ -299,7 +299,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         // Provider-specific services can override this
         return Task.CompletedTask;
     }
-    
+
     public DownloadInfo? GetDownloadStatus(string songId)
     {
         ActiveDownloads.TryGetValue(songId, out var info);
@@ -310,24 +310,24 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     {
         return ActiveDownloads.Values.ToList().AsReadOnly();
     }
-    
+
     public async Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId)
     {
         if (externalProvider != ProviderName)
         {
             return null;
         }
-        
+
         // Check local library (works for both cache and permanent storage)
         var localPath = await LocalLibraryService.GetLocalPathForExternalSongAsync(externalProvider, externalId);
         if (localPath != null && IOFile.Exists(localPath))
         {
             return localPath;
         }
-        
+
         return null;
     }
-    
+
     public abstract Task<bool> IsAvailableAsync();
 
     protected string BuildTrackedSongId(string externalId)
@@ -347,7 +347,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             info.Progress = Math.Clamp(progress, 0d, 1d);
         }
     }
-    
+
     public void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId)
     {
         if (externalProvider != ProviderName)
@@ -368,11 +368,11 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             }
         });
     }
-    
+
     #endregion
-    
+
     #region Template Methods (to be implemented by subclasses)
-    
+
     /// <summary>
     /// Downloads a track and saves it to disk.
     /// Subclasses implement provider-specific logic (encryption, authentication, etc.)
@@ -382,7 +382,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Local file path where the track was saved</returns>
     protected abstract Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken);
-    
+
     /// <summary>
     /// Downloads a track at a specific quality tier to a temp file.
     /// Subclasses override this to map StreamQuality to provider-specific quality settings.
@@ -399,7 +399,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         // Default: ignore quality override and use configured quality
         return DownloadTrackAsync(trackId, song, cancellationToken);
     }
-    
+
     /// <summary>
     /// Extracts the external album ID from the internal album ID format.
     /// Example: "ext-deezer-album-123456" -> "123456"
@@ -415,11 +415,11 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         }
         return null;
     }
-    
+
     #endregion
-    
+
     #region Common Download Logic
-    
+
     /// <summary>
     /// Internal method for downloading a song with control over album download triggering
     /// </summary>
@@ -437,9 +437,9 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
         var songId = BuildTrackedSongId(externalProvider, externalId);
         var isCache = CurrentStorageMode == StorageMode.Cache;
-        
+
         bool isInitiator = false;
-        
+
         // 1. Synchronous state check to prevent race conditions on checking existence or ActiveDownloads
         await _stateSemaphore.WaitAsync(cancellationToken);
         try
@@ -449,13 +449,13 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             if (existingPath != null && IOFile.Exists(existingPath))
             {
                 Logger.LogInformation("Song already downloaded: {Path}", existingPath);
-                
+
                 // For cache mode, update file write time to extend cache lifetime
                 if (isCache)
                 {
                     IOFile.SetLastWriteTime(existingPath, DateTime.UtcNow);
                 }
-                
+
                 return existingPath;
             }
 
@@ -507,13 +507,13 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 }
                 await Task.Delay(100, CancellationToken.None);
             }
-            
+
             if (activeDownload?.Status == DownloadStatus.Completed && activeDownload.LocalPath != null)
             {
                 Logger.LogDebug("Download completed while waiting, returning path: {Path}", activeDownload.LocalPath);
                 return activeDownload.LocalPath;
             }
-            
+
             // Download failed or was cancelled
             throw new Exception(activeDownload?.ErrorMessage ?? "Download failed while waiting");
         }
@@ -527,7 +527,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             // Get metadata
             // In Album mode, fetch the full album first to ensure AlbumArtist is correctly set
             Song? song = null;
-            
+
             if (CurrentDownloadMode == DownloadMode.Album)
             {
                 // First try to get the song to extract album ID
@@ -547,13 +547,13 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                     }
                 }
             }
-            
+
             // Fallback to individual song fetch if not in Album mode or album fetch failed
             if (song == null)
             {
                 song = await MetadataService.GetSongAsync(externalProvider, externalId);
             }
-            
+
             if (song == null)
             {
                 throw new Exception("Song not found");
@@ -568,7 +568,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             }
 
             var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
-            
+
             if (ActiveDownloads.TryGetValue(songId, out var successInfo))
             {
                 successInfo.Status = DownloadStatus.Completed;
@@ -576,9 +576,9 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 successInfo.LocalPath = localPath;
                 successInfo.CompletedAt = DateTime.UtcNow;
             }
-            
+
             song.LocalPath = localPath;
-            
+
             // Clean up completed download from tracking after a short delay
             _ = Task.Run(async () =>
             {
@@ -586,10 +586,10 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 ActiveDownloads.TryRemove(songId, out _);
                 Logger.LogDebug("Cleaned up completed download tracking for {SongId}", songId);
             });
-            
+
             // Register BEFORE releasing lock to prevent race conditions (both cache and download modes)
             await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
-            
+
             // Check if this track belongs to a playlist and update M3U
             if (PlaylistSyncService != null)
             {
@@ -607,7 +607,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                     Logger.LogWarning(ex, "Failed to update playlist M3U for track {SongId}", songId);
                 }
             }
-            
+
             // Trigger library scan and album download AFTER releasing lock (download mode only)
             if (!isCache)
             {
@@ -623,7 +623,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                         Logger.LogWarning(ex, "Failed to trigger library scan after download");
                     }
                 });
-                
+
                 // If download mode is Album and triggering is enabled, start background download of remaining tracks
                 if (triggerAlbumDownload && CurrentDownloadMode == DownloadMode.Album && !string.IsNullOrEmpty(song.AlbumId))
                 {
@@ -639,7 +639,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             {
                 Logger.LogInformation("Cache mode: skipping library registration and scan");
             }
-            
+
             Logger.LogInformation("Download completed: {Path}", localPath);
             return localPath;
         }
@@ -649,7 +649,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             {
                 downloadInfo.Status = DownloadStatus.Failed;
                 downloadInfo.ErrorMessage = ex.Message;
-                
+
                 // Clean up failed download from tracking after a short delay
                 _ = Task.Run(async () =>
                 {
@@ -658,7 +658,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                     Logger.LogDebug("Cleaned up failed download tracking for {SongId}", songId);
                 });
             }
-            
+
             if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
             {
                 Logger.LogError("Download failed for {SongId}: {StatusCode}: {ReasonPhrase}",
@@ -676,10 +676,10 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             _concurrencySemaphore.Release();
         }
     }
-    
+
     protected async Task DownloadRemainingAlbumTracksAsync(string albumExternalId, string excludeTrackExternalId)
     {
-        Logger.LogInformation("Starting background download for album {AlbumId} (excluding track {TrackId})", 
+        Logger.LogInformation("Starting background download for album {AlbumId} (excluding track {TrackId})",
             albumExternalId, excludeTrackExternalId);
 
         var album = await MetadataService.GetAlbumAsync(ProviderName, albumExternalId);
@@ -693,7 +693,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             .Where(s => s.ExternalId != excludeTrackExternalId && !string.IsNullOrEmpty(s.ExternalId))
             .ToList();
 
-        Logger.LogInformation("Found {Count} additional tracks to download for album '{AlbumTitle}'", 
+        Logger.LogInformation("Found {Count} additional tracks to download for album '{AlbumTitle}'",
             tracksToDownload.Count, album.Title);
 
         foreach (var track in tracksToDownload)
@@ -716,7 +716,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                         Logger.LogDebug("Track {TrackId} download already in progress, skipping", track.ExternalId);
                         continue;
                     }
-                    
+
                     if (activeDownload.Status == DownloadStatus.Completed)
                     {
                         Logger.LogDebug("Track {TrackId} already downloaded in this session, skipping", track.ExternalId);
@@ -740,11 +740,11 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
         Logger.LogInformation("Completed background download for album '{AlbumTitle}'", album.Title);
     }
-    
+
     #endregion
-    
+
     #region Common Metadata Writing
-    
+
     /// <summary>
     /// Writes ID3/Vorbis metadata and cover art to the audio file
     /// </summary>
@@ -753,46 +753,46 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         try
         {
             Logger.LogInformation("Writing metadata to: {Path}", filePath);
-            
+
             using var tagFile = TagLib.File.Create(filePath);
-            
+
             // Basic metadata
             tagFile.Tag.Title = song.Title;
             tagFile.Tag.Performers = new[] { song.Artist };
             tagFile.Tag.Album = song.Album;
             tagFile.Tag.AlbumArtists = new[] { !string.IsNullOrEmpty(song.AlbumArtist) ? song.AlbumArtist : song.Artist };
-            
+
             if (song.Track.HasValue)
                 tagFile.Tag.Track = (uint)song.Track.Value;
-            
+
             if (song.TotalTracks.HasValue)
                 tagFile.Tag.TrackCount = (uint)song.TotalTracks.Value;
-            
+
             if (song.DiscNumber.HasValue)
                 tagFile.Tag.Disc = (uint)song.DiscNumber.Value;
-            
+
             if (song.Year.HasValue)
                 tagFile.Tag.Year = (uint)song.Year.Value;
-            
+
             if (!string.IsNullOrEmpty(song.Genre))
                 tagFile.Tag.Genres = new[] { song.Genre };
-            
+
             if (song.Bpm.HasValue)
                 tagFile.Tag.BeatsPerMinute = (uint)song.Bpm.Value;
-            
+
             if (song.Contributors.Count > 0)
                 tagFile.Tag.Composers = song.Contributors.ToArray();
-            
+
             if (!string.IsNullOrEmpty(song.Copyright))
                 tagFile.Tag.Copyright = song.Copyright;
-            
+
             var comments = new List<string>();
             if (!string.IsNullOrEmpty(song.Isrc))
                 comments.Add($"ISRC: {song.Isrc}");
-            
+
             if (comments.Count > 0)
                 tagFile.Tag.Comment = string.Join(" | ", comments);
-            
+
             // Download and embed cover art
             var coverUrl = song.CoverArtUrlLarge ?? song.CoverArtUrl;
             if (!string.IsNullOrEmpty(coverUrl))
@@ -819,7 +819,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                     Logger.LogWarning(ex, "Failed to download cover art from {Url}", coverUrl);
                 }
             }
-            
+
             tagFile.Save();
             Logger.LogInformation("Metadata written successfully to: {Path}", filePath);
         }
@@ -828,7 +828,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             Logger.LogError(ex, "Failed to write metadata to: {Path}", filePath);
         }
     }
-    
+
     /// <summary>
     /// Downloads cover art from a URL
     /// </summary>
@@ -847,11 +847,11 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             return null;
         }
     }
-    
+
     #endregion
-    
+
     #region Utility Methods
-    
+
     /// <summary>
     /// Ensures a directory exists, creating it and all parent directories if necessary
     /// </summary>
@@ -871,12 +871,12 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             throw;
         }
     }
-    
-    
+
+
     #endregion
-    
+
     #region Rate Limiting
-    
+
     /// <summary>
     /// Queues a request with rate limiting to prevent overwhelming the API.
     /// Ensures minimum interval between requests.
@@ -888,7 +888,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         {
             var now = DateTime.UtcNow;
             var timeSinceLastRequest = (now - _lastRequestTime).TotalMilliseconds;
-            
+
             if (timeSinceLastRequest < _minRequestIntervalMs)
             {
                 await Task.Delay((int)(_minRequestIntervalMs - timeSinceLastRequest));
@@ -902,6 +902,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             _requestLock.Release();
         }
     }
-    
+
     #endregion
 }

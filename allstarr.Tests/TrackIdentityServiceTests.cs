@@ -476,14 +476,14 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         Guid tenantId,
         string name,
         DateTimeOffset now) => new()
-    {
-        Id = id,
-        TenantId = tenantId,
-        DisplayName = name,
-        Status = PlatformUserStatus.Active,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
+        {
+            Id = id,
+            TenantId = tenantId,
+            DisplayName = name,
+            Status = PlatformUserStatus.Active,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
 
     private static string Hash(string value) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

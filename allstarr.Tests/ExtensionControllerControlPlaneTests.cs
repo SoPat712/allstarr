@@ -94,9 +94,14 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
 
     private static AdminAuthSession Session(bool administrator, Guid? allstarrUserId = null) => new()
     {
-        SessionId = "fixture", UserId = "backend-user", UserName = "Fixture",
-        IsAdministrator = administrator, AllstarrUserId = allstarrUserId,
-        JellyfinAccessToken = "fixture", ExpiresAtUtc = DateTime.UtcNow.AddHours(1), LastSeenUtc = DateTime.UtcNow
+        SessionId = "fixture",
+        UserId = "backend-user",
+        UserName = "Fixture",
+        IsAdministrator = administrator,
+        AllstarrUserId = allstarrUserId,
+        JellyfinAccessToken = "fixture",
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+        LastSeenUtc = DateTime.UtcNow
     };
 
     public Task DisposeAsync()

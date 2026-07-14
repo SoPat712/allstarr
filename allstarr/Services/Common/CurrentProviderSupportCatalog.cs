@@ -171,10 +171,10 @@ public static class CurrentProviderSupportCatalog
         string state,
         string protocolLimit,
         string testCoverage) => new()
-    {
-        Id = id,
-        State = state,
-        ProtocolLimit = protocolLimit,
-        TestCoverage = testCoverage
-    };
+        {
+            Id = id,
+            State = state,
+            ProtocolLimit = protocolLimit,
+            TestCoverage = testCoverage
+        };
 }

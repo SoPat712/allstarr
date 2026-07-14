@@ -60,12 +60,12 @@ public abstract class BaseStartupValidator : IStartupValidator
     {
         return ex switch
         {
-            TaskCanceledException => ValidationResult.Failure("TIMEOUT", 
+            TaskCanceledException => ValidationResult.Failure("TIMEOUT",
                 "Could not reach service within timeout period", ConsoleColor.Yellow),
-            
+
             HttpRequestException => ValidationResult.Failure("UNREACHABLE",
                 "The service could not be reached", ConsoleColor.Yellow),
-            
+
             _ => ValidationResult.Failure(
                 "ERROR",
                 $"Validation failed ({ex.GetType().Name})",

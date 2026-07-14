@@ -46,7 +46,7 @@ public static class AuthHeaderHelper
             if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
             {
                 var headerValue = header.Value.ToString();
-                
+
                 // Check if it's a MediaBrowser/Jellyfin auth header
                 if (headerValue.Contains("MediaBrowser", StringComparison.OrdinalIgnoreCase) ||
                     headerValue.Contains("Client=", StringComparison.OrdinalIgnoreCase) ||
@@ -64,10 +64,10 @@ public static class AuthHeaderHelper
                 }
             }
         }
-        
+
         return false;
     }
-    
+
     /// <summary>
     /// Extracts device ID from X-Emby-Authorization header.
     /// </summary>
@@ -80,7 +80,7 @@ public static class AuthHeaderHelper
             var authValue = authHeader.ToString();
             return ExtractDeviceIdFromAuthString(authValue);
         }
-        
+
         if (headers.TryGetValue("Authorization", out var authHeader2))
         {
             var authValue = authHeader2.ToString();
@@ -89,10 +89,10 @@ public static class AuthHeaderHelper
                 return ExtractDeviceIdFromAuthString(authValue);
             }
         }
-        
+
         return null;
     }
-    
+
     /// <summary>
     /// Extracts device ID from MediaBrowser auth string.
     /// Format: MediaBrowser Client="...", Device="...", DeviceId="...", Version="...", Token="..."
@@ -100,18 +100,18 @@ public static class AuthHeaderHelper
     private static string? ExtractDeviceIdFromAuthString(string authValue)
     {
         var deviceIdMatch = System.Text.RegularExpressions.Regex.Match(
-            authValue, 
-            @"DeviceId=""([^""]+)""", 
+            authValue,
+            @"DeviceId=""([^""]+)""",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        
+
         if (deviceIdMatch.Success)
         {
             return deviceIdMatch.Groups[1].Value;
         }
-        
+
         return null;
     }
-    
+
     /// <summary>
     /// Extracts client name from MediaBrowser auth string.
     /// </summary>
@@ -122,7 +122,7 @@ public static class AuthHeaderHelper
             var authValue = authHeader.ToString();
             return ExtractClientNameFromAuthString(authValue);
         }
-        
+
         if (headers.TryGetValue("Authorization", out var authHeader2))
         {
             var authValue = authHeader2.ToString();
@@ -131,49 +131,49 @@ public static class AuthHeaderHelper
                 return ExtractClientNameFromAuthString(authValue);
             }
         }
-        
+
         return null;
     }
-    
+
     /// <summary>
     /// Extracts client name from MediaBrowser auth string.
     /// </summary>
     private static string? ExtractClientNameFromAuthString(string authValue)
     {
         var clientMatch = System.Text.RegularExpressions.Regex.Match(
-            authValue, 
-            @"Client=""([^""]+)""", 
+            authValue,
+            @"Client=""([^""]+)""",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        
+
         if (clientMatch.Success)
         {
             return clientMatch.Groups[1].Value;
         }
-        
+
         return null;
     }
-    
+
     /// <summary>
     /// Creates a MediaBrowser auth header string.
     /// </summary>
     public static string CreateAuthHeader(string token, string? client = null, string? device = null, string? deviceId = null, string? version = null)
     {
         var parts = new List<string>();
-        
+
         if (!string.IsNullOrEmpty(client))
             parts.Add($"Client=\"{client}\"");
-        
+
         if (!string.IsNullOrEmpty(device))
             parts.Add($"Device=\"{device}\"");
-        
+
         if (!string.IsNullOrEmpty(deviceId))
             parts.Add($"DeviceId=\"{deviceId}\"");
-        
+
         if (!string.IsNullOrEmpty(version))
             parts.Add($"Version=\"{version}\"");
-        
+
         parts.Add($"Token=\"{token}\"");
-        
+
         return $"MediaBrowser {string.Join(", ", parts)}";
     }
 }

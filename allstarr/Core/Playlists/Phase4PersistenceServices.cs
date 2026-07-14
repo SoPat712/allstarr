@@ -64,15 +64,25 @@ public sealed class TrackMatchPersistenceService : ITrackMatchPersistenceService
 
         var record = new ExternalMetadataSnapshotRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = actor.TenantId, OwnerUserId = actor.EffectiveUserId!.Value,
-            ProviderAccountId = account.Account.Id, ProviderTrackIdentityId = input.ProviderTrackIdentityId,
-            SourceJobId = input.SourceJobId, LibraryScopeId = input.LibraryScopeId,
-            BackendInstanceId = context.BackendInstanceId, BackendPrincipalId = context.VerifiedBackendPrincipalId,
-            Protocol = context.Protocol.ToString().ToLowerInvariant(), ProviderId = account.Account.ProviderId,
-            ResourceKind = input.ResourceKind.Trim().ToLowerInvariant(), ExternalIdHash = input.ExternalIdHash,
-            SnapshotVersion = input.SnapshotVersion, ProviderRevision = input.ProviderRevision.Trim(),
-            PayloadJson = input.PayloadJson, PayloadSha256 = input.PayloadSha256,
-            CorrelationId = context.CorrelationId, RetrievedAt = _clock.UtcNow
+            Id = Guid.CreateVersion7(),
+            TenantId = actor.TenantId,
+            OwnerUserId = actor.EffectiveUserId!.Value,
+            ProviderAccountId = account.Account.Id,
+            ProviderTrackIdentityId = input.ProviderTrackIdentityId,
+            SourceJobId = input.SourceJobId,
+            LibraryScopeId = input.LibraryScopeId,
+            BackendInstanceId = context.BackendInstanceId,
+            BackendPrincipalId = context.VerifiedBackendPrincipalId,
+            Protocol = context.Protocol.ToString().ToLowerInvariant(),
+            ProviderId = account.Account.ProviderId,
+            ResourceKind = input.ResourceKind.Trim().ToLowerInvariant(),
+            ExternalIdHash = input.ExternalIdHash,
+            SnapshotVersion = input.SnapshotVersion,
+            ProviderRevision = input.ProviderRevision.Trim(),
+            PayloadJson = input.PayloadJson,
+            PayloadSha256 = input.PayloadSha256,
+            CorrelationId = context.CorrelationId,
+            RetrievedAt = _clock.UtcNow
         };
         db.ExternalMetadataSnapshots.Add(record);
         await db.SaveChangesAsync(cancellationToken);
@@ -108,13 +118,23 @@ public sealed class TrackMatchPersistenceService : ITrackMatchPersistenceService
         }
         var record = new TrackMatchRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = actor.TenantId, OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id, LibraryTrackId = input.LibraryTrackId,
-            CanonicalRecordingId = input.CanonicalRecordingId, LibraryScopeId = snapshot.LibraryScopeId,
-            State = input.State, Confidence = input.Confidence, Threshold = input.Threshold,
-            DecisionVersion = input.DecisionVersion, PolicyVersion = input.PolicyVersion.Trim(),
-            CandidateResultsJson = input.CandidateResultsJson, ReasonsJson = input.ReasonsJson,
-            WarningsJson = input.WarningsJson, CorrelationId = context.CorrelationId, DecidedAt = _clock.UtcNow
+            Id = Guid.CreateVersion7(),
+            TenantId = actor.TenantId,
+            OwnerUserId = snapshot.OwnerUserId,
+            ExternalSnapshotId = snapshot.Id,
+            LibraryTrackId = input.LibraryTrackId,
+            CanonicalRecordingId = input.CanonicalRecordingId,
+            LibraryScopeId = snapshot.LibraryScopeId,
+            State = input.State,
+            Confidence = input.Confidence,
+            Threshold = input.Threshold,
+            DecisionVersion = input.DecisionVersion,
+            PolicyVersion = input.PolicyVersion.Trim(),
+            CandidateResultsJson = input.CandidateResultsJson,
+            ReasonsJson = input.ReasonsJson,
+            WarningsJson = input.WarningsJson,
+            CorrelationId = context.CorrelationId,
+            DecidedAt = _clock.UtcNow
         };
         db.TrackMatches.Add(record);
         await db.SaveChangesAsync(cancellationToken);
@@ -143,10 +163,16 @@ public sealed class TrackMatchPersistenceService : ITrackMatchPersistenceService
         }
         var record = new ManualTrackOverrideRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = actor.TenantId, OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id, LibraryTrackId = input.LibraryTrackId,
-            LibraryScopeId = input.LibraryScopeId, Decision = input.Decision, Reason = input.Reason.Trim(),
-            DecisionVersion = version + 1, CreatedAt = _clock.UtcNow
+            Id = Guid.CreateVersion7(),
+            TenantId = actor.TenantId,
+            OwnerUserId = snapshot.OwnerUserId,
+            ExternalSnapshotId = snapshot.Id,
+            LibraryTrackId = input.LibraryTrackId,
+            LibraryScopeId = input.LibraryScopeId,
+            Decision = input.Decision,
+            Reason = input.Reason.Trim(),
+            DecisionVersion = version + 1,
+            CreatedAt = _clock.UtcNow
         };
         db.ManualTrackOverrides.Add(record);
         await db.SaveChangesAsync(cancellationToken);
@@ -224,13 +250,30 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         if (existing != null) return existing;
         var record = new PlaylistLinkRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = actor.TenantId, OwnerUserId = actor.EffectiveUserId!.Value,
-            ProviderAccountId = account.Account.Id, ScheduleId = input.ScheduleId, LibraryScopeId = input.LibraryScopeId,
-            SourceProviderId = account.Account.ProviderId, SourcePlaylistId = PersistenceGuard.Required(input.SourcePlaylistId, nameof(input.SourcePlaylistId)), SourcePlaylistIdHash = input.SourcePlaylistIdHash,
-            TargetProtocol = PersistenceGuard.Required(input.TargetProtocol, nameof(input.TargetProtocol)).ToLowerInvariant(), TargetBackendInstanceId = PersistenceGuard.Required(input.TargetBackendInstanceId, nameof(input.TargetBackendInstanceId)), TargetPlaylistId = input.TargetPlaylistId, TargetCredentialReferenceId = input.TargetCredentialReferenceId,
-            Mode = input.Mode, MaterializationMode = input.MaterializationMode, MirrorStaleEntries = input.MirrorStaleEntries, PreserveManualEntries = input.PreserveManualEntries,
-            SyncName = input.SyncName, SyncDescription = input.SyncDescription, SyncArtwork = input.SyncArtwork,
-            RuleVersion = input.RuleVersion.Trim(), PolicyVersion = input.PolicyVersion.Trim(), CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow
+            Id = Guid.CreateVersion7(),
+            TenantId = actor.TenantId,
+            OwnerUserId = actor.EffectiveUserId!.Value,
+            ProviderAccountId = account.Account.Id,
+            ScheduleId = input.ScheduleId,
+            LibraryScopeId = input.LibraryScopeId,
+            SourceProviderId = account.Account.ProviderId,
+            SourcePlaylistId = PersistenceGuard.Required(input.SourcePlaylistId, nameof(input.SourcePlaylistId)),
+            SourcePlaylistIdHash = input.SourcePlaylistIdHash,
+            TargetProtocol = PersistenceGuard.Required(input.TargetProtocol, nameof(input.TargetProtocol)).ToLowerInvariant(),
+            TargetBackendInstanceId = PersistenceGuard.Required(input.TargetBackendInstanceId, nameof(input.TargetBackendInstanceId)),
+            TargetPlaylistId = input.TargetPlaylistId,
+            TargetCredentialReferenceId = input.TargetCredentialReferenceId,
+            Mode = input.Mode,
+            MaterializationMode = input.MaterializationMode,
+            MirrorStaleEntries = input.MirrorStaleEntries,
+            PreserveManualEntries = input.PreserveManualEntries,
+            SyncName = input.SyncName,
+            SyncDescription = input.SyncDescription,
+            SyncArtwork = input.SyncArtwork,
+            RuleVersion = input.RuleVersion.Trim(),
+            PolicyVersion = input.PolicyVersion.Trim(),
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
         };
         db.PlaylistLinks.Add(record); await db.SaveChangesAsync(cancellationToken); return record;
     }

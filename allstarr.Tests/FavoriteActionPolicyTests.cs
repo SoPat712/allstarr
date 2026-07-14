@@ -116,8 +116,15 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
         var credential = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.SecretReferences.Add(new SecretReferenceRecord { Id = credential, TenantId = _tenant,
-                Purpose = "subsonic-target:main", ActiveVersion = 1, CreatedAt = Clock.Now, UpdatedAt = Clock.Now });
+            db.SecretReferences.Add(new SecretReferenceRecord
+            {
+                Id = credential,
+                TenantId = _tenant,
+                Purpose = "subsonic-target:main",
+                ActiveVersion = 1,
+                CreatedAt = Clock.Now,
+                UpdatedAt = Clock.Now
+            });
             await db.SaveChangesAsync();
         }
         var values = new FavoriteActionPolicyValues(true, false, false, false, false, true, credential);
@@ -141,8 +148,15 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
         await using (var db = await _factory.CreateDbContextAsync())
         {
             db.Tenants.Add(new TenantRecord { Id = foreignTenant, Slug = "foreign-policy", Name = "Foreign", CreatedAt = Clock.Now });
-            db.SecretReferences.Add(new SecretReferenceRecord { Id = foreignCredential, TenantId = foreignTenant,
-                Purpose = "subsonic-target:foreign", ActiveVersion = 1, CreatedAt = Clock.Now, UpdatedAt = Clock.Now });
+            db.SecretReferences.Add(new SecretReferenceRecord
+            {
+                Id = foreignCredential,
+                TenantId = foreignTenant,
+                Purpose = "subsonic-target:foreign",
+                ActiveVersion = 1,
+                CreatedAt = Clock.Now,
+                UpdatedAt = Clock.Now
+            });
             await db.SaveChangesAsync();
         }
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _store.UpsertAsync(
@@ -152,9 +166,17 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
             new(_tenant, null, "jellyfin", "main", null), FavoriteActionPolicyScope.Global,
             new(true, false, false, false, false, true, foreignCredential), _user));
     }
-    private static FavoriteActionPolicyUpdateRequest GlobalRequest() => new() { Protocol = "jellyfin", BackendInstanceId = "main",
-        AddToVirtualLiked = true, MatchLocalLibrary = false, AutoDownload = false, EnrichMetadata = false,
-        PlaceManagedFile = false, RefreshBackendLibrary = true };
+    private static FavoriteActionPolicyUpdateRequest GlobalRequest() => new()
+    {
+        Protocol = "jellyfin",
+        BackendInstanceId = "main",
+        AddToVirtualLiked = true,
+        MatchLocalLibrary = false,
+        AutoDownload = false,
+        EnrichMetadata = false,
+        PlaceManagedFile = false,
+        RefreshBackendLibrary = true
+    };
 
     private FavoriteActionPoliciesController Controller(AdminAuthSession session, ProviderAccountManagementMode mode)
     {
@@ -164,13 +186,38 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
         return controller;
     }
-    private PlatformUserRecord User(Guid id, string name) => new() { Id = id, TenantId = _tenant, DisplayName = name,
-        Status = PlatformUserStatus.Active, CreatedAt = Clock.Now, UpdatedAt = Clock.Now };
-    private BackendIdentityRecord Identity(Guid user, string principal) => new() { Id = Guid.CreateVersion7(), TenantId = _tenant,
-        UserId = user, BackendType = "jellyfin", BackendInstanceId = "main", PrincipalId = principal, CreatedAt = Clock.Now, LastSeenAt = Clock.Now };
-    private AdminAuthSession Session(Guid user, bool admin) => new() { SessionId = "session", UserId = "backend", UserName = "User",
-        IsAdministrator = admin, TenantId = _tenant, AllstarrUserId = user, JellyfinAccessToken = "fixture",
-        ExpiresAtUtc = Clock.Now.UtcDateTime.AddHours(1), LastSeenUtc = Clock.Now.UtcDateTime };
+    private PlatformUserRecord User(Guid id, string name) => new()
+    {
+        Id = id,
+        TenantId = _tenant,
+        DisplayName = name,
+        Status = PlatformUserStatus.Active,
+        CreatedAt = Clock.Now,
+        UpdatedAt = Clock.Now
+    };
+    private BackendIdentityRecord Identity(Guid user, string principal) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _tenant,
+        UserId = user,
+        BackendType = "jellyfin",
+        BackendInstanceId = "main",
+        PrincipalId = principal,
+        CreatedAt = Clock.Now,
+        LastSeenAt = Clock.Now
+    };
+    private AdminAuthSession Session(Guid user, bool admin) => new()
+    {
+        SessionId = "session",
+        UserId = "backend",
+        UserName = "User",
+        IsAdministrator = admin,
+        TenantId = _tenant,
+        AllstarrUserId = user,
+        JellyfinAccessToken = "fixture",
+        ExpiresAtUtc = Clock.Now.UtcDateTime.AddHours(1),
+        LastSeenUtc = Clock.Now.UtcDateTime
+    };
     public Task DisposeAsync() { if (File.Exists(_path)) File.Delete(_path); return Task.CompletedTask; }
     private sealed class Clock : IPlatformClock { public static DateTimeOffset Now => new(2026, 7, 12, 22, 0, 0, TimeSpan.Zero); public DateTimeOffset UtcNow => Now; }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>

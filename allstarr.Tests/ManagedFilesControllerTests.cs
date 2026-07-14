@@ -124,15 +124,25 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
 
     private AdminAuthSession Session(Guid userId, bool administrator = false) => new()
     {
-        SessionId = Guid.NewGuid().ToString("N"), UserId = userId.ToString(), UserName = "fixture",
-        IsAdministrator = administrator, TenantId = tenant, AllstarrUserId = userId,
-        JellyfinAccessToken = "secret", ExpiresAtUtc = DateTime.UtcNow.AddHours(1), LastSeenUtc = DateTime.UtcNow
+        SessionId = Guid.NewGuid().ToString("N"),
+        UserId = userId.ToString(),
+        UserName = "fixture",
+        IsAdministrator = administrator,
+        TenantId = tenant,
+        AllstarrUserId = userId,
+        JellyfinAccessToken = "secret",
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+        LastSeenUtc = DateTime.UtcNow
     };
 
     private PlatformUserRecord User(Guid id) => new()
     {
-        Id = id, TenantId = tenant, DisplayName = id.ToString("N"), Status = PlatformUserStatus.Active,
-        CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        Id = id,
+        TenantId = tenant,
+        DisplayName = id.ToString("N"),
+        Status = PlatformUserStatus.Active,
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
     };
 
     private ManagedFileOwnershipEntity File(Guid user, string name, char hashCharacter)
@@ -143,11 +153,21 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
         System.IO.File.WriteAllText(path, name);
         return new()
         {
-            Id = Guid.CreateVersion7(), RootId = Guid.CreateVersion7(), TargetRootPath = targetRoot,
-            CanonicalPath = path, ContentSha256 = new string(hashCharacter, 64), Length = new FileInfo(path).Length,
-            PlacementMethod = ManagedFilePlacementMethod.Copy, TenantId = tenant, OwnerUserId = user,
-            LibraryScopeId = "library", ScopeKey = $"scope-{user:N}", ReferenceCount = 1, IsManaged = true,
-            CreatedAt = DateTimeOffset.UtcNow, Revision = 1
+            Id = Guid.CreateVersion7(),
+            RootId = Guid.CreateVersion7(),
+            TargetRootPath = targetRoot,
+            CanonicalPath = path,
+            ContentSha256 = new string(hashCharacter, 64),
+            Length = new FileInfo(path).Length,
+            PlacementMethod = ManagedFilePlacementMethod.Copy,
+            TenantId = tenant,
+            OwnerUserId = user,
+            LibraryScopeId = "library",
+            ScopeKey = $"scope-{user:N}",
+            ReferenceCount = 1,
+            IsManaged = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Revision = 1
         };
     }
 

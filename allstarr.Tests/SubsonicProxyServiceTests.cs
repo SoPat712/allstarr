@@ -23,9 +23,9 @@ public class SubsonicProxyServiceTests
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
 
-        var settings = Options.Create(new SubsonicSettings 
-        { 
-            Url = "http://localhost:4533" 
+        var settings = Options.Create(new SubsonicSettings
+        {
+            Url = "http://localhost:4533"
         });
 
         var httpContext = new DefaultHttpContext();
@@ -153,7 +153,7 @@ public class SubsonicProxyServiceTests
         var parameters = new Dictionary<string, string> { { "u", "admin" } };
 
         // Act & Assert
-        await Assert.ThrowsAsync<HttpRequestException>(() => 
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
             _service.RelayAsync("rest/ping", parameters));
     }
 
@@ -246,8 +246,8 @@ public class SubsonicProxyServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(responseMessage);
 
-        var parameters = new Dictionary<string, string> 
-        { 
+        var parameters = new Dictionary<string, string>
+        {
             { "id", "song123" },
             { "u", "admin" }
         };
@@ -352,8 +352,8 @@ public class SubsonicProxyServiceTests
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers["Range"] = "bytes=0-1023";
         var httpContextAccessor = new HttpContextAccessor { HttpContext = httpContext };
-        var service = new SubsonicProxyService(_mockHttpClientFactory.Object, 
-            Options.Create(new SubsonicSettings { Url = "http://localhost:4533" }), 
+        var service = new SubsonicProxyService(_mockHttpClientFactory.Object,
+            Options.Create(new SubsonicSettings { Url = "http://localhost:4533" }),
             httpContextAccessor);
 
         var parameters = new Dictionary<string, string> { { "id", "song123" } };

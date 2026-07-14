@@ -25,10 +25,25 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow; db.Tenants.Add(new() { Id = tenant, Slug = "playback", Name = "Playback", CreatedAt = now });
         db.Users.Add(new() { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();
         var identity = Guid.CreateVersion7(); db.BackendIdentities.Add(new() { Id = identity, TenantId = tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now });
-        db.LibraryTracks.Add(new() { Id = Guid.CreateVersion7(), TenantId = tenant, OwnerUserId = user, BackendIdentityId = identity,
-            LibraryScopeId = "music", Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = "track-1",
-            FilePath = "/media/track.flac", Title = "Track", Artist = "Artist", DurationMilliseconds = 120000,
-            ProviderIdsJson = "{}", IndexedAt = now, SourceModifiedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();
+        db.LibraryTracks.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenant,
+            OwnerUserId = user,
+            BackendIdentityId = identity,
+            LibraryScopeId = "music",
+            Protocol = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendItemId = "track-1",
+            FilePath = "/media/track.flac",
+            Title = "Track",
+            Artist = "Artist",
+            DurationMilliseconds = 120000,
+            ProviderIdsJson = "{}",
+            IndexedAt = now,
+            SourceModifiedAt = now,
+            UpdatedAt = now
+        }); await db.SaveChangesAsync();
         clock = new() { UtcNow = now }; var jobOptions = new DurableJobOptions(); jobs = new(factory, jobOptions, new JobPayloadPolicy(jobOptions), clock);
     }
 

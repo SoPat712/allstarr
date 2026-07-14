@@ -23,7 +23,7 @@ public class SubsonicResponseBuilder
         {
             return CreateJsonResponse(new { status = "ok", version = SubsonicVersion });
         }
-        
+
         var ns = XNamespace.Get(SubsonicNamespace);
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
@@ -42,14 +42,14 @@ public class SubsonicResponseBuilder
     {
         if (format == "json")
         {
-            return CreateJsonResponse(new 
-            { 
-                status = "failed", 
+            return CreateJsonResponse(new
+            {
+                status = "failed",
                 version = SubsonicVersion,
                 error = new { code, message }
             });
         }
-        
+
         var ns = XNamespace.Get(SubsonicNamespace);
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
@@ -71,14 +71,14 @@ public class SubsonicResponseBuilder
     {
         if (format == "json")
         {
-            return CreateJsonResponse(new 
-            { 
-                status = "ok", 
+            return CreateJsonResponse(new
+            {
+                status = "ok",
                 version = SubsonicVersion,
                 song = ConvertSongToJson(song)
             });
         }
-        
+
         var ns = XNamespace.Get(SubsonicNamespace);
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
@@ -166,12 +166,12 @@ public class SubsonicResponseBuilder
     public IActionResult CreateAlbumResponse(string format, Album album)
     {
         var totalDuration = album.Songs.Sum(s => s.Duration ?? 0);
-        
+
         if (format == "json")
         {
-            return CreateJsonResponse(new 
-            { 
-                status = "ok", 
+            return CreateJsonResponse(new
+            {
+                status = "ok",
                 version = SubsonicVersion,
                 album = new
                 {
@@ -189,7 +189,7 @@ public class SubsonicResponseBuilder
                 }
             });
         }
-        
+
         var ns = XNamespace.Get(SubsonicNamespace);
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
@@ -208,7 +208,7 @@ public class SubsonicResponseBuilder
         );
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
-    
+
     /// <summary>
     /// Creates a Subsonic response for a playlist represented as an album.
     /// Playlists appear as albums with genre "Playlist".
@@ -216,16 +216,16 @@ public class SubsonicResponseBuilder
     public IActionResult CreatePlaylistAsAlbumResponse(string format, ExternalPlaylist playlist, List<Song> tracks)
     {
         var totalDuration = tracks.Sum(s => s.Duration ?? 0);
-        
+
         // Build artist name with emoji and curator
         var artistName = $"🎵 {char.ToUpper(playlist.Provider[0])}{playlist.Provider.Substring(1)}";
         if (!string.IsNullOrEmpty(playlist.CuratorName))
         {
             artistName += $" {playlist.CuratorName}";
         }
-        
+
         var artistId = $"curator-{playlist.Provider}-{playlist.CuratorName?.ToLowerInvariant().Replace(" ", "-") ?? "unknown"}";
-        
+
         // Aggregate unique genres from all tracks
         var genres = tracks
             .Where(s => !string.IsNullOrEmpty(s.Genre))
@@ -233,12 +233,12 @@ public class SubsonicResponseBuilder
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var genreString = genres.Count > 0 ? string.Join(", ", genres) : "Playlist";
-        
+
         if (format == "json")
         {
-            return CreateJsonResponse(new 
-            { 
-                status = "ok", 
+            return CreateJsonResponse(new
+            {
+                status = "ok",
                 version = SubsonicVersion,
                 album = new
                 {
@@ -257,7 +257,7 @@ public class SubsonicResponseBuilder
                 }
             });
         }
-        
+
         var ns = XNamespace.Get(SubsonicNamespace);
         var albumElement = new XElement(ns + "album",
             new XAttribute("id", playlist.Id),
@@ -269,19 +269,19 @@ public class SubsonicResponseBuilder
             new XAttribute("genre", genreString),
             new XAttribute("coverArt", playlist.Id)
         );
-        
+
         if (playlist.CreatedDate.HasValue)
         {
             albumElement.Add(new XAttribute("year", playlist.CreatedDate.Value.Year));
             albumElement.Add(new XAttribute("created", playlist.CreatedDate.Value.ToString("yyyy-MM-ddTHH:mm:ss")));
         }
-        
+
         // Add songs
         foreach (var song in tracks)
         {
             albumElement.Add(ConvertSongToXml(song, ns));
         }
-        
+
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
                 new XAttribute("status", "ok"),
@@ -299,9 +299,9 @@ public class SubsonicResponseBuilder
     {
         if (format == "json")
         {
-            return CreateJsonResponse(new 
-            { 
-                status = "ok", 
+            return CreateJsonResponse(new
+            {
+                status = "ok",
                 version = SubsonicVersion,
                 artist = new
                 {
@@ -314,7 +314,7 @@ public class SubsonicResponseBuilder
                 }
             });
         }
-        
+
         var ns = XNamespace.Get(SubsonicNamespace);
         var doc = new XDocument(
             new XElement(ns + "subsonic-response",
@@ -381,7 +381,7 @@ public class SubsonicResponseBuilder
             result["suffix"] = suffix;
             result["contentType"] = contentType;
         }
-        
+
         return result;
     }
 

@@ -31,19 +31,38 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         var now = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "scheduler", Name = "Scheduler", CreatedAt = now });
         db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
-        db.BackendIdentities.Add(new BackendIdentityRecord { Id = Guid.CreateVersion7(), TenantId = _tenant,
-            UserId = _user, BackendType = "subsonic", BackendInstanceId = "navidrome-main",
-            PrincipalId = "scheduled-owner", CreatedAt = now, LastSeenAt = now });
+        db.BackendIdentities.Add(new BackendIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenant,
+            UserId = _user,
+            BackendType = "subsonic",
+            BackendInstanceId = "navidrome-main",
+            PrincipalId = "scheduled-owner",
+            CreatedAt = now,
+            LastSeenAt = now
+        });
         db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _account, TenantId = _tenant, OwnerUserId = _user, ProviderId = "spotify", DisplayName = "Source", Scope = ProviderAccountScope.User, Enabled = true, CreatedAt = now, UpdatedAt = now });
         db.JobSchedules.Add(NewSchedule(now));
         db.PlaylistLinks.Add(new PlaylistLinkRecord
         {
-            Id = _link, TenantId = _tenant, OwnerUserId = _user, ProviderAccountId = _account,
-            ScheduleId = _schedule, LibraryScopeId = "music", SourceProviderId = "spotify",
-            SourcePlaylistId = "stable-playlist-id", SourcePlaylistIdHash = new string('a', 64),
-            TargetProtocol = "subsonic", TargetBackendInstanceId = "navidrome-main",
-            Mode = PlaylistLinkMode.Materialized, MaterializationMode = PlaylistMaterializationMode.Reconcile,
-            RuleVersion = "rules-v1", PolicyVersion = "policy-v1", CreatedAt = now, UpdatedAt = now
+            Id = _link,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            ProviderAccountId = _account,
+            ScheduleId = _schedule,
+            LibraryScopeId = "music",
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "stable-playlist-id",
+            SourcePlaylistIdHash = new string('a', 64),
+            TargetProtocol = "subsonic",
+            TargetBackendInstanceId = "navidrome-main",
+            Mode = PlaylistLinkMode.Materialized,
+            MaterializationMode = PlaylistMaterializationMode.Reconcile,
+            RuleVersion = "rules-v1",
+            PolicyVersion = "policy-v1",
+            CreatedAt = now,
+            UpdatedAt = now
         });
         await db.SaveChangesAsync();
         _clock = new FakeClock(now);
@@ -189,11 +208,20 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
 
     private JobScheduleRecord NewSchedule(DateTimeOffset now) => new()
     {
-        Id = _schedule, TenantId = _tenant, OwnerUserId = _user, LibraryScopeId = "music",
-        JobType = DurableScheduleEngine.PlaylistSyncJobType, CronExpression = "* * * * *", TimeZoneId = "UTC",
-        OverlapPolicy = ScheduleOverlapPolicy.Skip, MisfirePolicy = ScheduleMisfirePolicy.Skip,
-        RetryPolicyJson = "{\"policy\":\"standard\"}", NextRunAt = now.AddMinutes(1), Enabled = true,
-        CreatedAt = now, UpdatedAt = now
+        Id = _schedule,
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        LibraryScopeId = "music",
+        JobType = DurableScheduleEngine.PlaylistSyncJobType,
+        CronExpression = "* * * * *",
+        TimeZoneId = "UTC",
+        OverlapPolicy = ScheduleOverlapPolicy.Skip,
+        MisfirePolicy = ScheduleMisfirePolicy.Skip,
+        RetryPolicyJson = "{\"policy\":\"standard\"}",
+        NextRunAt = now.AddMinutes(1),
+        Enabled = true,
+        CreatedAt = now,
+        UpdatedAt = now
     };
 
     private DurableScheduleEngine NewEngine()

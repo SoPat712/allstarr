@@ -160,9 +160,23 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type serviceType) => null; }
-    private LibraryTrackRecord Track(Guid id, Guid identityId, string backendId) => new() { Id = id, TenantId = _tenant,
-        OwnerUserId = _user, BackendIdentityId = identityId, LibraryScopeId = "music", Protocol = "jellyfin",
-        BackendInstanceId = "main", BackendItemId = backendId, FilePath = $"/library/{backendId}.flac",
-        Title = backendId, Artist = "Fixture", DurationMilliseconds = 180000, ProviderIdsJson = "{}",
-        IndexedAt = _clock.UtcNow, SourceModifiedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow };
+    private LibraryTrackRecord Track(Guid id, Guid identityId, string backendId) => new()
+    {
+        Id = id,
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        BackendIdentityId = identityId,
+        LibraryScopeId = "music",
+        Protocol = "jellyfin",
+        BackendInstanceId = "main",
+        BackendItemId = backendId,
+        FilePath = $"/library/{backendId}.flac",
+        Title = backendId,
+        Artist = "Fixture",
+        DurationMilliseconds = 180000,
+        ProviderIdsJson = "{}",
+        IndexedAt = _clock.UtcNow,
+        SourceModifiedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow
+    };
 }

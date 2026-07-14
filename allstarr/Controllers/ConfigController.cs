@@ -476,7 +476,8 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update durable runtime configuration");
-            return StatusCode(500, new {
+            return StatusCode(500, new
+            {
                 error = "Failed to update configuration"
             });
         }
@@ -544,7 +545,8 @@ public class ConfigController : ControllerBase
         _logger.LogInformation("Cache cleared: {Files} files, {RedisKeys} Redis keys (including {SearchKeys} search keys, {ImageKeys} image keys)",
             clearedFiles, clearedRedisKeys, searchKeysDeleted, imageKeysDeleted);
 
-        return Ok(new {
+        return Ok(new
+        {
             message = "Cache cleared successfully",
             filesDeleted = clearedFiles,
             redisKeysDeleted = clearedRedisKeys
@@ -573,7 +575,8 @@ public class ConfigController : ControllerBase
             if (!System.IO.File.Exists(socketPath))
             {
                 _logger.LogWarning("Docker socket not available at {Path}", socketPath);
-                return StatusCode(503, new {
+                return StatusCode(503, new
+                {
                     error = "Docker socket not available",
                     message = "Please restart manually: docker restart allstarr"
                 });
@@ -626,7 +629,8 @@ public class ConfigController : ControllerBase
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
                 _logger.LogError("Failed to restart container: {StatusCode} - {Body}", response.StatusCode, errorBody);
-                return StatusCode((int)response.StatusCode, new {
+                return StatusCode((int)response.StatusCode, new
+                {
                     error = "Failed to restart container",
                     message = "Please restart manually: docker restart allstarr"
                 });
@@ -635,7 +639,8 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error restarting container");
-            return StatusCode(500, new {
+            return StatusCode(500, new
+            {
                 error = "Failed to restart container",
                 message = "Please restart manually: docker restart allstarr"
             });

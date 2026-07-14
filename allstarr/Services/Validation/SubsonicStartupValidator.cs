@@ -39,7 +39,7 @@ public class SubsonicStartupValidator : BaseStartupValidator
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync(cancellationToken);
-                
+
                 if (content.Contains("\"status\":\"ok\"") || content.Contains("status=\"ok\""))
                 {
                     WriteStatus("Subsonic server", "OK", ConsoleColor.Green);
@@ -61,7 +61,7 @@ public class SubsonicStartupValidator : BaseStartupValidator
             else
             {
                 WriteStatus("Subsonic server", $"HTTP {(int)response.StatusCode}", ConsoleColor.Red);
-                return ValidationResult.Failure($"HTTP {(int)response.StatusCode}", 
+                return ValidationResult.Failure($"HTTP {(int)response.StatusCode}",
                     "Subsonic server returned an error", ConsoleColor.Red);
             }
         }

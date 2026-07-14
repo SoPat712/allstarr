@@ -999,7 +999,7 @@ public partial class JellyfinController
 
             Request.Body.Position = 0;
 
-                _logger.LogInformation("⏹️ Playback STOPPED reported");
+            _logger.LogInformation("⏹️ Playback STOPPED reported");
             _logger.LogDebug("📤 Sending playback stop body ({BodyLength} bytes)", body.Length);
 
             // Parse the body to check if it's an external track

@@ -42,20 +42,20 @@ public class GlobalExceptionHandler : IExceptionHandler
             // Not Found errors (404)
             FileNotFoundException => (404, 70, "Resource not found"),
             DirectoryNotFoundException => (404, 70, "Directory not found"),
-            
+
             // Authentication errors (401)
             UnauthorizedAccessException => (401, 40, "Wrong username or password"),
-            
+
             // Bad Request errors (400)
             ArgumentNullException => (400, 10, "Required parameter is missing"),
             ArgumentException => (400, 10, "Invalid request"),
             FormatException => (400, 10, "Invalid format"),
             InvalidOperationException => (400, 10, "Operation not valid"),
-            
+
             // External service errors (502)
             HttpRequestException => (502, 0, "External service unavailable"),
             TimeoutException => (504, 0, "Request timeout"),
-            
+
             // Generic server error (500)
             _ => (500, 0, "An internal server error occurred")
         };

@@ -17,17 +17,28 @@ public sealed partial class Phase6FavoritesManagedFilesEnrichment : Migration
 
         migrationBuilder.CreateTable(name: "favorite_events", columns: table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: false), Protocol = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            BackendInstanceId = table.Column<string>(type: text, maxLength: 200, nullable: false), BackendPrincipalId = table.Column<string>(type: text, maxLength: 300, nullable: false),
-            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true), ItemId = table.Column<string>(type: text, maxLength: 500, nullable: false),
-            Operation = table.Column<string>(type: text, maxLength: 32, nullable: false), SourceRevision = table.Column<string>(type: text, maxLength: 300, nullable: false),
-            EventKey = table.Column<string>(type: text, maxLength: 64, nullable: false), CorrelationId = table.Column<string>(type: text, maxLength: 100, nullable: false),
-            PolicySnapshotJson = table.Column<string>(type: text, nullable: false), TargetCredentialReferenceId = table.Column<Guid>(type: guid, nullable: true),
-            JobId = table.Column<Guid>(type: guid, nullable: false), State = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            LastErrorCode = table.Column<string>(type: text, maxLength: 100, nullable: true), LastErrorMessage = table.Column<string>(type: text, maxLength: 1000, nullable: true),
-            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
-            CompletedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true), Revision = table.Column<long>(type: bigint, nullable: false)
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: false),
+            Protocol = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            BackendInstanceId = table.Column<string>(type: text, maxLength: 200, nullable: false),
+            BackendPrincipalId = table.Column<string>(type: text, maxLength: 300, nullable: false),
+            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
+            ItemId = table.Column<string>(type: text, maxLength: 500, nullable: false),
+            Operation = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            SourceRevision = table.Column<string>(type: text, maxLength: 300, nullable: false),
+            EventKey = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            CorrelationId = table.Column<string>(type: text, maxLength: 100, nullable: false),
+            PolicySnapshotJson = table.Column<string>(type: text, nullable: false),
+            TargetCredentialReferenceId = table.Column<Guid>(type: guid, nullable: true),
+            JobId = table.Column<Guid>(type: guid, nullable: false),
+            State = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            LastErrorCode = table.Column<string>(type: text, maxLength: 100, nullable: true),
+            LastErrorMessage = table.Column<string>(type: text, maxLength: 1000, nullable: true),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            CompletedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
+            Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {
             table.PrimaryKey("PK_favorite_events", item => item.Id);
@@ -39,14 +50,22 @@ public sealed partial class Phase6FavoritesManagedFilesEnrichment : Migration
 
         migrationBuilder.CreateTable(name: "managed_files", columns: table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), RootId = table.Column<Guid>(type: guid, nullable: false),
-            TargetRootPath = table.Column<string>(type: text, maxLength: 2000, nullable: false), CanonicalPath = table.Column<string>(type: text, maxLength: 2000, nullable: false),
-            ContentSha256 = table.Column<string>(type: text, maxLength: 64, nullable: false), Length = table.Column<long>(type: bigint, nullable: false),
-            PlacementMethod = table.Column<string>(type: text, maxLength: 32, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: true), LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
-            SourceJobId = table.Column<Guid>(type: guid, nullable: true), ScopeKey = table.Column<string>(type: text, maxLength: 1000, nullable: false),
-            ReferenceCount = table.Column<int>(type: integer, nullable: false), IsManaged = table.Column<bool>(type: boolean, nullable: false),
-            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), RemovedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            RootId = table.Column<Guid>(type: guid, nullable: false),
+            TargetRootPath = table.Column<string>(type: text, maxLength: 2000, nullable: false),
+            CanonicalPath = table.Column<string>(type: text, maxLength: 2000, nullable: false),
+            ContentSha256 = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            Length = table.Column<long>(type: bigint, nullable: false),
+            PlacementMethod = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: true),
+            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
+            SourceJobId = table.Column<Guid>(type: guid, nullable: true),
+            ScopeKey = table.Column<string>(type: text, maxLength: 1000, nullable: false),
+            ReferenceCount = table.Column<int>(type: integer, nullable: false),
+            IsManaged = table.Column<bool>(type: boolean, nullable: false),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            RemovedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
             Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {
@@ -62,13 +81,20 @@ public sealed partial class Phase6FavoritesManagedFilesEnrichment : Migration
 
         migrationBuilder.CreateTable(name: "favorite_actions", columns: table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), EventId = table.Column<Guid>(type: guid, nullable: false),
-            TenantId = table.Column<Guid>(type: guid, nullable: false), OwnerUserId = table.Column<Guid>(type: guid, nullable: false),
-            ActionType = table.Column<string>(type: text, maxLength: 100, nullable: false), IdempotencyKey = table.Column<string>(type: text, maxLength: 300, nullable: false),
-            Reversible = table.Column<bool>(type: boolean, nullable: false), State = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            AttemptCount = table.Column<int>(type: integer, nullable: false), LastErrorCode = table.Column<string>(type: text, maxLength: 100, nullable: true),
-            LastErrorMessage = table.Column<string>(type: text, maxLength: 1000, nullable: true), CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
-            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), CompletedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            EventId = table.Column<Guid>(type: guid, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: false),
+            ActionType = table.Column<string>(type: text, maxLength: 100, nullable: false),
+            IdempotencyKey = table.Column<string>(type: text, maxLength: 300, nullable: false),
+            Reversible = table.Column<bool>(type: boolean, nullable: false),
+            State = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            AttemptCount = table.Column<int>(type: integer, nullable: false),
+            LastErrorCode = table.Column<string>(type: text, maxLength: 100, nullable: true),
+            LastErrorMessage = table.Column<string>(type: text, maxLength: 1000, nullable: true),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            CompletedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
             Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {
@@ -78,11 +104,16 @@ public sealed partial class Phase6FavoritesManagedFilesEnrichment : Migration
 
         migrationBuilder.CreateTable(name: "favorite_states", columns: table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: false), Protocol = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            BackendInstanceId = table.Column<string>(type: text, maxLength: 200, nullable: false), ItemId = table.Column<string>(type: text, maxLength: 500, nullable: false),
-            IsFavorite = table.Column<bool>(type: boolean, nullable: false), LastEventId = table.Column<Guid>(type: guid, nullable: false),
-            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), Revision = table.Column<long>(type: bigint, nullable: false)
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: false),
+            Protocol = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            BackendInstanceId = table.Column<string>(type: text, maxLength: 200, nullable: false),
+            ItemId = table.Column<string>(type: text, maxLength: 500, nullable: false),
+            IsFavorite = table.Column<bool>(type: boolean, nullable: false),
+            LastEventId = table.Column<Guid>(type: guid, nullable: false),
+            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {
             table.PrimaryKey("PK_favorite_states", item => item.Id);
@@ -92,12 +123,18 @@ public sealed partial class Phase6FavoritesManagedFilesEnrichment : Migration
 
         migrationBuilder.CreateTable(name: "metadata_enrichment_plans", columns: table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: false), LineageJobId = table.Column<Guid>(type: guid, nullable: false),
-            ManagedArtifactId = table.Column<Guid>(type: guid, nullable: false), Fingerprint = table.Column<string>(type: text, maxLength: 64, nullable: false),
-            PlanVersion = table.Column<int>(type: integer, nullable: false), SourceRevisionsJson = table.Column<string>(type: text, nullable: false),
-            DecisionsJson = table.Column<string>(type: text, nullable: false), TagsJson = table.Column<string>(type: text, nullable: false),
-            PathValuesJson = table.Column<string>(type: text, nullable: false), CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false)
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: false),
+            LineageJobId = table.Column<Guid>(type: guid, nullable: false),
+            ManagedArtifactId = table.Column<Guid>(type: guid, nullable: false),
+            Fingerprint = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            PlanVersion = table.Column<int>(type: integer, nullable: false),
+            SourceRevisionsJson = table.Column<string>(type: text, nullable: false),
+            DecisionsJson = table.Column<string>(type: text, nullable: false),
+            TagsJson = table.Column<string>(type: text, nullable: false),
+            PathValuesJson = table.Column<string>(type: text, nullable: false),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false)
         }, constraints: table =>
         {
             table.PrimaryKey("PK_enrichment_plans", item => item.Id);
@@ -111,12 +148,18 @@ public sealed partial class Phase6FavoritesManagedFilesEnrichment : Migration
 
         migrationBuilder.CreateTable(name: "metadata_enrichment_applications", columns: table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: false), PlanId = table.Column<Guid>(type: guid, nullable: false),
-            ManagedArtifactId = table.Column<Guid>(type: guid, nullable: false), LineageJobId = table.Column<Guid>(type: guid, nullable: false),
-            ArtifactContentSha256 = table.Column<string>(type: text, maxLength: 64, nullable: false), State = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            ErrorCode = table.Column<string>(type: text, maxLength: 100, nullable: true), SafeErrorMessage = table.Column<string>(type: text, maxLength: 1000, nullable: true),
-            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: false),
+            PlanId = table.Column<Guid>(type: guid, nullable: false),
+            ManagedArtifactId = table.Column<Guid>(type: guid, nullable: false),
+            LineageJobId = table.Column<Guid>(type: guid, nullable: false),
+            ArtifactContentSha256 = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            State = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            ErrorCode = table.Column<string>(type: text, maxLength: 100, nullable: true),
+            SafeErrorMessage = table.Column<string>(type: text, maxLength: 1000, nullable: true),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
             Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {

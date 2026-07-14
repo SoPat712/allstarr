@@ -1218,44 +1218,44 @@ public class SpotifyApiClient : IDisposable
         switch (value.ValueKind)
         {
             case JsonValueKind.String:
-            {
-                var stringValue = value.GetString();
-                return ParseSpotifyDateString(stringValue);
-            }
+                {
+                    var stringValue = value.GetString();
+                    return ParseSpotifyDateString(stringValue);
+                }
             case JsonValueKind.Number:
-            {
-                if (value.TryGetInt64(out var numericValue))
                 {
-                    return ParseSpotifyUnixTimestamp(numericValue);
-                }
+                    if (value.TryGetInt64(out var numericValue))
+                    {
+                        return ParseSpotifyUnixTimestamp(numericValue);
+                    }
 
-                return null;
-            }
+                    return null;
+                }
             case JsonValueKind.Object:
-            {
-                // Common GraphQL style: { "isoString": "..." }
-                if (value.TryGetProperty("isoString", out var isoString))
                 {
-                    return ParseSpotifyDateElement(isoString);
-                }
+                    // Common GraphQL style: { "isoString": "..." }
+                    if (value.TryGetProperty("isoString", out var isoString))
+                    {
+                        return ParseSpotifyDateElement(isoString);
+                    }
 
-                if (value.TryGetProperty("value", out var nestedValue))
-                {
-                    return ParseSpotifyDateElement(nestedValue);
-                }
+                    if (value.TryGetProperty("value", out var nestedValue))
+                    {
+                        return ParseSpotifyDateElement(nestedValue);
+                    }
 
-                if (value.TryGetProperty("timestampMs", out var timestampMs))
-                {
-                    return ParseSpotifyDateElement(timestampMs);
-                }
+                    if (value.TryGetProperty("timestampMs", out var timestampMs))
+                    {
+                        return ParseSpotifyDateElement(timestampMs);
+                    }
 
-                if (value.TryGetProperty("milliseconds", out var milliseconds))
-                {
-                    return ParseSpotifyDateElement(milliseconds);
-                }
+                    if (value.TryGetProperty("milliseconds", out var milliseconds))
+                    {
+                        return ParseSpotifyDateElement(milliseconds);
+                    }
 
-                return null;
-            }
+                    return null;
+                }
             default:
                 return null;
         }

@@ -25,7 +25,7 @@ public class EndpointBenchmarkService
     /// from blocking startup. Recommended: 5-10 second timeout per ping.
     /// </summary>
     public async Task<List<string>> BenchmarkEndpointsAsync(
-        List<string> endpoints, 
+        List<string> endpoints,
         Func<string, CancellationToken, Task<bool>> testFunc,
         int pingCount = 3,
         CancellationToken cancellationToken = default)
@@ -85,7 +85,7 @@ public class EndpointBenchmarkService
                 _lock.Release();
             }
 
-            _logger.LogDebug("  {Endpoint}: {AvgMs}ms avg, {SuccessRate:P0} success rate", 
+            _logger.LogDebug("  {Endpoint}: {AvgMs}ms avg, {SuccessRate:P0} success rate",
                 endpoint, avgMs, metrics.SuccessRate);
 
             return metrics;
@@ -101,8 +101,8 @@ public class EndpointBenchmarkService
             .Select(m => m.Endpoint)
             .ToList();
 
-        _logger.LogInformation("✅ Benchmark complete. Fastest: {Fastest} ({Ms}ms)", 
-            sorted.FirstOrDefault() ?? "none", 
+        _logger.LogInformation("✅ Benchmark complete. Fastest: {Fastest} ({Ms}ms)",
+            sorted.FirstOrDefault() ?? "none",
             results.Where(m => m.SuccessRate > 0).MinBy(m => m.AverageResponseMs)?.AverageResponseMs ?? 0);
 
         return sorted;

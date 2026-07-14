@@ -224,14 +224,26 @@ public sealed class DurableJobQueue
 
         var job = new DurableJobRecord
         {
-            Id = Guid.CreateVersion7(), ScopeKey = scopeKey, TenantId = savedContext.TenantId,
-            OwnerUserId = savedContext.OwnerUserId, ProviderAccountId = savedContext.ProviderAccountId,
-            LibraryScopeId = savedContext.LibraryScopeId, ProviderCapability = savedContext.ProviderCapability,
-            PolicySnapshotJson = savedContext.PolicySnapshotJson, RequestFingerprint = requestFingerprint,
-            CorrelationId = savedContext.CorrelationId, Type = type, PayloadJson = payloadJson,
-            IdempotencyKey = idempotencyKey, State = DurableJobState.Pending, Priority = request.Priority,
-            MaxAttempts = maxAttempts, MaxDeferrals = maxDeferrals, AvailableAt = request.AvailableAt ?? now,
-            CreatedAt = now, UpdatedAt = now
+            Id = Guid.CreateVersion7(),
+            ScopeKey = scopeKey,
+            TenantId = savedContext.TenantId,
+            OwnerUserId = savedContext.OwnerUserId,
+            ProviderAccountId = savedContext.ProviderAccountId,
+            LibraryScopeId = savedContext.LibraryScopeId,
+            ProviderCapability = savedContext.ProviderCapability,
+            PolicySnapshotJson = savedContext.PolicySnapshotJson,
+            RequestFingerprint = requestFingerprint,
+            CorrelationId = savedContext.CorrelationId,
+            Type = type,
+            PayloadJson = payloadJson,
+            IdempotencyKey = idempotencyKey,
+            State = DurableJobState.Pending,
+            Priority = request.Priority,
+            MaxAttempts = maxAttempts,
+            MaxDeferrals = maxDeferrals,
+            AvailableAt = request.AvailableAt ?? now,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         context.Jobs.Add(job);
         context.OutboxMessages.Add(CreateOutbox(savedContext.TenantId, "job.enqueued", new { jobId = job.Id, jobType = job.Type }, now));
@@ -697,15 +709,15 @@ public sealed class DurableJobQueue
         string type,
         object payload,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = tenantId,
-        Type = type,
-        PayloadJson = JsonSerializer.Serialize(payload),
-        State = OutboxMessageState.Pending,
-        AvailableAt = now,
-        MaxAttempts = _options.MaxOutboxAttempts,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            Type = type,
+            PayloadJson = JsonSerializer.Serialize(payload),
+            State = OutboxMessageState.Pending,
+            AvailableAt = now,
+            MaxAttempts = _options.MaxOutboxAttempts,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
 }

@@ -29,7 +29,7 @@ public class AppleMusicDownloadService : BaseDownloadService
     {
         _httpClient = httpClientFactory.CreateClient("AppleMusic");
         _appleMusicSettings = appleMusicSettings.Value;
-        
+
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
         _minRequestIntervalMs = 200;
     }
@@ -83,18 +83,18 @@ public class AppleMusicDownloadService : BaseDownloadService
         }
 
         var songId = BuildTrackedSongId(trackId);
-        var basePath = CurrentStorageMode == StorageMode.Cache 
+        var basePath = CurrentStorageMode == StorageMode.Cache
             ? Path.Combine(DownloadPath, "cache") : Path.Combine(DownloadPath, "permanent");
 
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        
+
         // The managed track-download route returns a FLAC artifact stream.
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, ".flac", "applemusic", trackId);
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
 
         outputPath = PathHelper.ResolveUniquePath(outputPath);
-        
+
         var streamUrl = new Uri(baseUri, $"api/download/{Uri.EscapeDataString(trackId)}?quality={Uri.EscapeDataString(quality)}");
         Logger.LogInformation("Downloading Apple Music track {TrackId} at quality {Quality} from sidecar...", trackId, quality);
 

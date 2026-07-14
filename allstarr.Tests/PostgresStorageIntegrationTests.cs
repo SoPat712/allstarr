@@ -102,27 +102,52 @@ public sealed class PostgresStorageIntegrationTests
         {
             seedSchedule.ProviderAccounts.Add(new ProviderAccountRecord
             {
-                Id = accountId, TenantId = principal.TenantId, OwnerUserId = principal.UserId,
-                ProviderId = "spotify", DisplayName = "Schedule source", Scope = ProviderAccountScope.User,
-                Enabled = true, CreatedAt = now, UpdatedAt = now
+                Id = accountId,
+                TenantId = principal.TenantId,
+                OwnerUserId = principal.UserId,
+                ProviderId = "spotify",
+                DisplayName = "Schedule source",
+                Scope = ProviderAccountScope.User,
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now
             });
             seedSchedule.JobSchedules.Add(new JobScheduleRecord
             {
-                Id = scheduleId, TenantId = principal.TenantId, OwnerUserId = principal.UserId,
-                LibraryScopeId = "music", JobType = DurableScheduleEngine.PlaylistSyncJobType,
-                CronExpression = "* * * * *", TimeZoneId = "UTC", OverlapPolicy = ScheduleOverlapPolicy.Skip,
-                MisfirePolicy = ScheduleMisfirePolicy.RunOnce, RetryPolicyJson = "{}",
-                NextRunAt = now.AddMinutes(-1), Enabled = true, CreatedAt = now, UpdatedAt = now
+                Id = scheduleId,
+                TenantId = principal.TenantId,
+                OwnerUserId = principal.UserId,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.PlaylistSyncJobType,
+                CronExpression = "* * * * *",
+                TimeZoneId = "UTC",
+                OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                RetryPolicyJson = "{}",
+                NextRunAt = now.AddMinutes(-1),
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now
             });
             seedSchedule.PlaylistLinks.Add(new PlaylistLinkRecord
             {
-                Id = linkId, TenantId = principal.TenantId, OwnerUserId = principal.UserId,
-                ProviderAccountId = accountId, ScheduleId = scheduleId, LibraryScopeId = "music",
-                SourceProviderId = "spotify", SourcePlaylistId = "native-postgres-playlist",
-                SourcePlaylistIdHash = new string('a', 64), TargetProtocol = "subsonic",
-                TargetBackendInstanceId = "primary", Mode = PlaylistLinkMode.Materialized,
+                Id = linkId,
+                TenantId = principal.TenantId,
+                OwnerUserId = principal.UserId,
+                ProviderAccountId = accountId,
+                ScheduleId = scheduleId,
+                LibraryScopeId = "music",
+                SourceProviderId = "spotify",
+                SourcePlaylistId = "native-postgres-playlist",
+                SourcePlaylistIdHash = new string('a', 64),
+                TargetProtocol = "subsonic",
+                TargetBackendInstanceId = "primary",
+                Mode = PlaylistLinkMode.Materialized,
                 MaterializationMode = PlaylistMaterializationMode.Reconcile,
-                RuleVersion = "rules-v1", PolicyVersion = "policy-v1", CreatedAt = now, UpdatedAt = now
+                RuleVersion = "rules-v1",
+                PolicyVersion = "policy-v1",
+                CreatedAt = now,
+                UpdatedAt = now
             });
             await seedSchedule.SaveChangesAsync();
         }
@@ -175,7 +200,9 @@ public sealed class PostgresStorageIntegrationTests
                 schema = source.Database.GetMigrations().Last();
                 source.Tenants.Add(new TenantRecord
                 {
-                    Id = Guid.CreateVersion7(), Slug = "portable-postgres", Name = "Portable PostgreSQL",
+                    Id = Guid.CreateVersion7(),
+                    Slug = "portable-postgres",
+                    Name = "Portable PostgreSQL",
                     CreatedAt = DateTimeOffset.UtcNow
                 });
                 await source.SaveChangesAsync();

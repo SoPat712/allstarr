@@ -69,7 +69,7 @@ public sealed class FavoriteDownloadActionExecutor(
             var workspace = await artifacts.CreateWorkspaceAsync(new ProviderDownloadWorkspaceRequest(
                 favoriteEvent.TenantId, favoriteEvent.OwnerUserId, favoriteEvent.JobId, candidate.Provider.Id,
                 candidate.Context.Account?.AccountId, action.IdempotencyKey)
-                { LibraryScopeId = favoriteEvent.LibraryScopeId }, cancellationToken);
+            { LibraryScopeId = favoriteEvent.LibraryScopeId }, cancellationToken);
             var track = candidate.TrackId ?? new ProviderExternalResourceId(
                 candidate.Provider.Id, ProviderResourceKind.Track, external.Value.Id);
             ProviderOutcome<ProviderDownloadedArtifact> outcome;

@@ -70,8 +70,14 @@ public sealed class ManagedFilesController(
 
     private static object SafeResponse(ManagedFileOwnershipEntity item) => new
     {
-        item.Id, item.RootId, item.OwnerUserId, item.LibraryScopeId, item.Length,
-        placementMethod = item.PlacementMethod.ToString(), item.ReferenceCount, item.CreatedAt,
+        item.Id,
+        item.RootId,
+        item.OwnerUserId,
+        item.LibraryScopeId,
+        item.Length,
+        placementMethod = item.PlacementMethod.ToString(),
+        item.ReferenceCount,
+        item.CreatedAt,
         fileName = Path.GetFileName(item.CanonicalPath)
     };
 }

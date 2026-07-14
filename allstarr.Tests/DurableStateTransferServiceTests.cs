@@ -164,260 +164,544 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         });
         context.Jobs.Add(new DurableJobRecord
         {
-            Id = playbackJobId, ScopeKey = $"user:{tenantId:N}:{userId:N}", TenantId = tenantId,
-            OwnerUserId = userId, LibraryScopeId = "music", PolicySnapshotJson = "{}",
-            RequestFingerprint = new string('e', 64), CorrelationId = "playback-transfer",
-            Type = "playback.signal", PayloadJson = "{}", IdempotencyKey = "playback-transfer-signal",
-            State = DurableJobState.Succeeded, Priority = 0, MaxAttempts = 3, MaxDeferrals = 3,
-            AvailableAt = now, StartedAt = now, CompletedAt = now, CreatedAt = now, UpdatedAt = now
+            Id = playbackJobId,
+            ScopeKey = $"user:{tenantId:N}:{userId:N}",
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            LibraryScopeId = "music",
+            PolicySnapshotJson = "{}",
+            RequestFingerprint = new string('e', 64),
+            CorrelationId = "playback-transfer",
+            Type = "playback.signal",
+            PayloadJson = "{}",
+            IdempotencyKey = "playback-transfer-signal",
+            State = DurableJobState.Succeeded,
+            Priority = 0,
+            MaxAttempts = 3,
+            MaxDeferrals = 3,
+            AvailableAt = now,
+            StartedAt = now,
+            CompletedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
         });
         await context.SaveChangesAsync();
         context.FavoriteEvents.Add(new FavoriteEventRecord
         {
-            Id = favoriteEventId, TenantId = tenantId, OwnerUserId = userId, Protocol = "jellyfin",
-            BackendInstanceId = "transfer-backend", BackendPrincipalId = "transfer-principal", LibraryScopeId = "music",
-            ItemId = "favorite-track-42", Operation = FavoriteOperation.Favorite, SourceRevision = "favorite-rev-1",
-            EventKey = new string('e', 64), CorrelationId = "phase6-transfer", PolicySnapshotJson = "{\"version\":1}",
-            JobId = jobId, State = FavoriteEventState.Succeeded, CreatedAt = now, UpdatedAt = now, CompletedAt = now
+            Id = favoriteEventId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            BackendPrincipalId = "transfer-principal",
+            LibraryScopeId = "music",
+            ItemId = "favorite-track-42",
+            Operation = FavoriteOperation.Favorite,
+            SourceRevision = "favorite-rev-1",
+            EventKey = new string('e', 64),
+            CorrelationId = "phase6-transfer",
+            PolicySnapshotJson = "{\"version\":1}",
+            JobId = jobId,
+            State = FavoriteEventState.Succeeded,
+            CreatedAt = now,
+            UpdatedAt = now,
+            CompletedAt = now
         });
         context.ManagedFiles.Add(new ManagedFileOwnershipEntity
         {
-            Id = managedFileId, RootId = Guid.CreateVersion7(), TargetRootPath = "/managed/music",
-            CanonicalPath = "/managed/music/Fixture/Transfer.flac", ContentSha256 = new string('a', 64), Length = 1234,
-            PlacementMethod = ManagedFilePlacementMethod.Copy, TenantId = tenantId, OwnerUserId = userId,
-            LibraryScopeId = "music", SourceJobId = jobId, ScopeKey = "user:transfer", ReferenceCount = 1,
-            IsManaged = true, CreatedAt = now
+            Id = managedFileId,
+            RootId = Guid.CreateVersion7(),
+            TargetRootPath = "/managed/music",
+            CanonicalPath = "/managed/music/Fixture/Transfer.flac",
+            ContentSha256 = new string('a', 64),
+            Length = 1234,
+            PlacementMethod = ManagedFilePlacementMethod.Copy,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            LibraryScopeId = "music",
+            SourceJobId = jobId,
+            ScopeKey = "user:transfer",
+            ReferenceCount = 1,
+            IsManaged = true,
+            CreatedAt = now
         });
         context.ProviderDownloadWorkspaces.Add(new ProviderDownloadWorkspaceEntity
         {
-            Id = downloadWorkspaceId, WorkspaceId = new string('c', 64), TenantId = tenantId,
-            OwnerUserId = userId, DurableJobId = jobId, ProviderId = "fixture", ProviderAccountId = accountId,
-            IdempotencyKey = "phase6-download-workspace", CreatedAt = now, CompletedAt = now, Revision = 1
+            Id = downloadWorkspaceId,
+            WorkspaceId = new string('c', 64),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            DurableJobId = jobId,
+            ProviderId = "fixture",
+            ProviderAccountId = accountId,
+            IdempotencyKey = "phase6-download-workspace",
+            CreatedAt = now,
+            CompletedAt = now,
+            Revision = 1
         });
         context.ProviderDownloadArtifacts.Add(new ProviderDownloadArtifactEntity
         {
-            Id = downloadArtifactId, WorkspaceRecordId = downloadWorkspaceId, WorkspaceId = new string('c', 64),
-            TenantId = tenantId, OwnerUserId = userId, DurableJobId = jobId, ProviderId = "fixture",
-            ProviderAccountId = accountId, ProviderArtifactId = "provider/output.flac",
-            RelativePath = "provider/output.flac", ContentSha256 = new string('d', 64), Length = 4321,
-            State = ProviderDownloadArtifactState.Placed, ManagedFileId = managedFileId,
-            CreatedAt = now, VerifiedAt = now, PlacedAt = now, Revision = 1
+            Id = downloadArtifactId,
+            WorkspaceRecordId = downloadWorkspaceId,
+            WorkspaceId = new string('c', 64),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            DurableJobId = jobId,
+            ProviderId = "fixture",
+            ProviderAccountId = accountId,
+            ProviderArtifactId = "provider/output.flac",
+            RelativePath = "provider/output.flac",
+            ContentSha256 = new string('d', 64),
+            Length = 4321,
+            State = ProviderDownloadArtifactState.Placed,
+            ManagedFileId = managedFileId,
+            CreatedAt = now,
+            VerifiedAt = now,
+            PlacedAt = now,
+            Revision = 1
         });
         await context.SaveChangesAsync();
         context.FavoriteActions.Add(new FavoriteActionRecord
         {
-            Id = Guid.CreateVersion7(), EventId = favoriteEventId, TenantId = tenantId, OwnerUserId = userId,
-            ActionType = "enrich", IdempotencyKey = "phase6-action-1", State = FavoriteActionState.Succeeded,
-            AttemptCount = 1, CreatedAt = now, UpdatedAt = now, CompletedAt = now
+            Id = Guid.CreateVersion7(),
+            EventId = favoriteEventId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ActionType = "enrich",
+            IdempotencyKey = "phase6-action-1",
+            State = FavoriteActionState.Succeeded,
+            AttemptCount = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+            CompletedAt = now
         });
         context.FavoriteStates.Add(new FavoriteStateRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId, Protocol = "jellyfin",
-            BackendInstanceId = "transfer-backend", ItemId = "favorite-track-42", IsFavorite = true,
-            LastEventId = favoriteEventId, UpdatedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            ItemId = "favorite-track-42",
+            IsFavorite = true,
+            LastEventId = favoriteEventId,
+            UpdatedAt = now
         });
         context.MetadataEnrichmentPlans.Add(new MetadataEnrichmentPlanRecord
         {
-            Id = enrichmentPlanId, TenantId = tenantId, OwnerUserId = userId, LineageJobId = jobId,
-            ManagedArtifactId = managedFileId, Fingerprint = new string('b', 64), PlanVersion = 1,
-            SourceRevisionsJson = "[\"musicbrainz:rev-1\"]", DecisionsJson = "[{\"field\":\"title\"}]",
-            TagsJson = "{\"title\":\"Transfer\"}", PathValuesJson = "{\"artist\":\"Fixture\"}", CreatedAt = now
+            Id = enrichmentPlanId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            LineageJobId = jobId,
+            ManagedArtifactId = managedFileId,
+            Fingerprint = new string('b', 64),
+            PlanVersion = 1,
+            SourceRevisionsJson = "[\"musicbrainz:rev-1\"]",
+            DecisionsJson = "[{\"field\":\"title\"}]",
+            TagsJson = "{\"title\":\"Transfer\"}",
+            PathValuesJson = "{\"artist\":\"Fixture\"}",
+            CreatedAt = now
         });
         await context.SaveChangesAsync();
         context.MetadataEnrichmentApplications.Add(new MetadataEnrichmentApplicationRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId, PlanId = enrichmentPlanId,
-            ManagedArtifactId = managedFileId, LineageJobId = jobId, ArtifactContentSha256 = new string('a', 64),
-            State = MetadataEnrichmentApplicationState.Applied, CreatedAt = now, UpdatedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            PlanId = enrichmentPlanId,
+            ManagedArtifactId = managedFileId,
+            LineageJobId = jobId,
+            ArtifactContentSha256 = new string('a', 64),
+            State = MetadataEnrichmentApplicationState.Applied,
+            CreatedAt = now,
+            UpdatedAt = now
         });
         await context.SaveChangesAsync();
         context.BackendIdentities.Add(new BackendIdentityRecord
         {
-            Id = backendIdentityId, TenantId = tenantId, UserId = userId, BackendType = "jellyfin",
-            BackendInstanceId = "transfer-backend", PrincipalId = "transfer-principal",
-            CreatedAt = now, LastSeenAt = now
+            Id = backendIdentityId,
+            TenantId = tenantId,
+            UserId = userId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            PrincipalId = "transfer-principal",
+            CreatedAt = now,
+            LastSeenAt = now
         });
         context.FavoriteActionPolicies.AddRange(
             new FavoriteActionPolicyRecord
             {
-                Id = Guid.CreateVersion7(), TenantId = tenantId, Scope = FavoriteActionPolicyScope.Global,
-                Protocol = "jellyfin", BackendInstanceId = "transfer-backend", LibraryScopeId = "music",
-                AddToVirtualLiked = true, MatchLocalLibrary = false, AutoDownload = false, EnrichMetadata = false,
-                PlaceManagedFile = false, RefreshBackendLibrary = true, UpdatedByUserId = userId,
-                CreatedAt = now, UpdatedAt = now, Revision = 1
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                Scope = FavoriteActionPolicyScope.Global,
+                Protocol = "jellyfin",
+                BackendInstanceId = "transfer-backend",
+                LibraryScopeId = "music",
+                AddToVirtualLiked = true,
+                MatchLocalLibrary = false,
+                AutoDownload = false,
+                EnrichMetadata = false,
+                PlaceManagedFile = false,
+                RefreshBackendLibrary = true,
+                UpdatedByUserId = userId,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1
             },
             new FavoriteActionPolicyRecord
             {
-                Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId, Scope = FavoriteActionPolicyScope.User,
-                Protocol = "jellyfin", BackendInstanceId = "transfer-backend", LibraryScopeId = "music",
-                AutoDownload = true, RefreshBackendLibrary = false, UpdatedByUserId = userId,
-                CreatedAt = now, UpdatedAt = now, Revision = 1
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                Scope = FavoriteActionPolicyScope.User,
+                Protocol = "jellyfin",
+                BackendInstanceId = "transfer-backend",
+                LibraryScopeId = "music",
+                AutoDownload = true,
+                RefreshBackendLibrary = false,
+                UpdatedByUserId = userId,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1
             });
         context.LibraryTracks.Add(new LibraryTrackRecord
         {
-            Id = libraryTrackId, TenantId = tenantId, OwnerUserId = userId,
-            BackendIdentityId = backendIdentityId, CanonicalRecordingId = canonicalRecordingId,
-            LibraryScopeId = "music", Protocol = "jellyfin", BackendInstanceId = "transfer-backend",
-            BackendItemId = "local-42", FilePath = "/media/Music/Transfer.flac", Title = "Transfer",
-            Artist = "Fixture", DurationMilliseconds = 123000, ProviderIdsJson = "{}",
-            IndexedAt = now, SourceModifiedAt = now, UpdatedAt = now
+            Id = libraryTrackId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            BackendIdentityId = backendIdentityId,
+            CanonicalRecordingId = canonicalRecordingId,
+            LibraryScopeId = "music",
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            BackendItemId = "local-42",
+            FilePath = "/media/Music/Transfer.flac",
+            Title = "Transfer",
+            Artist = "Fixture",
+            DurationMilliseconds = 123000,
+            ProviderIdsJson = "{}",
+            IndexedAt = now,
+            SourceModifiedAt = now,
+            UpdatedAt = now
         });
         context.Jobs.Add(new DurableJobRecord
         {
-            Id = intelligenceJobId, ScopeKey = $"user:{tenantId:N}:{userId:N}", TenantId = tenantId,
-            OwnerUserId = userId, LibraryScopeId = "music", PolicySnapshotJson = "{}",
-            RequestFingerprint = new string('c', 64), CorrelationId = "intelligence-transfer",
-            Type = "recommendation.generate", PayloadJson = $"{{\"RunId\":\"{recommendationRunId}\"}}",
-            IdempotencyKey = "intelligence-transfer-run", State = DurableJobState.Succeeded, Priority = 0,
-            MaxAttempts = 3, MaxDeferrals = 3, AvailableAt = now, StartedAt = now, CompletedAt = now,
-            CreatedAt = now, UpdatedAt = now
+            Id = intelligenceJobId,
+            ScopeKey = $"user:{tenantId:N}:{userId:N}",
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            LibraryScopeId = "music",
+            PolicySnapshotJson = "{}",
+            RequestFingerprint = new string('c', 64),
+            CorrelationId = "intelligence-transfer",
+            Type = "recommendation.generate",
+            PayloadJson = $"{{\"RunId\":\"{recommendationRunId}\"}}",
+            IdempotencyKey = "intelligence-transfer-run",
+            State = DurableJobState.Succeeded,
+            Priority = 0,
+            MaxAttempts = 3,
+            MaxDeferrals = 3,
+            AvailableAt = now,
+            StartedAt = now,
+            CompletedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
         });
         context.IntelligencePolicies.Add(new IntelligencePolicyRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId, Protocol = "jellyfin",
-            BackendInstanceId = "transfer-backend", LibraryScopeId = "music", Enabled = true, RetentionDays = 30,
-            AllowedSignalTypesJson = "[\"favorite\",\"play\"]", EnabledProvidersJson = "[\"local-rules\"]",
-            CreatedAt = now, UpdatedAt = now, Revision = 1
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            Enabled = true,
+            RetentionDays = 30,
+            AllowedSignalTypesJson = "[\"favorite\",\"play\"]",
+            EnabledProvidersJson = "[\"local-rules\"]",
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
         });
         context.ListeningSignals.Add(new ListeningSignalRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId, Protocol = "jellyfin",
-            BackendInstanceId = "transfer-backend", LibraryScopeId = "music", SignalType = "favorite",
-            TrackKeyHash = new string('d', 64), TrackReference = $"library:{libraryTrackId:N}", Value = 1,
-            SignalKey = new string('f', 64), SourceJobId = playbackJobId,
-            ObservedAt = now, ExpiresAt = now.AddDays(30)
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            SignalType = "favorite",
+            TrackKeyHash = new string('d', 64),
+            TrackReference = $"library:{libraryTrackId:N}",
+            Value = 1,
+            SignalKey = new string('f', 64),
+            SourceJobId = playbackJobId,
+            ObservedAt = now,
+            ExpiresAt = now.AddDays(30)
         });
         context.PlaybackDeliveryCheckpoints.Add(new PlaybackDeliveryCheckpointEntity
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId,
-            SignalKey = new string('f', 64), TargetId = "lastfm", CompletedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            SignalKey = new string('f', 64),
+            TargetId = "lastfm",
+            CompletedAt = now
         });
         var profile = new ListeningProfile(tenantId, userId, "transfer-backend", "music", 1, 0, 1,
-            new Dictionary<string, double>(), now, now) { TopTrackKeys = [$"library:{libraryTrackId:N}"] };
+            new Dictionary<string, double>(), now, now)
+        { TopTrackKeys = [$"library:{libraryTrackId:N}"] };
         context.ListeningProfiles.Add(new ListeningProfileRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId, Protocol = "jellyfin",
-            BackendInstanceId = "transfer-backend", LibraryScopeId = "music", ProfileJson = JsonSerializer.Serialize(profile),
-            WindowStart = now, WindowEnd = now, CreatedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            ProfileJson = JsonSerializer.Serialize(profile),
+            WindowStart = now,
+            WindowEnd = now,
+            CreatedAt = now
         });
         context.RecommendationRuns.Add(new RecommendationRunRecord
         {
-            Id = recommendationRunId, TenantId = tenantId, OwnerUserId = userId, Protocol = "jellyfin",
-            BackendInstanceId = "transfer-backend", LibraryScopeId = "music", JobId = intelligenceJobId,
-            IdempotencyKey = "intelligence-transfer-run", PolicySnapshotJson = JsonSerializer.Serialize(
-                new RecommendationPolicySnapshot(1, ["local-rules"], 30)), SeedTrackKeysJson = "[]", Limit = 10,
-            State = RecommendationRunState.Succeeded, CreatedAt = now, UpdatedAt = now, CompletedAt = now, Revision = 1
+            Id = recommendationRunId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            JobId = intelligenceJobId,
+            IdempotencyKey = "intelligence-transfer-run",
+            PolicySnapshotJson = JsonSerializer.Serialize(
+                new RecommendationPolicySnapshot(1, ["local-rules"], 30)),
+            SeedTrackKeysJson = "[]",
+            Limit = 10,
+            State = RecommendationRunState.Succeeded,
+            CreatedAt = now,
+            UpdatedAt = now,
+            CompletedAt = now,
+            Revision = 1
         });
         var identityJson = JsonSerializer.Serialize(new RecommendationTrackIdentity("local", LibraryTrackId: libraryTrackId, BackendItemId: "local-42"));
         var signalsJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("shared-artist", .8, "Shares an artist.") });
         context.RecommendationCandidates.Add(new RecommendationCandidateRecord
         {
-            Id = Guid.CreateVersion7(), RunId = recommendationRunId, TenantId = tenantId, OwnerUserId = userId,
-            Position = 0, TrackKey = "local-42", Score = .8, Source = "local-rules", SignalsJson = signalsJson,
-            IdentityJson = identityJson, CreatedAt = now
+            Id = Guid.CreateVersion7(),
+            RunId = recommendationRunId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Position = 0,
+            TrackKey = "local-42",
+            Score = .8,
+            Source = "local-rules",
+            SignalsJson = signalsJson,
+            IdentityJson = identityJson,
+            CreatedAt = now
         });
         context.GeneratedSets.Add(new GeneratedSetRecord
         {
-            Id = generatedSetId, RunId = recommendationRunId, TenantId = tenantId, OwnerUserId = userId,
-            Protocol = "jellyfin", BackendInstanceId = "transfer-backend", LibraryScopeId = "music",
-            Name = "Transfer mix", MaterializationState = GeneratedSetMaterializationState.Pending,
-            CreatedAt = now, UpdatedAt = now, Revision = 1
+            Id = generatedSetId,
+            RunId = recommendationRunId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            Name = "Transfer mix",
+            MaterializationState = GeneratedSetMaterializationState.Pending,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
         });
         context.GeneratedSetEntries.Add(new GeneratedSetEntryRecord
         {
-            Id = Guid.CreateVersion7(), GeneratedSetId = generatedSetId, TenantId = tenantId, OwnerUserId = userId,
-            Position = 0, TrackKey = "local-42", Score = .8, Source = "local-rules",
-            ExplanationJson = signalsJson, IdentityJson = identityJson
+            Id = Guid.CreateVersion7(),
+            GeneratedSetId = generatedSetId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Position = 0,
+            TrackKey = "local-42",
+            Score = .8,
+            Source = "local-rules",
+            ExplanationJson = signalsJson,
+            IdentityJson = identityJson
         });
         context.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
         {
-            Id = externalSnapshotId, TenantId = tenantId, OwnerUserId = userId,
-            ProviderAccountId = accountId, ProviderTrackIdentityId = providerIdentityId,
-            LibraryScopeId = "music", BackendInstanceId = "transfer-backend",
-            BackendPrincipalId = "transfer-principal", Protocol = "jellyfin", ProviderId = "fixture",
-            ResourceKind = "track", ExternalIdHash = stableHash, SnapshotVersion = 1,
-            ProviderRevision = "track-rev-1", PayloadJson = "{\"title\":\"Transfer\"}",
-            PayloadSha256 = stableHash, CorrelationId = "phase4-transfer", RetrievedAt = now
+            Id = externalSnapshotId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ProviderAccountId = accountId,
+            ProviderTrackIdentityId = providerIdentityId,
+            LibraryScopeId = "music",
+            BackendInstanceId = "transfer-backend",
+            BackendPrincipalId = "transfer-principal",
+            Protocol = "jellyfin",
+            ProviderId = "fixture",
+            ResourceKind = "track",
+            ExternalIdHash = stableHash,
+            SnapshotVersion = 1,
+            ProviderRevision = "track-rev-1",
+            PayloadJson = "{\"title\":\"Transfer\"}",
+            PayloadSha256 = stableHash,
+            CorrelationId = "phase4-transfer",
+            RetrievedAt = now
         });
         await context.SaveChangesAsync();
         context.TrackMatches.Add(new TrackMatchRecord
         {
-            Id = matchId, TenantId = tenantId, OwnerUserId = userId,
-            ExternalSnapshotId = externalSnapshotId, LibraryTrackId = libraryTrackId,
-            CanonicalRecordingId = canonicalRecordingId, LibraryScopeId = "music",
-            State = TrackMatchState.Accepted, Confidence = .99, Threshold = .85, DecisionVersion = 1,
-            PolicyVersion = "match-v1", CandidateResultsJson = "[]", ReasonsJson = "[\"exact-id\"]",
-            WarningsJson = "[]", CorrelationId = "phase4-transfer", DecidedAt = now
+            Id = matchId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ExternalSnapshotId = externalSnapshotId,
+            LibraryTrackId = libraryTrackId,
+            CanonicalRecordingId = canonicalRecordingId,
+            LibraryScopeId = "music",
+            State = TrackMatchState.Accepted,
+            Confidence = .99,
+            Threshold = .85,
+            DecisionVersion = 1,
+            PolicyVersion = "match-v1",
+            CandidateResultsJson = "[]",
+            ReasonsJson = "[\"exact-id\"]",
+            WarningsJson = "[]",
+            CorrelationId = "phase4-transfer",
+            DecidedAt = now
         });
         context.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = userId,
-            ExternalSnapshotId = externalSnapshotId, LibraryTrackId = libraryTrackId,
-            LibraryScopeId = "music", Decision = ManualOverrideDecision.Pin,
-            Reason = "transfer fixture", DecisionVersion = 1, CreatedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ExternalSnapshotId = externalSnapshotId,
+            LibraryTrackId = libraryTrackId,
+            LibraryScopeId = "music",
+            Decision = ManualOverrideDecision.Pin,
+            Reason = "transfer fixture",
+            DecisionVersion = 1,
+            CreatedAt = now
         });
         context.JobSchedules.Add(new JobScheduleRecord
         {
-            Id = scheduleId, TenantId = tenantId, OwnerUserId = userId, LibraryScopeId = "music",
-            JobType = "playlist-sync", CronExpression = "0 0 * * *", TimeZoneId = "UTC",
-            OverlapPolicy = ScheduleOverlapPolicy.Skip, MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
-            Enabled = true, NextRunAt = now.AddDays(1), CreatedAt = now, UpdatedAt = now
+            Id = scheduleId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            LibraryScopeId = "music",
+            JobType = "playlist-sync",
+            CronExpression = "0 0 * * *",
+            TimeZoneId = "UTC",
+            OverlapPolicy = ScheduleOverlapPolicy.Skip,
+            MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+            Enabled = true,
+            NextRunAt = now.AddDays(1),
+            CreatedAt = now,
+            UpdatedAt = now
         });
         await context.SaveChangesAsync();
         context.PlaylistLinks.Add(new PlaylistLinkRecord
         {
-            Id = playlistLinkId, TenantId = tenantId, OwnerUserId = userId, ProviderAccountId = accountId,
-            ScheduleId = scheduleId, LibraryScopeId = "music", SourceProviderId = "fixture",
-            SourcePlaylistId = "playlist-42", SourcePlaylistIdHash = stableHash,
-            TargetProtocol = "jellyfin", TargetBackendInstanceId = "transfer-backend",
-            Mode = PlaylistLinkMode.Materialized, MaterializationMode = PlaylistMaterializationMode.Reconcile,
-            RuleVersion = "rules-v1", PolicyVersion = "policy-v1", CreatedAt = now, UpdatedAt = now
+            Id = playlistLinkId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ProviderAccountId = accountId,
+            ScheduleId = scheduleId,
+            LibraryScopeId = "music",
+            SourceProviderId = "fixture",
+            SourcePlaylistId = "playlist-42",
+            SourcePlaylistIdHash = stableHash,
+            TargetProtocol = "jellyfin",
+            TargetBackendInstanceId = "transfer-backend",
+            Mode = PlaylistLinkMode.Materialized,
+            MaterializationMode = PlaylistMaterializationMode.Reconcile,
+            RuleVersion = "rules-v1",
+            PolicyVersion = "policy-v1",
+            CreatedAt = now,
+            UpdatedAt = now
         });
         await context.SaveChangesAsync();
         context.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
         {
-            Id = playlistSnapshotId, TenantId = tenantId, OwnerUserId = userId,
-            PlaylistLinkId = playlistLinkId, ProviderAccountId = accountId, SnapshotVersion = 1,
-            ProviderRevision = "playlist-rev-1", Name = "Transfer playlist",
-            ArtworkReferenceKey = "fixture:art:42", PayloadSha256 = stableHash,
-            CorrelationId = "phase4-transfer", RetrievedAt = now
+            Id = playlistSnapshotId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            PlaylistLinkId = playlistLinkId,
+            ProviderAccountId = accountId,
+            SnapshotVersion = 1,
+            ProviderRevision = "playlist-rev-1",
+            Name = "Transfer playlist",
+            ArtworkReferenceKey = "fixture:art:42",
+            PayloadSha256 = stableHash,
+            CorrelationId = "phase4-transfer",
+            RetrievedAt = now
         });
         await context.SaveChangesAsync();
         context.PlaylistSourceEntries.Add(new PlaylistSourceEntryRecord
         {
-            Id = sourceEntryId, TenantId = tenantId, PlaylistSourceSnapshotId = playlistSnapshotId,
-            ExternalMetadataSnapshotId = externalSnapshotId, SourcePosition = 0,
+            Id = sourceEntryId,
+            TenantId = tenantId,
+            PlaylistSourceSnapshotId = playlistSnapshotId,
+            ExternalMetadataSnapshotId = externalSnapshotId,
+            SourcePosition = 0,
             SourceEntryIdHash = stableHash
         });
         await context.SaveChangesAsync();
         context.PlaylistSyncRuns.Add(new PlaylistSyncRunRecord
         {
-            Id = syncRunId, TenantId = tenantId, OwnerUserId = userId,
-            PlaylistLinkId = playlistLinkId, PlaylistSourceSnapshotId = playlistSnapshotId,
-            ScheduleId = scheduleId, Generation = 1, IdempotencyKey = "phase4-transfer-run",
-            RuleVersion = "rules-v1", MaterializationMode = PlaylistMaterializationMode.Reconcile,
-            State = PlaylistSyncState.Succeeded, StartedAt = now, CompletedAt = now
+            Id = syncRunId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            PlaylistLinkId = playlistLinkId,
+            PlaylistSourceSnapshotId = playlistSnapshotId,
+            ScheduleId = scheduleId,
+            Generation = 1,
+            IdempotencyKey = "phase4-transfer-run",
+            RuleVersion = "rules-v1",
+            MaterializationMode = PlaylistMaterializationMode.Reconcile,
+            State = PlaylistSyncState.Succeeded,
+            StartedAt = now,
+            CompletedAt = now
         });
         await context.SaveChangesAsync();
         context.PlaylistSyncEntryResults.Add(new PlaylistSyncEntryResultRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, PlaylistSyncRunId = syncRunId,
-            PlaylistSourceEntryId = sourceEntryId, TrackMatchId = matchId,
-            LibraryTrackId = libraryTrackId, SourcePosition = 0, TargetPosition = 0,
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            PlaylistSyncRunId = syncRunId,
+            PlaylistSourceEntryId = sourceEntryId,
+            TrackMatchId = matchId,
+            LibraryTrackId = libraryTrackId,
+            SourcePosition = 0,
+            TargetPosition = 0,
             Outcome = PlaylistEntryOutcome.Reused
         });
         context.PlaylistTargetMemberships.Add(new PlaylistTargetMembershipRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, PlaylistLinkId = playlistLinkId,
-            LibraryTrackId = libraryTrackId, CreatedBySyncRunId = syncRunId,
-            TargetEntryId = "target-entry-42", LastKnownPosition = 0, Active = true,
-            CreatedAt = now, UpdatedAt = now
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            PlaylistLinkId = playlistLinkId,
+            LibraryTrackId = libraryTrackId,
+            CreatedBySyncRunId = syncRunId,
+            TargetEntryId = "target-entry-42",
+            LastKnownPosition = 0,
+            Active = true,
+            CreatedAt = now,
+            UpdatedAt = now
         });
         context.TenantRuntimeSettings.Add(new TenantRuntimeSettingRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, Key = "Cache:LyricsDays",
-            ValueType = RuntimeSettingValueType.Integer, ValueJson = "21", Source = "transfer-fixture",
-            UpdatedByUserId = userId, CreatedAt = now, UpdatedAt = now, Revision = 2
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            Key = "Cache:LyricsDays",
+            ValueType = RuntimeSettingValueType.Integer,
+            ValueJson = "21",
+            Source = "transfer-fixture",
+            UpdatedByUserId = userId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 2
         });
         var migrationAuditId = Guid.CreateVersion7();
         const string migrationSource = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -425,14 +709,23 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             true, false, 1, 0, 0, 0, 0, 0, [], migrationSource, now);
         context.AuditEvents.Add(new AuditEventRecord
         {
-            Id = migrationAuditId, TenantId = tenantId, ActorUserId = userId,
-            Category = "configuration-migration", Action = "legacy-env.apply", Outcome = "succeeded",
-            CorrelationId = "transfer-legacy-env", DetailsJson = "{}", CreatedAt = now
+            Id = migrationAuditId,
+            TenantId = tenantId,
+            ActorUserId = userId,
+            Category = "configuration-migration",
+            Action = "legacy-env.apply",
+            Outcome = "succeeded",
+            CorrelationId = "transfer-legacy-env",
+            DetailsJson = "{}",
+            CreatedAt = now
         });
         context.LegacyEnvImports.Add(new LegacyEnvImportRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, SourceSha256 = migrationSource,
-            ActorUserId = userId, AuditEventId = migrationAuditId,
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            SourceSha256 = migrationSource,
+            ActorUserId = userId,
+            AuditEventId = migrationAuditId,
             ResultJson = JsonSerializer.Serialize(migrationResult, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             AppliedAt = now
         });
@@ -741,10 +1034,19 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             foreignManagedFileId = Guid.CreateVersion7();
             source.ManagedFiles.Add(new ManagedFileOwnershipEntity
             {
-                Id = foreignManagedFileId, RootId = Guid.CreateVersion7(), TargetRootPath = "/managed/foreign",
-                CanonicalPath = "/managed/foreign/file.flac", ContentSha256 = new string('e', 64), Length = 1,
-                PlacementMethod = ManagedFilePlacementMethod.Copy, TenantId = second.TenantId, OwnerUserId = second.UserId,
-                ScopeKey = "foreign", ReferenceCount = 1, IsManaged = true, CreatedAt = DateTimeOffset.UtcNow
+                Id = foreignManagedFileId,
+                RootId = Guid.CreateVersion7(),
+                TargetRootPath = "/managed/foreign",
+                CanonicalPath = "/managed/foreign/file.flac",
+                ContentSha256 = new string('e', 64),
+                Length = 1,
+                PlacementMethod = ManagedFilePlacementMethod.Copy,
+                TenantId = second.TenantId,
+                OwnerUserId = second.UserId,
+                ScopeKey = "foreign",
+                ReferenceCount = 1,
+                IsManaged = true,
+                CreatedAt = DateTimeOffset.UtcNow
             });
             await source.SaveChangesAsync();
         }
@@ -1362,25 +1664,25 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Guid providerAccountId,
         string providerId,
         string externalId) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = tenantId,
-        CanonicalRecordingId = canonicalRecordingId,
-        ProviderAccountId = providerAccountId,
-        ProviderId = providerId,
-        ResourceKind = ProviderResourceKind.Track,
-        CatalogNamespace = "default",
-        Scope = ProviderIdentityScope.Account,
-        ExternalId = externalId,
-        ExternalIdHash = HashExternalId(externalId),
-        Verification = ProviderIdentityVerification.Verified,
-        VerificationMethod = "fixture",
-        DecisionVersion = 1,
-        VerifiedAt = DateTimeOffset.UtcNow,
-        CreatedAt = DateTimeOffset.UtcNow,
-        UpdatedAt = DateTimeOffset.UtcNow,
-        Revision = 1
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            CanonicalRecordingId = canonicalRecordingId,
+            ProviderAccountId = providerAccountId,
+            ProviderId = providerId,
+            ResourceKind = ProviderResourceKind.Track,
+            CatalogNamespace = "default",
+            Scope = ProviderIdentityScope.Account,
+            ExternalId = externalId,
+            ExternalIdHash = HashExternalId(externalId),
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "fixture",
+            DecisionVersion = 1,
+            VerifiedAt = DateTimeOffset.UtcNow,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            Revision = 1
+        };
 
     private static void MutateTrackIdentity(JsonObject identity, string mutation)
     {

@@ -33,7 +33,8 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
         ExtensionSandbox sandbox,
         ExtensionSdkManifest manifest,
         IProviderAccountSecretAccessor? secrets = null) :
-        base(sandbox, manifest, ProviderCapabilityKind.Metadata, secrets) { }
+        base(sandbox, manifest, ProviderCapabilityKind.Metadata, secrets)
+    { }
 
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Metadata;
 

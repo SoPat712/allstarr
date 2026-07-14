@@ -66,13 +66,17 @@ public sealed class FirstPartyExtensionPolicyTests : IDisposable
 
     private static ExtensionPackageRecord Package(string archive, string content) => new()
     {
-        ExtensionId = "deezer", Version = "1.0.0", Sha256 = archive, ContentSha256 = content
+        ExtensionId = "deezer",
+        Version = "1.0.0",
+        Sha256 = archive,
+        ContentSha256 = content
     };
 
     private static void WriteLock(string path, string activation, string archive, string content) =>
         File.WriteAllText(path, JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, sdkVersion = "1",
+            schemaVersion = 1,
+            sdkVersion = "1",
             packages = new[] { new { id = "deezer", version = "1.0.0", activation, archiveFile = "deezer-1.0.0.zip", archiveSha256 = archive, contentSha256 = content } }
         }));
 

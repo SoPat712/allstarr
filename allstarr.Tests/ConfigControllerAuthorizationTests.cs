@@ -60,7 +60,10 @@ public class ConfigControllerAuthorizationTests : IDisposable
         context.Database.Migrate();
         context.Tenants.Add(new TenantRecord
         {
-            Id = _tenantId, Slug = "config-test", Name = "Config test", CreatedAt = DateTimeOffset.UtcNow
+            Id = _tenantId,
+            Slug = "config-test",
+            Name = "Config test",
+            CreatedAt = DateTimeOffset.UtcNow
         });
         context.Users.Add(new PlatformUserRecord
         {
@@ -197,7 +200,9 @@ public class ConfigControllerAuthorizationTests : IDisposable
             new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "legacy.env")));
         AssertForbidden(await controller.ApplyEnvMigration(new ConfigController.ApplyLegacyEnvMigrationRequest
         {
-            PreviewToken = "token", Revision = "revision", Confirmed = true
+            PreviewToken = "token",
+            Revision = "revision",
+            Confirmed = true
         }));
     }
 
@@ -220,14 +225,18 @@ public class ConfigControllerAuthorizationTests : IDisposable
         var unconfirmed = Assert.IsType<BadRequestObjectResult>(await controller.ApplyEnvMigration(
             new ConfigController.ApplyLegacyEnvMigrationRequest
             {
-                PreviewToken = token, Revision = revision, Confirmed = false
+                PreviewToken = token,
+                Revision = revision,
+                Confirmed = false
             }));
         Assert.Equal(StatusCodes.Status400BadRequest, unconfirmed.StatusCode);
 
         var applied = Assert.IsType<OkObjectResult>(await controller.ApplyEnvMigration(
             new ConfigController.ApplyLegacyEnvMigrationRequest
             {
-                PreviewToken = token, Revision = revision, Confirmed = true
+                PreviewToken = token,
+                Revision = revision,
+                Confirmed = true
             }));
         Assert.Equal(StatusCodes.Status200OK, applied.StatusCode);
         await using var db = await _factory.CreateDbContextAsync();

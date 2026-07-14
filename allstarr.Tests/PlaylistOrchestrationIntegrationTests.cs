@@ -44,10 +44,29 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         _identity = Guid.CreateVersion7(); _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "orchestration", Name = "Orchestration", CreatedAt = _now });
         db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = _now, UpdatedAt = _now });
-        db.BackendIdentities.Add(new BackendIdentityRecord { Id = _identity, TenantId = _tenant, UserId = _user,
-            BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = _now, LastSeenAt = _now });
-        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _account, TenantId = _tenant, OwnerUserId = _user,
-            ProviderId = "fixture", DisplayName = "Fixture", Scope = ProviderAccountScope.User, Enabled = true, CreatedAt = _now, UpdatedAt = _now });
+        db.BackendIdentities.Add(new BackendIdentityRecord
+        {
+            Id = _identity,
+            TenantId = _tenant,
+            UserId = _user,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            PrincipalId = "principal",
+            CreatedAt = _now,
+            LastSeenAt = _now
+        });
+        db.ProviderAccounts.Add(new ProviderAccountRecord
+        {
+            Id = _account,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            ProviderId = "fixture",
+            DisplayName = "Fixture",
+            Scope = ProviderAccountScope.User,
+            Enabled = true,
+            CreatedAt = _now,
+            UpdatedAt = _now
+        });
         db.LibraryTracks.AddRange(Local(_trackOne, "local-1", "source-1", "One"), Local(_trackTwo, "local-2", "source-2", "Two"));
         db.PlaylistLinks.Add(Link());
         await db.SaveChangesAsync();
@@ -199,29 +218,62 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
 
     private PlaylistLinkRecord Link() => new()
     {
-        Id = _link, TenantId = _tenant, OwnerUserId = _user, ProviderAccountId = _account,
-        LibraryScopeId = "music", SourceProviderId = "fixture", SourcePlaylistId = "playlist",
-        SourcePlaylistIdHash = Hash("playlist"), TargetProtocol = "jellyfin", TargetBackendInstanceId = "backend",
-        TargetCredentialReferenceId = _credential, Mode = PlaylistLinkMode.Materialized,
-        MaterializationMode = PlaylistMaterializationMode.Reconcile, PreserveManualEntries = true,
-        SyncName = true, SyncDescription = true, SyncArtwork = true, RuleVersion = "rules-v1", PolicyVersion = "policy-v1",
-        CreatedAt = _now, UpdatedAt = _now
+        Id = _link,
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        ProviderAccountId = _account,
+        LibraryScopeId = "music",
+        SourceProviderId = "fixture",
+        SourcePlaylistId = "playlist",
+        SourcePlaylistIdHash = Hash("playlist"),
+        TargetProtocol = "jellyfin",
+        TargetBackendInstanceId = "backend",
+        TargetCredentialReferenceId = _credential,
+        Mode = PlaylistLinkMode.Materialized,
+        MaterializationMode = PlaylistMaterializationMode.Reconcile,
+        PreserveManualEntries = true,
+        SyncName = true,
+        SyncDescription = true,
+        SyncArtwork = true,
+        RuleVersion = "rules-v1",
+        PolicyVersion = "policy-v1",
+        CreatedAt = _now,
+        UpdatedAt = _now
     };
 
     private LibraryTrackRecord Local(Guid id, string backendItem, string sourceId, string title) => new()
     {
-        Id = id, TenantId = _tenant, OwnerUserId = _user, BackendIdentityId = _identity,
-        LibraryScopeId = "music", Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = backendItem,
-        FilePath = $"/music/{backendItem}.flac", Title = title, Artist = "Artist", Album = "Album",
-        DurationMilliseconds = 180000, ProviderIdsJson = $"{{\"fixture\":\"{Hash(sourceId)}\"}}",
-        IndexedAt = _now, SourceModifiedAt = _now, UpdatedAt = _now
+        Id = id,
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        BackendIdentityId = _identity,
+        LibraryScopeId = "music",
+        Protocol = "jellyfin",
+        BackendInstanceId = "backend",
+        BackendItemId = backendItem,
+        FilePath = $"/music/{backendItem}.flac",
+        Title = title,
+        Artist = "Artist",
+        Album = "Album",
+        DurationMilliseconds = 180000,
+        ProviderIdsJson = $"{{\"fixture\":\"{Hash(sourceId)}\"}}",
+        IndexedAt = _now,
+        SourceModifiedAt = _now,
+        UpdatedAt = _now
     };
 
     private ManualTrackOverrideRecord Override(Guid external, ManualOverrideDecision decision, Guid? track) => new()
     {
-        Id = Guid.CreateVersion7(), TenantId = _tenant, OwnerUserId = _user, ExternalSnapshotId = external,
-        LibraryTrackId = track, LibraryScopeId = "music", Decision = decision, Reason = "reviewed",
-        DecisionVersion = 1, CreatedAt = _now
+        Id = Guid.CreateVersion7(),
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        ExternalSnapshotId = external,
+        LibraryTrackId = track,
+        LibraryScopeId = "music",
+        Decision = decision,
+        Reason = "reviewed",
+        DecisionVersion = 1,
+        CreatedAt = _now
     };
 
     private async Task SetLink(PlaylistLinkMode? mode = null, PlaylistMaterializationMode? materialization = null)

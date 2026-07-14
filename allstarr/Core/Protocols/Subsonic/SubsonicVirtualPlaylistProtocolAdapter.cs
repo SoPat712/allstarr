@@ -23,12 +23,16 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(IPlaylistVirtualizati
             {
                 ["subsonic-response"] = new Dictionary<string, object?>
                 {
-                    ["status"] = "ok", ["version"] = Version,
+                    ["status"] = "ok",
+                    ["version"] = Version,
                     ["playlist"] = new Dictionary<string, object?>
                     {
-                        ["id"] = playlist.ProtocolId, ["name"] = playlist.Name,
-                        ["comment"] = playlist.Description, ["owner"] = "allstarr",
-                        ["public"] = false, ["songCount"] = playlist.Tracks.Count,
+                        ["id"] = playlist.ProtocolId,
+                        ["name"] = playlist.Name,
+                        ["comment"] = playlist.Description,
+                        ["owner"] = "allstarr",
+                        ["public"] = false,
+                        ["songCount"] = playlist.Tracks.Count,
                         ["duration"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) / 1000,
                         ["coverArt"] = playlist.ArtworkReferenceKey,
                         ["entry"] = playlist.Tracks.Select(ToJsonEntry).ToList()
@@ -54,10 +58,16 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(IPlaylistVirtualizati
 
     private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track) => new()
     {
-        ["id"] = track.BackendItemId, ["title"] = track.Title, ["artist"] = track.Artist,
-        ["album"] = track.Album, ["albumArtist"] = track.AlbumArtist,
-        ["duration"] = track.DurationMilliseconds / 1000, ["track"] = track.SourcePosition + 1,
-        ["isDir"] = false, ["type"] = "music", ["coverArt"] = track.CoverArtReference
+        ["id"] = track.BackendItemId,
+        ["title"] = track.Title,
+        ["artist"] = track.Artist,
+        ["album"] = track.Album,
+        ["albumArtist"] = track.AlbumArtist,
+        ["duration"] = track.DurationMilliseconds / 1000,
+        ["track"] = track.SourcePosition + 1,
+        ["isDir"] = false,
+        ["type"] = "music",
+        ["coverArt"] = track.CoverArtReference
     };
 
     private static IEnumerable<XAttribute> ToXmlAttributes(VirtualPlaylistTrack track)

@@ -39,8 +39,12 @@ public sealed class FavoriteMatchActionExecutor(IDbContextFactory<AllstarrDbCont
             : candidates.FirstOrDefault(item => ProviderIdMatches(item.ProviderIdsJson, external.Value.Provider, external.Value.Id));
         db.AuditEvents.Add(new AuditEventRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = favoriteEvent.TenantId, ActorUserId = favoriteEvent.OwnerUserId,
-            Category = "favorite-action", Action = "match", Outcome = match == null ? "unmatched" : "matched",
+            Id = Guid.CreateVersion7(),
+            TenantId = favoriteEvent.TenantId,
+            ActorUserId = favoriteEvent.OwnerUserId,
+            Category = "favorite-action",
+            Action = "match",
+            Outcome = match == null ? "unmatched" : "matched",
             CorrelationId = favoriteEvent.CorrelationId,
             DetailsJson = JsonSerializer.Serialize(new
             {

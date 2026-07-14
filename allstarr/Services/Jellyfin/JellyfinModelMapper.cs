@@ -39,7 +39,7 @@ public class JellyfinModelMapper
         try
         {
             JsonElement items;
-            
+
             // Handle both direct array and Items property
             if (response.RootElement.TryGetProperty("Items", out items))
             {
@@ -56,8 +56,8 @@ public class JellyfinModelMapper
 
             foreach (var item in items.EnumerateArray())
             {
-                var type = item.TryGetProperty("Type", out var typeEl) 
-                    ? typeEl.GetString() 
+                var type = item.TryGetProperty("Type", out var typeEl)
+                    ? typeEl.GetString()
                     : null;
 
                 switch (type)
@@ -106,8 +106,8 @@ public class JellyfinModelMapper
 
             foreach (var hint in hints.EnumerateArray())
             {
-                var type = hint.TryGetProperty("Type", out var typeEl) 
-                    ? typeEl.GetString() 
+                var type = hint.TryGetProperty("Type", out var typeEl)
+                    ? typeEl.GetString()
                     : null;
 
                 switch (type)
@@ -140,7 +140,7 @@ public class JellyfinModelMapper
     {
         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
         var runTimeTicks = item.TryGetProperty("RunTimeTicks", out var rtt) ? rtt.GetInt64() : 0;
-        
+
         var song = new Song
         {
             Id = id,
@@ -209,7 +209,7 @@ public class JellyfinModelMapper
     {
         var id = hint.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
         var runTimeTicks = hint.TryGetProperty("RunTimeTicks", out var rtt) ? rtt.GetInt64() : 0;
-        
+
         return new Song
         {
             Id = id,
@@ -228,7 +228,7 @@ public class JellyfinModelMapper
     public Album ParseAlbum(JsonElement item)
     {
         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
-        
+
         var album = new Album
         {
             Id = id,
@@ -262,7 +262,7 @@ public class JellyfinModelMapper
     private Album ParseAlbumFromHint(JsonElement hint)
     {
         var id = hint.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
-        
+
         return new Album
         {
             Id = id,
@@ -280,7 +280,7 @@ public class JellyfinModelMapper
     public Artist ParseArtist(JsonElement item)
     {
         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
-        
+
         return new Artist
         {
             Id = id,
@@ -297,7 +297,7 @@ public class JellyfinModelMapper
     private Artist ParseArtistFromHint(JsonElement hint)
     {
         var id = hint.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
-        
+
         return new Artist
         {
             Id = id,
@@ -310,8 +310,8 @@ public class JellyfinModelMapper
     /// <summary>
     /// Merges local Jellyfin results with external search results.
     /// </summary>
-    public (List<Dictionary<string, object?>> MergedSongs, 
-            List<Dictionary<string, object?>> MergedAlbums, 
+    public (List<Dictionary<string, object?>> MergedSongs,
+            List<Dictionary<string, object?>> MergedAlbums,
             List<Dictionary<string, object?>> MergedArtists) MergeSearchResults(
         List<Song> localSongs,
         List<Album> localAlbums,
@@ -324,23 +324,23 @@ public class JellyfinModelMapper
             .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
             .Concat(externalResult.Songs.Select(s => _responseBuilder.ConvertSongToJellyfinItem(s)))
             .ToList();
-        
+
         // Merge albums with playlists
         var mergedAlbums = localAlbums
             .Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a))
             .Concat(externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a)))
             .Concat(externalPlaylists.Select(p => _responseBuilder.ConvertPlaylistToAlbumItem(p)))
             .ToList();
-        
+
         // Deduplicate artists by name - prefer local artists
         var localArtistNames = new HashSet<string>(
-            localArtists.Select(a => a.Name), 
+            localArtists.Select(a => a.Name),
             StringComparer.OrdinalIgnoreCase);
-        
+
         var mergedArtists = localArtists
             .Select(a => _responseBuilder.ConvertArtistToJellyfinItem(a))
             .ToList();
-        
+
         foreach (var externalArtist in externalResult.Artists)
         {
             if (!localArtistNames.Contains(externalArtist.Name))

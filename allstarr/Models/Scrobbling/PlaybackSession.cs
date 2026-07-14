@@ -11,42 +11,42 @@ public class PlaybackSession
     /// Unique identifier for this playback session.
     /// </summary>
     public required string SessionId { get; init; }
-    
+
     /// <summary>
     /// Device ID of the client.
     /// </summary>
     public required string DeviceId { get; init; }
-    
+
     /// <summary>
     /// Track being played.
     /// </summary>
     public required ScrobbleTrack Track { get; init; }
-    
+
     /// <summary>
     /// When playback started (UTC).
     /// </summary>
     public DateTime StartTime { get; init; }
-    
+
     /// <summary>
     /// Last reported playback position in seconds.
     /// </summary>
     public int LastPositionSeconds { get; set; }
-    
+
     /// <summary>
     /// Whether "Now Playing" has been sent for this session.
     /// </summary>
     public bool NowPlayingSent { get; set; }
-    
+
     /// <summary>
     /// Whether the track has been scrobbled.
     /// </summary>
     public bool Scrobbled { get; set; }
-    
+
     /// <summary>
     /// Last activity timestamp (for cleanup).
     /// </summary>
     public DateTime LastActivity { get; set; }
-    
+
     /// <summary>
     /// Checks if the track should be scrobbled based on Last.fm rules:
     /// - Track must be longer than 30 seconds

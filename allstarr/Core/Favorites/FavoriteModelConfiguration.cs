@@ -75,7 +75,11 @@ public static class FavoriteModelConfiguration
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new
             {
-                item.TenantId, item.OwnerUserId, item.Protocol, item.BackendInstanceId, item.ItemId
+                item.TenantId,
+                item.OwnerUserId,
+                item.Protocol,
+                item.BackendInstanceId,
+                item.ItemId
             }).IsUnique().HasDatabaseName("IX_favorite_state_owner_target");
             entity.HasIndex(item => new { item.LastEventId, item.TenantId, item.OwnerUserId })
                 .HasDatabaseName("IX_favorite_state_event");

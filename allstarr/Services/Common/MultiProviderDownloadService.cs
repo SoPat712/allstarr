@@ -28,7 +28,7 @@ public class MultiProviderDownloadService : IDownloadService
             try
             {
                 _logger.LogInformation("Attempting download using target provider: {TargetProvider}", targetProvider);
-                
+
                 string targetId = externalId;
                 if (!externalProvider.Equals(targetProvider, StringComparison.OrdinalIgnoreCase))
                 {
@@ -80,7 +80,7 @@ public class MultiProviderDownloadService : IDownloadService
             try
             {
                 _logger.LogInformation("Attempting streaming using target provider: {TargetProvider}", targetProvider);
-                
+
                 string targetId = externalId;
                 if (!externalProvider.Equals(targetProvider, StringComparison.OrdinalIgnoreCase))
                 {
@@ -260,10 +260,10 @@ public class MultiProviderDownloadService : IDownloadService
         {
             var query = $"{sourceSong.Title} {sourceSong.Artist}";
             var results = await targetMetadataServiceForSearch.SearchSongsAsync(query, 5, cancellationToken);
-            var match = results.FirstOrDefault(r => 
-                r.Title.Contains(sourceSong.Title, StringComparison.OrdinalIgnoreCase) || 
+            var match = results.FirstOrDefault(r =>
+                r.Title.Contains(sourceSong.Title, StringComparison.OrdinalIgnoreCase) ||
                 sourceSong.Title.Contains(r.Title, StringComparison.OrdinalIgnoreCase));
-            
+
             if (match != null && !string.IsNullOrEmpty(match.ExternalId))
             {
                 _logger.LogInformation("Translated track using text search mapping: {SourceProvider}:{SourceId} -> {TargetProvider}:{TargetId}", sourceProvider, sourceId, targetProvider, match.ExternalId);

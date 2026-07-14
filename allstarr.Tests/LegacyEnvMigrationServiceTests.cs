@@ -334,9 +334,13 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
             duplicate.AuditEvents.Add(MigrationAudit(auditId, _tenantId, _userId));
             duplicate.LegacyEnvImports.Add(new LegacyEnvImportRecord
             {
-                Id = Guid.CreateVersion7(), TenantId = _tenantId, ActorUserId = _userId,
-                SourceSha256 = result.SourceFingerprint, AuditEventId = auditId,
-                ResultJson = JsonSerializer.Serialize(result), AppliedAt = DateTimeOffset.UtcNow
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenantId,
+                ActorUserId = _userId,
+                SourceSha256 = result.SourceFingerprint,
+                AuditEventId = auditId,
+                ResultJson = JsonSerializer.Serialize(result),
+                AppliedAt = DateTimeOffset.UtcNow
             });
             await Assert.ThrowsAsync<DbUpdateException>(() => duplicate.SaveChangesAsync());
         }
@@ -347,13 +351,18 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         {
             seed.Tenants.Add(new TenantRecord
             {
-                Id = otherTenantId, Slug = "other-migration", Name = "Other migration",
+                Id = otherTenantId,
+                Slug = "other-migration",
+                Name = "Other migration",
                 CreatedAt = DateTimeOffset.UtcNow
             });
             seed.Users.Add(new PlatformUserRecord
             {
-                Id = otherUserId, TenantId = otherTenantId, DisplayName = "Other admin",
-                Status = PlatformUserStatus.Active, CreatedAt = DateTimeOffset.UtcNow,
+                Id = otherUserId,
+                TenantId = otherTenantId,
+                DisplayName = "Other admin",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
             await seed.SaveChangesAsync();
@@ -364,9 +373,13 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         crossed.AuditEvents.Add(MigrationAudit(crossedAuditId, _tenantId, otherUserId));
         crossed.LegacyEnvImports.Add(new LegacyEnvImportRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = _tenantId, ActorUserId = otherUserId,
-            SourceSha256 = new string('b', 64), AuditEventId = crossedAuditId,
-            ResultJson = JsonSerializer.Serialize(result), AppliedAt = DateTimeOffset.UtcNow
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            ActorUserId = otherUserId,
+            SourceSha256 = new string('b', 64),
+            AuditEventId = crossedAuditId,
+            ResultJson = JsonSerializer.Serialize(result),
+            AppliedAt = DateTimeOffset.UtcNow
         });
         await Assert.ThrowsAsync<DbUpdateException>(() => crossed.SaveChangesAsync());
     }
@@ -408,9 +421,15 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
 
     private static AuditEventRecord MigrationAudit(Guid id, Guid tenantId, Guid actorUserId) => new()
     {
-        Id = id, TenantId = tenantId, ActorUserId = actorUserId,
-        Category = "configuration-migration", Action = "legacy-env.apply", Outcome = "succeeded",
-        CorrelationId = $"migration-{id:N}", DetailsJson = "{}", CreatedAt = DateTimeOffset.UtcNow
+        Id = id,
+        TenantId = tenantId,
+        ActorUserId = actorUserId,
+        Category = "configuration-migration",
+        Action = "legacy-env.apply",
+        Outcome = "succeeded",
+        CorrelationId = $"migration-{id:N}",
+        DetailsJson = "{}",
+        CreatedAt = DateTimeOffset.UtcNow
     };
 
     private static byte[] Source(string value) => Encoding.UTF8.GetBytes(value);

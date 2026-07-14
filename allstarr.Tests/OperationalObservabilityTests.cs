@@ -222,10 +222,10 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
         var logger = provider.CreateLogger("allstarr.fixture");
 
         using (logger.BeginScope(new Dictionary<string, object>
-               {
-                   ["CorrelationId"] = "fixture-correlation-123",
-                   ["ConnectionString"] = "Host=database;Password=scoped-secret"
-               }))
+        {
+            ["CorrelationId"] = "fixture-correlation-123",
+            ["ConnectionString"] = "Host=database;Password=scoped-secret"
+        }))
         {
             logger.LogInformation("Scoped operation completed");
         }

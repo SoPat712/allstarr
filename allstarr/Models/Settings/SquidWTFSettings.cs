@@ -13,8 +13,8 @@ public class SquidWTFSettings
     /// - LOW: 96kbps AAC (low quality, smallest files)
     /// If not specified or unavailable, LOSSLESS will be used.
     /// </summary>
-    public string? Quality { get; set; }	
-    
+    public string? Quality { get; set; }
+
     /// <summary>
     /// Minimum interval between requests in milliseconds.
     /// Default: 200ms

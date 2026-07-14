@@ -900,7 +900,7 @@ public class PlaylistController : ControllerBase
                     }
                 }
 
-                AddTrack:
+            AddTrack:
                 if (isLocal == false)
                 {
                     externalProvider = NormalizeExternalProviderForDisplay(externalProvider);
@@ -1080,7 +1080,8 @@ public class PlaylistController : ControllerBase
             // Then invalidate playlist summary cache (will rebuild with fresh stats)
             _helperService.InvalidatePlaylistSummaryCache();
 
-            return Ok(new {
+            return Ok(new
+            {
                 message = $"Refreshed {decodedName} from Spotify (no re-matching)",
                 timestamp = DateTime.UtcNow
             });
@@ -1135,7 +1136,8 @@ public class PlaylistController : ControllerBase
             await _cache.DeleteAsync(statsCacheKey);
             _logger.LogDebug("Cleared stats cache for {Name}", decodedName);
 
-            return Ok(new {
+            return Ok(new
+            {
                 message = $"Re-matching tracks for {decodedName} (checking local changes)",
                 timestamp = DateTime.UtcNow
             });

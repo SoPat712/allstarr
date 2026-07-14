@@ -692,7 +692,7 @@ public class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
         if (album.TryGetProperty("release_date_original", out var releaseDate))
         {
             var dateStr = releaseDate.GetString();
-                year = ParseYearFromDateString(dateStr);
+            year = ParseYearFromDateString(dateStr);
         }
 
         return new Album

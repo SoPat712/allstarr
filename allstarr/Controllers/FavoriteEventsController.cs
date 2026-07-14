@@ -32,9 +32,17 @@ public sealed class FavoriteEventsController(
         var events = await query.OrderByDescending(item => item.CreatedAt).Take(limit)
             .Select(item => new
             {
-                item.Id, item.JobId, operation = item.Operation.ToString(), state = item.State.ToString(),
-                item.Protocol, item.BackendInstanceId, item.ItemId, item.CreatedAt, item.CompletedAt,
-                item.LastErrorCode, item.LastErrorMessage
+                item.Id,
+                item.JobId,
+                operation = item.Operation.ToString(),
+                state = item.State.ToString(),
+                item.Protocol,
+                item.BackendInstanceId,
+                item.ItemId,
+                item.CreatedAt,
+                item.CompletedAt,
+                item.LastErrorCode,
+                item.LastErrorMessage
             }).ToListAsync(cancellationToken);
         return Ok(new { events });
     }

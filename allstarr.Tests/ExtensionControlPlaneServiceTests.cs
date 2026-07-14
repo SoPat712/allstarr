@@ -159,7 +159,8 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var lockPath = Path.Combine(bundle, "bundle.lock.json");
         File.WriteAllText(lockPath, JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, sdkVersion = "1",
+            schemaVersion = 1,
+            sdkVersion = "1",
             packages = new[] { new
             {
                 id = "deezer", version = "1.0.0", activation = "ready",
@@ -200,7 +201,8 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var lockPath = Path.Combine(_root, "runtime-bundle.lock.json");
         File.WriteAllText(lockPath, JsonSerializer.Serialize(new
         {
-            schemaVersion = 1, sdkVersion = "1",
+            schemaVersion = 1,
+            sdkVersion = "1",
             packages = new[] { new
             {
                 id = package.ExtensionId, version = package.Version, activation = "ready",
@@ -241,8 +243,11 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             [new(ExtensionPermissionKind.Network, "https://api.example.test/", true), new(ExtensionPermissionKind.Secret, "accountToken", true)]);
         File.WriteAllText(Path.Combine(packageRoot, "manifest.json"), JsonSerializer.Serialize(new
         {
-            id = manifest.Id, displayName = manifest.DisplayName, version = manifest.Version,
-            sdkVersion = manifest.SdkVersion, entryPoint = manifest.EntryPoint,
+            id = manifest.Id,
+            displayName = manifest.DisplayName,
+            version = manifest.Version,
+            sdkVersion = manifest.SdkVersion,
+            entryPoint = manifest.EntryPoint,
             capabilities = new[] { new { kind = "metadata", hooks = new[] { "searchTracks", "getTrack" }, accountScopes = new[] { "user" } } },
             permissions = new[] { new { kind = "network", value = "https://api.example.test/", required = true }, new { kind = "secret", value = "accountToken", required = true } }
         }));

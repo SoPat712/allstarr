@@ -45,8 +45,12 @@ public sealed class PlaylistLinksControllerContractTests
 
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            SessionId = "session", UserId = "backend-user", UserName = "User", IsAdministrator = false,
-            JellyfinAccessToken = "not-used-by-playlist-api", ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+            SessionId = "session",
+            UserId = "backend-user",
+            UserName = "User",
+            IsAdministrator = false,
+            JellyfinAccessToken = "not-used-by-playlist-api",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
             LastSeenUtc = DateTime.UtcNow
         };
         var forbidden = Assert.IsType<ObjectResult>(await controller.List("music", CancellationToken.None));
@@ -71,7 +75,9 @@ public sealed class PlaylistLinksControllerContractTests
     {
         var request = new BackendCredentialRequest
         {
-            TargetProtocol = "subsonic", Username = "listener", Password = "do-not-echo"
+            TargetProtocol = "subsonic",
+            Username = "listener",
+            Password = "do-not-echo"
         };
         Assert.DoesNotContain("do-not-echo", request.ToString(), StringComparison.Ordinal);
         var result = await Controller().CreateBackendCredential(request, CancellationToken.None);

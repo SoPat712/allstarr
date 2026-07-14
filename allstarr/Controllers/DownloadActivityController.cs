@@ -69,7 +69,7 @@ public class DownloadActivityController : ControllerBase
 
         // Use the request aborted token or the provided cancellation token.
         var requestAborted = HttpContext.RequestAborted;
-        
+
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, requestAborted);
         var token = linkedCts.Token;
 

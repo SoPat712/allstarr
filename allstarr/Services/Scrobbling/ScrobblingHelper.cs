@@ -13,7 +13,7 @@ public class ScrobblingHelper
     private readonly JellyfinProxyService _proxyService;
     private readonly ILocalLibraryService _localLibraryService;
     private readonly ILogger<ScrobblingHelper> _logger;
-    
+
     public ScrobblingHelper(
         JellyfinProxyService proxyService,
         ILocalLibraryService localLibraryService,
@@ -23,13 +23,13 @@ public class ScrobblingHelper
         _localLibraryService = localLibraryService;
         _logger = logger;
     }
-    
+
     /// <summary>
     /// Extracts scrobble track information from a Jellyfin item.
     /// Fetches item details from Jellyfin if needed.
     /// </summary>
     public async Task<ScrobbleTrack?> GetScrobbleTrackFromItemIdAsync(
-        string itemId, 
+        string itemId,
         Microsoft.AspNetCore.Http.IHeaderDictionary headers,
         CancellationToken cancellationToken = default)
     {
@@ -37,14 +37,14 @@ public class ScrobblingHelper
         {
             // Fetch item details from Jellyfin
             var (itemResult, statusCode) = await _proxyService.GetJsonAsync($"Items/{itemId}", null, headers);
-            
+
             if (itemResult == null || statusCode != 200)
             {
-                _logger.LogWarning("Failed to fetch item details for scrobbling: {ItemId} (status: {StatusCode})", 
+                _logger.LogWarning("Failed to fetch item details for scrobbling: {ItemId} (status: {StatusCode})",
                     itemId, statusCode);
                 return null;
             }
-            
+
             return ExtractScrobbleTrackFromJson(itemResult);
         }
         catch (Exception ex)
@@ -53,7 +53,7 @@ public class ScrobblingHelper
             return null;
         }
     }
-    
+
     /// <summary>
     /// Extracts scrobble track information from a Jellyfin JSON item.
     /// </summary>
@@ -62,23 +62,23 @@ public class ScrobblingHelper
         try
         {
             var item = itemJson.RootElement;
-            
+
             // Extract required fields
             var title = item.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
             var artist = ExtractArtist(item);
-            
+
             if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(artist))
             {
                 _logger.LogDebug("Cannot create scrobble track - missing title or artist");
                 return null;
             }
-            
+
             // Extract optional fields
             var album = item.TryGetProperty("Album", out var albumProp) ? albumProp.GetString() : null;
             var albumArtist = ExtractAlbumArtist(item);
             var durationSeconds = ExtractDurationSeconds(item);
             var musicBrainzId = ExtractMusicBrainzId(item);
-            
+
             // Determine if track is external by checking the Path
             var isExternal = false;
             if (item.TryGetProperty("Path", out var pathProp))
@@ -91,7 +91,7 @@ public class ScrobblingHelper
                     isExternal = path.StartsWith("ext-") || path.Contains("/kept/") || path.Contains("\\kept\\");
                 }
             }
-            
+
             return new ScrobbleTrack
             {
                 Title = title,
@@ -111,7 +111,7 @@ public class ScrobblingHelper
             return null;
         }
     }
-    
+
     /// <summary>
     /// Creates a scrobble track from external track metadata.
     /// </summary>
@@ -127,7 +127,7 @@ public class ScrobblingHelper
         {
             return null;
         }
-        
+
         return new ScrobbleTrack
         {
             Title = title,
@@ -140,9 +140,9 @@ public class ScrobblingHelper
             StartPositionSeconds = startPositionSeconds
         };
     }
-    
+
     #region Private Helper Methods
-    
+
     /// <summary>
     /// Checks if a track is long enough to be scrobbled according to Last.fm rules.
     /// Tracks must be at least 30 seconds long.
@@ -151,7 +151,7 @@ public class ScrobblingHelper
     {
         return durationSeconds >= 30;
     }
-    
+
     /// <summary>
     /// Checks if enough of the track has been listened to for scrobbling.
     /// Last.fm rules: Must listen to at least 50% of track OR 4 minutes (whichever comes first).
@@ -163,7 +163,7 @@ public class ScrobblingHelper
         var threshold = Math.Min(halfDuration, fourMinutes);
         return playedSeconds >= threshold;
     }
-    
+
     /// <summary>
     /// Checks if a track has the minimum required metadata for scrobbling.
     /// Requires at minimum: track title and artist name.
@@ -172,7 +172,7 @@ public class ScrobblingHelper
     {
         return !string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(artist);
     }
-    
+
     /// <summary>
     /// Formats a track for display in logs.
     /// </summary>
@@ -180,7 +180,7 @@ public class ScrobblingHelper
     {
         return $"{title} - {artist}";
     }
-    
+
     /// <summary>
     /// Extracts artist name from Jellyfin item.
     /// Tries Artists array first, then AlbumArtist, then ArtistItems.
@@ -196,13 +196,13 @@ public class ScrobblingHelper
                 return firstArtist.GetString();
             }
         }
-        
+
         // Try AlbumArtist
         if (item.TryGetProperty("AlbumArtist", out var albumArtistProp))
         {
             return albumArtistProp.GetString();
         }
-        
+
         // Try ArtistItems array
         if (item.TryGetProperty("ArtistItems", out var artistItemsProp) && artistItemsProp.ValueKind == JsonValueKind.Array)
         {
@@ -212,10 +212,10 @@ public class ScrobblingHelper
                 return artistNameProp.GetString();
             }
         }
-        
+
         return null;
     }
-    
+
     /// <summary>
     /// Extracts album artist from Jellyfin item.
     /// </summary>
@@ -225,11 +225,11 @@ public class ScrobblingHelper
         {
             return albumArtistProp.GetString();
         }
-        
+
         // Fall back to first artist
         return ExtractArtist(item);
     }
-    
+
     /// <summary>
     /// Extracts track duration in seconds from Jellyfin item.
     /// </summary>
@@ -240,10 +240,10 @@ public class ScrobblingHelper
             var ticks = ticksProp.GetInt64();
             return (int)(ticks / TimeSpan.TicksPerSecond);
         }
-        
+
         return null;
     }
-    
+
     /// <summary>
     /// Extracts MusicBrainz Track ID from Jellyfin item.
     /// </summary>
@@ -256,9 +256,9 @@ public class ScrobblingHelper
                 return mbidProp.GetString();
             }
         }
-        
+
         return null;
     }
-    
+
     #endregion
 }

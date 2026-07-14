@@ -12,7 +12,7 @@ namespace allstarr.Services.Lyrics;
 public class LyricsStartupValidator : BaseStartupValidator
 {
     private readonly SpotifyApiSettings _spotifySettings;
-    
+
     // Test song: "22" by Taylor Swift
     private const string TestSongTitle = "22";
     private const string TestArtist = "Taylor Swift";
@@ -35,15 +35,15 @@ public class LyricsStartupValidator : BaseStartupValidator
     {
         WriteStatus("Lyrics Test Song", $"{TestSongTitle} by {TestArtist}", ConsoleColor.Cyan);
         WriteDetail($"Spotify ID: {TestSpotifyId}");
-        
+
         var allSuccess = true;
 
         // Test 1: LRCLib
         allSuccess &= await TestLrclibAsync(cancellationToken);
-        
+
         // Test 2: Spotify Lyrics Sidecar
         allSuccess &= await TestSpotifyLyricsSidecarAsync(cancellationToken);
-        
+
         // Test 3: Spotify API (if enabled)
         if (_spotifySettings.Enabled)
         {
@@ -55,7 +55,7 @@ public class LyricsStartupValidator : BaseStartupValidator
             WriteDetail("Enable SpotifyApi__Enabled to test Spotify API lyrics");
         }
 
-        return allSuccess 
+        return allSuccess
             ? ValidationResult.Success("Lyrics services validation completed")
             : ValidationResult.Failure("PARTIAL", "Some lyrics services had issues", ConsoleColor.Yellow);
     }
@@ -65,19 +65,19 @@ public class LyricsStartupValidator : BaseStartupValidator
         try
         {
             var url = $"https://lrclib.net/api/get?artist_name={Uri.EscapeDataString(TestArtist)}&track_name={Uri.EscapeDataString(TestSongTitle)}&album_name={Uri.EscapeDataString(TestAlbum)}&duration={TestDuration}";
-            
+
             var response = await _httpClient.GetAsync(url, cancellationToken);
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 var doc = JsonDocument.Parse(json);
-                
-                var hasSyncedLyrics = doc.RootElement.TryGetProperty("syncedLyrics", out var synced) && 
+
+                var hasSyncedLyrics = doc.RootElement.TryGetProperty("syncedLyrics", out var synced) &&
                                      !string.IsNullOrEmpty(synced.GetString());
-                var hasPlainLyrics = doc.RootElement.TryGetProperty("plainLyrics", out var plain) && 
+                var hasPlainLyrics = doc.RootElement.TryGetProperty("plainLyrics", out var plain) &&
                                     !string.IsNullOrEmpty(plain.GetString());
-                
+
                 WriteStatus("LRCLib", "WORKING", ConsoleColor.Green);
                 WriteDetail($"✓ Synced: {hasSyncedLyrics}, Plain: {hasPlainLyrics}");
                 return true;
@@ -114,30 +114,30 @@ public class LyricsStartupValidator : BaseStartupValidator
             }
 
             var url = $"{_spotifySettings.LyricsApiUrl}/?trackid={TestSpotifyId}&format=id3";
-            
+
             var response = await _httpClient.GetAsync(url, cancellationToken);
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 var doc = JsonDocument.Parse(json);
-                
+
                 var hasError = doc.RootElement.TryGetProperty("error", out var error) && error.GetBoolean();
-                
+
                 if (hasError)
                 {
                     WriteStatus("Spotify Lyrics Sidecar", "API ERROR", ConsoleColor.Yellow);
                     WriteDetail("Check if sp_dc cookie is valid");
                     return false;
                 }
-                
-                var syncType = doc.RootElement.TryGetProperty("syncType", out var st) 
-                    ? st.GetString() 
+
+                var syncType = doc.RootElement.TryGetProperty("syncType", out var st)
+                    ? st.GetString()
                     : "UNKNOWN";
-                var lineCount = doc.RootElement.TryGetProperty("lines", out var lines) 
-                    ? lines.GetArrayLength() 
+                var lineCount = doc.RootElement.TryGetProperty("lines", out var lines)
+                    ? lines.GetArrayLength()
                     : 0;
-                
+
                 WriteStatus("Spotify Lyrics Sidecar", "WORKING", ConsoleColor.Green);
                 WriteDetail($"✓ Type: {syncType}, Lines: {lineCount}");
                 return true;

@@ -36,10 +36,24 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         var now = new DateTimeOffset(2026, 7, 12, 12, 0, 0, TimeSpan.Zero);
         database.Tenants.Add(new TenantRecord { Id = _tenantId, Slug = "favorite-tests", Name = "Favorite tests", CreatedAt = now });
         database.Users.AddRange(
-            new PlatformUserRecord { Id = _userId, TenantId = _tenantId, DisplayName = "Favorite user",
-                Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now },
-            new PlatformUserRecord { Id = _otherUserId, TenantId = _tenantId, DisplayName = "Other user",
-                Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
+            new PlatformUserRecord
+            {
+                Id = _userId,
+                TenantId = _tenantId,
+                DisplayName = "Favorite user",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            },
+            new PlatformUserRecord
+            {
+                Id = _otherUserId,
+                TenantId = _tenantId,
+                DisplayName = "Other user",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
         await database.SaveChangesAsync();
         _clock = new FakeClock(now);
         _jobs = CreateQueue();
@@ -158,9 +172,14 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         };
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            SessionId = "favorite-session", UserId = "backend-user", UserName = "Favorite user",
-            IsAdministrator = false, TenantId = _tenantId, AllstarrUserId = _userId,
-            JellyfinAccessToken = "not-returned", ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+            SessionId = "favorite-session",
+            UserId = "backend-user",
+            UserName = "Favorite user",
+            IsAdministrator = false,
+            TenantId = _tenantId,
+            AllstarrUserId = _userId,
+            JellyfinAccessToken = "not-returned",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
         };
 
         var result = Assert.IsType<OkObjectResult>(await controller.Get(receipt.EventId));
@@ -194,29 +213,57 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         {
             database.BackendIdentities.Add(new BackendIdentityRecord
             {
-                Id = identityId, TenantId = _tenantId, UserId = _userId, BackendType = "jellyfin",
-                BackendInstanceId = "jellyfin-main", PrincipalId = "backend-user",
-                CreatedAt = _clock.UtcNow, LastSeenAt = _clock.UtcNow
+                Id = identityId,
+                TenantId = _tenantId,
+                UserId = _userId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                PrincipalId = "backend-user",
+                CreatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
             });
             database.LibraryTracks.Add(new LibraryTrackRecord
             {
-                Id = libraryTrackId, TenantId = _tenantId, OwnerUserId = _userId,
-                BackendIdentityId = identityId, LibraryScopeId = "music", Protocol = "jellyfin",
-                BackendInstanceId = "jellyfin-main", BackendItemId = "local-1", FilePath = "/source/never-touched.flac",
-                Title = "Fixture", Artist = "Fixture", DurationMilliseconds = 180000,
-                ProviderIdsJson = "{\"fixture\":\"track-1\"}", IndexedAt = _clock.UtcNow,
-                SourceModifiedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow
+                Id = libraryTrackId,
+                TenantId = _tenantId,
+                OwnerUserId = _userId,
+                BackendIdentityId = identityId,
+                LibraryScopeId = "music",
+                Protocol = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                BackendItemId = "local-1",
+                FilePath = "/source/never-touched.flac",
+                Title = "Fixture",
+                Artist = "Fixture",
+                DurationMilliseconds = 180000,
+                ProviderIdsJson = "{\"fixture\":\"track-1\"}",
+                IndexedAt = _clock.UtcNow,
+                SourceModifiedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
             });
             await database.SaveChangesAsync();
         }
         var favoriteEvent = new FavoriteEventRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = _tenantId, OwnerUserId = _userId, Protocol = "jellyfin",
-            BackendInstanceId = "jellyfin-main", BackendPrincipalId = "backend-user", LibraryScopeId = "music",
-            ItemId = "ext-fixture-song-track-1", CorrelationId = "match-action-test"
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            OwnerUserId = _userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "jellyfin-main",
+            BackendPrincipalId = "backend-user",
+            LibraryScopeId = "music",
+            ItemId = "ext-fixture-song-track-1",
+            CorrelationId = "match-action-test"
         };
-        var action = new FavoriteActionRecord { Id = Guid.CreateVersion7(), TenantId = _tenantId,
-            OwnerUserId = _userId, EventId = favoriteEvent.Id, ActionType = "match", IdempotencyKey = "match-key" };
+        var action = new FavoriteActionRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            OwnerUserId = _userId,
+            EventId = favoriteEvent.Id,
+            ActionType = "match",
+            IdempotencyKey = "match-key"
+        };
 
         var result = await new FavoriteMatchActionExecutor(_factory, _clock)
             .ExecuteAsync(favoriteEvent, action, default);
@@ -237,15 +284,29 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.True(download.Succeeded);
         Assert.True(place.Succeeded, $"{place.ErrorCode}: {place.SafeMessage}");
         Assert.True(enrich.Succeeded, $"{enrich.ErrorCode}: {enrich.SafeMessage}");
-        FavoriteActionRecord Action(string type) => new() { Id = Guid.CreateVersion7(), TenantId = _tenantId,
-            OwnerUserId = _userId, EventId = favoriteEvent.Id, ActionType = type, IdempotencyKey = $"{type}-key" };
+        FavoriteActionRecord Action(string type) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            OwnerUserId = _userId,
+            EventId = favoriteEvent.Id,
+            ActionType = type,
+            IdempotencyKey = $"{type}-key"
+        };
     }
 
     [Fact]
     public async Task CompositeActions_RetryFromFailedStageWithoutRepeatingCompletedStages()
     {
-        var policy = new FavoriteActionPolicyOptions { AddToVirtualLiked = false, MatchLocalLibrary = true,
-            AutoDownload = true, PlaceManagedFile = true, EnrichMetadata = true, RefreshBackendLibrary = true };
+        var policy = new FavoriteActionPolicyOptions
+        {
+            AddToVirtualLiked = false,
+            MatchLocalLibrary = true,
+            AutoDownload = true,
+            PlaceManagedFile = true,
+            EnrichMetadata = true,
+            RefreshBackendLibrary = true
+        };
         var pipeline = new FavoriteActionPipeline(_factory, _jobs, _clock, policy);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "jellyfin-main", "backend-user",
             new AllstarrPrincipal(_tenantId, _userId, "jellyfin", "jellyfin-main", "backend-user", "Favorite user", false),
@@ -287,12 +348,26 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         var credential = needsCredential ? Guid.CreateVersion7() : (Guid?)null;
         var favoriteEvent = new FavoriteEventRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = _tenantId, OwnerUserId = _userId, JobId = Guid.CreateVersion7(),
-            Protocol = protocol, BackendInstanceId = $"{protocol}-main", BackendPrincipalId = "backend-user",
-            LibraryScopeId = "music", CorrelationId = "favorite-refresh", TargetCredentialReferenceId = credential
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenantId,
+            OwnerUserId = _userId,
+            JobId = Guid.CreateVersion7(),
+            Protocol = protocol,
+            BackendInstanceId = $"{protocol}-main",
+            BackendPrincipalId = "backend-user",
+            LibraryScopeId = "music",
+            CorrelationId = "favorite-refresh",
+            TargetCredentialReferenceId = credential
         };
-        var action = new FavoriteActionRecord { Id = Guid.CreateVersion7(), EventId = favoriteEvent.Id,
-            TenantId = _tenantId, OwnerUserId = _userId, ActionType = "refresh", IdempotencyKey = $"refresh-{protocol}" };
+        var action = new FavoriteActionRecord
+        {
+            Id = Guid.CreateVersion7(),
+            EventId = favoriteEvent.Id,
+            TenantId = _tenantId,
+            OwnerUserId = _userId,
+            ActionType = "refresh",
+            IdempotencyKey = $"refresh-{protocol}"
+        };
         var result = await new FavoriteRefreshActionExecutor(new BackendLibraryRefreshOrchestrator(_jobs))
             .ExecuteAsync(favoriteEvent, action, default);
 
@@ -314,8 +389,13 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
 
     private DurableJobQueue CreateQueue()
     {
-        var options = new DurableJobOptions { DefaultMaxAttempts = 3, LeaseSeconds = 30,
-            PollIntervalMilliseconds = 10, MaxPayloadBytes = 64 * 1024 };
+        var options = new DurableJobOptions
+        {
+            DefaultMaxAttempts = 3,
+            LeaseSeconds = 30,
+            PollIntervalMilliseconds = 10,
+            MaxPayloadBytes = 64 * 1024
+        };
         return new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
     }
 

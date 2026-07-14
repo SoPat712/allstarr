@@ -18,7 +18,7 @@ public static class PathHelper
     {
         return Path.Combine(Path.GetTempPath(), "allstarr-cache");
     }
-    
+
     /// <summary>
     /// Builds the output path for a downloaded track following the Artist/Album/Track structure.
     /// </summary>
@@ -36,10 +36,10 @@ public static class PathHelper
         var safeArtist = SanitizeFolderName(artist);
         var safeAlbum = SanitizeFolderName(album);
         var safeTitle = SanitizeFileName(title);
-        
+
         var artistFolder = Path.Combine(downloadPath, safeArtist);
         var albumFolder = Path.Combine(artistFolder, safeAlbum);
-        
+
         var trackPrefix = trackNumber.HasValue ? $"{trackNumber:D2} - " : "";
         // Sanitize provider and external id to avoid path traversal or invalid filename segments
         string? safeProvider = null;
@@ -59,7 +59,7 @@ public static class PathHelper
             ? $" [{safeProvider}-{safeExternalId}]"
             : "";
         var fileName = $"{trackPrefix}{safeTitle}{idSuffix}{extension}";
-        
+
         return Path.Combine(albumFolder, fileName);
     }
 
@@ -74,12 +74,12 @@ public static class PathHelper
         {
             return "Unknown";
         }
-        
+
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = new string(fileName
             .Select(c => invalidChars.Contains(c) ? '_' : c)
             .ToArray());
-        
+
         // Collapse sequences of two or more dots to a single underscore to avoid
         // creating ".." which can be interpreted as parent directory tokens.
         sanitized = System.Text.RegularExpressions.Regex.Replace(sanitized, "\\.{2,}", "_");
@@ -111,30 +111,30 @@ public static class PathHelper
         {
             return "Unknown";
         }
-        
+
         var invalidChars = Path.GetInvalidFileNameChars()
             .Concat(Path.GetInvalidPathChars())
             .Distinct()
             .ToArray();
-            
+
         var sanitized = new string(folderName
             .Select(c => invalidChars.Contains(c) ? '_' : c)
             .ToArray());
-        
+
         // Remove leading/trailing dots and spaces (Windows folder restrictions)
         sanitized = sanitized.Trim().TrimEnd('.');
-        
+
         if (sanitized.Length > 100)
         {
             sanitized = sanitized[..100].TrimEnd('.');
         }
-        
+
         // Ensure we have a valid name
         if (string.IsNullOrWhiteSpace(sanitized))
         {
             return "Unknown";
         }
-        
+
         return sanitized;
     }
 
@@ -154,7 +154,7 @@ public static class PathHelper
         {
             return basePath;
         }
-        
+
         var directory = Path.GetDirectoryName(basePath);
         if (string.IsNullOrEmpty(directory))
         {
@@ -163,7 +163,7 @@ public static class PathHelper
         }
         var extension = Path.GetExtension(basePath);
         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(basePath);
-        
+
         var counter = 1;
         string uniquePath;
         // Limit attempts to avoid infinite loop in pathological cases
@@ -178,7 +178,7 @@ public static class PathHelper
                 throw new IOException("Unable to determine unique file path after many attempts");
             }
         } while (IOFile.Exists(uniquePath));
-        
+
         return uniquePath;
     }
 }

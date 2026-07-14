@@ -67,7 +67,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         IMusicMetadataService metadataService,
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<SquidWTFSettings> SquidWTFSettings,
-		IServiceProvider serviceProvider,
+        IServiceProvider serviceProvider,
         ILogger<SquidWTFDownloadService> logger,
         OdesliService odesliService,
         List<string> apiUrls)
@@ -78,13 +78,13 @@ public class SquidWTFDownloadService : BaseDownloadService
         _odesliService = odesliService;
         _fallbackHelper = new RoundRobinFallbackHelper(apiUrls, logger, "SquidWTF");
         _serviceProvider = serviceProvider;
-        
+
         // Increase timeout for large downloads and slow endpoints
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
         _minRequestIntervalMs = _squidwtfSettings.MinRequestIntervalMs;
     }
-    
-	
+
+
     #region BaseDownloadService Implementation
 
     public override async Task<bool> IsAvailableAsync()
@@ -94,7 +94,7 @@ public class SquidWTFDownloadService : BaseDownloadService
             var response = await _httpClient.GetAsync(baseUrl);
             return response.IsSuccessStatusCode;
         });
-	}
+    }
 
 
     private async Task<string> RunDownloadWithFallbackAsync(string trackId, Song song, string quality, string basePath, CancellationToken cancellationToken)
@@ -121,7 +121,10 @@ public class SquidWTFDownloadService : BaseDownloadService
 
         var extension = downloadInfo.MimeType?.ToLower() switch
         {
-            "audio/flac" => ".flac", "audio/mpeg" => ".mp3", "audio/mp4" => ".m4a", _ => ".flac"
+            "audio/flac" => ".flac",
+            "audio/mpeg" => ".mp3",
+            "audio/mp4" => ".m4a",
+            _ => ".flac"
         };
 
         var artistForPath = song.AlbumArtist ?? song.Artist;
@@ -197,7 +200,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         {
             Exception? lastException = null;
             var qualityOrder = BuildQualityFallbackOrder(_squidwtfSettings.Quality);
-            var basePath = CurrentStorageMode == StorageMode.Cache 
+            var basePath = CurrentStorageMode == StorageMode.Cache
                 ? Path.Combine(DownloadPath, "cache") : Path.Combine(DownloadPath, "permanent");
 
             foreach (var quality in qualityOrder)
@@ -219,10 +222,10 @@ public class SquidWTFDownloadService : BaseDownloadService
         });
     }
 
-    #endregion	
-	
+    #endregion
+
     #region Quality Override Support
-    
+
     /// <summary>
     /// Downloads a track at a specific quality tier, capped at the .env quality ceiling.
     /// The .env quality is the maximum — client requests can only go equal or lower.
@@ -266,7 +269,7 @@ public class SquidWTFDownloadService : BaseDownloadService
     private static string NormalizeSquidWTFQuality(string? quality)
     {
         if (string.IsNullOrEmpty(quality)) return "LOSSLESS";
-        
+
         return quality.ToUpperInvariant() switch
         {
             "HI_RES" or "HI_RES_LOSSLESS" => "HI_RES_LOSSLESS",
@@ -301,7 +304,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         // Lower array index = higher quality
         var idealIndex = Array.IndexOf(ranking, idealQuality);
         if (idealIndex < 0) idealIndex = envIndex;
-        
+
         if (idealIndex < envIndex)
         {
             return envQuality;
@@ -309,11 +312,11 @@ public class SquidWTFDownloadService : BaseDownloadService
 
         return idealQuality;
     }
-    
+
     #endregion
-	
-	#region SquidWTF API Methods
-	
+
+    #region SquidWTF API Methods
+
     // Removed GetTrackDownloadInfoAsync as it's now integrated inside RunDownloadWithFallbackAsync
 
     private async Task<DownloadResult> FetchTrackDownloadInfoAsync(
@@ -329,41 +332,41 @@ public class SquidWTFDownloadService : BaseDownloadService
         Logger.LogDebug("Fetching SquidWTF track download info from: {Url}", url);
 
         using var response = await _httpClient.GetAsync(url, cancellationToken);
-        
+
         if (!response.IsSuccessStatusCode)
         {
             response.EnsureSuccessStatusCode();
         }
-        
+
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var doc = JsonDocument.Parse(json);
-        
+
         if (!doc.RootElement.TryGetProperty("data", out var data))
         {
             throw new Exception("Invalid response from API");
         }
-        
+
         // Get the manifest (base64 encoded JSON containing the actual CDN URL)
         var manifestBase64 = data.GetProperty("manifest").GetString()
             ?? throw new Exception("No manifest in response");
-        
+
         // Decode the manifest
         var manifestJson = Encoding.UTF8.GetString(Convert.FromBase64String(manifestBase64));
         using var manifest = JsonDocument.Parse(manifestJson);
-        
+
         // Extract the download URL from the manifest
         if (!manifest.RootElement.TryGetProperty("urls", out var urls) || urls.GetArrayLength() == 0)
         {
             throw new Exception("No download URLs in manifest");
         }
-        
+
         var downloadUrl = urls[0].GetString()
             ?? throw new Exception("Download URL is null");
-        
+
         var mimeType = manifest.RootElement.TryGetProperty("mimeType", out var mimeTypeEl)
             ? mimeTypeEl.GetString()
             : "audio/flac";
-        
+
         var audioQuality = data.TryGetProperty("audioQuality", out var audioQualityEl)
             ? audioQualityEl.GetString()
             : quality;
@@ -417,9 +420,9 @@ public class SquidWTFDownloadService : BaseDownloadService
         return ex.Message;
     }
 
-	
-	#endregion
-	
+
+    #endregion
+
     #region Utility Methods
 
     /// <summary>
@@ -438,7 +441,7 @@ public class SquidWTFDownloadService : BaseDownloadService
         if (!string.IsNullOrEmpty(spotifyId))
         {
             Logger.LogDebug("Background Spotify ID obtained for Tidal/{TrackId}: {SpotifyId}", externalId, spotifyId);
-            
+
             // Immediately prefetch lyrics now that we have the Spotify ID
             // This ensures lyrics are cached and ready when the client requests them
             _ = Task.Run(async () =>
@@ -447,13 +450,13 @@ public class SquidWTFDownloadService : BaseDownloadService
                 {
                     using var scope = _serviceProvider.CreateScope();
                     var spotifyLyricsService = scope.ServiceProvider.GetService<SpotifyLyricsService>();
-                    
+
                     if (spotifyLyricsService != null)
                     {
                         var lyrics = await spotifyLyricsService.GetLyricsByTrackIdAsync(spotifyId);
                         if (lyrics != null && lyrics.Lines.Count > 0)
                         {
-                            Logger.LogDebug("Background lyrics prefetched for Spotify/{SpotifyId}: {LineCount} lines", 
+                            Logger.LogDebug("Background lyrics prefetched for Spotify/{SpotifyId}: {LineCount} lines",
                                 spotifyId, lyrics.Lines.Count);
                         }
                         else
@@ -479,4 +482,4 @@ public class SquidWTFDownloadService : BaseDownloadService
         public string MimeType { get; set; } = string.Empty;
         public string AudioQuality { get; set; } = string.Empty;
     }
-}	
+}

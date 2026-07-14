@@ -182,8 +182,12 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         var staged = await StageBatchAsync(db, tenantId, writes, source, actorUserId, cancellationToken);
         db.AuditEvents.Add(new AuditEventRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = tenantId, ActorUserId = actorUserId,
-            Category = "runtime-settings", Action = "runtime-settings.batch-apply", Outcome = "succeeded",
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            ActorUserId = actorUserId,
+            Category = "runtime-settings",
+            Action = "runtime-settings.batch-apply",
+            Outcome = "succeeded",
             CorrelationId = $"runtime-settings:{Guid.NewGuid():N}",
             DetailsJson = JsonSerializer.Serialize(new
             {
@@ -340,8 +344,10 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
 
     private static string DefaultRaw(RuntimeSettingDefinition definition) => definition.ValueType switch
     {
-        RuntimeSettingValueType.Boolean => "false", RuntimeSettingValueType.Integer => definition.Minimum?.ToString(CultureInfo.InvariantCulture) ?? "0",
-        RuntimeSettingValueType.StringList => string.Empty, RuntimeSettingValueType.String when definition.Choices?.Count > 0 => definition.Choices.First(),
+        RuntimeSettingValueType.Boolean => "false",
+        RuntimeSettingValueType.Integer => definition.Minimum?.ToString(CultureInfo.InvariantCulture) ?? "0",
+        RuntimeSettingValueType.StringList => string.Empty,
+        RuntimeSettingValueType.String when definition.Choices?.Count > 0 => definition.Choices.First(),
         _ => "default"
     };
 }

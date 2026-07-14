@@ -88,7 +88,7 @@ public class JellyfinStartupValidator : BaseStartupValidator
                     }
                 }
 
-                var serverInfo = !string.IsNullOrEmpty(serverName) 
+                var serverInfo = !string.IsNullOrEmpty(serverName)
                     ? $"{serverName} (v{version ?? "unknown"})"
                     : "OK";
 
@@ -143,7 +143,7 @@ public class JellyfinStartupValidator : BaseStartupValidator
                            $"Version=\"{settings.ClientVersion}\", " +
                            $"Token=\"{settings.ApiKey}\"";
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, 
+            using var request = new HttpRequestMessage(HttpMethod.Get,
                 $"{settings.Url?.TrimEnd('/')}/System/Info");
             request.Headers.Add("Authorization", authHeader);
 

@@ -9,7 +9,7 @@ namespace allstarr.Services.Common;
 public static class PlaylistIdHelper
 {
     private const string PlaylistType = "playlist";
-    
+
     /// <summary>
     /// Checks if an ID represents an external playlist.
     /// Only supports new format: ext-{provider}-playlist-{id}
@@ -19,12 +19,12 @@ public static class PlaylistIdHelper
     public static bool IsExternalPlaylist(string? id)
     {
         if (string.IsNullOrEmpty(id)) return false;
-        
+
         // New format only: ext-{provider}-playlist-{id}
         return id.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) &&
                id.Contains("-playlist-", StringComparison.OrdinalIgnoreCase);
     }
-    
+
     /// <summary>
     /// Parses a playlist ID to extract provider and external ID.
     /// Only supports new format: ext-{provider}-playlist-{id}
@@ -38,28 +38,28 @@ public static class PlaylistIdHelper
         {
             throw new ArgumentException($"Invalid playlist ID format. Expected 'ext-{{provider}}-playlist-{{externalId}}', got '{id}'", nameof(id));
         }
-        
+
         // Format: ext-{provider}-playlist-{externalId}
         var withoutPrefix = id.Substring(4); // Remove "ext-"
-        
+
         // Find "-playlist-" separator
         var playlistIndex = withoutPrefix.IndexOf("-playlist-", StringComparison.OrdinalIgnoreCase);
         if (playlistIndex == -1)
         {
             throw new ArgumentException($"Invalid playlist ID format. Expected 'ext-{{provider}}-playlist-{{externalId}}', got '{id}'", nameof(id));
         }
-        
+
         var provider = withoutPrefix.Substring(0, playlistIndex);
         var externalId = withoutPrefix.Substring(playlistIndex + 10); // 10 = length of "-playlist-"
-        
+
         if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(externalId))
         {
             throw new ArgumentException($"Invalid playlist ID format. Provider or external ID is empty in '{id}'", nameof(id));
         }
-        
+
         return (provider, externalId);
     }
-    
+
     /// <summary>
     /// Creates a playlist ID from provider and external ID.
     /// </summary>
@@ -72,12 +72,12 @@ public static class PlaylistIdHelper
         {
             throw new ArgumentException("Provider cannot be null or empty", nameof(provider));
         }
-        
+
         if (string.IsNullOrEmpty(externalId))
         {
             throw new ArgumentException("External ID cannot be null or empty", nameof(externalId));
         }
-        
+
         return $"ext-{provider.ToLowerInvariant()}-{PlaylistType}-{externalId}";
     }
 }

@@ -24,16 +24,16 @@ namespace allstarr.Services.Deezer;
 public class DeezerDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
-    
+
     private readonly string? _arl;
     private readonly string? _arlFallback;
     private readonly string? _preferredQuality;
-    
+
     private string? _apiToken;
     private string? _licenseToken;
-    
+
     private const string DeezerApiBase = "https://api.deezer.com";
-    
+
     // Deezer's standard Blowfish CBC encryption key for track decryption
     // This is a well-known constant used by the Deezer API, not a user-specific secret
     private const string BfSecret = "g4el58wc0zvf9na1";
@@ -52,7 +52,7 @@ public class DeezerDownloadService : BaseDownloadService
         : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
         _httpClient = httpClientFactory.CreateClient();
-        
+
         var deezer = deezerSettings.Value;
         _arl = deezer.Arl;
         _arlFallback = deezer.ArlFallback;
@@ -86,7 +86,7 @@ public class DeezerDownloadService : BaseDownloadService
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
         var downloadInfo = await GetTrackDownloadInfoAsync(trackId, cancellationToken);
-        
+
         Logger.LogInformation("Track token obtained for: {Title} - {Artist}", downloadInfo.Title, downloadInfo.Artist);
         Logger.LogInformation("Using format: {Format}", downloadInfo.Format);
 
@@ -99,15 +99,15 @@ public class DeezerDownloadService : BaseDownloadService
 
         // Build organized folder structure: Artist/Album/Track using AlbumArtist (fallback to Artist for singles)
         var artistForPath = song.AlbumArtist ?? song.Artist;
-        var basePath = CurrentStorageMode == StorageMode.Cache 
+        var basePath = CurrentStorageMode == StorageMode.Cache
             ? Path.Combine(DownloadPath, "cache")
             : Path.Combine(DownloadPath, "permanent");
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "deezer", trackId);
-        
+
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
-        
+
         // Resolve unique path if file already exists
         outputPath = PathHelper.ResolveUniquePath(outputPath);
 
@@ -117,7 +117,7 @@ public class DeezerDownloadService : BaseDownloadService
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
-            
+
             var res = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             res.EnsureSuccessStatusCode();
             return res;
@@ -126,12 +126,12 @@ public class DeezerDownloadService : BaseDownloadService
         // Download and decrypt
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
-        
+
         await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
-        
+
         // Close file before writing metadata
         await outputFile.DisposeAsync();
-        
+
         // Write metadata and cover art
         await WriteMetadataAsync(outputPath, song, cancellationToken);
 
@@ -141,7 +141,7 @@ public class DeezerDownloadService : BaseDownloadService
     #endregion
 
     #region Quality Override Support
-    
+
     /// <summary>
     /// Downloads a track at a specific quality tier, capped at the .env quality ceiling.
     /// Deezer quality hierarchy: FLAC > MP3_320 > MP3_128
@@ -186,11 +186,11 @@ public class DeezerDownloadService : BaseDownloadService
         var artistForPath = song.AlbumArtist ?? song.Artist;
         var basePath = Path.Combine(DownloadPath, "transcoded");
         var outputPath = PathHelper.BuildTrackPath(basePath, artistForPath, song.Album, song.Title, song.Track, extension, "deezer", trackId);
-        
+
         // Create directories if they don't exist
         var albumFolder = Path.GetDirectoryName(outputPath)!;
         EnsureDirectoryExists(albumFolder);
-        
+
         // If the file already exists in transcoded cache, return it directly
         if (IOFile.Exists(outputPath))
         {
@@ -206,7 +206,7 @@ public class DeezerDownloadService : BaseDownloadService
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadInfo.DownloadUrl);
             request.Headers.Add("User-Agent", "Mozilla/5.0");
             request.Headers.Add("Accept", "*/*");
-            
+
             var res = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             res.EnsureSuccessStatusCode();
             return res;
@@ -216,7 +216,7 @@ public class DeezerDownloadService : BaseDownloadService
         await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var outputFile = IOFile.Create(outputPath);
         await DecryptAndWriteStreamAsync(responseStream, outputFile, trackId, cancellationToken);
-        
+
         // Close file before writing metadata
         await outputFile.DisposeAsync();
 
@@ -232,7 +232,7 @@ public class DeezerDownloadService : BaseDownloadService
     private static string NormalizeDeezerQuality(string? quality)
     {
         if (string.IsNullOrEmpty(quality)) return "FLAC";
-        
+
         return quality.ToUpperInvariant() switch
         {
             "FLAC" => "FLAC",
@@ -263,7 +263,7 @@ public class DeezerDownloadService : BaseDownloadService
         // Cap at env ceiling (lower index = higher quality)
         var idealIndex = Array.IndexOf(ranking, idealQuality);
         if (idealIndex < 0) idealIndex = envIndex;
-        
+
         if (idealIndex < envIndex)
         {
             return envQuality;
@@ -286,9 +286,9 @@ public class DeezerDownloadService : BaseDownloadService
 
         await RetryHelper.RetryWithBackoffAsync(async () =>
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, 
+            using var request = new HttpRequestMessage(HttpMethod.Post,
                 "https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=null");
-            
+
             request.Headers.Add("Cookie", $"arl={arl}");
             request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
 
@@ -302,14 +302,14 @@ public class DeezerDownloadService : BaseDownloadService
                 results.TryGetProperty("checkForm", out var checkForm))
             {
                 _apiToken = checkForm.GetString();
-                
+
                 if (results.TryGetProperty("USER", out var user) &&
                     user.TryGetProperty("OPTIONS", out var options) &&
                     options.TryGetProperty("license_token", out var licenseToken))
                 {
                     _licenseToken = licenseToken.GetString();
                 }
-                
+
                 Logger.LogInformation("Deezer token refreshed successfully");
             }
             else
@@ -331,10 +331,10 @@ public class DeezerDownloadService : BaseDownloadService
                 // Get track info
                 var trackResponse = await _httpClient.GetAsync($"{DeezerApiBase}/track/{trackId}", cancellationToken);
                 trackResponse.EnsureSuccessStatusCode();
-                
+
                 var trackJson = await trackResponse.Content.ReadAsStringAsync(cancellationToken);
                 var trackDoc = JsonDocument.Parse(trackJson);
-                
+
                 if (!trackDoc.RootElement.TryGetProperty("track_token", out var trackTokenElement))
                 {
                     throw new Exception("Track not found or track_token missing");
@@ -342,14 +342,14 @@ public class DeezerDownloadService : BaseDownloadService
 
                 var trackToken = trackTokenElement.GetString();
                 var title = trackDoc.RootElement.GetProperty("title").GetString() ?? "";
-                var artist = trackDoc.RootElement.TryGetProperty("artist", out var artistEl) 
-                    ? artistEl.GetProperty("name").GetString() ?? "" 
+                var artist = trackDoc.RootElement.TryGetProperty("artist", out var artistEl)
+                    ? artistEl.GetProperty("name").GetString() ?? ""
                     : "";
 
                 // Get download URL via media API
                 // Build format list based on preferred quality (or overridden quality for transcoding)
                 var formatsList = BuildFormatsList(qualityOverride ?? _preferredQuality);
-                
+
                 var mediaRequest = new
                 {
                     license_token = _licenseToken,
@@ -366,8 +366,8 @@ public class DeezerDownloadService : BaseDownloadService
 
                 var mediaHttpRequest = new HttpRequestMessage(HttpMethod.Post, "https://media.deezer.com/v1/get_url");
                 mediaHttpRequest.Content = new StringContent(
-                    JsonSerializer.Serialize(mediaRequest), 
-                    Encoding.UTF8, 
+                    JsonSerializer.Serialize(mediaRequest),
+                    Encoding.UTF8,
                     "application/json");
 
                 using (mediaHttpRequest)
@@ -378,14 +378,14 @@ public class DeezerDownloadService : BaseDownloadService
                     var mediaJson = await mediaResponse.Content.ReadAsStringAsync(cancellationToken);
                     var mediaDoc = JsonDocument.Parse(mediaJson);
 
-                    if (!mediaDoc.RootElement.TryGetProperty("data", out var data) || 
+                    if (!mediaDoc.RootElement.TryGetProperty("data", out var data) ||
                         data.GetArrayLength() == 0)
                     {
                         throw new Exception("No download URL available");
                     }
 
                     var firstData = data[0];
-                    if (!firstData.TryGetProperty("media", out var media) || 
+                    if (!firstData.TryGetProperty("media", out var media) ||
                         media.GetArrayLength() == 0)
                     {
                         throw new Exception("No media sources available - track may be unavailable in your region");
@@ -396,7 +396,7 @@ public class DeezerDownloadService : BaseDownloadService
                     foreach (var mediaItem in media.EnumerateArray())
                     {
                         if (mediaItem.TryGetProperty("format", out var formatEl) &&
-                            mediaItem.TryGetProperty("sources", out var sources) && 
+                            mediaItem.TryGetProperty("sources", out var sources) &&
                             sources.GetArrayLength() > 0)
                         {
                             var fmt = formatEl.GetString();
@@ -418,7 +418,7 @@ public class DeezerDownloadService : BaseDownloadService
 
                     // Quality priority order (highest to lowest)
                     var qualityPriority = new[] { "FLAC", "MP3_320", "MP3_128" };
-                    
+
                     string? selectedFormat = null;
                     string? downloadUrl = null;
 
@@ -474,28 +474,28 @@ public class DeezerDownloadService : BaseDownloadService
     {
         var hash = MD5.HashData(Encoding.UTF8.GetBytes(trackId));
         var hashHex = Convert.ToHexString(hash).ToLower();
-        
+
         var bfKey = new byte[16];
         for (int i = 0; i < 16; i++)
         {
             bfKey[i] = (byte)(hashHex[i] ^ hashHex[i + 16] ^ BfSecret[i]);
         }
-        
+
         return bfKey;
     }
 
     private async Task DecryptAndWriteStreamAsync(
-        Stream input, 
-        Stream output, 
-        string trackId, 
+        Stream input,
+        Stream output,
+        string trackId,
         CancellationToken cancellationToken)
     {
         var bfKey = GetBlowfishKey(trackId);
         var iv = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-        
+
         var buffer = new byte[2048];
         int chunkIndex = 0;
-        
+
         while (true)
         {
             var bytesRead = await ReadExactAsync(input, buffer, cancellationToken);
@@ -532,15 +532,15 @@ public class DeezerDownloadService : BaseDownloadService
         var engine = new BlowfishEngine();
         var cipher = new CbcBlockCipher(engine);
         cipher.Init(false, new ParametersWithIV(new KeyParameter(key), iv));
-        
+
         var output = new byte[data.Length];
         var blockSize = cipher.GetBlockSize(); // 8 bytes for Blowfish
-        
+
         for (int offset = 0; offset < data.Length; offset += blockSize)
         {
             cipher.ProcessBlock(data, offset, output, offset);
         }
-        
+
         return output;
     }
 
@@ -566,7 +566,7 @@ public class DeezerDownloadService : BaseDownloadService
         }
 
         var preferred = preferredQuality.ToUpperInvariant();
-        
+
         return preferred switch
         {
             "FLAC" => allFormats,

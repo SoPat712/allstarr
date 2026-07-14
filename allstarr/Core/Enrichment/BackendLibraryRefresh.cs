@@ -147,8 +147,12 @@ public sealed class BackendLibraryRefreshJobHandler(IDbContextFactory<AllstarrDb
                 new(payload.LibraryScopeId, payload.CredentialReferenceId), cancellationToken);
             db.AuditEvents.Add(new AuditEventRecord
             {
-                Id = Guid.CreateVersion7(), TenantId = identity.TenantId, ActorUserId = identity.UserId,
-                Category = "library-refresh", Action = "scan.requested", Outcome = result.Accepted ? "succeeded" : "failed",
+                Id = Guid.CreateVersion7(),
+                TenantId = identity.TenantId,
+                ActorUserId = identity.UserId,
+                Category = "library-refresh",
+                Action = "scan.requested",
+                Outcome = result.Accepted ? "succeeded" : "failed",
                 CorrelationId = context.Claim.CorrelationId,
                 DetailsJson = JsonSerializer.Serialize(new { payload.LibraryScopeId, payload.BackendInstanceId, protocol, result.NativeScanId }),
                 CreatedAt = clock.UtcNow

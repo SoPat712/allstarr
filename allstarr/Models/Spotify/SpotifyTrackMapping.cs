@@ -10,22 +10,22 @@ public class SpotifyTrackMapping
     /// Spotify track ID (e.g., "3n3Ppam7vgaVa1iaRUc9Lp")
     /// </summary>
     public required string SpotifyId { get; set; }
-    
+
     /// <summary>
     /// Target type: "local" or "external"
     /// </summary>
     public required string TargetType { get; set; }
-    
+
     /// <summary>
     /// Jellyfin item ID (if TargetType is "local")
     /// </summary>
     public string? LocalId { get; set; }
-    
+
     /// <summary>
     /// External provider name (if TargetType is "external")
     /// </summary>
     public string? ExternalProvider { get; set; }
-    
+
     /// <summary>
     /// External provider track ID (if TargetType is "external")
     /// </summary>
@@ -37,32 +37,32 @@ public class SpotifyTrackMapping
     /// provider-specific mappings without replacing existing ones.
     /// </summary>
     public List<ExternalTrackMapping> ExternalMappings { get; set; } = new();
-    
+
     /// <summary>
     /// Track metadata for display purposes
     /// </summary>
     public TrackMetadata? Metadata { get; set; }
-    
+
     /// <summary>
     /// How this mapping was created: "auto" or "manual"
     /// </summary>
     public required string Source { get; set; }
-    
+
     /// <summary>
     /// When this mapping was created
     /// </summary>
     public DateTime CreatedAt { get; set; }
-    
+
     /// <summary>
     /// When this mapping was last updated (for manual overrides)
     /// </summary>
     public DateTime? UpdatedAt { get; set; }
-    
+
     /// <summary>
     /// When this mapping was last validated (checked if target still exists)
     /// </summary>
     public DateTime? LastValidatedAt { get; set; }
-    
+
     /// <summary>
     /// Whether this mapping needs validation
     /// Local: every 7 days, External: every playlist sync
@@ -70,9 +70,9 @@ public class SpotifyTrackMapping
     public bool NeedsValidation(bool isPlaylistSync = false)
     {
         if (!LastValidatedAt.HasValue) return true;
-        
+
         var timeSinceValidation = DateTime.UtcNow - LastValidatedAt.Value;
-        
+
         if (TargetType == "local")
         {
             // Local mappings: validate every 7 days
@@ -83,7 +83,7 @@ public class SpotifyTrackMapping
             // External mappings: validate on every playlist sync
             return isPlaylistSync;
         }
-        
+
         return false;
     }
 

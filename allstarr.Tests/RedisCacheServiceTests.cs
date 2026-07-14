@@ -179,7 +179,7 @@ public class RedisCacheServiceTests
     {
         // Arrange
         var disabledService = new RedisCacheService(_settings, _mockLogger.Object);
-        
+
         var enabledSettings = Options.Create(new RedisSettings
         {
             Enabled = true,

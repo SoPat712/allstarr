@@ -158,7 +158,8 @@ public sealed class DurableBackupService
                 manifest.Sha256,
                 manifest.SchemaVersion,
                 manifest.CreatedAt)
-            with { ApplicationVersion = manifest.ApplicationVersion };
+            with
+        { ApplicationVersion = manifest.ApplicationVersion };
     }
 
     public async Task VerifyAsync(
@@ -383,14 +384,14 @@ public sealed class DurableBackupService
 
     private static Dictionary<string, string?> PostgresEnvironment(
         NpgsqlConnectionStringBuilder connection) => new(StringComparer.Ordinal)
-    {
-        ["PGHOST"] = connection.Host,
-        ["PGPORT"] = connection.Port.ToString(),
-        ["PGDATABASE"] = connection.Database,
-        ["PGUSER"] = connection.Username,
-        ["PGPASSWORD"] = connection.Password,
-        ["PGSSLMODE"] = connection.SslMode.ToString().ToLowerInvariant()
-    };
+        {
+            ["PGHOST"] = connection.Host,
+            ["PGPORT"] = connection.Port.ToString(),
+            ["PGDATABASE"] = connection.Database,
+            ["PGUSER"] = connection.Username,
+            ["PGPASSWORD"] = connection.Password,
+            ["PGSSLMODE"] = connection.SslMode.ToString().ToLowerInvariant()
+        };
 
     private static async Task SetStandaloneSqliteJournalMode(
         SqliteConnection connection,

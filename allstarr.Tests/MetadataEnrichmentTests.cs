@@ -130,10 +130,26 @@ public sealed class MetadataEnrichmentTests
                 db.Tenants.AddRange(
                     new TenantRecord { Id = tenant, Slug = "owner", Name = "Owner", CreatedAt = DateTimeOffset.UtcNow },
                     new TenantRecord { Id = foreignTenant, Slug = "foreign", Name = "Foreign", CreatedAt = DateTimeOffset.UtcNow });
-                db.Users.Add(new PlatformUserRecord { Id = user, TenantId = foreignTenant, DisplayName = "Foreign", Status = PlatformUserStatus.Active,
-                    CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
-                db.BackendIdentities.Add(new BackendIdentityRecord { Id = Guid.CreateVersion7(), TenantId = foreignTenant, UserId = user,
-                    BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = DateTimeOffset.UtcNow, LastSeenAt = DateTimeOffset.UtcNow });
+                db.Users.Add(new PlatformUserRecord
+                {
+                    Id = user,
+                    TenantId = foreignTenant,
+                    DisplayName = "Foreign",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                });
+                db.BackendIdentities.Add(new BackendIdentityRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = foreignTenant,
+                    UserId = user,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "backend",
+                    PrincipalId = "principal",
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    LastSeenAt = DateTimeOffset.UtcNow
+                });
                 await db.SaveChangesAsync();
             }
             var fake = new FakeRefresher();

@@ -19,17 +19,17 @@ public class LrclibServiceTests
     {
         _mockLogger = new Mock<ILogger<LrclibService>>();
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
-        
+
         // Create mock Redis cache
         var mockRedisLogger = new Mock<ILogger<RedisCacheService>>();
         var mockRedisSettings = Options.Create(new RedisSettings { Enabled = false });
         _mockCache = new Mock<RedisCacheService>(mockRedisSettings, mockRedisLogger.Object);
-        
+
         _httpClient = new HttpClient
         {
             BaseAddress = new Uri("https://lrclib.net")
         };
-        
+
         _mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(_httpClient);
     }
 

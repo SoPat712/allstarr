@@ -19,13 +19,13 @@ public static class RetryHelper
     /// <param name="initialDelayMs">Initial delay in milliseconds (default: 1000)</param>
     /// <returns>Result of the action</returns>
     public static async Task<T> RetryWithBackoffAsync<T>(
-        Func<Task<T>> action, 
+        Func<Task<T>> action,
         ILogger logger,
-        int maxRetries = 3, 
+        int maxRetries = 3,
         int initialDelayMs = 1000)
     {
         Exception? lastException = null;
-        
+
         for (int attempt = 0; attempt < maxRetries; attempt++)
         {
             try
@@ -41,7 +41,7 @@ public static class RetryHelper
                 {
                     var delay = initialDelayMs * (int)Math.Pow(2, attempt);
                     logger.LogWarning(
-                        "Retry attempt {Attempt}/{MaxRetries} after {Delay}ms ({Message})", 
+                        "Retry attempt {Attempt}/{MaxRetries} after {Delay}ms ({Message})",
                         attempt + 1, maxRetries, delay, ex.Message);
                     await Task.Delay(delay);
                 }
@@ -59,9 +59,9 @@ public static class RetryHelper
     /// Executes an async action with exponential backoff retry logic (void return).
     /// </summary>
     public static async Task RetryWithBackoffAsync(
-        Func<Task> action, 
+        Func<Task> action,
         ILogger logger,
-        int maxRetries = 3, 
+        int maxRetries = 3,
         int initialDelayMs = 1000)
     {
         await RetryWithBackoffAsync(async () =>

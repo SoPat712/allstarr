@@ -8,9 +8,12 @@ public static class IntelligenceModelConfiguration
     public static void Configure(ModelBuilder modelBuilder)
     {
         ConfigureOwned<IntelligencePolicyRecord>(modelBuilder, "intelligence_policies", e => e.Id,
-            (entity) => { entity.Property(x => x.AllowedSignalTypesJson).IsRequired(); entity.Property(x => x.EnabledProvidersJson).IsRequired(); entity.Property(x => x.Revision).IsConcurrencyToken();
+            (entity) =>
+            {
+                entity.Property(x => x.AllowedSignalTypesJson).IsRequired(); entity.Property(x => x.EnabledProvidersJson).IsRequired(); entity.Property(x => x.Revision).IsConcurrencyToken();
                 entity.HasIndex(x => x.TargetCredentialReferenceId).HasDatabaseName("IX_intelligence_policy_credential_reference");
-                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId }).IsUnique().HasDatabaseName("IX_intelligence_policy_scope"); });
+                entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.Protocol, x.BackendInstanceId, x.LibraryScopeId }).IsUnique().HasDatabaseName("IX_intelligence_policy_scope");
+            });
         ConfigureOwned<ListeningSignalRecord>(modelBuilder, "listening_signals", e => e.Id,
             entity => { entity.Property(x => x.SignalType).HasMaxLength(32).IsRequired(); entity.Property(x => x.TrackKeyHash).HasMaxLength(64).IsRequired(); entity.Property(x => x.TrackReference).HasMaxLength(100).IsRequired(); entity.Property(x => x.SignalKey).HasMaxLength(64); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.ExpiresAt }); entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.SignalKey }).IsUnique().HasFilter("\"SignalKey\" IS NOT NULL").HasDatabaseName("IX_listening_signal_idempotency"); entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(x => x.SourceJobId).HasConstraintName("FK_listening_signal_job").OnDelete(DeleteBehavior.Restrict); });
         ConfigureOwned<ListeningProfileRecord>(modelBuilder, "listening_profiles", e => e.Id,

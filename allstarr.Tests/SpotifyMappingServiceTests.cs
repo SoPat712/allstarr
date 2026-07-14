@@ -22,14 +22,14 @@ public class SpotifyMappingServiceTests
     {
         _mockCacheLogger = new Mock<ILogger<RedisCacheService>>();
         _mockLogger = new Mock<ILogger<SpotifyMappingService>>();
-        
+
         // Use disabled Redis for tests
         var redisSettings = Options.Create(new RedisSettings
         {
             Enabled = false,
             ConnectionString = "localhost:6379"
         });
-        
+
         _cache = new RedisCacheService(redisSettings, _mockCacheLogger.Object);
         _service = new SpotifyMappingService(_cache, _mockLogger.Object);
     }

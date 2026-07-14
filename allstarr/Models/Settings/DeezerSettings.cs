@@ -10,19 +10,19 @@ public class DeezerSettings
     /// Obtained from browser cookies after logging into deezer.com
     /// </summary>
     public string? Arl { get; set; }
-    
+
     /// <summary>
     /// Fallback ARL token (optional)
     /// Used if the primary ARL token fails
     /// </summary>
     public string? ArlFallback { get; set; }
-    
+
     /// <summary>
     /// Preferred audio quality: FLAC, MP3_320, MP3_128
     /// If not specified or unavailable, the highest available quality will be used.
     /// </summary>
     public string? Quality { get; set; }
-    
+
     /// <summary>
     /// Minimum interval between requests in milliseconds.
     /// Default: 200ms

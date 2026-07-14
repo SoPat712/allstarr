@@ -102,7 +102,7 @@ public class LyricsOrchestrator
         string? spotifyTrackId = null)
     {
         var artistName = string.Join(", ", artistNames);
-        _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Track} (Spotify ID: {SpotifyId})", 
+        _logger.LogDebug("🎵 Prefetching lyrics for: {Artist} - {Track} (Spotify ID: {SpotifyId})",
             artistName, trackName, spotifyTrackId ?? "none");
 
         var order = _statusManager.GetEnabledLyricsProviders();
@@ -154,7 +154,7 @@ public class LyricsOrchestrator
         {
             // Validate Spotify ID format
             var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
-            
+
             if (cleanSpotifyId.Length != 22 || cleanSpotifyId.Contains(":") || cleanSpotifyId.Contains("local"))
             {
                 _logger.LogWarning("Invalid Spotify ID format: {SpotifyId}, skipping", spotifyTrackId);
@@ -162,17 +162,17 @@ public class LyricsOrchestrator
             }
 
             _logger.LogDebug("→ Trying Spotify lyrics for track ID: {SpotifyId}", cleanSpotifyId);
-            
+
             var spotifyLyrics = await _spotifyLyrics.GetLyricsByTrackIdAsync(cleanSpotifyId);
-            
+
             if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
             {
-                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines, type: {SyncType})", 
+                _logger.LogDebug("✓ Found Spotify lyrics for {Artist} - {Track} ({LineCount} lines, type: {SyncType})",
                     artistName, trackName, spotifyLyrics.Lines.Count, spotifyLyrics.SyncType);
-                
+
                 return _spotifyLyrics.ToLyricsInfo(spotifyLyrics);
             }
-            
+
             _logger.LogDebug("No Spotify lyrics found for track ID {SpotifyId}", cleanSpotifyId);
             return null;
         }
@@ -184,25 +184,25 @@ public class LyricsOrchestrator
     }
 
     private async Task<LyricsInfo?> TryLyricsPlusLyrics(
-        string trackName, 
-        string[] artistNames, 
-        string? albumName, 
+        string trackName,
+        string[] artistNames,
+        string? albumName,
         int durationSeconds,
         string artistName)
     {
         try
         {
             _logger.LogDebug("→ Trying LyricsPlus for: {Artist} - {Track}", artistName, trackName);
-            
+
             var lyrics = await _lyricsPlus.GetLyricsAsync(trackName, artistNames, albumName, durationSeconds);
-            
+
             if (lyrics != null)
             {
                 // LyricsPlus already logs with source info, so we just confirm success
                 _logger.LogDebug("✓ LyricsOrchestrator: Using LyricsPlus lyrics for {Artist} - {Track}", artistName, trackName);
                 return lyrics;
             }
-            
+
             _logger.LogDebug("No LyricsPlus lyrics found for {Artist} - {Track}", artistName, trackName);
             return null;
         }
@@ -214,24 +214,24 @@ public class LyricsOrchestrator
     }
 
     private async Task<LyricsInfo?> TryLrclibLyrics(
-        string trackName, 
-        string[] artistNames, 
-        string? albumName, 
+        string trackName,
+        string[] artistNames,
+        string? albumName,
         int durationSeconds,
         string artistName)
     {
         try
         {
             _logger.LogDebug("→ Trying LRCLib for: {Artist} - {Track}", artistName, trackName);
-            
+
             var lyrics = await _lrclib.GetLyricsAsync(trackName, artistNames, albumName ?? string.Empty, durationSeconds);
-            
+
             if (lyrics != null)
             {
                 _logger.LogInformation("✓ LyricsOrchestrator: Using LRCLib lyrics for {Artist} - {Track}", artistName, trackName);
                 return lyrics;
             }
-            
+
             _logger.LogDebug("No LRCLib lyrics found for {Artist} - {Track}", artistName, trackName);
             return null;
         }

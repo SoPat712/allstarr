@@ -36,7 +36,7 @@ public class SubsonicModelMapper
         try
         {
             var content = Encoding.UTF8.GetString(responseBody);
-            
+
             if (contentType?.Contains("json") == true)
             {
                 var jsonDoc = JsonDocument.Parse(content);
@@ -71,7 +71,7 @@ public class SubsonicModelMapper
                 var xmlDoc = XDocument.Parse(content);
                 var ns = xmlDoc.Root?.GetDefaultNamespace() ?? XNamespace.None;
                 var searchResult = xmlDoc.Descendants(ns + "searchResult3").FirstOrDefault();
-                
+
                 if (searchResult != null)
                 {
                     foreach (var song in searchResult.Elements(ns + "song"))
@@ -128,13 +128,13 @@ public class SubsonicModelMapper
         var mergedSongs = localSongs
             .Concat(externalResult.Songs.Select(s => _responseBuilder.ConvertSongToJson(s)))
             .ToList();
-        
+
         // Merge albums with playlists (playlists appear as albums with genre "Playlist")
         var mergedAlbums = localAlbums
             .Concat(externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJson(a)))
             .Concat(externalPlaylists.Select(p => ConvertPlaylistToAlbumJson(p)))
             .ToList();
-        
+
         // Deduplicate artists by name - prefer local artists over external ones
         var localArtistNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var artist in localArtists)
@@ -144,7 +144,7 @@ public class SubsonicModelMapper
                 localArtistNames.Add(nameObj?.ToString() ?? "");
             }
         }
-        
+
         var mergedArtists = localArtists.ToList();
         foreach (var externalArtist in externalResult.Artists)
         {
@@ -166,11 +166,11 @@ public class SubsonicModelMapper
         List<ExternalPlaylist> externalPlaylists)
     {
         var ns = XNamespace.Get("http://subsonic.org/restapi");
-        
+
         // Deduplicate artists by name - prefer local artists over external ones
         var localArtistNamesXml = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var mergedArtists = new List<object>();
-        
+
         foreach (var artist in localArtists.Cast<XElement>())
         {
             var name = artist.Attribute("name")?.Value;
@@ -181,7 +181,7 @@ public class SubsonicModelMapper
             artist.Name = ns + "artist";
             mergedArtists.Add(artist);
         }
-        
+
         foreach (var artist in externalResult.Artists)
         {
             // Only add external artist if no local artist with same name exists
@@ -190,7 +190,7 @@ public class SubsonicModelMapper
                 mergedArtists.Add(_responseBuilder.ConvertArtistToXml(artist, ns));
             }
         }
-        
+
         // Albums
         var mergedAlbums = new List<object>();
         foreach (var album in localAlbums.Cast<XElement>())
@@ -207,7 +207,7 @@ public class SubsonicModelMapper
         {
             mergedAlbums.Add(ConvertPlaylistToAlbumXml(playlist, ns));
         }
-        
+
         // Songs
         var mergedSongs = new List<object>();
         foreach (var song in localSongs.Cast<XElement>())
@@ -222,7 +222,7 @@ public class SubsonicModelMapper
 
         return (mergedSongs, mergedAlbums, mergedArtists);
     }
-    
+
     /// <summary>
     /// Converts an ExternalPlaylist to a JSON object representing an album.
     /// Playlists are represented as albums with aggregated genres from tracks and artist "🎵 {Provider} {Curator}".
@@ -234,9 +234,9 @@ public class SubsonicModelMapper
         {
             artistName += $" {playlist.CuratorName}";
         }
-        
+
         var artistId = $"curator-{playlist.Provider}-{playlist.CuratorName?.ToLowerInvariant().Replace(" ", "-") ?? "unknown"}";
-        
+
         var album = new Dictionary<string, object>
         {
             ["id"] = playlist.Id,
@@ -247,21 +247,21 @@ public class SubsonicModelMapper
             ["songCount"] = playlist.TrackCount,
             ["duration"] = playlist.Duration
         };
-        
+
         if (playlist.CreatedDate.HasValue)
         {
             album["year"] = playlist.CreatedDate.Value.Year;
             album["created"] = playlist.CreatedDate.Value.ToString("yyyy-MM-ddTHH:mm:ss");
         }
-        
+
         if (!string.IsNullOrEmpty(playlist.CoverUrl))
         {
             album["coverArt"] = playlist.Id;
         }
-        
+
         return album;
     }
-    
+
     /// <summary>
     /// Converts an ExternalPlaylist to an XML element representing an album.
     /// Playlists are represented as albums with aggregated genres from tracks and artist "🎵 {Provider} {Curator}".
@@ -273,9 +273,9 @@ public class SubsonicModelMapper
         {
             artistName += $" {playlist.CuratorName}";
         }
-        
+
         var artistId = $"curator-{playlist.Provider}-{playlist.CuratorName?.ToLowerInvariant().Replace(" ", "-") ?? "unknown"}";
-        
+
         var album = new XElement(ns + "album",
             new XAttribute("id", playlist.Id),
             new XAttribute("name", playlist.Name),
@@ -285,18 +285,18 @@ public class SubsonicModelMapper
             new XAttribute("songCount", playlist.TrackCount),
             new XAttribute("duration", playlist.Duration)
         );
-        
+
         if (playlist.CreatedDate.HasValue)
         {
             album.Add(new XAttribute("year", playlist.CreatedDate.Value.Year));
             album.Add(new XAttribute("created", playlist.CreatedDate.Value.ToString("yyyy-MM-ddTHH:mm:ss")));
         }
-        
+
         if (!string.IsNullOrEmpty(playlist.CoverUrl))
         {
             album.Add(new XAttribute("coverArt", playlist.Id));
         }
-        
+
         return album;
     }
 }

@@ -22,7 +22,7 @@ public class LocalLibraryService : ILocalLibraryService
     private readonly ILogger<LocalLibraryService> _logger;
     private Dictionary<string, LocalSongMapping>? _mappings;
     private readonly SemaphoreSlim _lock = new(1, 1);
-    
+
     // Debounce to avoid triggering too many scans
     private DateTime _lastScanTrigger = DateTime.MinValue;
     private readonly TimeSpan _scanDebounceInterval = TimeSpan.FromSeconds(30);
@@ -38,7 +38,7 @@ public class LocalLibraryService : ILocalLibraryService
         _httpClient = httpClientFactory.CreateClient();
         _subsonicSettings = subsonicSettings.Value;
         _logger = logger;
-        
+
         if (!Directory.Exists(_downloadDirectory))
         {
             Directory.CreateDirectory(_downloadDirectory);
@@ -49,27 +49,27 @@ public class LocalLibraryService : ILocalLibraryService
     {
         var mappings = await LoadMappingsAsync();
         var key = $"{externalProvider}:{externalId}";
-        
+
         if (mappings.TryGetValue(key, out var mapping) && File.Exists(mapping.LocalPath))
         {
             return mapping.LocalPath;
         }
-        
+
         return null;
     }
 
     public async Task RegisterDownloadedSongAsync(Song song, string localPath)
     {
         if (song.ExternalProvider == null || song.ExternalId == null) return;
-        
+
         // Load mappings first (this acquires the lock internally if needed)
         var mappings = await LoadMappingsAsync();
-        
+
         await _lock.WaitAsync();
         try
         {
             var key = $"{song.ExternalProvider}:{song.ExternalId}";
-            
+
             mappings[key] = new LocalSongMapping
             {
                 ExternalProvider = song.ExternalProvider,
@@ -80,7 +80,7 @@ public class LocalLibraryService : ILocalLibraryService
                 Album = song.Album,
                 DownloadedAt = DateTime.UtcNow
             };
-            
+
             await SaveMappingsAsync(mappings);
         }
         finally
@@ -109,12 +109,12 @@ public class LocalLibraryService : ILocalLibraryService
         {
             return (false, null, null, null);
         }
-        
+
         var parts = id.Split('-');
-        
+
         // Known types for the new format
         var knownTypes = new HashSet<string> { "song", "album", "artist" };
-        
+
         // New format: ext-{provider}-{type}-{id} (e.g., ext-deezer-artist-259)
         // Only use new format if parts[2] is a known type
         if (parts.Length >= 4 && knownTypes.Contains(parts[2]))
@@ -124,7 +124,7 @@ public class LocalLibraryService : ILocalLibraryService
             var externalId = string.Join("-", parts.Skip(3)); // Handle IDs with dashes
             return (true, provider, type, externalId);
         }
-        
+
         // Legacy format: ext-{provider}-{id} (assumes "song" type for backward compatibility)
         // This handles both 3-part IDs and 4+ part IDs where parts[2] is NOT a known type
         if (parts.Length >= 3)
@@ -133,7 +133,7 @@ public class LocalLibraryService : ILocalLibraryService
             var externalId = string.Join("-", parts.Skip(2)); // Everything after provider is the ID
             return (true, provider, "song", externalId);
         }
-        
+
         return (false, null, null, null);
     }
 
@@ -141,25 +141,25 @@ public class LocalLibraryService : ILocalLibraryService
     {
         // Fast path: return cached mappings if available
         if (_mappings != null) return _mappings;
-        
+
         // Slow path: acquire lock to load from file (prevents race condition)
         await _lock.WaitAsync();
         try
         {
             // Double-check after acquiring lock
             if (_mappings != null) return _mappings;
-            
+
             if (File.Exists(_mappingFilePath))
             {
                 var json = await File.ReadAllTextAsync(_mappingFilePath);
-                _mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, LocalSongMapping>>(json) 
+                _mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, LocalSongMapping>>(json)
                             ?? new Dictionary<string, LocalSongMapping>();
             }
             else
             {
                 _mappings = new Dictionary<string, LocalSongMapping>();
             }
-            
+
             return _mappings;
         }
         finally
@@ -171,9 +171,9 @@ public class LocalLibraryService : ILocalLibraryService
     private async Task SaveMappingsAsync(Dictionary<string, LocalSongMapping> mappings)
     {
         _mappings = mappings;
-        var json = System.Text.Json.JsonSerializer.Serialize(mappings, new System.Text.Json.JsonSerializerOptions 
-        { 
-            WriteIndented = true 
+        var json = System.Text.Json.JsonSerializer.Serialize(mappings, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true
         });
         await File.WriteAllTextAsync(_mappingFilePath, json);
     }
@@ -186,13 +186,13 @@ public class LocalLibraryService : ILocalLibraryService
         var now = DateTime.UtcNow;
         if (now - _lastScanTrigger < _scanDebounceInterval)
         {
-            _logger.LogDebug("Scan debounced - last scan was {Elapsed}s ago", 
+            _logger.LogDebug("Scan debounced - last scan was {Elapsed}s ago",
                 (now - _lastScanTrigger).TotalSeconds);
             return true;
         }
-        
+
         _lastScanTrigger = now;
-        
+
         try
         {
             // Call Subsonic API to trigger a scan
@@ -200,11 +200,11 @@ public class LocalLibraryService : ILocalLibraryService
             // when called from localhost. For remote servers requiring auth, this would need
             // to be refactored to accept credentials from the controller layer.
             var url = $"{_subsonicSettings.Url}/rest/startScan?f=json";
-            
+
             _logger.LogInformation("Triggering Subsonic library scan...");
-            
+
             var response = await _httpClient.GetAsync(url);
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
@@ -231,14 +231,14 @@ public class LocalLibraryService : ILocalLibraryService
             // Note: This endpoint works without authentication on most Subsonic/Navidrome servers
             // when called from localhost.
             var url = $"{_subsonicSettings.Url}/rest/getScanStatus?f=json";
-            
+
             var response = await _httpClient.GetAsync(url);
-            
+
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
                 var doc = JsonDocument.Parse(content);
-                
+
                 if (doc.RootElement.TryGetProperty("subsonic-response", out var subsonicResponse) &&
                     subsonicResponse.TryGetProperty("scanStatus", out var scanStatus))
                 {
@@ -254,7 +254,7 @@ public class LocalLibraryService : ILocalLibraryService
         {
             _logger.LogError(ex, "Error getting Subsonic scan status");
         }
-        
+
         return null;
     }
 }

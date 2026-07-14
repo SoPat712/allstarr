@@ -174,7 +174,8 @@ public class ScrobblingAdminController : ControllerBase
             catch (Exception saveEx)
             {
                 _logger.LogError(saveEx, "Failed to save session key to .env file");
-                return StatusCode(500, new {
+                return StatusCode(500, new
+                {
                     error = "Authentication succeeded but failed to save session key",
                     message = "The session key could not be persisted. Check server logs and retry."
                 });
@@ -201,7 +202,8 @@ public class ScrobblingAdminController : ControllerBase
     [HttpGet("lastfm/auth-url")]
     public IActionResult GetLastFmAuthUrl()
     {
-        return BadRequest(new {
+        return BadRequest(new
+        {
             error = "OAuth authentication is deprecated. Use POST /lastfm/authenticate with username and password instead.",
             hint = "This is simpler and doesn't require a callback URL."
         });
@@ -214,7 +216,8 @@ public class ScrobblingAdminController : ControllerBase
     [HttpPost("lastfm/get-session")]
     public IActionResult GetLastFmSession([FromBody] GetSessionRequest request)
     {
-        return BadRequest(new {
+        return BadRequest(new
+        {
             error = "OAuth authentication is deprecated. Use POST /lastfm/authenticate with username and password instead.",
             hint = "This is simpler and doesn't require a callback URL."
         });
@@ -380,7 +383,8 @@ public class ScrobblingAdminController : ControllerBase
             catch (Exception saveEx)
             {
                 _logger.LogError(saveEx, "Failed to save token to .env file");
-                return StatusCode(500, new {
+                return StatusCode(500, new
+                {
                     error = "Token validation succeeded but failed to save",
                     username = username,
                     message = "The token could not be persisted. Check server logs and retry."

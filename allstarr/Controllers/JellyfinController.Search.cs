@@ -95,7 +95,7 @@ public partial class JellyfinController
                 if (album == null)
                 {
                     return new JsonResult(new
-                        { Items = Array.Empty<object>(), TotalRecordCount = 0, StartIndex = startIndex });
+                    { Items = Array.Empty<object>(), TotalRecordCount = 0, StartIndex = startIndex });
                 }
 
                 var albumItems = album.Songs.Select(song => _responseBuilder.ConvertSongToJellyfinItem(song)).ToList();

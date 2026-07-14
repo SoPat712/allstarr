@@ -40,25 +40,25 @@ public sealed class AudioMuseRecommendationClient(HttpClient http, IConfiguratio
                     item.TenantId == query.Scope.TenantId && item.UserId == query.Scope.OwnerUserId &&
                     item.BackendType == query.Scope.Protocol && item.BackendInstanceId == query.Scope.BackendInstanceId,
                     cancellationToken) ?? throw new UnauthorizedAccessException();
-            if (query.Scope.Protocol == "jellyfin")
-            {
-                body["jellyfin_user_identifier"] = identity.PrincipalId;
-            }
-            else if (query.Scope.Protocol == "subsonic")
-            {
-                var referenceId = await db.IntelligencePolicies.AsNoTracking().Where(item =>
-                    item.TenantId == query.Scope.TenantId && item.OwnerUserId == query.Scope.OwnerUserId &&
-                    item.Protocol == query.Scope.Protocol && item.BackendInstanceId == query.Scope.BackendInstanceId &&
-                    item.LibraryScopeId == query.Scope.LibraryScopeId && item.Enabled)
-                    .Select(item => item.TargetCredentialReferenceId).SingleOrDefaultAsync(cancellationToken);
-                if (!referenceId.HasValue) throw new UnauthorizedAccessException();
-                credential = await secrets.OpenAsync(referenceId.Value,
-                    new SecretAccessContext(query.Scope.TenantId, AllowGlobal: false), cancellationToken);
-                using var secret = JsonDocument.Parse(credential.Value);
-                body["navidrome_user"] = Required(secret.RootElement, "username");
-                body["navidrome_password"] = Required(secret.RootElement, "password");
-            }
-            else throw new NotSupportedException();
+                if (query.Scope.Protocol == "jellyfin")
+                {
+                    body["jellyfin_user_identifier"] = identity.PrincipalId;
+                }
+                else if (query.Scope.Protocol == "subsonic")
+                {
+                    var referenceId = await db.IntelligencePolicies.AsNoTracking().Where(item =>
+                        item.TenantId == query.Scope.TenantId && item.OwnerUserId == query.Scope.OwnerUserId &&
+                        item.Protocol == query.Scope.Protocol && item.BackendInstanceId == query.Scope.BackendInstanceId &&
+                        item.LibraryScopeId == query.Scope.LibraryScopeId && item.Enabled)
+                        .Select(item => item.TargetCredentialReferenceId).SingleOrDefaultAsync(cancellationToken);
+                    if (!referenceId.HasValue) throw new UnauthorizedAccessException();
+                    credential = await secrets.OpenAsync(referenceId.Value,
+                        new SecretAccessContext(query.Scope.TenantId, AllowGlobal: false), cancellationToken);
+                    using var secret = JsonDocument.Parse(credential.Value);
+                    body["navidrome_user"] = Required(secret.RootElement, "username");
+                    body["navidrome_password"] = Required(secret.RootElement, "password");
+                }
+                else throw new NotSupportedException();
             }
             using var response = await http.PostAsJsonAsync(endpoint, body, cancellationToken);
             if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.NotImplemented) throw new NotSupportedException();

@@ -25,8 +25,15 @@ public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<Allstarr
     {
         await using var db = await factory.CreateDbContextAsync(token);
         if (await db.Set<PlaybackDeliveryCheckpointEntity>().AsNoTracking().AnyAsync(x => x.TenantId == tenantId && x.OwnerUserId == ownerUserId && x.SignalKey == signalKey && x.TargetId == targetId, token)) return;
-        db.Add(new PlaybackDeliveryCheckpointEntity { Id = Guid.CreateVersion7(), TenantId = tenantId, OwnerUserId = ownerUserId,
-            SignalKey = signalKey, TargetId = targetId, CompletedAt = DateTimeOffset.UtcNow });
+        db.Add(new PlaybackDeliveryCheckpointEntity
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = ownerUserId,
+            SignalKey = signalKey,
+            TargetId = targetId,
+            CompletedAt = DateTimeOffset.UtcNow
+        });
         try { await db.SaveChangesAsync(token); } catch (DbUpdateException) { }
     }
 }

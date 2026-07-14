@@ -34,7 +34,7 @@ public class DeezerDownloadServiceTests : IDisposable
 
         _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_httpMessageHandlerMock.Object);
-        
+
         _httpClientFactoryMock = new Mock<IHttpClientFactory>();
         _httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
 
@@ -71,11 +71,11 @@ public class DeezerDownloadServiceTests : IDisposable
             })
             .Build();
 
-        var subsonicSettings = Options.Create(new SubsonicSettings 
-        { 
-            DownloadMode = downloadMode 
+        var subsonicSettings = Options.Create(new SubsonicSettings
+        {
+            DownloadMode = downloadMode
         });
-        
+
         var deezerSettings = Options.Create(new DeezerSettings
         {
             Arl = arl,
@@ -131,7 +131,7 @@ public class DeezerDownloadServiceTests : IDisposable
         var service = CreateService(arl: "test-arl");
 
         // Act & Assert
-        await Assert.ThrowsAsync<NotSupportedException>(() => 
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
             service.DownloadSongAsync("spotify", "123456"));
     }
 
@@ -183,9 +183,9 @@ public class DeezerDownloadServiceTests : IDisposable
         var service = CreateService(arl: "test-arl");
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<Exception>(() => 
+        var exception = await Assert.ThrowsAsync<Exception>(() =>
             service.DownloadSongAsync("deezer", "999999"));
-        
+
         Assert.Equal("Song not found", exception.Message);
     }
 
@@ -220,7 +220,7 @@ public class DeezerDownloadServiceTests : IDisposable
 
         // Act - Should not throw (fire-and-forget)
         service.DownloadRemainingAlbumTracksInBackground("deezer", "123456", "111");
-        
+
         // Assert - Just verify it doesn't throw, actual download is async
         Assert.True(true);
     }
@@ -417,7 +417,7 @@ public class PathHelperTests : IDisposable
         var parts = result.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         Assert.Contains("My Artist", parts);
         Assert.Contains("My Album", parts);
-        
+
         // Artist should come before Album in the path
         var artistIndex = Array.IndexOf(parts, "My Artist");
         var albumIndex = Array.IndexOf(parts, "My Album");

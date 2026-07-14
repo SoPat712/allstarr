@@ -118,7 +118,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Cache:SearchResultsMinutes"] = "1", ["Deezer:Arl"] = "bootstrap-secret",
+            ["Cache:SearchResultsMinutes"] = "1",
+            ["Deezer:Arl"] = "bootstrap-secret",
             ["MULTI_PROVIDER_STREAMING_ORDER"] = "qobuz"
         }).Build();
         var signal = new RuntimeSettingsChangeSignal();

@@ -19,7 +19,7 @@ public interface IDownloadService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The path to the downloaded file</returns>
     Task<string> DownloadSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Downloads a song and streams the result progressively.
     /// When qualityOverride is specified (not null and not Original), downloads at the requested
@@ -32,7 +32,7 @@ public interface IDownloadService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A stream of the audio file</returns>
     Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, Common.StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Downloads remaining tracks from an album in background (excluding the specified track)
     /// </summary>
@@ -40,17 +40,17 @@ public interface IDownloadService
     /// <param name="albumExternalId">The album ID on the external provider</param>
     /// <param name="excludeTrackExternalId">The track ID to exclude (already downloaded)</param>
     void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId);
-    
+
     /// <summary>
     /// Checks if a song is currently being downloaded
     /// </summary>
     DownloadInfo? GetDownloadStatus(string songId);
-    
+
     /// <summary>
     /// Gets a snapshot of all active/recent downloads for the activity feed
     /// </summary>
     IReadOnlyList<DownloadInfo> GetActiveDownloads();
-    
+
     /// <summary>
     /// Gets the local path for a song if it has been downloaded already
     /// </summary>
@@ -58,7 +58,7 @@ public interface IDownloadService
     /// <param name="externalId">The ID on the external provider</param>
     /// <returns>The local file path if exists, null otherwise</returns>
     Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId);
-    
+
     /// <summary>
     /// Checks if the service is properly configured and functional
     /// </summary>

@@ -23,10 +23,10 @@ public class DeezerMetadataServiceTests
     {
         _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_httpMessageHandlerMock.Object);
-        
+
         _httpClientFactoryMock = new Mock<IHttpClientFactory>();
         _httpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
-        
+
         _settings = new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly };
         _service = CreateService(_settings);
     }
@@ -562,7 +562,7 @@ public class DeezerMetadataServiceTests
     {
         // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
-        
+
         var deezerResponse = new
         {
             data = new object[]
@@ -614,7 +614,7 @@ public class DeezerMetadataServiceTests
     {
         // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.CleanOnly });
-        
+
         var deezerResponse = new
         {
             data = new object[]
@@ -666,7 +666,7 @@ public class DeezerMetadataServiceTests
     {
         // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.All });
-        
+
         var deezerResponse = new
         {
             data = new object[]
@@ -715,7 +715,7 @@ public class DeezerMetadataServiceTests
     {
         // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
-        
+
         var deezerResponse = new
         {
             data = new object[]
@@ -747,7 +747,7 @@ public class DeezerMetadataServiceTests
     {
         // Arrange
         _service = CreateService(new SubsonicSettings { ExplicitFilter = ExplicitFilter.ExplicitOnly });
-        
+
         var deezerResponse = new
         {
             id = 456789,

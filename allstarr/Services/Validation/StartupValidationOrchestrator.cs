@@ -22,7 +22,7 @@ public class StartupValidationOrchestrator : IHostedService
         // Get version from assembly
         var version = typeof(StartupValidationOrchestrator).Assembly
             .GetName().Version?.ToString(3) ?? "unknown";
-        
+
         _logger.LogInformation("Starting provider validation for Allstarr {Version}", version);
 
         // Run all validators

@@ -30,7 +30,7 @@ public class MappingController : ControllerBase
         _mappingService = mappingService;
     }
 
-    
+
     /// <summary>
     /// Save lyrics mapping to file for persistence across restarts.
     /// Lyrics mappings NEVER expire - they are permanent user decisions.
@@ -42,26 +42,26 @@ public class MappingController : ControllerBase
         {
             var mappingsDir = "/app/cache/mappings";
             var allMappings = new List<object>();
-            
+
             if (!Directory.Exists(mappingsDir))
             {
                 return Ok(new { mappings = allMappings, totalCount = 0 });
             }
-            
+
             var files = Directory.GetFiles(mappingsDir, "*_mappings.json");
-            
+
             foreach (var file in files)
             {
                 try
                 {
                     var json = await System.IO.File.ReadAllTextAsync(file);
                     var playlistMappings = JsonSerializer.Deserialize<Dictionary<string, ManualMappingEntry>>(json);
-                    
+
                     if (playlistMappings != null)
                     {
                         var fileName = Path.GetFileNameWithoutExtension(file);
                         var playlistName = fileName.Replace("_mappings", "").Replace("_", " ");
-                        
+
                         foreach (var mapping in playlistMappings.Values)
                         {
                             var targets = await BuildExternalTargetsForManualMappingAsync(mapping);
@@ -84,9 +84,9 @@ public class MappingController : ControllerBase
                     _logger.LogError(ex, "Failed to read mapping file {File}", file);
                 }
             }
-            
-            return Ok(new 
-            { 
+
+            return Ok(new
+            {
                 mappings = allMappings.OrderBy(m => ((dynamic)m).playlist).ThenBy(m => ((dynamic)m).createdAt),
                 totalCount = allMappings.Count,
                 jellyfinCount = allMappings.Count(m => ((dynamic)m).type == "jellyfin"),
@@ -99,7 +99,7 @@ public class MappingController : ControllerBase
             return StatusCode(500, new { error = "Failed to get track mappings" });
         }
     }
-    
+
     /// <summary>
     /// Delete a manual track mapping
     /// </summary>
@@ -113,7 +113,7 @@ public class MappingController : ControllerBase
         {
             return BadRequest(new { error = "playlist and spotifyId parameters are required" });
         }
-        
+
         try
         {
             var removedPlaylistManual = false;

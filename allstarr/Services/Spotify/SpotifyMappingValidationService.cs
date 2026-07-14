@@ -84,7 +84,7 @@ public class SpotifyMappingValidationService
                 // Track still exists, update validation timestamp
                 mapping.LastValidatedAt = DateTime.UtcNow;
                 await _mappingService.SaveMappingAsync(mapping);
-                
+
                 _logger.LogInformation("✓ Local track still exists: {LocalId}", mapping.LocalId);
                 return mapping;
             }
@@ -289,7 +289,7 @@ public class SpotifyMappingValidationService
         int batchSize = 50)
     {
         var spotifyIds = tracks.Select(t => t.SpotifyId).Distinct().ToList();
-        
+
         _logger.LogInformation("Validating mappings for {Count} tracks from playlist (isPlaylistSync: {IsSync})",
             spotifyIds.Count,
             isPlaylistSync);

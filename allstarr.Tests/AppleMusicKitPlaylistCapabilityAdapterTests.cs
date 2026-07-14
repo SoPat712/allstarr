@@ -186,13 +186,16 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         }
         private static object Playlist() => new
         {
-            id = "p.opaque", type = "library-playlists",
+            id = "p.opaque",
+            type = "library-playlists",
             attributes = new { name = "Road Mix", description = "A description", lastModifiedDate = "2026-01-01T00:00:00Z", artwork = new { url = "https://is1-ssl.mzstatic.com/{w}x{h}.jpg" } },
             relationships = new { tracks = new { meta = new { total = 20 } } }
         };
         private static object Song(string id, string name) => new
         {
-            id, type = "library-songs", attributes = new { name, artistName = "Artist", albumName = "Album", durationInMillis = 123000, isrc = "USABC1234567", contentRating = "explicit" }
+            id,
+            type = "library-songs",
+            attributes = new { name, artistName = "Artist", albumName = "Album", durationInMillis = 123000, isrc = "USABC1234567", contentRating = "explicit" }
         };
         private static HttpResponseMessage Json(HttpStatusCode status, object value) => new(status)
         {

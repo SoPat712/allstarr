@@ -16,14 +16,23 @@ public sealed partial class Phase6FavoritePoliciesAndDownloadArtifacts : Migrati
 
         migrationBuilder.CreateTable("favorite_action_policies", table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: true), Scope = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            Protocol = table.Column<string>(type: text, maxLength: 32, nullable: false), BackendInstanceId = table.Column<string>(type: text, maxLength: 200, nullable: false),
-            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true), AddToVirtualLiked = table.Column<bool>(type: boolean, nullable: true),
-            MatchLocalLibrary = table.Column<bool>(type: boolean, nullable: true), AutoDownload = table.Column<bool>(type: boolean, nullable: true),
-            EnrichMetadata = table.Column<bool>(type: boolean, nullable: true), PlaceManagedFile = table.Column<bool>(type: boolean, nullable: true),
-            RefreshBackendLibrary = table.Column<bool>(type: boolean, nullable: true), TargetCredentialReferenceId = table.Column<Guid>(type: guid, nullable: true), UpdatedByUserId = table.Column<Guid>(type: guid, nullable: false),
-            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: true),
+            Scope = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            Protocol = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            BackendInstanceId = table.Column<string>(type: text, maxLength: 200, nullable: false),
+            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
+            AddToVirtualLiked = table.Column<bool>(type: boolean, nullable: true),
+            MatchLocalLibrary = table.Column<bool>(type: boolean, nullable: true),
+            AutoDownload = table.Column<bool>(type: boolean, nullable: true),
+            EnrichMetadata = table.Column<bool>(type: boolean, nullable: true),
+            PlaceManagedFile = table.Column<bool>(type: boolean, nullable: true),
+            RefreshBackendLibrary = table.Column<bool>(type: boolean, nullable: true),
+            TargetCredentialReferenceId = table.Column<Guid>(type: guid, nullable: true),
+            UpdatedByUserId = table.Column<Guid>(type: guid, nullable: false),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            UpdatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
             Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {
@@ -35,12 +44,18 @@ public sealed partial class Phase6FavoritePoliciesAndDownloadArtifacts : Migrati
 
         migrationBuilder.CreateTable("provider_download_workspaces", table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), WorkspaceId = table.Column<string>(type: text, maxLength: 64, nullable: false),
-            TenantId = table.Column<Guid>(type: guid, nullable: false), OwnerUserId = table.Column<Guid>(type: guid, nullable: true),
-            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true), DurableJobId = table.Column<Guid>(type: guid, nullable: false),
-            ProviderId = table.Column<string>(type: text, maxLength: 100, nullable: false), ProviderAccountId = table.Column<Guid>(type: guid, nullable: true),
-            IdempotencyKey = table.Column<string>(type: text, maxLength: 300, nullable: false), CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
-            CompletedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true), Revision = table.Column<long>(type: bigint, nullable: false)
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            WorkspaceId = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: true),
+            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
+            DurableJobId = table.Column<Guid>(type: guid, nullable: false),
+            ProviderId = table.Column<string>(type: text, maxLength: 100, nullable: false),
+            ProviderAccountId = table.Column<Guid>(type: guid, nullable: true),
+            IdempotencyKey = table.Column<string>(type: text, maxLength: 300, nullable: false),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            CompletedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
+            Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {
             table.PrimaryKey("PK_provider_download_workspaces", item => item.Id);
@@ -52,15 +67,24 @@ public sealed partial class Phase6FavoritePoliciesAndDownloadArtifacts : Migrati
 
         migrationBuilder.CreateTable("provider_download_artifacts", table => new
         {
-            Id = table.Column<Guid>(type: guid, nullable: false), WorkspaceRecordId = table.Column<Guid>(type: guid, nullable: false),
-            WorkspaceId = table.Column<string>(type: text, maxLength: 64, nullable: false), TenantId = table.Column<Guid>(type: guid, nullable: false),
-            OwnerUserId = table.Column<Guid>(type: guid, nullable: true), LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
-            DurableJobId = table.Column<Guid>(type: guid, nullable: false), ProviderId = table.Column<string>(type: text, maxLength: 100, nullable: false),
-            ProviderAccountId = table.Column<Guid>(type: guid, nullable: true), ProviderArtifactId = table.Column<string>(type: text, maxLength: 500, nullable: false),
-            RelativePath = table.Column<string>(type: text, maxLength: 1000, nullable: false), ContentSha256 = table.Column<string>(type: text, maxLength: 64, nullable: false),
-            Length = table.Column<long>(type: bigint, nullable: false), State = table.Column<string>(type: text, maxLength: 32, nullable: false),
-            ManagedFileId = table.Column<Guid>(type: guid, nullable: true), CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
-            VerifiedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false), PlacedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
+            Id = table.Column<Guid>(type: guid, nullable: false),
+            WorkspaceRecordId = table.Column<Guid>(type: guid, nullable: false),
+            WorkspaceId = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            TenantId = table.Column<Guid>(type: guid, nullable: false),
+            OwnerUserId = table.Column<Guid>(type: guid, nullable: true),
+            LibraryScopeId = table.Column<string>(type: text, maxLength: 300, nullable: true),
+            DurableJobId = table.Column<Guid>(type: guid, nullable: false),
+            ProviderId = table.Column<string>(type: text, maxLength: 100, nullable: false),
+            ProviderAccountId = table.Column<Guid>(type: guid, nullable: true),
+            ProviderArtifactId = table.Column<string>(type: text, maxLength: 500, nullable: false),
+            RelativePath = table.Column<string>(type: text, maxLength: 1000, nullable: false),
+            ContentSha256 = table.Column<string>(type: text, maxLength: 64, nullable: false),
+            Length = table.Column<long>(type: bigint, nullable: false),
+            State = table.Column<string>(type: text, maxLength: 32, nullable: false),
+            ManagedFileId = table.Column<Guid>(type: guid, nullable: true),
+            CreatedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            VerifiedAt = table.Column<DateTimeOffset>(type: bigint, nullable: false),
+            PlacedAt = table.Column<DateTimeOffset>(type: bigint, nullable: true),
             Revision = table.Column<long>(type: bigint, nullable: false)
         }, constraints: table =>
         {

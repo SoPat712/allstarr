@@ -23,17 +23,62 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow; var job = Guid.CreateVersion7(); var run = Guid.CreateVersion7();
         db.Tenants.Add(new() { Id = _tenant, Slug = "generated", Name = "Generated", CreatedAt = now });
         db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
-        db.BackendIdentities.Add(new() { Id = _backendIdentity, TenantId = _tenant, UserId = _user, BackendType = "jellyfin",
-            BackendInstanceId = "main", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now });
-        db.Jobs.Add(new() { Id = job, ScopeKey = $"{_tenant:N}:{_user:N}", TenantId = _tenant, OwnerUserId = _user,
-            Type = "recommendation.generate", PayloadJson = "{}", PolicySnapshotJson = "{}", RequestFingerprint = new string('a', 64),
-            IdempotencyKey = "run", CorrelationId = "test", State = DurableJobState.Succeeded, MaxAttempts = 1,
-            AvailableAt = now, CreatedAt = now, UpdatedAt = now });
-        db.RecommendationRuns.Add(new() { Id = run, TenantId = _tenant, OwnerUserId = _user, Protocol = "jellyfin",
-            BackendInstanceId = "main", LibraryScopeId = "music", JobId = job, IdempotencyKey = "run", Limit = 10,
-            State = RecommendationRunState.Succeeded, CreatedAt = now, UpdatedAt = now });
-        db.GeneratedSets.Add(new() { Id = _set, RunId = run, TenantId = _tenant, OwnerUserId = _user, Protocol = "jellyfin",
-            BackendInstanceId = "main", LibraryScopeId = "music", Name = "My smart mix", CreatedAt = now });
+        db.BackendIdentities.Add(new()
+        {
+            Id = _backendIdentity,
+            TenantId = _tenant,
+            UserId = _user,
+            BackendType = "jellyfin",
+            BackendInstanceId = "main",
+            PrincipalId = "principal",
+            CreatedAt = now,
+            LastSeenAt = now
+        });
+        db.Jobs.Add(new()
+        {
+            Id = job,
+            ScopeKey = $"{_tenant:N}:{_user:N}",
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            Type = "recommendation.generate",
+            PayloadJson = "{}",
+            PolicySnapshotJson = "{}",
+            RequestFingerprint = new string('a', 64),
+            IdempotencyKey = "run",
+            CorrelationId = "test",
+            State = DurableJobState.Succeeded,
+            MaxAttempts = 1,
+            AvailableAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        db.RecommendationRuns.Add(new()
+        {
+            Id = run,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            JobId = job,
+            IdempotencyKey = "run",
+            Limit = 10,
+            State = RecommendationRunState.Succeeded,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        db.GeneratedSets.Add(new()
+        {
+            Id = _set,
+            RunId = run,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            Name = "My smart mix",
+            CreatedAt = now
+        });
         await db.SaveChangesAsync();
     }
 
@@ -113,8 +158,15 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
         await ChangeProtocol("subsonic"); var track = await AddTrack("song-1", null, "subsonic"); await AddEntries("one");
         var credential = Guid.CreateVersion7(); await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.SecretReferences.Add(new() { Id = credential, TenantId = _tenant, Purpose = "subsonic.generated-playlists",
-                ActiveVersion = 1, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            db.SecretReferences.Add(new()
+            {
+                Id = credential,
+                TenantId = _tenant,
+                Purpose = "subsonic.generated-playlists",
+                ActiveVersion = 1,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
             (await db.GeneratedSets.SingleAsync()).TargetCredentialReferenceId = credential; await db.SaveChangesAsync();
         }
         var target = new FakeTarget(BackendPlaylistFamily.Subsonic);
@@ -169,18 +221,44 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     private async Task<Guid> AddTrack(string backendItem, string? mbid, string protocol = "jellyfin")
     {
         await using var db = await _factory.CreateDbContextAsync(); var id = Guid.CreateVersion7(); var now = DateTimeOffset.UtcNow;
-        db.LibraryTracks.Add(new() { Id = id, TenantId = _tenant, OwnerUserId = _user, BackendIdentityId = _backendIdentity,
-            LibraryScopeId = "music", Protocol = protocol, BackendInstanceId = "main", BackendItemId = backendItem,
-            FilePath = $"/music/{backendItem}.flac", Title = backendItem, Artist = "Artist", DurationMilliseconds = 1000,
-            MusicBrainzRecordingId = mbid, ProviderIdsJson = "{}", IndexedAt = now, SourceModifiedAt = now, UpdatedAt = now });
+        db.LibraryTracks.Add(new()
+        {
+            Id = id,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            BackendIdentityId = _backendIdentity,
+            LibraryScopeId = "music",
+            Protocol = protocol,
+            BackendInstanceId = "main",
+            BackendItemId = backendItem,
+            FilePath = $"/music/{backendItem}.flac",
+            Title = backendItem,
+            Artist = "Artist",
+            DurationMilliseconds = 1000,
+            MusicBrainzRecordingId = mbid,
+            ProviderIdsJson = "{}",
+            IndexedAt = now,
+            SourceModifiedAt = now,
+            UpdatedAt = now
+        });
         await db.SaveChangesAsync(); return id;
     }
     private async Task AddEntries(params string[] keys)
     {
         await using var db = await _factory.CreateDbContextAsync();
-        for (var i = 0; i < keys.Length; i++) db.GeneratedSetEntries.Add(new() { Id = Guid.CreateVersion7(), GeneratedSetId = _set,
-            TenantId = _tenant, OwnerUserId = _user, Position = i, TrackKey = keys[i], Source = "fixture", Score = .8,
-            ExplanationJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("fixture", .8, "Fixture reason") }), IdentityJson = "{}" });
+        for (var i = 0; i < keys.Length; i++) db.GeneratedSetEntries.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            GeneratedSetId = _set,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            Position = i,
+            TrackKey = keys[i],
+            Source = "fixture",
+            Score = .8,
+            ExplanationJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("fixture", .8, "Fixture reason") }),
+            IdentityJson = "{}"
+        });
         await db.SaveChangesAsync();
     }
     private async Task ChangeProtocol(string protocol)
@@ -210,15 +288,19 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     private sealed class FakeTarget(BackendPlaylistFamily family) : IBackendPlaylistTarget
     {
         public BackendPlaylistFamily Family => family; public BackendPlaylistTargetCapabilities Capabilities { get; } = new(true, true, true, true, true, true, false, false, false);
-        public BackendPlaylistWriteRequest? Request { get; private set; } public int Writes { get; private set; } public bool Existing { get; set; }
+        public BackendPlaylistWriteRequest? Request { get; private set; }
+        public int Writes { get; private set; }
+        public bool Existing { get; set; }
         public BackendPlaylistTargetContext? Context { get; private set; }
         public List<string> Names { get; } = [];
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(BackendPlaylistTargetContext context, string name, CancellationToken cancellationToken)
         { Context = context; Names.Add(name); BackendPlaylistSnapshot? value = Existing ? new("playlist-1", name, [], BackendPlaylistSnapshot.ComputeFingerprint("playlist-1", name, [])) : null; return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot?>(BackendPlaylistTargetStatus.Success, value)); }
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot>> ReadAsync(BackendPlaylistTargetContext context, string backendPlaylistId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
-        { Request = request; Writes++; var snapshot = new BackendPlaylistSnapshot(request.BackendPlaylistId ?? "playlist-1", request.Metadata.Name,
+        {
+            Request = request; Writes++; var snapshot = new BackendPlaylistSnapshot(request.BackendPlaylistId ?? "playlist-1", request.Metadata.Name,
             request.OrderedBackendItemIds.Select(id => new BackendPlaylistMember(id)).ToArray(), BackendPlaylistSnapshot.ComputeFingerprint("playlist-1", request.Metadata.Name, request.OrderedBackendItemIds.Select(id => new BackendPlaylistMember(id))), Description: request.Metadata.Description);
-            return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>(BackendPlaylistTargetStatus.Success, new(snapshot, true, ["artwork"]))); }
+            return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>(BackendPlaylistTargetStatus.Success, new(snapshot, true, ["artwork"])));
+        }
     }
 }

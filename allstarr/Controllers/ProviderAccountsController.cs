@@ -515,25 +515,25 @@ public sealed partial class ProviderAccountsController : ControllerBase
     private static object AccountResponse(
         ProviderAccountRecord account,
         SecretReferenceRecord? secret) => new
-    {
-        account.Id,
-        account.ProviderId,
-        account.DisplayName,
-        scope = account.Scope.ToString(),
-        account.TenantId,
-        account.OwnerUserId,
-        account.LibraryScopeId,
-        account.Enabled,
-        secret = new
         {
-            configured = account.SecretReferenceId.HasValue,
-            version = secret?.ActiveVersion,
-            updatedAt = secret?.UpdatedAt,
-            revoked = secret?.RevokedAt.HasValue ?? false
-        },
-        account.CreatedAt,
-        account.UpdatedAt
-    };
+            account.Id,
+            account.ProviderId,
+            account.DisplayName,
+            scope = account.Scope.ToString(),
+            account.TenantId,
+            account.OwnerUserId,
+            account.LibraryScopeId,
+            account.Enabled,
+            secret = new
+            {
+                configured = account.SecretReferenceId.HasValue,
+                version = secret?.ActiveVersion,
+                updatedAt = secret?.UpdatedAt,
+                revoked = secret?.RevokedAt.HasValue ?? false
+            },
+            account.CreatedAt,
+            account.UpdatedAt
+        };
 
     [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex ProviderIdPattern();

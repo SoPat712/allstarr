@@ -164,12 +164,23 @@ public sealed class PlaylistLinksController(
             DurableScheduleEngine.Validate(request.CronExpression, request.TimeZoneId);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var now = clock.UtcNow;
-            var schedule = new JobScheduleRecord { Id = Guid.CreateVersion7(), TenantId = link.TenantId, OwnerUserId = link.OwnerUserId,
-                LibraryScopeId = link.LibraryScopeId, JobType = DurableScheduleEngine.PlaylistSyncJobType,
-                CronExpression = request.CronExpression.Trim(), TimeZoneId = request.TimeZoneId.Trim(), OverlapPolicy = overlap,
-                MisfirePolicy = misfire, RetryPolicyJson = "{}", Enabled = request.Enabled,
+            var schedule = new JobScheduleRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = link.TenantId,
+                OwnerUserId = link.OwnerUserId,
+                LibraryScopeId = link.LibraryScopeId,
+                JobType = DurableScheduleEngine.PlaylistSyncJobType,
+                CronExpression = request.CronExpression.Trim(),
+                TimeZoneId = request.TimeZoneId.Trim(),
+                OverlapPolicy = overlap,
+                MisfirePolicy = misfire,
+                RetryPolicyJson = "{}",
+                Enabled = request.Enabled,
                 NextRunAt = request.Enabled ? DurableScheduleEngine.GetNextOccurrence(request.CronExpression, request.TimeZoneId, now) : null,
-                CreatedAt = now, UpdatedAt = now };
+                CreatedAt = now,
+                UpdatedAt = now
+            };
             db.JobSchedules.Add(schedule);
             var tracked = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.TenantId == link.TenantId, cancellationToken);
             if (tracked.ScheduleId.HasValue) return Conflict(new { error = "The playlist link already has a schedule" });

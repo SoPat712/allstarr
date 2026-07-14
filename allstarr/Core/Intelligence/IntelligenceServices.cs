@@ -51,9 +51,16 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
                 cancellationToken))
             throw new UnauthorizedAccessException("The intelligence target credential is outside this tenant or revoked.");
         var record = await Query(db, scope).SingleOrDefaultAsync(cancellationToken);
-        var now = clock.UtcNow; record ??= new() { Id = Guid.CreateVersion7(), TenantId = scope.TenantId,
-            OwnerUserId = scope.OwnerUserId, Protocol = scope.Protocol, BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId, CreatedAt = now };
+        var now = clock.UtcNow; record ??= new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            CreatedAt = now
+        };
         if (db.Entry(record).State == EntityState.Detached) db.IntelligencePolicies.Add(record);
         record.Enabled = input.Enabled; record.RetentionDays = input.RetentionDays;
         record.TargetCredentialReferenceId = input.TargetCredentialReferenceId;
@@ -81,8 +88,11 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         db.RecommendationRuns.RemoveRange(runs.Where(x => !runningJobIds.Contains(x.JobId))); db.ListeningProfiles.RemoveRange(ScopedProfiles(db, scope)); db.ListeningSignals.RemoveRange(ScopedSignals(db, scope));
         await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
     }
-    internal static void ValidateScope(IntelligenceScope s) { if (s.TenantId == Guid.Empty || s.OwnerUserId == Guid.Empty ||
-        s.Protocol is not ("jellyfin" or "subsonic") || string.IsNullOrWhiteSpace(s.BackendInstanceId) || string.IsNullOrWhiteSpace(s.LibraryScopeId)) throw new ArgumentException("The intelligence scope is invalid."); }
+    internal static void ValidateScope(IntelligenceScope s)
+    {
+        if (s.TenantId == Guid.Empty || s.OwnerUserId == Guid.Empty ||
+        s.Protocol is not ("jellyfin" or "subsonic") || string.IsNullOrWhiteSpace(s.BackendInstanceId) || string.IsNullOrWhiteSpace(s.LibraryScopeId)) throw new ArgumentException("The intelligence scope is invalid.");
+    }
     internal static IQueryable<IntelligencePolicyRecord> Query(AllstarrDbContext db, IntelligenceScope s) => db.IntelligencePolicies.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
     internal static IQueryable<ListeningSignalRecord> ScopedSignals(AllstarrDbContext db, IntelligenceScope s) => db.ListeningSignals.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
     internal static IQueryable<ListeningProfileRecord> ScopedProfiles(AllstarrDbContext db, IntelligenceScope s) => db.ListeningProfiles.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
@@ -119,11 +129,23 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
         if (track == null) return false;
         var expires = observedAt.AddDays(policy.RetentionDays); if (expires <= clock.UtcNow) return false;
         if (signalKey != null && await db.ListeningSignals.AsNoTracking().AnyAsync(x => x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId && x.SignalKey == signalKey, cancellationToken)) return true;
-        db.ListeningSignals.Add(new() { Id = Guid.CreateVersion7(), TenantId = scope.TenantId, OwnerUserId = scope.OwnerUserId,
-            Protocol = scope.Protocol, BackendInstanceId = scope.BackendInstanceId, LibraryScopeId = scope.LibraryScopeId,
-            SignalType = signalType, TrackKeyHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(trackKey))),
-            TrackReference = $"library:{track.Id:N}", SignalKey = signalKey, SourceJobId = sourceJobId,
-            Value = value, ObservedAt = observedAt, ExpiresAt = expires });
+        db.ListeningSignals.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            Protocol = scope.Protocol,
+            BackendInstanceId = scope.BackendInstanceId,
+            LibraryScopeId = scope.LibraryScopeId,
+            SignalType = signalType,
+            TrackKeyHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(trackKey))),
+            TrackReference = $"library:{track.Id:N}",
+            SignalKey = signalKey,
+            SourceJobId = sourceJobId,
+            Value = value,
+            ObservedAt = observedAt,
+            ExpiresAt = expires
+        });
         try { await db.SaveChangesAsync(cancellationToken); return true; }
         catch (DbUpdateException) when (signalKey != null)
         {

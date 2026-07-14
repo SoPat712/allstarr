@@ -30,12 +30,18 @@ public sealed class DurableMetadataEnrichmentService(IDbContextFactory<AllstarrD
         if (existing != null) return existing;
         var record = new MetadataEnrichmentPlanRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = request.TenantId, OwnerUserId = request.OwnerUserId,
-            LineageJobId = request.LineageJobId, ManagedArtifactId = request.ManagedArtifactId,
-            Fingerprint = request.Plan.Fingerprint, PlanVersion = request.Plan.Version,
+            Id = Guid.CreateVersion7(),
+            TenantId = request.TenantId,
+            OwnerUserId = request.OwnerUserId,
+            LineageJobId = request.LineageJobId,
+            ManagedArtifactId = request.ManagedArtifactId,
+            Fingerprint = request.Plan.Fingerprint,
+            PlanVersion = request.Plan.Version,
             SourceRevisionsJson = JsonSerializer.Serialize(request.Plan.SourceRevisions),
-            DecisionsJson = JsonSerializer.Serialize(request.Plan.Decisions), TagsJson = JsonSerializer.Serialize(request.Plan.Tags),
-            PathValuesJson = JsonSerializer.Serialize(request.Plan.PathValues), CreatedAt = clock.UtcNow
+            DecisionsJson = JsonSerializer.Serialize(request.Plan.Decisions),
+            TagsJson = JsonSerializer.Serialize(request.Plan.Tags),
+            PathValuesJson = JsonSerializer.Serialize(request.Plan.PathValues),
+            CreatedAt = clock.UtcNow
         };
         db.MetadataEnrichmentPlans.Add(record);
         await db.SaveChangesAsync(cancellationToken);
@@ -59,10 +65,16 @@ public sealed class DurableMetadataEnrichmentService(IDbContextFactory<AllstarrD
         if (existing != null) return existing;
         var record = new MetadataEnrichmentApplicationRecord
         {
-            Id = Guid.CreateVersion7(), TenantId = request.TenantId, OwnerUserId = request.OwnerUserId,
-            PlanId = request.PlanId, ManagedArtifactId = request.ManagedArtifactId, LineageJobId = request.LineageJobId,
-            ArtifactContentSha256 = checksum, State = MetadataEnrichmentApplicationState.Pending,
-            CreatedAt = clock.UtcNow, UpdatedAt = clock.UtcNow
+            Id = Guid.CreateVersion7(),
+            TenantId = request.TenantId,
+            OwnerUserId = request.OwnerUserId,
+            PlanId = request.PlanId,
+            ManagedArtifactId = request.ManagedArtifactId,
+            LineageJobId = request.LineageJobId,
+            ArtifactContentSha256 = checksum,
+            State = MetadataEnrichmentApplicationState.Pending,
+            CreatedAt = clock.UtcNow,
+            UpdatedAt = clock.UtcNow
         };
         db.MetadataEnrichmentApplications.Add(record);
         await db.SaveChangesAsync(cancellationToken);

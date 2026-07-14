@@ -443,13 +443,13 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             song.Isrc.Equals(isrc, StringComparison.OrdinalIgnoreCase));
     }
 
-	public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
-	{
+    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    {
         var normalizedLimit = NormalizeRemoteLimit(limit);
-		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-		{
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        {
             // Per hifi-api spec: use 'p' parameter for playlist search
-			var url = BuildSearchUrl(baseUrl, "p", query, normalizedLimit);
+            var url = BuildSearchUrl(baseUrl, "p", query, normalizedLimit);
             var response = await _httpClient.GetAsync(url, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
@@ -467,34 +467,34 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
 
             var playlists = new List<ExternalPlaylist>();
             // Per hifi-api spec: playlist search returns data.playlists.items array
-			if (result.RootElement.TryGetProperty("data", out var data) &&
-				data.TryGetProperty("playlists", out var playlistObj) &&
-				playlistObj.TryGetProperty("items", out var items))
-			{
+            if (result.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("playlists", out var playlistObj) &&
+                playlistObj.TryGetProperty("items", out var items))
+            {
                 int count = 0;
-				foreach(var playlist in items.EnumerateArray())
-				{
+                foreach (var playlist in items.EnumerateArray())
+                {
                     if (count >= normalizedLimit) break;
 
-					try
-					{
-						playlists.Add(ParseTidalPlaylist(playlist));
+                    try
+                    {
+                        playlists.Add(ParseTidalPlaylist(playlist));
                         count++;
-					}
-					catch (Exception ex)
-					{
-						_logger.LogWarning(ex, "Failed to parse playlist, skipping");
-						// Skip this playlist and continue with others
-						}
-					}
-				}
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse playlist, skipping");
+                        // Skip this playlist and continue with others
+                    }
+                }
+            }
             else
             {
                 throw new InvalidOperationException("SquidWTF playlist search response did not contain data.playlists.items");
             }
-			return playlists;
-		}, new List<ExternalPlaylist>());
-	}
+            return playlists;
+        }, new List<ExternalPlaylist>());
+    }
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
     {
@@ -517,7 +517,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             Artists = await artistsTask
         };
 
-		return temp;
+        return temp;
     }
 
     public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
@@ -856,7 +856,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
-            
+
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogDebug("SquidWTF artist response: {Json}", json.Length > 500 ? json.Substring(0, 500) + "..." : json);
             using var result = JsonDocument.Parse(json);
@@ -899,136 +899,136 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
 
     public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-		if (externalProvider != "squidwtf") return new List<Album>();
+        if (externalProvider != "squidwtf") return new List<Album>();
 
-		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-		{
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        {
             _logger.LogDebug("GetArtistAlbumsAsync called for SquidWTF artist {ExternalId}", externalId);
 
             // Per hifi-api README: /artist/?f={artistId} returns aggregated releases and tracks
-			var url = $"{baseUrl}/artist/?f={externalId}";
-			_logger.LogDebug("Fetching artist albums from URL: {Url}", url);
-			var response = await _httpClient.GetAsync(url, cancellationToken);
+            var url = $"{baseUrl}/artist/?f={externalId}";
+            _logger.LogDebug("Fetching artist albums from URL: {Url}", url);
+            var response = await _httpClient.GetAsync(url, cancellationToken);
 
-			if (!response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
 
-			var json = await response.Content.ReadAsStringAsync(cancellationToken);
-			_logger.LogDebug("SquidWTF artist albums response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
-			var result = JsonDocument.Parse(json);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogDebug("SquidWTF artist albums response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
+            var result = JsonDocument.Parse(json);
 
-			var albums = new List<Album>();
+            var albums = new List<Album>();
 
             // Response structure: { "albums": { "items": [ album objects ] } }
-			if (result.RootElement.TryGetProperty("albums", out var albumsObj) &&
-				albumsObj.TryGetProperty("items", out var items))
-			{
-				foreach (var album in items.EnumerateArray())
-				{
-					var parsedAlbum = ParseTidalAlbum(album);
-					_logger.LogInformation("Parsed album: {AlbumTitle} by {ArtistName} (ArtistId: {ArtistId})",
-						parsedAlbum.Title, parsedAlbum.Artist, parsedAlbum.ArtistId);
-					albums.Add(parsedAlbum);
-				}
+            if (result.RootElement.TryGetProperty("albums", out var albumsObj) &&
+                albumsObj.TryGetProperty("items", out var items))
+            {
+                foreach (var album in items.EnumerateArray())
+                {
+                    var parsedAlbum = ParseTidalAlbum(album);
+                    _logger.LogInformation("Parsed album: {AlbumTitle} by {ArtistName} (ArtistId: {ArtistId})",
+                        parsedAlbum.Title, parsedAlbum.Artist, parsedAlbum.ArtistId);
+                    albums.Add(parsedAlbum);
+                }
                 _logger.LogDebug("Found {AlbumCount} albums for artist {ExternalId}", albums.Count, externalId);
-			}
+            }
             else
             {
                 throw new InvalidOperationException(
                     $"SquidWTF artist albums response for {externalId} did not contain albums.items");
             }
 
-			return albums;
-		}, new List<Album>());
-	}
+            return albums;
+        }, new List<Album>());
+    }
 
     public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-		if (externalProvider != "squidwtf") return new List<Song>();
+        if (externalProvider != "squidwtf") return new List<Song>();
 
-		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-		{
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        {
             _logger.LogDebug("GetArtistTracksAsync called for SquidWTF artist {ExternalId}", externalId);
 
             // Per hifi-api README: /artist/?f={artistId} returns both albums and tracks
-			var url = $"{baseUrl}/artist/?f={externalId}";
-			_logger.LogDebug("Fetching artist tracks from URL: {Url}", url);
-			var response = await _httpClient.GetAsync(url, cancellationToken);
+            var url = $"{baseUrl}/artist/?f={externalId}";
+            _logger.LogDebug("Fetching artist tracks from URL: {Url}", url);
+            var response = await _httpClient.GetAsync(url, cancellationToken);
 
-			if (!response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"HTTP {response.StatusCode}");
             }
 
-			var json = await response.Content.ReadAsStringAsync(cancellationToken);
-			_logger.LogDebug("SquidWTF artist tracks response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
-			var result = JsonDocument.Parse(json);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogDebug("SquidWTF artist tracks response for {ExternalId}: {JsonLength} bytes", externalId, json.Length);
+            var result = JsonDocument.Parse(json);
 
-			var tracks = new List<Song>();
+            var tracks = new List<Song>();
 
             // Response structure: { "tracks": [ track objects ] }
-			if (result.RootElement.TryGetProperty("tracks", out var tracksArray))
-			{
-				foreach (var track in tracksArray.EnumerateArray())
-				{
-					var parsedTrack = ParseTidalTrack(track);
-					tracks.Add(parsedTrack);
-				}
+            if (result.RootElement.TryGetProperty("tracks", out var tracksArray))
+            {
+                foreach (var track in tracksArray.EnumerateArray())
+                {
+                    var parsedTrack = ParseTidalTrack(track);
+                    tracks.Add(parsedTrack);
+                }
                 _logger.LogDebug("Found {TrackCount} tracks for artist {ExternalId}", tracks.Count, externalId);
-			}
+            }
             else
             {
                 throw new InvalidOperationException(
                     $"SquidWTF artist tracks response for {externalId} did not contain tracks");
             }
 
-			return tracks;
-		}, new List<Song>());
-	}
+            return tracks;
+        }, new List<Song>());
+    }
 
     public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    	{
-    		if (externalProvider != "squidwtf") return null;
+    {
+        if (externalProvider != "squidwtf") return null;
 
-    		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-    		{
-    			var url = BuildPagedEndpointUrl(baseUrl, "playlist", "id", externalId, RemoteSearchMinLimit);
-    			var response = await _httpClient.GetAsync(url, cancellationToken);
-    			if (!response.IsSuccessStatusCode)
-    			{
-    				throw new HttpRequestException($"HTTP {response.StatusCode}");
-    			}
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        {
+            var url = BuildPagedEndpointUrl(baseUrl, "playlist", "id", externalId, RemoteSearchMinLimit);
+            var response = await _httpClient.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"HTTP {response.StatusCode}");
+            }
 
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                using var result = JsonDocument.Parse(json);
-                var rootElement = result.RootElement;
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var result = JsonDocument.Parse(json);
+            var rootElement = result.RootElement;
 
-                // Check for error response
-                if (rootElement.TryGetProperty("error", out _))
-                {
-                    throw new InvalidOperationException($"SquidWTF playlist response for {externalId} contained an error payload");
-                }
+            // Check for error response
+            if (rootElement.TryGetProperty("error", out _))
+            {
+                throw new InvalidOperationException($"SquidWTF playlist response for {externalId} contained an error payload");
+            }
 
-                // Response structure: { "playlist": { playlist object }, "items": [ track wrappers ] }
-    			// Extract the playlist object from the response
-    			if (!rootElement.TryGetProperty("playlist", out var playlistElement))
-    			{
-    				throw new InvalidOperationException($"SquidWTF playlist response for {externalId} did not contain playlist");
-    			}
+            // Response structure: { "playlist": { playlist object }, "items": [ track wrappers ] }
+            // Extract the playlist object from the response
+            if (!rootElement.TryGetProperty("playlist", out var playlistElement))
+            {
+                throw new InvalidOperationException($"SquidWTF playlist response for {externalId} did not contain playlist");
+            }
 
-    			return ParseTidalPlaylist(playlistElement);
-    		}, (ExternalPlaylist?)null);
-    	}
+            return ParseTidalPlaylist(playlistElement);
+        }, (ExternalPlaylist?)null);
+    }
 
     public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-	{
-		if (externalProvider != "squidwtf") return new List<Song>();
+    {
+        if (externalProvider != "squidwtf") return new List<Song>();
 
-		return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
-		{
-			var songs = new List<Song>();
+        return await _fallbackHelper.TryWithFallbackAsync(async (baseUrl) =>
+        {
+            var songs = new List<Song>();
             var offset = DefaultSearchOffset;
             var rawTrackCount = 0;
             var trackIndex = 1;
@@ -1107,11 +1107,11 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
                 offset += pageCount;
             }
 
-			return songs;
-		}, new List<Song>());
-	}
+            return songs;
+        }, new List<Song>());
+    }
 
-	// --- Parser functions start here ---
+    // --- Parser functions start here ---
 
     private static string? BuildTidalImageUrl(string? imageId, string size)
     {
@@ -1135,10 +1135,10 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();
 
-		int? explicitContentLyrics =
-			track.TryGetProperty("explicit", out var ecl) && ecl.ValueKind == JsonValueKind.True
-				? 1
-				: 0;
+        int? explicitContentLyrics =
+            track.TryGetProperty("explicit", out var ecl) && ecl.ValueKind == JsonValueKind.True
+                ? 1
+                : 0;
 
         var title = track.GetProperty("title").GetString() ?? "";
         if (track.TryGetProperty("version", out var version))
@@ -1421,7 +1421,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
         };
     }
 
-	/// <summary>
+    /// <summary>
     /// Parses a Tidal artist object from hifi-api responses.
     /// Per hifi-api spec, artist objects contain: id, name, picture (UUID).
     /// Note: albums_count is not in the standard API response but is added by GetArtistAsync.
@@ -1455,16 +1455,16 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
             Id = BuildExternalArtistId("squidwtf", externalId),
             Name = artistName,
             ImageUrl = imageUrl,
-			AlbumCount = artist.TryGetProperty("albums_count", out var albumsCount)
-				? albumsCount.GetInt32()
-				: null,
+            AlbumCount = artist.TryGetProperty("albums_count", out var albumsCount)
+                ? albumsCount.GetInt32()
+                : null,
             IsLocal = false,
             ExternalProvider = "squidwtf",
             ExternalId = externalId
         };
     }
 
-	/// <summary>
+    /// <summary>
     /// Parses a Tidal playlist from hifi-api /playlist/ endpoint response.
     /// Response structure: { "playlist": { uuid, title, description, creator, created, numberOfTracks, duration, squareImage },
     ///   "items": [ { "item": { track object } } ] }
@@ -1472,114 +1472,114 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
     /// <param name="playlistElement">Root JSON element containing playlist and items</param>
     /// <returns>Parsed ExternalPlaylist object</returns>
     private ExternalPlaylist ParseTidalPlaylist(JsonElement playlistElement)
-    	{
-    		// The playlistElement IS the playlist data directly from the API
-    		// No need to look for a "playlist" property wrapper
+    {
+        // The playlistElement IS the playlist data directly from the API
+        // No need to look for a "playlist" property wrapper
 
-    		var externalId = playlistElement.GetProperty("uuid").GetString()!;
+        var externalId = playlistElement.GetProperty("uuid").GetString()!;
 
-            // Get curator/creator name
-            string? curatorName = null;
-            if (playlistElement.TryGetProperty("creator", out var creator))
+        // Get curator/creator name
+        string? curatorName = null;
+        if (playlistElement.TryGetProperty("creator", out var creator))
+        {
+            // Try to get the name first, fall back to id if name doesn't exist
+            if (creator.TryGetProperty("name", out var name))
             {
-                // Try to get the name first, fall back to id if name doesn't exist
-                if (creator.TryGetProperty("name", out var name))
+                curatorName = name.GetString();
+            }
+            else if (creator.TryGetProperty("id", out var id))
+            {
+                // Handle both string and number types for creator.id
+                var idValue = id.ValueKind == JsonValueKind.Number
+                    ? id.GetInt32().ToString()
+                    : id.GetString();
+
+                // If creator ID is 0/empty, treat as unknown and allow promotedArtists fallback.
+                if (idValue == "0" || string.IsNullOrEmpty(idValue))
                 {
-                    curatorName = name.GetString();
+                    curatorName = null;
                 }
-                else if (creator.TryGetProperty("id", out var id))
+                else
                 {
-                    // Handle both string and number types for creator.id
-                    var idValue = id.ValueKind == JsonValueKind.Number
-                        ? id.GetInt32().ToString()
-                        : id.GetString();
-
-                    // If creator ID is 0/empty, treat as unknown and allow promotedArtists fallback.
-                    if (idValue == "0" || string.IsNullOrEmpty(idValue))
-                    {
-                        curatorName = null;
-                    }
-                    else
-                    {
-                        curatorName = idValue;
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(curatorName) &&
-                playlistElement.TryGetProperty("promotedArtists", out var promotedArtists) &&
-                promotedArtists.ValueKind == JsonValueKind.Array &&
-                promotedArtists.GetArrayLength() > 0 &&
-                promotedArtists[0].TryGetProperty("name", out var promotedArtistName))
-            {
-                curatorName = promotedArtistName.GetString();
-            }
-
-            // Final fallback: if still no curator name, use TIDAL
-            if (string.IsNullOrEmpty(curatorName))
-            {
-                curatorName = "TIDAL";
-            }
-
-    		// Get creation date
-            DateTime? createdDate = null;
-            if (playlistElement.TryGetProperty("created", out var creationDateEl))
-            {
-                var dateStr = creationDateEl.GetString();
-                if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr, out var date))
-                {
-                    createdDate = date;
+                    curatorName = idValue;
                 }
             }
+        }
 
-            if (createdDate == null &&
-                playlistElement.TryGetProperty("lastUpdated", out var lastUpdatedEl) &&
-                DateTime.TryParse(lastUpdatedEl.GetString(), out var lastUpdatedDate))
+        if (string.IsNullOrWhiteSpace(curatorName) &&
+            playlistElement.TryGetProperty("promotedArtists", out var promotedArtists) &&
+            promotedArtists.ValueKind == JsonValueKind.Array &&
+            promotedArtists.GetArrayLength() > 0 &&
+            promotedArtists[0].TryGetProperty("name", out var promotedArtistName))
+        {
+            curatorName = promotedArtistName.GetString();
+        }
+
+        // Final fallback: if still no curator name, use TIDAL
+        if (string.IsNullOrEmpty(curatorName))
+        {
+            curatorName = "TIDAL";
+        }
+
+        // Get creation date
+        DateTime? createdDate = null;
+        if (playlistElement.TryGetProperty("created", out var creationDateEl))
+        {
+            var dateStr = creationDateEl.GetString();
+            if (!string.IsNullOrEmpty(dateStr) && DateTime.TryParse(dateStr, out var date))
             {
-                createdDate = lastUpdatedDate;
+                createdDate = date;
             }
+        }
 
-            if (createdDate == null &&
-                playlistElement.TryGetProperty("lastItemAddedAt", out var lastItemAddedAtEl) &&
-                DateTime.TryParse(lastItemAddedAtEl.GetString(), out var lastItemAddedAtDate))
-            {
-                createdDate = lastItemAddedAtDate;
-            }
+        if (createdDate == null &&
+            playlistElement.TryGetProperty("lastUpdated", out var lastUpdatedEl) &&
+            DateTime.TryParse(lastUpdatedEl.GetString(), out var lastUpdatedDate))
+        {
+            createdDate = lastUpdatedDate;
+        }
 
-    		// Get playlist image URL
-    		string? imageUrl = null;
-            if (playlistElement.TryGetProperty("squareImage", out var picture))
-            {
-                imageUrl = BuildTidalImageUrl(picture.GetString(), "1080x1080");
-            }
+        if (createdDate == null &&
+            playlistElement.TryGetProperty("lastItemAddedAt", out var lastItemAddedAtEl) &&
+            DateTime.TryParse(lastItemAddedAtEl.GetString(), out var lastItemAddedAtDate))
+        {
+            createdDate = lastItemAddedAtDate;
+        }
 
-            if (string.IsNullOrWhiteSpace(imageUrl) &&
-                playlistElement.TryGetProperty("image", out var image))
-            {
-                imageUrl = BuildTidalImageUrl(image.GetString(), "1080x1080");
-            }
+        // Get playlist image URL
+        string? imageUrl = null;
+        if (playlistElement.TryGetProperty("squareImage", out var picture))
+        {
+            imageUrl = BuildTidalImageUrl(picture.GetString(), "1080x1080");
+        }
 
-    		return new ExternalPlaylist
-            {
-                Id = Common.PlaylistIdHelper.CreatePlaylistId("squidwtf", externalId),
-                Name = playlistElement.GetProperty("title").GetString() ?? "",
-                Description = playlistElement.TryGetProperty("description", out var desc)
-                    ? desc.GetString()
-                    : null,
-                CuratorName = curatorName,
-                Provider = "squidwtf",
-                ExternalId = externalId,
-                TrackCount = playlistElement.TryGetProperty("numberOfTracks", out var nbTracks)
-                    ? nbTracks.GetInt32()
-                    : 0,
-                Duration = playlistElement.TryGetProperty("duration", out var duration)
-                    ? duration.GetInt32()
-                    : 0,
-                CoverUrl = imageUrl,
-                CreatedDate = createdDate
-            };
+        if (string.IsNullOrWhiteSpace(imageUrl) &&
+            playlistElement.TryGetProperty("image", out var image))
+        {
+            imageUrl = BuildTidalImageUrl(image.GetString(), "1080x1080");
+        }
 
-    	}
+        return new ExternalPlaylist
+        {
+            Id = Common.PlaylistIdHelper.CreatePlaylistId("squidwtf", externalId),
+            Name = playlistElement.GetProperty("title").GetString() ?? "",
+            Description = playlistElement.TryGetProperty("description", out var desc)
+                ? desc.GetString()
+                : null,
+            CuratorName = curatorName,
+            Provider = "squidwtf",
+            ExternalId = externalId,
+            TrackCount = playlistElement.TryGetProperty("numberOfTracks", out var nbTracks)
+                ? nbTracks.GetInt32()
+                : 0,
+            Duration = playlistElement.TryGetProperty("duration", out var duration)
+                ? duration.GetInt32()
+                : 0,
+            CoverUrl = imageUrl,
+            CreatedDate = createdDate
+        };
+
+    }
 
     /// <summary>
     /// Determines whether a song should be included based on the explicit content filter setting

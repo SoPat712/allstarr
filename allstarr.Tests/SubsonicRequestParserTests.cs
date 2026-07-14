@@ -39,7 +39,7 @@ public class SubsonicRequestParserTests
         var context = new DefaultHttpContext();
         var formData = "u=admin&p=password&query=test+artist&artistCount=10";
         var bytes = Encoding.UTF8.GetBytes(formData);
-        
+
         context.Request.Body = new MemoryStream(bytes);
         context.Request.ContentType = "application/x-www-form-urlencoded";
         context.Request.ContentLength = bytes.Length;
@@ -63,7 +63,7 @@ public class SubsonicRequestParserTests
         var context = new DefaultHttpContext();
         var jsonData = "{\"u\":\"admin\",\"p\":\"password\",\"query\":\"test artist\",\"artistCount\":10}";
         var bytes = Encoding.UTF8.GetBytes(jsonData);
-        
+
         context.Request.Body = new MemoryStream(bytes);
         context.Request.ContentType = "application/json";
         context.Request.ContentLength = bytes.Length;
@@ -85,7 +85,7 @@ public class SubsonicRequestParserTests
         // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?u=admin&p=password&f=json");
-        
+
         var formData = "query=test&artistCount=5";
         var bytes = Encoding.UTF8.GetBytes(formData);
         context.Request.Body = new MemoryStream(bytes);
@@ -140,7 +140,7 @@ public class SubsonicRequestParserTests
         // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?u=admin");
-        
+
         var invalidJson = "{invalid json}";
         var bytes = Encoding.UTF8.GetBytes(invalidJson);
         context.Request.Body = new MemoryStream(bytes);
@@ -162,7 +162,7 @@ public class SubsonicRequestParserTests
         var context = new DefaultHttpContext();
         var jsonData = "{\"u\":\"admin\",\"p\":null,\"query\":\"test\"}";
         var bytes = Encoding.UTF8.GetBytes(jsonData);
-        
+
         context.Request.Body = new MemoryStream(bytes);
         context.Request.ContentType = "application/json";
         context.Request.ContentLength = bytes.Length;
@@ -183,7 +183,7 @@ public class SubsonicRequestParserTests
         // Arrange
         var context = new DefaultHttpContext();
         context.Request.QueryString = new QueryString("?format=xml&query=old");
-        
+
         var jsonData = "{\"query\":\"new\",\"artist\":\"Beatles\"}";
         var bytes = Encoding.UTF8.GetBytes(jsonData);
         context.Request.Body = new MemoryStream(bytes);

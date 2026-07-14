@@ -214,7 +214,7 @@ public class SubsonicController : ControllerBase
         try
         {
             var downloadStream = await _downloadService.DownloadAndStreamAsync(provider!, externalId!, cancellationToken: HttpContext.RequestAborted);
-            
+
             var contentType = "audio/mpeg";
             if (downloadStream is FileStream fs)
             {

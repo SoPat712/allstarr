@@ -20,22 +20,22 @@ public interface IMusicMetadataService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>List of found songs</returns>
     Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Searches for albums on external providers
     /// </summary>
     Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Searches for artists on external providers
     /// </summary>
     Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Combined search (songs, albums, artists)
     /// </summary>
     Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets details of an external song
     /// </summary>
@@ -45,27 +45,27 @@ public interface IMusicMetadataService
     /// Attempts to find a song by ISRC using the provider's most exact lookup path.
     /// </summary>
     Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets details of an external album with its songs
     /// </summary>
     Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets details of an external artist
     /// </summary>
     Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets an artist's albums
     /// </summary>
     Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets an artist's top tracks (not all songs, just popular tracks from the artist endpoint)
     /// </summary>
     Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Searches for playlists on external providers
     /// </summary>
@@ -74,7 +74,7 @@ public interface IMusicMetadataService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>List of found playlists</returns>
     Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets details of an external playlist (metadata only, not tracks)
     /// </summary>
@@ -83,7 +83,7 @@ public interface IMusicMetadataService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Playlist details or null if not found</returns>
     Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Gets all tracks from an external playlist
     /// </summary>

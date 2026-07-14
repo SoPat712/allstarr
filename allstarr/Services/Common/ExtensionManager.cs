@@ -49,7 +49,7 @@ public class ExtensionManager
         _extensionsDir = Path.GetFullPath(
             _configuration["Extensions:Directory"] ??
             Path.Combine(Directory.GetCurrentDirectory(), "extensions"));
-        
+
         if (!Directory.Exists(_extensionsDir))
         {
             Directory.CreateDirectory(_extensionsDir);
@@ -925,7 +925,7 @@ public class ExtensionSandbox
         {
             var jsResult = _engine.Invoke(fn, id);
             if (!jsResult.IsObject()) return null;
-            
+
             var item = jsResult.AsObject();
             var song = new Song
             {
@@ -1317,7 +1317,7 @@ public class ExtensionHostBridge
                 throw new UnauthorizedAccessException("Extension network origin is not approved.");
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = TimeSpan.FromSeconds(15);
-            
+
             var request = new HttpRequestMessage(new HttpMethod(method), safeUri);
 
             if (body != null)
@@ -1331,7 +1331,7 @@ public class ExtensionHostBridge
                 {
                     var headerKey = prop.Key.ToString();
                     var headerVal = ResolveSecretMarkers(obj.Get(prop.Key).ToString());
-                    
+
                     if (!string.IsNullOrEmpty(headerVal))
                     {
                         if (headerKey.Contains('\r') || headerKey.Contains('\n') || headerVal.Contains('\r') || headerVal.Contains('\n') ||
@@ -1370,7 +1370,8 @@ public class ExtensionHostBridge
 
             var respHeaders = response.Headers.ToDictionary(k => k.Key, v => (object)string.Join(", ", v.Value));
 
-            return new {
+            return new
+            {
                 statusCode = (int)response.StatusCode,
                 body = bodyText,
                 headers = respHeaders
@@ -1378,7 +1379,8 @@ public class ExtensionHostBridge
         }
         catch (Exception ex)
         {
-            return new {
+            return new
+            {
                 statusCode = 500,
                 body = "",
                 error = ex is UnauthorizedAccessException ? "permission_denied" : "extension_request_failed"
@@ -1424,7 +1426,7 @@ public class ExtensionHostBridge
                         foreach (var item in approved) _storage[item.Key] = item.Value;
                 }
             }
-            catch {}
+            catch { }
         }
     }
 

@@ -2,6 +2,7 @@ using allstarr.Core.Intelligence;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Storage;
+
 public sealed partial class AllstarrDbContext
 {
     public DbSet<IntelligencePolicyRecord> IntelligencePolicies => Set<IntelligencePolicyRecord>();
