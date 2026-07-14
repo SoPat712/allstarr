@@ -20,10 +20,9 @@ This is critical because both backend controllers own catch-all routes.
 controller is registered, and activates every registered controller. The one-protocol-per-deployment rule
 is therefore a checked current invariant, not only a roadmap preference.
 
-## Phase 0 Stabilization Seams
+## Compatibility And Observability Seams
 
-Phase 0 adds narrow compatibility and observability seams beside the legacy architecture. These are not
-the Phase 1 durable foundation or the Phase 2 capability core:
+The compatibility layer preserves older routes while current durable and typed subsystems own new work:
 
 - `JellyfinAuthFilter` permits only login/public bootstrap routes without client credentials. Before any
   other Jellyfin controller action it calls backend `Users/Me` using the client's credentials, preserves
@@ -44,22 +43,22 @@ the Phase 1 durable foundation or the Phase 2 capability core:
   from Jellyfin-only session and metadata services. Jellyfin supplies the current adapters; Subsonic mode
   starts without those adapters.
 - `CurrentProviderSupportCatalog` is the visible current capability/account/coverage inventory. It is
-  separate from `ProviderStatusManager`, whose Phase 0 runtime observations are in-memory and scoped by
+  separate from `ProviderStatusManager`, whose compatibility observations are in-memory and scoped by
   provider, capability, and account key.
 - Provider configuration and health are distinct. Untested capabilities are `Unknown`, explicit tests pass
   through `Testing`, and only a successful observation is `Healthy`/ready. The compatibility router may
-  still attempt eligible `Unknown` capabilities on legacy protocol paths. The Phase 2 router is now the policy
-  boundary for typed capability adapters; Phase 3 moves protocol routes onto it without silently changing their
-  current compatibility behavior.
-- Remote extension installation is default-deny. Existing local JavaScript extensions remain trusted
-  in-process code and metadata-only compatibility inputs; this is not the SDK v1 isolation boundary.
+  still attempt eligible `Unknown` capabilities on legacy protocol paths. `ProviderRouter` is the policy
+  boundary for typed capability adapters and authenticated protocol work.
+- Remote extension installation is default-deny. SDK v1 packages pass checksum, manifest, permission, staging,
+  lifecycle, and typed capability checks. JavaScript still runs as trusted code in constrained in-process Jint,
+  not an operating-system sandbox.
 - External unfavorite is logical and preserves managed files. Favorite-triggered optional work now enters the
   durable, tenant-scoped `FavoriteActionPipeline`; it no longer relies on controller `Task.Run` work or a Redis
   kept-file record. The backend favorite result stays separate from optional Allstarr action failures.
 
-## Phase 1 Durable Foundation
+## Durable Foundation
 
-Phase 1 has a verified durable control plane beside the legacy provider and protocol services. Its migration,
+The app has a verified durable control plane beside the legacy provider and protocol services. Its migration,
 runtime-image, backup/restore, and Compose exit gates are complete.
 
 - `AllstarrDbContext` is the source of truth for tenants, users, backend identities, provider accounts,
@@ -98,9 +97,10 @@ runtime-image, backup/restore, and Compose exit gates are complete.
   persistent database/app volumes, and separate accessible download and kept-media mounts. The legacy
   Redis-to-Valkey conversion overlay has been removed. Pre-overhaul application state is not imported.
 
-## Phase 2 Capability Core And Minimum Track Identity
+## Capability Core And Track Identity
 
-Phase 2 adds a typed provider lane beside the unchanged Jellyfin and Subsonic compatibility controllers.
+The typed provider lane is shared by built-ins and SDK v1 packages while compatibility controllers preserve
+older routes.
 
 - `Core/Capabilities` defines immutable external IDs, actor/account/library execution context, quality and
   fallback policy, provider outcomes, capability contracts, descriptors, and the validated provider registry.
@@ -122,13 +122,13 @@ Phase 2 adds a typed provider lane beside the unchanged Jellyfin and Subsonic co
   migration enforces same-tenant
   canonical relationships, separate catalog/account uniqueness, track-only identities, accepted verification
   states, positive decision versions, and normalized hash length.
-- `Core/Providers/Deezer` is the first real built-in adapter. It wraps the existing public Deezer metadata service
-  without changing controller behavior. The other current built-ins are registered as non-operational core
-  descriptors until their typed adapters are implemented, including a separate `apple-musickit` provider.
+- `Core/Providers` contains the current typed built-in adapters. Provider support is capability-specific and
+  reported by `CurrentProviderSupportCatalog`; a provider may be supported for playlists or metadata while a
+  different lane remains partial, blocked, or unavailable. `apple-download` and `apple-musickit` are separate.
 
-## Phase 3 Protocol Adapters And Compatibility
+## Protocol Adapters And Compatibility
 
-Phase 3 keeps one selected protocol surface while moving client-visible shaping behind tested adapters.
+The protocol layer keeps one selected surface while placing client-visible shaping behind tested adapters.
 
 - `ProtocolExecutionContextFilter` runs after native backend authentication and provides one secret-free request
   context. Linked identities can authorize optional user work. Unresolved identities retain transparent relay
@@ -145,7 +145,28 @@ Phase 3 keeps one selected protocol surface while moving client-visible shaping 
 Provider-neutral playlist materialization and durable favorite work now build on those authenticated boundaries.
 Durable playback/scrobble work and scoped recommendation policy now build on those authenticated boundaries.
 
-## Phase 6 Favorites, Managed Files, And Enrichment
+## Library Index, Matching, And Playlists
+
+- `Core/Playlists` owns provider-neutral links, ordered source snapshots, schedules, runs, conflicts, target
+  membership, and metadata/artwork references.
+- `Core/Matching` and the library index connect one canonical recording to many provider identities and local
+  copies. Decisions are scoped, versioned, explainable, and reviewable; manual overrides are durable.
+- Spotify and Apple MusicKit sources use the selected encrypted provider account. Jellyfin and
+  Subsonic/Navidrome targets support virtual reads, reconcile, and explicit recreate behavior.
+- Materialization reuses exact local matches, preserves order, and reports unmatched entries. It does not
+  download missing songs unless a separate opt-in policy starts a download workflow.
+
+## Extension SDK v1 And First-Party Packages
+
+- SDK v1 exposes typed metadata, streaming, download, playlist, lyrics, and health hooks through the same
+  registry and router used by built-ins.
+- Package installation verifies source and content hashes, archive bounds, manifests, compatibility, permissions,
+  account scope, staged activation, disable/update, and rollback.
+- The checksum-locked first-party bundle is mounted by AIO. Blocked packages are not activated merely because
+  their archives are present.
+- The current Jint runtime is a constrained trusted-code boundary. Stronger process isolation remains future work.
+
+## Favorites, Managed Files, And Enrichment
 
 - Favorite actions are opt-in at an exact tenant, user, protocol, backend, and optional library scope. Admins can
   define a tenant/backend policy. Users can save their own override in Hybrid or UserManaged mode. User values
@@ -163,7 +184,7 @@ Durable playback/scrobble work and scoped recommendation policy now build on tho
 - Jellyfin refresh uses the configured server API key. Subsonic/Navidrome refresh resolves an encrypted,
   tenant-scoped credential just in time and keeps it out of job payloads, state-transfer archives, and logs.
 
-## Phase 7 Intelligence And Durable Playback Signals
+## Intelligence And Durable Playback Signals
 
 - `Core/Intelligence` owns exact-scope opt-in policy, retention, listening profiles, recommendation providers,
   durable runs, explanations, generated sets, and backend materialization. Turning a scope off stops new signals;
@@ -173,9 +194,15 @@ Durable playback/scrobble work and scoped recommendation policy now build on tho
 - Habit-derived seeds feed Jellyfin InstantMix, exact-account Last.fm `track.getSimilar`, ListenBrainz
   collaborative filtering, local rules, MusicBrainz-enriched local relationships, and optional healthy
   AudioMuse-AI. Readiness is scoped and visible before selection.
-- Generated sets reconcile exact local matches into Jellyfin or Subsonic/Navidrome through the Phase 4 targets.
+- Generated sets reconcile exact local matches into Jellyfin or Subsonic/Navidrome through the shared playlist targets.
   Unmatched entries stay explained and are not downloaded. Subsonic credentials are explicitly saved on policy,
   snapshotted through run/set lineage, and resolved just in time.
+
+## First-Party Package Boundaries
+
+First-party Deezer, Spotify, and Apple MusicKit package sources live under `first-party` with deterministic
+archives and source locks. A package replaces a built-in only after parity, permission, activation, and rollback
+gates pass. The bundle lock keeps incomplete switchovers blocked.
 
 ## Project Map
 
@@ -237,12 +264,13 @@ Durable playback/scrobble work and scoped recommendation policy now build on tho
 - `Models/Scrobbling`: playback sessions and scrobble payloads.
 - `Models/Admin`: admin request and response shapes.
 - `Models/Subsonic`, `Models/Lyrics`, `Models/Download`, `Models/Search`: backend or feature-specific payloads.
-- `Core/Storage/DurableEntities.cs`: provider-neutral durable records for Phase 1 identity, accounts, secrets,
+- `Core/Storage/DurableEntities.cs`: provider-neutral durable records for identity, accounts, secrets,
   jobs, health, circuits, backups, and audit state.
 
 ### Frontend and Tests
 
-- `wwwroot`: static Lit admin UI with supporting ES modules under `wwwroot/js`.
+- `wwwroot`: static Lit admin UI. Application behavior is consolidated in `wwwroot/js/webui.js`; vendored Lit
+  remains separate.
 - `allstarr.Tests`: xUnit regression coverage for helpers, middleware, controllers, provider services,
   real-host composition, protocol source locks/fixtures, JavaScript syntax, responsive/UI contracts, path
   safety, redaction, and policy logic.
@@ -287,7 +315,7 @@ or startup behavior usually require looking at both controller code and a hosted
 environment, favorite, mapping, and version-state migration services are not registered. The overhaul starts
 from a fresh durable baseline instead of importing those formats during startup.
 
-Phase 1 also registers `DurableStorageInitializer`, `DurableStorageRuntimeMonitor`, `IdentityBootstrapper`, `DurableJobWorker`,
+The durable host registers `DurableStorageInitializer`, `DurableStorageRuntimeMonitor`, `IdentityBootstrapper`, `DurableJobWorker`,
 `DurableOutboxDispatcher`, `DurableProviderHealthInitializer`, and `SidecarHealthMonitor`. Storage initialization
 runs before durable mutations can be admitted. Job and outbox workers recover pending records from the selected
 database, not from Valkey. The runtime monitor pauses mutations and workers if the selected database disappears
@@ -338,7 +366,7 @@ Current state is split by ownership:
 - `.env` still holds deployment and current compatibility settings. New provider-account secrets are saved by
   reference in durable storage instead of being returned through configuration APIs. Startup does not scan
   old environment, mapping, favorite, or version-state files and convert them into the new baseline.
-- Valkey/Redis and `/app/cache` remain cache and compatibility inputs. Neither is a durable record of a Phase 1
+- Valkey/Redis and `/app/cache` remain cache and compatibility inputs. Neither is a durable record of a
   job, outbox action, account, or health rollup.
 - `downloads/*`, kept media, and configured library mounts contain the actual files. Postgres and SQLite never
   contain encoded song bytes.
@@ -354,6 +382,7 @@ Current state is split by ownership:
 - Keep the selected database explicit and fail readiness instead of substituting another provider.
 - Keep secret key material outside database rows, backup artifacts, metrics, and logs.
 - Keep job failure retries separate from bounded sidecar deferrals, and keep both states operator-visible.
-- Keep remote extension install disabled by default until checksum, permission, staging/rollback, and isolation contracts exist.
+- Keep remote extension install disabled by default. Enabling staging never bypasses checksum, permission,
+  content, lifecycle, or account-scope checks. Do not describe in-process Jint as an operating-system sandbox.
 - Never make unfavorite/unstar an implicit file-deletion operation.
 - Do not let feature docs drift from code. Update steering when architecture changes.

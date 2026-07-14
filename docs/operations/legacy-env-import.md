@@ -138,6 +138,9 @@ to a freshly bootstrapped tenant without weakening conflicts around identities, 
 
 ## Minimum Verification
 
-Implementation is not complete without fixtures and tests for every classification row or key group, duplicate keys, empty values, malformed JSON, partial credential bundles, secret redaction, unknown keys, dry-run/apply hash mismatch, idempotent reapply rejection, setting conflicts, account conflicts, transaction rollback, tenant scope, encryption/key rotation compatibility, and absence of startup import behavior.
+Coverage must remain in place for every classification row or key group, duplicate keys, empty values, malformed
+JSON, partial credential bundles, secret redaction, unknown keys, dry-run/apply hash mismatch, idempotent reapply
+rejection, setting conflicts, account conflicts, transaction rollback, tenant scope, encryption/key rotation
+compatibility, and absence of startup import behavior.
 
 SQLite tests prove the complete transactional apply path, including encrypted secrets and rollback. Native Postgres integration verifies the portable runtime-settings migration and table contract. Release rehearsal must also exercise the WebUI migration against the target Postgres deployment before cutover.

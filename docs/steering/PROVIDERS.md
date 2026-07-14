@@ -2,9 +2,14 @@
 
 > **IMPORTANT FOR AI ASSISTANTS**: Do NOT create summary markdown files unless explicitly requested by the user or for vital architectural features. Put summaries in chat only. Keep the repository focused on durable steering and product docs.
 
-## Shared Provider Contract
+## Authoritative Provider Contract
 
-`IMusicMetadataService` is the contract all provider metadata services implement.
+`Core/Capabilities` owns the typed metadata, streaming, download, playlist, lyrics, and health contracts used by
+built-ins and SDK v1 packages. `ProviderRegistry` validates descriptors and implementations. `ProviderRouter`
+selects an eligible provider account by tenant, user, library, permission, policy, health, and capability.
+
+`IMusicMetadataService` remains a legacy compatibility contract for older provider metadata services. New work
+must enter through the typed capability core instead of extending last-registration-wins behavior.
 
 Key responsibilities:
 
@@ -18,7 +23,7 @@ Provider services should return domain models, not backend-specific response obj
 
 `TrackParserBase` centralizes typed external ID generation and shared parse helpers. New provider parsers should reuse it.
 
-## Registration Rules
+## Legacy Registration Rules
 
 `Program.cs` may register more than one provider at a time.
 
@@ -26,9 +31,10 @@ Provider services should return domain models, not backend-specific response obj
 - `ParallelMetadataService` can race all registered providers.
 - Deezer and Qobuz may be paired for playlist support depending on `EnableExternalPlaylists`.
 
-If you change provider registration, think about both default injection and multi-provider racing.
+If you change a compatibility provider registration, think about both default injection and multi-provider racing.
+Typed routes must register an accurate descriptor and matching capability implementation atomically.
 
-## Current Providers
+## Current Provider Notes
 
 ### Deezer
 
@@ -45,11 +51,23 @@ If you change provider registration, think about both default injection and mult
 
 ### SquidWTF
 
-- Endpoint discovery happens at startup
-- Metadata and downloads use `RoundRobinFallbackHelper`
+- Optional endpoint discovery supports metadata
+- Current routing permits metadata only
+- Streaming, download, and playlist lanes are policy-blocked until a working endpoint and contract fixtures exist
 - Search code handles query variants and endpoint failover
-- Downloads fall back across quality tiers and mirrors
 - Odesli conversion is used for Spotify ID enrichment
+
+### Apple
+
+- `apple-download` is an optional, separately deployed compatible gateway configured by URL. Standard and AIO do
+  not bundle GAMDL, wrapper-v2, or the gateway stack.
+- `apple-musickit` is a separate per-user MusicKit account for personal playlists and library operations.
+- Never pass a Music User Token to the download gateway or treat gateway login state as MusicKit authorization.
+
+### Spotify
+
+- Durable provider-neutral playlist links are the current playlist path.
+- The specialized session-cookie injection and Redis mapping flows remain compatibility-only.
 
 ### MusicBrainz Enrichment
 

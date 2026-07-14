@@ -2,13 +2,13 @@
 
 This file is the implementation charter for the overhaul. Start here, then follow the owned specifications in [docs/steering/references](docs/steering/references/README.md).
 
-Allstarr should become a self-hosted music platform gateway: a client-compatible front door for Jellyfin and Subsonic clients, backed by pluggable providers for metadata, streaming, downloads, playlists, lyrics, scrobbling, enrichment, recommendations, health, and automation.
+Allstarr is a self-hosted music platform gateway: a client-compatible front door for Jellyfin and Subsonic clients, backed by pluggable providers for metadata, streaming, downloads, playlists, lyrics, scrobbling, enrichment, recommendations, health, and automation.
 
-The practical recommendation is not a full rewrite first. Keep ASP.NET Core as the control plane, add Postgres for durable state, keep Valkey/Redis for cache and acceleration, keep sidecars where provider ecosystems require them, and build a capability core next to the current code. Migrate providers and protocol routes into that core in phases.
+The overhaul kept ASP.NET Core as the control plane, added Postgres for durable state, retained Valkey for cache and acceleration, and introduced a typed capability core beside compatibility services. Optional external provider services remain separate deployments.
 
 ## Plan Status And Ownership
 
-This is an approved product and migration direction, not a claim that every target behavior already exists. Current-code facts must remain separately labeled from target requirements. Do not move files or rewrite a working path merely to resemble the target directory tree.
+The version 3 beta implementation and all eight overhaul phases are complete. This file preserves the locked decisions, implemented design, completion evidence, and original phase roadmap. Current-state sections are authoritative. The roadmap near the end is historical and is not an unfinished task list.
 
 This root file owns:
 
@@ -32,13 +32,14 @@ The linked reference files own the detailed specifications for their areas. Upda
 ### Open Decisions That Require An Explicit Change
 
 - Whether a future deployment may serve Jellyfin and Subsonic protocol surfaces simultaneously, and what ports, routing, and authentication that requires.
-- The extension isolation boundary for SDK v1 (in-process sandbox, sidecar process, or another constrained runtime).
+- A future stronger extension isolation boundary beyond the current trusted, constrained in-process Jint runtime.
 - The precise identity-provider and account-recovery experience for deployments without Jellyfin-backed administration.
 - Any automatic provider behavior that could incur provider charges, rate-limit pressure, or rights-sensitive media actions.
 
 ## How To Use This Plan
 
-1. Read this file first and identify the relevant phase and exit criteria.
+1. Read this file first and identify the relevant current-state section. Use the completed phase records only for
+   design history and earlier exit evidence.
 2. Read the current-code steering docs that match the change area, especially [docs/steering/INTRODUCTION.md](docs/steering/INTRODUCTION.md), [docs/steering/ARCHITECTURE.md](docs/steering/ARCHITECTURE.md), [docs/steering/PROVIDERS.md](docs/steering/PROVIDERS.md), [docs/steering/DOWNLOADS.md](docs/steering/DOWNLOADS.md), [docs/steering/BACKENDS.md](docs/steering/BACKENDS.md), [docs/steering/CACHING.md](docs/steering/CACHING.md), [docs/steering/SCROBBLING.md](docs/steering/SCROBBLING.md), and [docs/steering/TESTING.md](docs/steering/TESTING.md).
 3. Use the owned specifications in [docs/steering/references/README.md](docs/steering/references/README.md), and update the relevant specification when changing behavior.
 4. Preserve existing user changes. Do not reset unrelated work.
@@ -57,7 +58,7 @@ Allstarr should free users from one-provider music lock-in while keeping client 
 - Import provider playlists as virtual views or explicitly materialize them into Jellyfin or a Subsonic-compatible backend such as Navidrome, either on demand or on a durable schedule.
 - Favorite a song and optionally trigger download, tagging, placement, and backend refresh.
 - Enrich kept music with MusicBrainz, beets, Picard-compatible naming, provider artwork, lyrics, and listening history.
-- Run a lightweight setup, the first-party package bundle, or selected provider-sidecar overlays independently.
+- Run a lightweight setup, the first-party package bundle, or selected external provider services independently.
 - Let administrators manage the platform while users manage their own accounts when configured that way.
 - Extend the system through provider extensions in SDK v1 and separately permissioned automation extensions in a later SDK version.
 
@@ -78,7 +79,7 @@ The current deployment model exposes exactly one proxy protocol surface: Jellyfi
 
 ### Identity And Account Resolution
 
-Before `ProviderRouter` handles user-scoped work, add a `BackendIdentityResolver` and `ProviderAccountResolver`.
+Before `ProviderRouter` handles user-scoped work, `BackendIdentityResolver` and `ProviderAccountResolver` establish the authorized identity and account scope.
 
 - `BackendIdentityResolver` maps the authenticated backend principal and request context to a stable Allstarr user identity without changing transparent proxy authentication behavior.
 - `ProviderAccountResolver` returns only accounts the user and policy may use, with an auditable reason for each selection.
@@ -116,9 +117,9 @@ These defaults are confirmed product decisions:
 - The SDK design must leave room for later automation, enrichment, recommendations, and UI extensions.
 - Standard Docker Compose is the recommended default: core app, Postgres, and Valkey.
 - AIO Compose remains available for the verified first-party package bundle; provider sidecars stay separate opt-ins.
-- Allstarr does not bundle or manage gamdl/wrapper in Standard or AIO. An operator may connect a separately
-  deployed compatible endpoint by URL. A repository overlay may remain only as an optional, documented example,
-  never as the required or privileged Apple path.
+- Allstarr does not bundle or manage GAMDL, wrapper-v2, or an Apple gateway in Standard or AIO. An operator may
+  connect a separately deployed compatible gateway by URL. This repository does not ship or maintain an Apple
+  gateway Compose overlay.
 - Low-resource alternatives must be supported. Removing optional services should reduce capability, not break the app.
 - Apple is split into `apple-download` and `apple-musickit`.
 - Extension registry trust starts with checksum verification. Add signatures later.
@@ -127,9 +128,9 @@ These defaults are confirmed product decisions:
 - Playlist imports default to a non-destructive reconcile. Recreate-on-every-run is an explicit per-link option, and neither mode may remove or rewrite audio files.
 - Pre-overhaul installs start again with the new deployment layout and configuration. The overhaul does not retain a Redis-to-Valkey upgrade-only compose file.
 
-## Early Foundation Requirements
+## Implemented Foundation
 
-These are required before cross-provider routing or user-scoped automation becomes broadly available:
+These requirements are implemented and remain architectural constraints for cross-provider routing and user-scoped automation:
 
 - A durable secret-reference model. Settings tables store references and metadata, never plaintext provider credentials.
 - An encrypted secret store with key-management, rotation, revocation, backup, and redacted diagnostic rules.
@@ -142,7 +143,7 @@ These are required before cross-provider routing or user-scoped automation becom
 
 Do not commit real or temporary API keys to markdown, source, tests, or fixtures. This plan documents only the secret types and expected storage flow.
 
-Real values belong only in a protected bootstrap source such as `.env` with restrictive permissions, Docker secrets, the encrypted runtime secret store introduced in Phase 1, or a manual live-test environment. The WebUI should mask secrets and avoid sending them to third-party services except the provider they belong to.
+Real values belong only in a protected bootstrap source such as `.env` with restrictive permissions, Docker secrets, the encrypted runtime secret store, or a manual live-test environment. The WebUI masks secrets and does not send them to third-party services except the provider they belong to.
 
 Likely credentials for manual/live validation:
 
@@ -160,12 +161,12 @@ Likely credentials for manual/live validation:
 | Area | Current source | What it means |
 | --- | --- | --- |
 | Host shape | [docs/steering/ARCHITECTURE.md](docs/steering/ARCHITECTURE.md), `allstarr/Program.cs` | Allstarr is already a two-surface ASP.NET Core host: proxy and admin UI. Preserve that boundary. |
-| Provider docs | [docs/steering/PROVIDERS.md](docs/steering/PROVIDERS.md) | Current provider contract is metadata-first and needs to evolve into explicit capability contracts. |
-| Downloads | [docs/steering/DOWNLOADS.md](docs/steering/DOWNLOADS.md) | Existing download behavior should become a provider-neutral download lane. |
-| Current extensions | [allstarr/Services/Common/ExtensionManager.cs](allstarr/Services/Common/ExtensionManager.cs) | Extension install/enable/disable exists. Phase 0 makes remote install default-deny and contains IDs/staging/lifecycle paths, but current Jint packages remain trusted in-process metadata code without SDK v1 checksums, permissions, isolation, staged activation, or rollback. |
-| Metadata routing | [allstarr/Services/Common/MultiProviderMetadataService.cs](allstarr/Services/Common/MultiProviderMetadataService.cs) | Built-ins and extensions already meet in one service, which is the right migration point. |
-| Download routing | [allstarr/Services/Common/MultiProviderDownloadService.cs](allstarr/Services/Common/MultiProviderDownloadService.cs) | Download and stream priority are partly split already, but the contracts are still mixed. |
-| Provider health | [allstarr/Core/Health/DurableProviderHealthStore.cs](allstarr/Core/Health/DurableProviderHealthStore.cs), [allstarr/Services/Common/ProviderStatusManager.cs](allstarr/Services/Common/ProviderStatusManager.cs) | Phase 1 persists provider-account/capability samples, 15-minute rollups, retention, and circuit state. The Phase 0 status manager remains the compatibility projection for current provider screens and explicit tests. |
+| Provider docs | [docs/steering/PROVIDERS.md](docs/steering/PROVIDERS.md) | Typed capability contracts and `ProviderRouter` are authoritative. Legacy metadata services remain compatibility adapters. |
+| Downloads | [docs/steering/DOWNLOADS.md](docs/steering/DOWNLOADS.md) | Streaming and downloading are separate provider-neutral capability lanes with durable managed-artifact ownership. |
+| Current extensions | [allstarr/Services/Common/ExtensionManager.cs](allstarr/Services/Common/ExtensionManager.cs) | SDK v1 verifies checksums, manifests, permissions, archive bounds, staged activation, disable/update, and rollback. JavaScript packages run as trusted code in constrained in-process Jint, not an operating-system sandbox. |
+| Metadata routing | [allstarr/Core/Routing](allstarr/Core/Routing), [allstarr/Services/Common/MultiProviderMetadataService.cs](allstarr/Services/Common/MultiProviderMetadataService.cs) | `ProviderRouter` owns typed routing. `MultiProviderMetadataService` remains a compatibility convergence point. |
+| Download routing | [allstarr/Services/Common/MultiProviderDownloadService.cs](allstarr/Services/Common/MultiProviderDownloadService.cs) | Typed streaming and download routes are separate. This service remains only where compatibility paths still use it. |
+| Provider health | [allstarr/Core/Health/DurableProviderHealthStore.cs](allstarr/Core/Health/DurableProviderHealthStore.cs), [allstarr/Services/Common/ProviderStatusManager.cs](allstarr/Services/Common/ProviderStatusManager.cs) | Durable provider-account/capability samples, 15-minute rollups, retention, and circuit state are authoritative for typed routes. `ProviderStatusManager` remains an in-memory compatibility projection. |
 | Durable storage | [allstarr/Core/Storage](allstarr/Core/Storage), [storage runbook](docs/operations/storage.md) | Startup selects Postgres or SQLite explicitly, applies provider-neutral EF migrations under a database-specific lock, and never falls back to another database. Verified backup, restore, and state-transfer operations are available through the admin surface and offline `storage` command. |
 | Identity and accounts | [allstarr/Core/Identity](allstarr/Core/Identity), [allstarr/Controllers/ProviderAccountsController.cs](allstarr/Controllers/ProviderAccountsController.cs) | Backend principals resolve to tenant-scoped platform users. Global, user, and library provider accounts are stored durably and filtered by account policy. |
 | Secrets | [allstarr/Core/Secrets](allstarr/Core/Secrets) | Provider-account records hold secret references. Versioned secret values are protected with AES-GCM using an external key ring, with replace, rotate, revoke, and tenant access rules. |
@@ -173,12 +174,12 @@ Likely credentials for manual/live validation:
 | Operations | [allstarr/Core/Operations](allstarr/Core/Operations), [allstarr/Controllers/DiagnosticsController.cs](allstarr/Controllers/DiagnosticsController.cs) | Liveness, readiness, sidecar capability state, redacted structured logs, correlated diagnostics, and Prometheus-style metrics expose the durable foundation without leaking credentials, media URLs, or account names. |
 | Apple download gateway | [AppleMusicController.cs](allstarr/Controllers/AppleMusicController.cs), [Apple Music services](allstarr/Services/AppleMusic) | Allstarr calls one separately deployed compatible gateway by URL. The repository does not vendor GAMDL or wrapper-v2. The gateway contract, health probe, and runtime manifest decide which capabilities can be advertised. |
 | Jellyfin protocol | [allstarr/Controllers/JellyfinController.Audio.cs](allstarr/Controllers/JellyfinController.Audio.cs), [allstarr/Controllers/JellyfinController.Search.cs](allstarr/Controllers/JellyfinController.Search.cs), [allstarr/Controllers/JellyfinController.PlaylistHandler.cs](allstarr/Controllers/JellyfinController.PlaylistHandler.cs) | Jellyfin compatibility stays the first protocol adapter. |
-| Spotify playlists | [allstarr/Controllers/JellyfinController.Spotify.cs](allstarr/Controllers/JellyfinController.Spotify.cs), [docs/steering/SPOTIFY.md](docs/steering/SPOTIFY.md) | Spotify playlist injection is the prototype for provider-neutral playlist links. |
-| MusicBrainz | [allstarr/Services/MusicBrainz/MusicBrainzService.cs](allstarr/Services/MusicBrainz/MusicBrainzService.cs) | MusicBrainz exists as enrichment and needs to become part of the matching and tagging pipeline. |
-| Fuzzy matching | [allstarr/Services/Common/FuzzyMatcher.cs](allstarr/Services/Common/FuzzyMatcher.cs) | Matching code exists but should be replaced by an explainable track identity service. |
+| Spotify playlists | [allstarr/Controllers/JellyfinController.Spotify.cs](allstarr/Controllers/JellyfinController.Spotify.cs), [docs/steering/SPOTIFY.md](docs/steering/SPOTIFY.md) | Durable provider-neutral playlist links are the current path. Spotify injection remains a compatibility path. |
+| MusicBrainz | [allstarr/Services/MusicBrainz/MusicBrainzService.cs](allstarr/Services/MusicBrainz/MusicBrainzService.cs) | MusicBrainz contributes enrichment, canonical identity, matching, tagging, and local recommendation relationships. |
+| Matching | [allstarr/Core/Matching](allstarr/Core/Matching) | Explainable canonical recordings, provider identities, match decisions, and manual overrides are durable and provider-neutral. |
 | Jellyfin OpenAPI | [apis/specifications/jellyfin/openapi-12.0.0.json](apis/specifications/jellyfin/openapi-12.0.0.json), [Jellyfin OpenAPI index](https://fra1.mirror.jellyfin.org/files/files/openapi/) | Use the local OpenAPI file as the source for protocol compatibility. It includes InstantMix endpoints. |
-| Subsonic source | [pinned octo-fiesta reference](https://github.com/V1ck3s/octo-fiesta/tree/a1ec833fc9805db6a5170a1a777a39534dae0eef), [OpenSubsonic API](https://opensubsonic.netlify.app/docs/opensubsonic-api/), [Subsonic API](https://www.subsonic.org/pages/api.jsp) | Compare current Subsonic behavior with octo-fiesta, then close verified parity gaps through the same capability core. |
-| Last.fm reference | [pinned Jellyfin Last.fm reference](https://github.com/danielfariati/jellyfin-plugin-lastfm/tree/8e060337953b52d2683aab4dc8c9c6fb7383ddf7), [docs/steering/SCROBBLING.md](docs/steering/SCROBBLING.md) | Scrobbling should remain provider-neutral and session-key handling must be audited. |
+| Subsonic source | [pinned octo-fiesta reference](https://github.com/V1ck3s/octo-fiesta/tree/a1ec833fc9805db6a5170a1a777a39534dae0eef), [OpenSubsonic API](https://opensubsonic.netlify.app/docs/opensubsonic-api/), [Subsonic API](https://www.subsonic.org/pages/api.jsp) | Keep verified Subsonic parity behavior in the shared capability and protocol core; use the pinned source only as a compatibility reference. |
+| Last.fm reference | [pinned Jellyfin Last.fm reference](https://github.com/danielfariati/jellyfin-plugin-lastfm/tree/8e060337953b52d2683aab4dc8c9c6fb7383ddf7), [docs/steering/SCROBBLING.md](docs/steering/SCROBBLING.md) | Scrobbling is provider-neutral and session keys remain user-scoped encrypted credentials. |
 
 ## Target Architecture
 
@@ -235,7 +236,7 @@ Prioritize structural improvements that make behavior easier to reason about: se
 - Postgres: durable state for users, providers, health, libraries, matches, playlists, jobs, events, and job/outbox records in Docker deployments.
 - SQLite: an explicit manual/small-install storage mode, not an automatic failover database.
 - Valkey or Redis: cache, short-lived probe state, locks, and queue acceleration. It must not be the only durable record of a job or side effect.
-- Sidecars: gamdl/wrapper, lyrics tools, provider-specific runtimes, and future intelligence services.
+- External services: optional lyrics tools, AudioMuse-AI, and provider-specific runtimes. Apple downloads use an operator-owned compatible gateway; GAMDL and wrapper-v2 are not repository services.
 - Extensions: installed packages with manifests, capability declarations, permissions, settings, health checks, logs, and optional UI panels.
 
 ## Capability Contracts
@@ -318,7 +319,9 @@ Provider identifiers are lowercase, stable, and never inferred from display name
 
 Provider split:
 
-- `apple-download`: gamdl/wrapper download and optional stream. It can produce managed song, music-video, synced-lyrics, cover-art, and rich-tagging artifacts where the configured account, source, and codec support them.
+- `apple-download`: an operator-owned compatible gateway for download and optional streaming. A GAMDL-backed
+  gateway can produce managed song, music-video, synced-lyrics, cover-art, and rich-tagging artifacts where its
+  advertised contract, account, source, and codec support them.
 - `apple-musickit`: per-user MusicKit API access for personal-library playlists and playlist items, library songs/albums/artists, and documented library or favorite-state actions. It uses the Apple developer token plus that user's Music User Token.
 - `deezer`: metadata, streaming/download where available and configured.
 - `qobuz`: metadata, download where configured.
@@ -335,7 +338,11 @@ Apple references:
 - [MusicKit Song.hasLyrics](https://developer.apple.com/documentation/musickit/song/haslyrics)
 - [gamdl](https://github.com/glomatico/gamdl)
 
-Apple user-library APIs require a Music User Token. Treat `mediaUserToken` and MusicKit as a separate per-user provider account from the gamdl/wrapper download account: it is not only for playlists, but for the user's `/v1/me` library and playlist API operations. gamdl currently authenticates its download path with browser cookies or its wrapper account/session flow; do not assume a MusicKit token can substitute for that credential or expose either one to the other provider.
+Apple user-library APIs require a Music User Token. Treat `mediaUserToken` and MusicKit as a separate per-user
+provider account from the external download gateway: it is not only for playlists, but for the user's `/v1/me`
+library and playlist API operations. A GAMDL-backed gateway authenticates its own download path with browser
+cookies or its wrapper account/session flow. Do not assume a MusicKit token can substitute for that credential
+or expose either one to the other provider.
 
 gamdl upstream can download catalog and library songs, albums, playlists, artists, and music videos, and can emit synced lyrics and rich tags alongside managed downloads. Ingest those outputs as verified managed artifacts. Synced lyrics produced during a download may feed the lyrics lane after format/ownership checks; that does not promise generic on-demand full-lyrics access for every Apple track.
 
@@ -343,7 +350,7 @@ Upstream support is not a gateway capability claim. Allstarr must contract-test 
 compatible gateway before its descriptor advertises it. Add audio, video, metadata/tagging, and lyric-artifact
 fixtures as each capability is wired. The configured URL must point to the provider gateway, not raw wrapper-v2.
 
-Treat a compatible gamdl/wrapper deployment as an ordinary optional provider endpoint. The admin supplies its URL
+Treat a compatible external Apple gateway as an ordinary optional provider endpoint. The admin supplies its URL
 and account configuration in the WebUI. Allstarr then performs version, health, authentication, and capability
 discovery before registering an `apple-download` provider instance. The provider card, source menus, priority
 editors, job UI, diagnostics, and route explanations must all use that discovered descriptor. Show each capability
@@ -843,16 +850,17 @@ Sidecars must tolerate removal and re-addition. The app should show missing side
 
 The app should run worse without optional services, not fail entirely. Storage mode is selected at startup: a Postgres deployment fails readiness when Postgres is unavailable rather than creating split-brain SQLite state. Missing Valkey may reduce cache and queue acceleration if the selected profile allows it. Missing provider sidecars disable only the capabilities that depend on them, and recovery requires readiness/health to pass before routing resumes.
 
-## Migration Phases
+## Completed Migration Phases
 
-Every phase is additive. It needs a small vertical slice, behavior tests, documented rollout/cutover behavior, and a rollback path before the next phase starts. Do not start work from a later phase by adding a UI placeholder or speculative interface alone.
+The phases were delivered additively. Each phase required a vertical slice, behavior tests, documented rollout and cutover behavior, and a rollback path before the next phase started. The records below preserve that implementation history.
 
 ### Current Implementation Status
 
-Phase 0 and Phase 1 are **complete**. The later phases remain target work. Do not infer
-their completion from Phase 0 compatibility seams, durable-schema tables, or UI schema fields.
+Phases 0 through 8 and the final release reconciliation are complete for the version 3 beta baseline. The
+completion records below describe what was implemented. Historical checkpoint counts are evidence from those points in
+time, not the expected total for every later branch or release.
 
-Implemented or characterized in the current Phase 0 work:
+The Phase 0 completion record included:
 
 - The subsystem-by-subsystem keep/wrap/refactor/replace/retire assessment is recorded in
   [code-map.md](docs/steering/references/code-map.md).
@@ -869,26 +877,27 @@ Implemented or characterized in the current Phase 0 work:
 - Phase 0 provider status reads no longer invented health or test time. Explicit probes were separated by
   capability/account key, disabled providers leave every lane, public metadata is not blocked by download
   credentials, SquidWTF is metadata-only, and optional provider startup probes default off. That compatibility
-  projection remains available; the Phase 1 work below adds durable account-scoped observations and accounts.
+  projection remains available; later durable account-scoped observations and accounts are authoritative for typed routes.
 - Apple wrapper `/me`, login, and pending-2FA responses are shaped without returning raw tokens. Last.fm
   and ListenBrainz admin tests return actionable sanitized failures. Local Jellyfin playback metadata and
   bounded artwork flow through backend-neutral admin activity seams.
 - No third-party registry is auto-added. Remote extension installation is default-deny. Phase 5 has since
   retired trusted local-folder activation in favor of the verified durable SDK lifecycle described below.
 - External unfavorite preserves managed files and the implicit pending-deletion processor is retired.
-  Favorite-triggered copy/download work is still non-durable and remains scheduled for the durable
-  favorite pipeline.
+  Favorite-triggered copy/download work was still non-durable at this checkpoint and was replaced by the later
+  durable favorite pipeline.
 - The Apple integration audit established that wrapper-v2 alone is not a search/download gateway. External
   GAMDL-backed gateways should use GAMDL 3.8.2 or newer with wrapper-v2 0.0.2, or the pair declared by their
   authoritative runtime manifest. Unimplemented gateway media/artifact features are not advertised.
 
-The Phase 0 exit gate passed with 823 .NET tests and eight Python sidecar contract tests. The support matrix
+At the Phase 0 checkpoint, 823 .NET tests and the then-current eight-test Python sidecar suite passed. That Python
+suite belonged to the retired repository-hosted Apple lane and is not a current release gate. The support matrix
 retains explicit gaps for later adapter/core phases rather than presenting them as implemented. At that gate,
 production-grade extension checksum/permission/isolation/update work, durable health/accounts/jobs, and favorite
-jobs belonged to later phases. The Phase 1 checkpoint below now implements the durable foundation. The favorite
-pipeline and extension SDK still remain with their owning phases.
+jobs belonged to later phases. The later completion records show when the durable foundation, favorite pipeline,
+and extension SDK landed.
 
-Current Phase 1 work now includes:
+The Phase 1 completion record included:
 
 - Explicit `Postgres` or `Sqlite` selection, provider-neutral EF migrations, a Postgres advisory migration
   lock, a SQLite file migration lock, bounded runtime connectivity/schema probes, readiness state, and a
@@ -919,16 +928,16 @@ Current Phase 1 work now includes:
   volumes, accessible media mounts, and explicit startup health. The Redis-to-Valkey conversion overlay has been
   removed because pre-overhaul deployments start again on the new durable baseline.
 
-The Phase 1 exit gate passed 1,002 .NET tests with no skips. Native PostgreSQL coverage ran with
-`ALLSTARR_TEST_POSTGRES` against PostgreSQL 18 and matching libpq 18 backup tools. Eight Python sidecar contract
-tests pass under the pinned Python 3.10 environment. Standard and development Compose render cleanly. The final
+At the Phase 1 checkpoint, 1,002 .NET tests passed with no skips. Native PostgreSQL coverage ran with
+`ALLSTARR_TEST_POSTGRES` against PostgreSQL 18 and matching libpq 18 backup tools. The then-current Python sidecar
+suite also passed. Standard and development Compose rendered cleanly. The checkpoint
 runtime image is `sha256:c6b659ed0028fc4347ac32ab1e5fc0505f2f742bc1ed906be17e68294b287e43`, contains
 `pg_dump` 18.4, and completed an isolated verified Postgres backup and restore through
 `20260711001832_Phase1OperationalCompletion`. That is the preserved Phase 1 checkpoint. The capability router
-and minimum canonical track identity are now implemented by Phase 2 below. Provider-neutral playlist
-materialization, the favorite pipeline, and the extension SDK still belong to their later phases.
+and minimum canonical track identity were implemented in Phase 2. Provider-neutral playlist materialization,
+the favorite pipeline, and the extension SDK followed in their recorded phases.
 
-Current Phase 2 work now includes:
+The Phase 2 completion record included:
 
 - Typed metadata, streaming, download, playlist, lyrics, and health contracts. Every operation receives an
   immutable `ProviderExecutionContext` with actor, account, library, policy, correlation, cancellation,
@@ -956,16 +965,16 @@ Current Phase 2 work now includes:
   the new tables and rejects malformed hashes, signals, account shapes, and cross-tenant links before import.
 - Deezer public metadata is the first real built-in routed through the core. Its existing service remains the
   client-compatible implementation while the typed adapter owns provider IDs, outcomes, pagination limits, and
-  redaction. Protocol controllers are unchanged until Phase 3 extracts their adapters.
+  redaction. Protocol adapter extraction followed in Phase 3.
 
-The Phase 2 exit gate passed 1,089 .NET tests with no skips, including native PostgreSQL 18 migration,
+At the Phase 2 checkpoint, 1,089 .NET tests passed with no skips, including native PostgreSQL 18 migration,
 rollback/reapply, backup, restore, and provider-neutral state transfer. The focused capability, registry, router,
-identity, health, host, and built-in adapter suites pass, as do eight Python sidecar tests and JavaScript syntax
-checks. The release build has no warnings or errors. Standard and development Compose render cleanly. The Phase 2
+identity, health, host, and built-in adapter suites passed, as did the then-current Python sidecar suite and
+JavaScript syntax checks. The release build had no warnings or errors. Standard and development Compose rendered cleanly. The Phase 2
 gate image is `sha256:0c6186174461faa899f590737ee32f928382e4c2846b6f5579fa35d9856a2a61` and contains
 `pg_dump` 18.4.
 
-Current Phase 3 work now includes:
+The Phase 3 completion record included:
 
 - One post-authentication `ProtocolExecutionContext` for both selected protocol surfaces. It carries the verified
   backend identity, linked canonical actor when one exists, client/device and library scope, correlation ID,
@@ -987,9 +996,9 @@ Current Phase 3 work now includes:
   work remains explicit: provider-account routing for legacy synthesized paths, durable favorite/scrobble jobs,
   provider range leases, provider-neutral playlist materialization, and recommendation policy.
 
-The Phase 3 exit gate passed 1,139 .NET tests with no skips. The focused protocol and adjacent compatibility gate
-passed 148 tests. Eight Python sidecar contract tests pass, JavaScript syntax checks pass, standard and development
-Compose render cleanly, and the release build has no warnings or errors. The Phase 3 gate image is
+At the Phase 3 checkpoint, 1,139 .NET tests passed with no skips. The focused protocol and adjacent compatibility
+gate passed 148 tests. The then-current Python sidecar suite and JavaScript syntax checks passed, standard and
+development Compose rendered cleanly, and the release build had no warnings or errors. The Phase 3 gate image is
 `sha256:6d2cbb6274c8a7250776a380d07b6a3301b625627d18d9a81c62bc6485dc0902`.
 
 ## Phase 4 Completion Record
@@ -1018,11 +1027,10 @@ Phase 4 replaces the new playlist and match workflow with durable provider-neutr
   links/schedules, refreshes snapshots, previews matches and skips, enqueues run-now jobs, and manages manual review.
   Durable payloads contain IDs and policy references only.
 
-The Phase 4 exit gate passed 1,221 .NET tests with no skips. A focused Phase 4 gate passed 199 tests. JavaScript
-syntax checks pass, standard and development Compose render cleanly, and the release build has no warnings or
-errors. The Python sidecar source was unchanged in this phase; its local rerun was blocked by an incompatible global
-`pydantic-core` installation and unavailable package-index access, while its Phase 3 eight-test gate remains the
-last verified sidecar result. The Phase 4 gate image is
+At the Phase 4 checkpoint, 1,221 .NET tests passed with no skips and a focused gate passed 199 tests. JavaScript
+syntax checks passed, standard and development Compose rendered cleanly, and the release build had no warnings or
+errors. The then-current repository-hosted Apple Python suite could not be rerun in that checkpoint environment;
+it was later retired with the external-gateway-only direction. The Phase 4 gate image is
 `sha256:55e16c40a1948665932772b1950d874ee6e17295dc447088c058d70e6be4b1c7`.
 
 ## Phase 5 Completion Record
@@ -1170,7 +1178,7 @@ no remote repository was created, and no incomplete package is presented as acti
 
 ## Final Release Reconciliation Record
 
-The final pass reconciles the repository with the application that actually shipped:
+The final pass reconciles the repository with the implemented version 3 beta baseline:
 
 - The root README, architecture, configuration, client, and contribution guides now describe the fresh-install
   Postgres and Valkey baseline, exact backend/protocol choice, durable jobs, provider-neutral matching and
@@ -1191,13 +1199,19 @@ The final pass reconciles the repository with the application that actually ship
   ListenBrainz recommendations, MusicBrainz-informed local similarity, managed enrichment, and the real SDK v1
   capability boundary.
 
-The final Release gate passed 1,408 .NET tests with no skips. Native PostgreSQL 18 migration, queue, backup, and
-isolated restore integration passed 3/3 against a fresh container. The isolated Python sidecar suite passed 11/11,
-the deterministic first-party bundle suite passed 5/5, all three archives verified, standard/development/AIO
-Compose rendering passed, every local Markdown link resolves, no stale API path remains, and `git diff --check`
-passes.
+At the recorded final reconciliation checkpoint, 1,408 .NET tests passed with no skips. Native PostgreSQL 18
+migration, queue, backup, and isolated restore integration passed 3/3 against a fresh container. The then-current
+isolated Python sidecar suite passed 11/11 and was later retired with the repository-hosted Apple lane. The
+deterministic first-party bundle suite passed 5/5, all three archives verified, standard/development/AIO Compose
+rendering passed, every local Markdown link resolved, no stale API path remained, and `git diff --check` passed.
+Current CI uses the deterministic first-party bundle tests and fake external-gateway contracts.
 
-### Phase 0: Characterize And Stabilize Current Behavior
+### Historical Phase Roadmap
+
+The following roadmap is retained for design context. Every phase in this section is complete. Its imperative
+language records the work that was approved at the time and must not be read as an unfinished task list.
+
+### Phase 0: Characterize And Stabilize Current Behavior (Completed)
 
 - Review each current subsystem in scope and record keep/wrap/refactor/replace/retire decisions against the target ownership map.
 - Capture Jellyfin and Subsonic compatibility fixtures and create the initial protocol parity-gap matrix.
@@ -1211,7 +1225,7 @@ passes.
 
 Exit: current behavior has regression fixtures, current WebUI states are accessible and responsive, and `dotnet test allstarr.sln` passes.
 
-### Phase 1: Durable Foundation, Identity, And Operations
+### Phase 1: Durable Foundation, Identity, And Operations (Completed)
 
 - Add explicit startup selection for Postgres or SQLite; add schema migrations, backup/restore, and a tested recovery plan for the new durable baseline.
 - Establish the fresh-install deployment baseline, retire the Redis-to-Valkey conversion overlay, and keep existing media folders attachable without importing legacy application state.
@@ -1222,7 +1236,7 @@ Exit: current behavior has regression fixtures, current WebUI states are accessi
 
 Exit: a restart cannot lose or duplicate durable work; tenant and secret-redaction tests pass; Postgres/SQLite modes and backup/restore are verified.
 
-### Phase 2: Capability Core And Minimum Track Identity
+### Phase 2: Capability Core And Minimum Track Identity (Completed)
 
 - Add typed capability contracts, `ProviderExecutionContext`, outcomes, descriptors, provider registry, and `ProviderRouter` route plans.
 - Add provider-neutral canonical recordings and provider identity links so one recording can map to many providers without a Spotify-only mapping table. Fallback cannot select an unverified recording across providers.
@@ -1231,7 +1245,7 @@ Exit: a restart cannot lose or duplicate durable work; tenant and secret-redacti
 
 Exit: one built-in capability can be routed through the core with an explainable decision record and fake-provider tests cover allowed and denied fallbacks.
 
-### Phase 3: Protocol Adapter Extraction And Compatibility
+### Phase 3: Protocol Adapter Extraction And Compatibility (Completed)
 
 - Extract Jellyfin adapters from controllers behind characterization fixtures without changing catch-all behavior.
 - Close documented Subsonic parity gaps from current Allstarr behavior and port only relevant octo-fiesta concepts or tests.
@@ -1240,7 +1254,7 @@ Exit: one built-in capability can be routed through the core with an explainable
 
 Exit: the support matrix has regression coverage for every claimed feature and existing clients retain compatible responses.
 
-### Phase 4: Library Index, Matching, And Playlists
+### Phase 4: Library Index, Matching, And Playlists (Completed)
 
 - Add the library index, versioned metadata snapshots, confidence explanations, review states, and manual overrides.
 - Replace Spotify-only import with tenant-scoped provider-neutral playlist links, preview, ownership, and conflict rules.
@@ -1249,29 +1263,29 @@ Exit: the support matrix has regression coverage for every claimed feature and e
 
 Exit: a user can review a match and playlist preview, run duplicate-safe materialization into either supported backend family, and inspect skipped tracks or conflicts without cross-tenant visibility or unsafe automatic mutation.
 
-### Phase 5: Extension SDK v1
+### Phase 5: Extension SDK v1 (Completed)
 
 - Expand `ExtensionManager` into the documented constrained provider runtime.
 - Add registry management without default third-party registries, mandatory registry checksum verification, permission review, logs, staged updates, rollback, and route integration.
-- Add the version-pinned upstream sidecar update lane: release discovery, candidate image build, contract tests, capability diff, versioned image publication, and rollback. Do not use `docker compose up` as a source-code updater.
-- Make gamdl/wrapper an optional external `apple-download` provider configured by URL in the WebUI. Discover and
+- Add version-pinned external-service compatibility checks, contract tests, capability diffs, and rollback guidance. Do not use `docker compose up` as a source-code updater.
+- Make the operator-owned compatible gateway an optional external `apple-download` provider configured by URL in the WebUI. Discover and
   verify its API version, authentication state, health, and per-feature capability manifest before registration.
   Display those capabilities and their recovery actions consistently in provider cards, source and priority
   controls, jobs, diagnostics, and routing decisions. Standard and AIO must work without it. Document how to add,
-  replace, disable, and re-add the endpoint later without database or media loss. Keep any Compose overlay as an
-  optional example only, not an Allstarr-owned bundle or a faster in-process path.
+  replace, disable, and re-add the endpoint later without database or media loss. Do not ship or maintain its
+  Compose stack in this repository.
 - Add fake and malicious-package coverage plus extension-authoring documentation.
 
 Exit: an enabled test provider participates in routing only after its package, permissions, health, and account scope pass validation.
 
-### Phase 6: Favorites, Placement, And Enrichment
+### Phase 6: Favorites, Placement, And Enrichment (Completed)
 
 - Add the durable favorite action pipeline, explicit unstar behavior, and managed-file lifecycle.
 - Add atomic placement with safe hardlink/reflink/copy behavior, path templates, MusicBrainz/beets/Picard-compatible enrichment, and backend refresh jobs.
 
 Exit: repeated events, restart, cross-volume placement, path attack, and failed refresh tests show no source-library mutation or duplicate side effects.
 
-### Phase 7: Intelligence And Later Automation
+### Phase 7: Intelligence And Later Automation (Completed)
 
 - Add recommendation core contracts, Jellyfin InstantMix, AudioMuse-AI, Last.fm, MusicBrainz-informed local similarity, ListenBrainz, and local-rule sources behind opt-in and data-retention controls.
 - Add provider-selectable customized playlists that learn from current listening habits, recommend future songs, explain their sources and matches, and can be generated manually or by scheduled jobs.
@@ -1280,16 +1294,16 @@ Exit: repeated events, restart, cross-volume placement, path attack, and failed 
 
 Exit: recommendation and automation data is tenant-scoped, explainable, opt-in, and independently disableable.
 
-### Phase 8: Split Built-Ins Into Repositories
+### Phase 8: Split Built-Ins Into Repositories (Completed)
 
 - Only after SDK v1 is stable, move built-ins into separate repositories where it improves maintenance.
 - Keep a first-party bundle for AIO installs and the compatibility matrix in this repository.
 
 Exit: externalized built-ins pass the same package, permission, contract, and compatibility suite as in-repo providers.
 
-### Final Release Reconciliation
+### Final Release Reconciliation (Completed)
 
-- Reconcile every Markdown file at the repository root with the behavior that actually shipped, including the README, architecture, setup, provider, playlist, and operations guidance. Keep the existing direct, natural voice. Prefer normal sentences and punctuation instead of an em-dash-heavy generated style.
+- Reconcile every Markdown file at the repository root with the implemented release baseline, including the README, architecture, setup, provider, playlist, and operations guidance. Keep the existing direct, natural voice. Prefer normal sentences and punctuation instead of an em-dash-heavy generated style.
 - Document the fresh-install path plainly. Remove legacy Redis-to-Valkey conversion instructions and do not imply that pre-overhaul runtime state is imported.
 - Inventory the repository root and remove obsolete, redundant, generated, or one-off files only after confirming that builds, packaging, tests, licenses, and documentation do not reference them.
 - Audit and reorganize `apis/` as an owned reference area. Keep useful upstream specifications, source fixtures, and provenance; remove obsolete, duplicated, generated, or inaccurate material; replace ad hoc scripts and stale notes with maintained references where they still serve a purpose; and update every code or documentation link affected by the new layout.

@@ -37,7 +37,7 @@ Current Jellyfin controller actions have a narrow backend-authentication boundar
 `JellyfinAuthFilter` calls backend `Users/Me` with only the client's authentication headers and any `api_key` or
 `access_token` query credential. A failed verification preserves the upstream status and JSON error without running
 the action, reading its cache, or calling a provider. The filter records the stable backend principal ID in request
-state, but it does not replace the Phase 1 `BackendIdentityResolver` or select a provider account.
+state, but it does not replace `BackendIdentityResolver` or select a provider account.
 
 ### Protocol Fixture Sources
 
@@ -84,7 +84,8 @@ Allstarr already has a `SubsonicController`, request parser, response builder, m
 
 The current explicit adapter routes include `search3`, `stream`, `getSong`, `getAlbum`, `getArtist`, `getCoverArt`, `star`, `unstar`, `updatePlaylist`, `getLyricsBySongId`, and `scrobble`; the catch-all relay carries other backend endpoints. Provider-neutral playlist writes, optional favorite work, and authenticated playback observations now use durable shared-core boundaries.
 
-Phase 0 places a resource filter before model binding so form credentials are still available for verification.
+The Subsonic authentication boundary uses a resource filter before model binding so form credentials remain
+available for verification.
 It accepts exactly one native mechanism (`u+p`, `u+t+s`, or `apiKey`), verifies it against backend `ping`,
 uses `tokenInfo` to resolve the API-key username, preserves backend protocol failures, and stops the action
 before provider/cache work on failure. `BackendIdentityResolver` resolves an existing canonical identity when

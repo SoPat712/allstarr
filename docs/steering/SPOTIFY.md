@@ -23,9 +23,10 @@ Spotify access is driven by `SpotifyApiSettings` and `SpotifySessionCookieServic
 
 Non-admin users can only operate on their own cookie scope. Admin users can manage other user scopes.
 
-### Account-Scope Guardrail For The Overhaul
+### Account-Scope Guardrail
 
-The current cookie fallback is a compatibility mechanism. During the provider-account migration, resolve and record the effective `ProviderAccount` before any playlist fetch, match rebuild, or playlist write:
+The cookie fallback is a compatibility mechanism. Provider-neutral work resolves and records the effective
+`ProviderAccount` before any playlist fetch, match rebuild, or playlist write:
 
 - A user-scoped cookie/account is selected only for its resolved Allstarr owner.
 - A shared/global Spotify account may be used only when the playlist-link policy explicitly permits it; do not silently fall back from a missing user account to another user's scope.
@@ -130,5 +131,6 @@ through the Redis mapping cache or scatter Spotify environment parsing into new 
 - Preserve the mapping precedence rules in `SpotifyMappingService`.
 - Preserve per-playlist cron behavior. Matching and fetch expiry are intentionally playlist-specific.
 - If a change affects playlist cache keys or mapping formats, update the cache and testing docs too.
-- Keep the current direct Spotify flow operational during migration. New provider-neutral work must carry an explicit account and identity context through playlist fetch, match, preview, and materialized-write paths.
+- Keep the direct Spotify compatibility flow operational until it is deliberately retired. Provider-neutral work
+  must carry an explicit account and identity context through playlist fetch, match, preview, and materialized-write paths.
 - Add tests for account isolation, snapshot/stale-state behavior, low-confidence match handling, and duplicate-safe retry before changing a playlist lifecycle boundary.

@@ -29,10 +29,12 @@
 - standard Compose topology, pinned service images, secret-file mounts, persistent volumes, and fresh-install
   retirement of the Redis-to-Valkey conversion overlay
 
-## Phase 0 Characterization Baseline
+## Historical Phase 0 Characterization Baseline
 
-The following checked-in tests and fixtures describe current behavior. They do not imply that the Phase 1
-identity/durability work or Phase 2 capability core exists:
+This section records the Phase 0 characterization baseline before the durable foundation and capability core
+landed. The fixtures remain useful, but the old phase boundary is historical. A few bullets name the current
+replacement tests so maintainers do not mistake compatibility coverage for current ownership. Current coverage
+continues below.
 
 - `HostCompositionTests` uses `WebApplicationFactory<Program>` to boot Jellyfin and Subsonic modes,
   verifies exactly one protocol controller, and activates every registered controller.
@@ -55,9 +57,10 @@ identity/durability work or Phase 2 capability core exists:
   `WebUiResponsiveContractTests` guard truthful advertised capabilities, disabled lanes, SquidWTF
   quarantine, configuration-versus-observation state, account/capability probe isolation, visible support
   tokens, narrow layout, and keyboard-operable mobile navigation.
-- `ExtensionManagerSecurityTests` covers default-deny remote installation without a network request,
+- At the Phase 0 checkpoint, `ExtensionManagerSecurityTests` covered default-deny remote installation without a network request,
   explicit trusted opt-in, safe local discovery, contained staging, and unsafe ID/lifecycle rejection. It
-  is not checksum, permission, malicious-archive, or runtime-isolation coverage for SDK v1.
+  did not provide checksum, permission, malicious-archive, or runtime-isolation coverage for SDK v1. Current SDK
+  lifecycle tests cover the implemented package boundary; Jint still is not an operating-system sandbox.
 - `FavoriteFileSafetyTests` prevents reintroduction of the implicit pending-deletion processor.
   `FavoriteActionPipelineTests`, `FavoriteActionPolicyTests`, `ProviderDownloadArtifactResolverTests`,
   `FilePlacementServiceTests`, and `MetadataEnrichmentTests` cover the durable replacement.
@@ -76,14 +79,14 @@ the startup-validation orchestrator, uses temporary data-protection/admin/cache/
 fixtures, removes hosted services where a route test does not need them, and replaces upstream HTTP with a
 deterministic fake. Optional provider startup probes default off in normal configuration as well.
 
-## Phase 1 Durable Foundation Checkpoint
+## Historical Phase 1 Durable Foundation Checkpoint
 
-The Phase 1 exit checkpoint passed 1,002 .NET tests with no skips. The native PostgreSQL tests were
+At the Phase 1 exit checkpoint, 1,002 .NET tests passed with no skips. The native PostgreSQL tests were
 run with `ALLSTARR_TEST_POSTGRES` against PostgreSQL 18 and matching libpq 18 tools. They are guarded by that
 environment variable so an ordinary developer run does not require a local PostgreSQL server. When the variable
 is present, the tests exercise the real database and command-line backup tools rather than substituting SQLite.
 
-Current Phase 1 coverage includes:
+The Phase 1 checkpoint coverage included:
 
 - `DurableStorageTests` for explicit provider validation, SQLite migrations, concurrent SQLite migration
   locking, one-shot SQLite bootstrap consumption, missing-file protection, bounded runtime connectivity/schema
@@ -115,20 +118,21 @@ Current Phase 1 coverage includes:
 - `ComposeContractTests` for the standard Postgres and Valkey topology, secret files, durable/media volume
   separation, pinned images, development overlay, and the absence of the retired conversion file.
 
-Eight Python sidecar contract tests also pass with the pinned Python 3.10 environment. Standard and development
+The then-current Python sidecar contract suite also passed with its pinned environment. That retired GAMDL lane
+is not part of the current repository gate. Standard and development
 Compose validation, the final runtime-image build, PostgreSQL 18.4 client check, and an isolated image backup and
 restore also passed. This checkpoint completes the durable foundation. The later phase sections and current test
 inventory describe matching, playlists, extensions, and favorite/placement work added after this checkpoint.
 
-## Phase 2 Capability And Track Identity Checkpoint
+## Historical Phase 2 Capability And Track Identity Checkpoint
 
-The Phase 2 exit checkpoint passed 1,089 .NET tests with no skips. The native PostgreSQL run covers the current
+At the Phase 2 exit checkpoint, 1,089 .NET tests passed with no skips. The native PostgreSQL run covered the
 `20260711141123_Phase2TrackIdentityFoundation` migration, rollback/reapply, native types, backup, restore, and
-state transfer. Eight Python sidecar tests and the JavaScript syntax checks also pass. The warning-free Phase 2
+state transfer. The then-current Python sidecar suite and JavaScript syntax checks also passed. The warning-free Phase 2
 gate image is `sha256:0c6186174461faa899f590737ee32f928382e4c2846b6f5579fa35d9856a2a61`; it contains
 `pg_dump` 18.4, and both standard and development Compose configurations render cleanly.
 
-Current Phase 2 coverage includes:
+The Phase 2 checkpoint coverage included:
 
 - `ProviderExecutionContextTests`, `ProviderCapabilityContractTests`, and `ProviderRegistryTests` for immutable
   actor/account/library context, typed outcomes, protected stream leases, provider/resource provenance, required
@@ -224,7 +228,7 @@ blocked in the lock are never bootstrapped or presented as active.
 - Storage command tests assert machine-readable JSON output and confirmation gates without printing connection
   strings or passwords.
 - Static WebUI contract tests are regression guards, not a substitute for functional browser, focus,
-  screen-reader, responsive, and accessibility validation before Phase 0 exit
+  screen-reader, responsive, and accessibility validation before release
 
 ## Useful Commands
 

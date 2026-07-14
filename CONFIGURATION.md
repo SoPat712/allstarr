@@ -47,8 +47,8 @@ The key ring is not stored in Postgres and is not included in database backups. 
 
 Postgres stores application state, not audio. Set `DOWNLOAD_PATH` and `KEPT_PATH` to persistent, accessible host folders. Other managed-library roots are selected by their scoped policies. Valkey is included for cache and acceleration; there is no legacy Redis conversion step.
 
-Standard Compose intentionally omits provider sidecars. The AIO override adds the verified offline first-party
-package bundle, not Apple/gamdl or another optional provider service:
+Standard Compose intentionally omits optional provider services. The AIO override adds the verified offline
+first-party package bundle, not the external Apple gateway or another optional provider service:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d

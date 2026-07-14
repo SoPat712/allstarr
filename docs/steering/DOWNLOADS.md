@@ -102,7 +102,9 @@ During the overhaul, do not let `.mappings.json` or a cache entry become the onl
 
 ## Download Activity
 
-`DownloadActivityController` aggregates `IEnumerable<IDownloadService>` and combines download state with recent playback state from `JellyfinSessionManager`.
+`DownloadActivityController` aggregates `IEnumerable<IDownloadService>` and combines download state with
+backend-neutral `IPlaybackActivitySource` results. Backend-specific resolvers supply safe metadata and artwork;
+Subsonic mode does not depend on Jellyfin session services.
 
 If you change `DownloadInfo` semantics, update both the download services and the activity endpoint contract.
 

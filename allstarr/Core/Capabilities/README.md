@@ -1,6 +1,6 @@
 # Capability Core
 
-This folder owns the provider-facing contracts shared by built-ins and the future SDK bridge. It does not
+This folder owns the provider-facing contracts shared by built-ins and the SDK v1 bridge. It does not
 select accounts, choose a provider, translate identities, persist recordings, or shape Jellyfin and Subsonic
 responses. Those jobs stay in their own layers.
 
@@ -25,8 +25,9 @@ health/circuits, sidecar readiness, quality, deadline, and durable download rule
 plan. Cross-provider track candidates require an exact verified translation from `TrackIdentityService` in
 `Core/Matching`. Missing or ambiguous identity links never trigger a guessed fallback.
 
-Deezer public metadata is the first real built-in capability adapter. It wraps the existing metadata service so
-current controllers keep their behavior while the core gets typed IDs, outcomes, registry ownership, and routing.
+Deezer public metadata was the first built-in capability adapter. Current built-ins and verified SDK v1 packages
+use the same typed IDs, outcomes, registry ownership, and routing boundary. Capability support remains
+provider-specific and is reported by the support catalog.
 
 Focused contract tests live in:
 

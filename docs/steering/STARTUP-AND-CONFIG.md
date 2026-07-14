@@ -88,17 +88,16 @@ The default is `Hybrid`. An invalid value fails startup instead of silently sele
 controls account management only. Provider selection still goes through tenant, owner, library, capability, and
 provider policy checks.
 
-### `.env` Ownership
+### Configuration Ownership
 
-The admin UI reads and writes `.env` through `ConfigController` and `AdminHelperService`.
+Deployment values such as listeners, backend selection, database connection, key-ring location, and mounted paths
+remain in Compose, secret files, or `.env` and normally require a container recreation. WebUI-owned non-secret
+preferences use the typed tenant-scoped durable runtime settings store. Provider-account credentials use encrypted
+secret references.
 
-Important implications:
-
-- many settings changes require restart to take effect
-- some values are stored as JSON blobs inside `.env`
-- playlist config and user-scoped Spotify cookies are persisted there
-
-Do not create alternate write paths for the same config unless you also update the admin tooling.
+`ConfigController` and `AdminHelperService` still read and write `.env` for explicitly retained compatibility
+settings, including the legacy Spotify playlist and user-cookie flows. Do not send new provider-neutral settings,
+playlist links, account secrets, or job state through that compatibility path.
 
 ## Hosted Services
 
@@ -123,7 +122,8 @@ When changing a feature that has a hosted service, inspect both the controller p
 ## Editing Guardrails
 
 - Keep `Program.cs` changes deliberate and minimal.
-- Preserve canonical Spotify playlist parsing and user-scoped cookie settings.
+- Preserve legacy Spotify playlist parsing and user-scoped cookie settings until those compatibility routes are
+  deliberately retired.
 - Do not add an automatic pre-overhaul import path. Import remains an explicit, reviewed WebUI action conforming
   to [the legacy environment import contract](../operations/legacy-env-import.md).
 - Reuse `AdminHelperService` for `.env` work.

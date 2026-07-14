@@ -27,7 +27,7 @@ These clients have been used with a Navidrome or other Subsonic-compatible backe
 ### Android
 
 - [Tempus](https://github.com/eddyizm/tempus)
-- [Substreamer](https://substreamerapp.com/)
+- [Substreamer](https://substreamer.org/)
 
 ### iOS
 

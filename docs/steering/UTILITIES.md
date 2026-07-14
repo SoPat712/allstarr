@@ -19,7 +19,7 @@
 ### Auth And Session Helpers
 
 - `AuthHeaderHelper`: forwards and builds Jellyfin auth headers
-- `AdminAuthSessionService`: in-memory admin session storage
+- `AdminAuthSessionService`: in-memory session index backed by a protected on-disk session store
 - `AdminHelperService`: `.env` access, value masking, playlist serialization, validation helpers
 
 ### Safety Helpers
@@ -44,9 +44,10 @@
 - `CacheCleanupService`: bounded cleanup for transient downloaded media
 - `CacheWarmingService`: current cache-file warmup for compatibility flows
 
-Pre-overhaul environment, favorite, Spotify mapping, and version-state migration helpers were retired. Do not
-reintroduce an automatic conversion path during startup. The durable overhaul uses a fresh install, and any
-future import must be an explicit operator action with validation and rollback.
+Pre-overhaul automatic environment, favorite, Spotify mapping, and version-state migration helpers were retired.
+Do not reintroduce conversion during startup. The durable overhaul uses a fresh install. The only legacy
+configuration import is the explicit WebUI preview and confirm workflow, with validation, redaction, transaction
+boundaries, and conflict handling documented in the operations guide.
 
 ## Editing Guardrails
 

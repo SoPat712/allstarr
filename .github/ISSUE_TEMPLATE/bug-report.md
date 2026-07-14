@@ -26,7 +26,7 @@ Steps to reproduce the behavior:
 - Allstarr image tag or commit:
 - Host architecture: [amd64 / arm64]
 - Backend: [Jellyfin / Navidrome / other Subsonic server]
-- Fresh install: [Yes / No]
+- Install history: [fresh version 3 install / imported reviewed 2.x settings / upgraded from version 3 tag]
 
 ## Expected behavior
 
@@ -41,15 +41,17 @@ Add any other context, screenshots, or surrounding details here.
 - Sensitive values stay redacted in this block.
 - Allstarr Version: [image tag or commit]
 - Backend Type: [e.g. Jellyfin]
-- Music Service: [e.g. SquidWTF]
+- Capability and provider involved: [e.g. playlist / Spotify]
+- Provider account scope: [global / user / library / not applicable]
+- Provider readiness: [Ready / Needs Config / Degraded / Unknown]
 - Storage Mode: [e.g. Cache]
 - Download Mode: [e.g. Track]
 - Storage: [Postgres version and readiness state]
 - Valkey Enabled: [e.g. Yes]
-- Spotify Import Enabled: [e.g. Yes]
-- Scrobbling Enabled: [e.g. Disabled]
-- Spotify Status: [e.g. Spotify Ready]
-- Jellyfin URL: [Configured (redacted) or Not configured]
+- Relevant job or correlation ID:
+- Playlist mode, if relevant: [virtual / materialized / hybrid]
+- Scrobbling or intelligence enabled: [e.g. Disabled]
+- Backend URL: [Configured (redacted) or Not configured]
 - Client: [e.g. Firefox 149 on macOS]
 - Generated At (UTC): [e.g. 2026-04-19T02:18:52.483Z]
 - Browser Time Zone: [e.g. America/New_York]

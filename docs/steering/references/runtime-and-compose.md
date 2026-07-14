@@ -26,9 +26,10 @@ For the fresh overhaul baseline, keep `.env` for deployment settings, initial se
 
 Standard deployment is the default: core app, Postgres, and Valkey. Optional sidecars should be selectable, removable, and re-addable without breaking startup.
 
-## Current Phase 1 Checkpoint
+## Historical Phase 1 Checkpoint
 
-The Phase 1 durable foundation and its runtime-image/Compose exit gate are complete:
+This section preserves the Phase 1 exit evidence. It is historical, not the current release test inventory. The
+Phase 1 durable foundation and its runtime-image/Compose exit gate completed with the following behavior:
 
 - `Storage:Provider` accepts only `Postgres` or `Sqlite`. The selected provider is used for the full EF model,
   migrations, readiness state, mutation guard, backups, and durable workers. A failed Postgres connection never
@@ -60,14 +61,15 @@ The Phase 1 durable foundation and its runtime-image/Compose exit gate are compl
   files, named database/app/cache volumes, and separate bind-mounted download and kept-media folders. The
   development override builds the local app image. The old Redis-to-Valkey conversion overlay is gone.
 
-The Phase 1 exit checkpoint passed 1,002 .NET tests with no skips, including the native PostgreSQL run with
-`ALLSTARR_TEST_POSTGRES`. Eight Python sidecar contract tests pass with the pinned Python 3.10 environment.
+At that checkpoint, 1,002 .NET tests passed with no skips, including the native PostgreSQL run with
+`ALLSTARR_TEST_POSTGRES`. The then-current Python sidecar contract suite also passed; that retired suite is not
+part of the current repository gate.
 Standard and development Compose render cleanly. Runtime image
 `sha256:c6b659ed0028fc4347ac32ab1e5fc0505f2f742bc1ed906be17e68294b287e43` contains `pg_dump` 18.4 and
 completed an isolated verified backup and restore through `20260711001832_Phase1OperationalCompletion`.
-That image and migration are the preserved Phase 1 runtime checkpoint. Current source now migrates through
-`20260711141123_Phase2TrackIdentityFoundation`, whose SQLite and PostgreSQL models both pass exact parity checks.
-The final overhaul image gate will replace the historical Phase 1 image reference after all phases finish.
+That image and migration are the preserved Phase 1 runtime checkpoint. The next recorded checkpoint migrated
+through `20260711141123_Phase2TrackIdentityFoundation`; later checked-in migrations define the current schema.
+Later phase and release records in `OVERHAUL.md` supersede this image as current release evidence.
 
 ## Explicit Profile And Storage Selection
 
@@ -126,14 +128,14 @@ docker compose up -d
 
 # development
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# verified first-party package bundle
+docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 ```
 
 The following commands apply after their later profile files are implemented:
 
 ```bash
-
-# verified first-party package bundle
-docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 
 # selected repository sidecars
 docker compose -f docker-compose.yml -f docker-compose.lyrics.yml up -d
@@ -172,8 +174,8 @@ For every external provider service:
 
 ## Durable Jobs And Transactional Outbox
 
-Phase 1 provides the durable job and transactional-outbox contract. Later downloads, favorites, file placement,
-provider refreshes, probes, and extension work must use it as they migrate. The selected database is the source
+The durable job and transactional-outbox contract owns downloads, favorites, file placement, provider refreshes,
+probes, and extension work. The selected database is the source
 of truth for jobs, attempts, cancellation, progress, and terminal results. State changes that require a
 follow-up action write an outbox record in the same transaction as the state change.
 
@@ -236,7 +238,7 @@ AIO:
 - Postgres.
 - Valkey.
 - Verified read-only first-party package bundle.
-- Nearly the same resource target as Standard until an independent provider-sidecar overlay is selected.
+- Nearly the same resource target as Standard. Independent external provider services have their own budgets.
 
 External Apple download provider:
 

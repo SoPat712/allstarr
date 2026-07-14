@@ -8,7 +8,7 @@ Caching in Allstarr is a layered runtime contract:
 
 - Valkey is the primary runtime cache in the standard deployment. The existing services use its Redis-compatible
   protocol and retain `Redis` in several type and configuration names.
-- `/app/cache` holds cold-start recovery files, persistent user mapping files, and a few admin artifacts.
+- `/app/cache` holds cold-start recovery files, legacy compatibility mapping files, and a few admin artifacts.
 - `CacheKeyBuilder` and `CacheExtensions` centralize cache naming and TTL policy.
 
 The code is intentionally fail-open when Valkey is unavailable. Features should degrade, not crash. Valkey and
@@ -81,8 +81,9 @@ Important locations:
 - `RedisPersistenceService` currently relies mostly on Redis native persistence and only maintains a snapshot folder placeholder.
 
 The fresh overhaul baseline does not backfill cache, favorite, environment, mapping, or version-state files into
-durable storage on startup. Existing compatibility services may still read current cache formats while their
-feature adapters are being replaced, but those files are never treated as the durable job or account store.
+durable storage on startup. Compatibility services may still read these formats for explicitly retained legacy
+routes, but provider-neutral matching, playlists, jobs, accounts, and identities use durable storage. Cache files
+are never the durable authority for those features.
 
 ## Feature-Specific Cache Contracts
 
@@ -90,7 +91,7 @@ feature adapters are being replaced, but those files are never treated as the du
 
 - Playlist fetch cache uses per-playlist cron-aware expiry, not a single global refresh interval.
 - Rebuild operations clear playlist-specific cache groups before fetching and matching again.
-- Global mappings are permanent until deleted.
+- Legacy global Spotify mappings remain until deleted. They are not the provider-neutral durable mapping model.
 
 ### Lyrics
 

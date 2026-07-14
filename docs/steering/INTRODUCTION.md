@@ -9,8 +9,10 @@ Allstarr is an ASP.NET Core `net10.0` music proxy. It sits between clients and a
 - Proxy port `8080`: Jellyfin-compatible or Subsonic-compatible client traffic.
 - Admin port `5275`: local Web UI and admin API.
 - Backends: Jellyfin or Subsonic/Navidrome, selected at startup.
-- Providers: SquidWTF, Deezer, and Qobuz.
-- Cross-cutting features: Spotify playlist injection, lyrics, scrobbling, caching, downloads, admin diagnostics.
+- Provider capabilities: Deezer, Qobuz, metadata-only SquidWTF, external Apple downloads, Apple MusicKit,
+  Spotify playlists, MusicBrainz enrichment, Last.fm, ListenBrainz, lyrics sources, and optional AudioMuse-AI.
+- Cross-cutting features: provider-neutral matching and playlists, durable jobs, managed downloads and placement,
+  favorites, lyrics, scrobbling, listening intelligence, caching, extensions, and admin diagnostics.
 
 ## What Matters Most In This Repo
 
@@ -24,12 +26,16 @@ Allstarr is an ASP.NET Core `net10.0` music proxy. It sits between clients and a
 ## Repository Shape
 
 - `allstarr/Controllers`: Jellyfin proxy, Subsonic proxy, and admin APIs.
+- `allstarr/Core`: durable storage, identity, secrets, jobs, capabilities, routing, matching, playlists, favorites,
+  managed files, playback, intelligence, and extensions.
 - `allstarr/Services`: backend integrations, provider clients, downloads, Spotify, lyrics, scrobbling, validation, shared helpers.
 - `allstarr/Middleware` and `allstarr/Filters`: proxy and admin request boundaries.
 - `allstarr/Models`: shared domain models, settings, Spotify models, scrobbling models, admin DTOs.
 - `allstarr/wwwroot`: static admin UI.
 - `allstarr.Tests`: xUnit regression suite.
-- `docs/steering`: subsystem-specific editing guidance for future work.
+- `first-party`: reproducible SDK v1 packages and the checksum-locked first-party bundle.
+- `apis/specifications`: versioned upstream API specifications with pinned provenance.
+- `docs/steering`: subsystem-specific editing guidance for current and future work.
 
 ## Start Here For Changes
 

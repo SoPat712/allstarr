@@ -28,7 +28,7 @@ These states describe checked-in Allstarr adapters, not everything an upstream s
 
 | Provider | Current Allstarr capabilities | Current account/config boundary | Current limits |
 | --- | --- | --- | --- |
-| `apple-download` (runtime ID `applemusic`) | Partial song metadata, download-backed streaming, single-song download, and compatible-gateway health/status. | One deployment-global external provider gateway URL and its account/session flow. | No verified MusicKit account, provider range lease, album/playlist/library job, music-video route, synced-lyrics artifact route, or broad managed-artifact contract. |
+| `apple-download` (legacy service alias `applemusic`) | Partial song metadata, download-backed streaming, single-song download, and compatible-gateway health/status. | One deployment-global external provider gateway URL and its account/session flow. | No verified provider range lease, album/playlist/library job, music-video route, synced-lyrics artifact route, or broad managed-artifact contract. MusicKit is a separate provider account. |
 | `apple-musickit` | Supported account-bound playlist reads. | Per-user developer token and Music User Token in an encrypted provider-account secret. | Playlist snapshots and materialization are implemented; general MusicKit metadata is not. |
 | `deezer` | Supported public metadata and playlist reads; partial download-backed streaming and track download. | Public metadata needs no ARL. Streaming/download use the deployment-global ARL. | No typed stream lease or complete durable progress/cancellation/artifact contract. |
 | `qobuz` | Partial catalog/playlist reads, download-backed streaming, and track download. | Metadata/playlist reads do not require the download account; streaming/download use the deployment-global token/user ID plus discovered app credentials. | Artist-track, paging, typed stream lease, progress/cancellation, and signed-URL failures are not fully characterized. |
@@ -52,7 +52,7 @@ projection for legacy paths. Typed routes additionally persist capability/accoun
   health (`Unknown`, `Testing`, `Healthy`, or `Degraded`). A configured credential is not proof of health.
 - Status reads are side-effect free. An untested capability remains `Unknown`, has no fabricated test
   time, and is never reported `Ready`. The compatibility router may still attempt an enabled, configured
-  `Unknown` capability while Phase 1 routing is absent.
+  `Unknown` capability only on explicitly retained compatibility paths. Typed routes use durable health and routing.
 - Only an explicit capability probe records `Testing` and then `Healthy` or `Degraded`. Observations are
   isolated by provider, capability, and account key. Typed health samples are durable; compatibility observations remain in memory.
 - Disabled providers are excluded from every current lane. A failed download probe does not degrade a
@@ -245,7 +245,7 @@ Uninstall requires explicit confirmation. It disables the extension first, remov
 
 ## Apple Split
 
-Apple should become at least two provider instances:
+Apple is represented by two separate provider instances:
 
 - `apple-download`: download and optional stream behavior exposed by a separately deployed compatible provider
   gateway. A GAMDL-backed gateway can create managed song, music-video, synced-lyrics, cover-art, and rich-tagging
@@ -284,7 +284,7 @@ upstream GAMDL support from a gateway route that Allstarr has actually implement
 
 | Upstream feature | Allstarr capability target | Current gateway status | Required before advertising |
 | --- | --- | --- | --- |
-| Catalog and library song, album, playlist, and artist downloads | `apple-download` download and playlist-import inputs | Audio song route exists; broader URL handling must be exposed deliberately. | Provider request model, managed-artifact record, and fake-sidecar contract tests. |
+| Catalog and library song, album, playlist, and artist downloads | `apple-download` download and playlist-import inputs | Audio song route exists; broader URL handling must be exposed deliberately. | Provider request model, managed-artifact record, and fake-gateway contract tests. |
 | Rich tags, artwork, and downloaded-file metadata | `apple-download` artifact metadata plus enrichment | Upstream capability; preserve only verified output fields. | Artifact parser/validation and metadata-merge tests. |
 | Synced LRC/SRT/TTML lyrics | Download artifact, then optional `ILyricsProvider` source | Not advertised without a compatible artifact route. | Explicit gateway output, format/ownership validation, and lyrics response tests. |
 | Music videos up to available upstream quality | Download media of kind `music-video`; protocol exposure only where the selected backend/client supports it | No verified gateway video contract yet. | Media-kind contract, video route/job, codec/container validation, and protocol fixtures. |
@@ -331,7 +331,7 @@ Spotify:
 
 - Playlist and liked-song source.
 - Matching seed in specialized playlist flows; no current generic metadata-provider registration.
-- Should migrate from Spotify-only playlist import and mappings into provider-neutral playlist links, canonical recordings, and provider identity links.
+- New playlist and mapping work uses provider-neutral playlist links, canonical recordings, and provider identity links. Spotify-only import remains a compatibility path.
 - Can feed virtual playlists or durable manual/scheduled materialization into Jellyfin or a Subsonic-compatible backend. Backend writes stay in the target adapter, not the Spotify provider.
 
 MusicBrainz:

@@ -53,7 +53,7 @@ empty, loading, configured, disabled, degraded, unauthorized, and error states f
 static capability promises.
 
 `SmartPlaylistService` saves an ordered generated set and queues `smart-playlist.materialize`. Jellyfin and
-Subsonic/Navidrome materializers reuse the Phase 4 backend playlist targets:
+Subsonic/Navidrome materializers reuse the shared backend playlist targets:
 
 - Resolve only the exact tenant, user, backend, and library.
 - Match by exact backend item, library track, MusicBrainz recording ID, ISRC, or verified provider identity.

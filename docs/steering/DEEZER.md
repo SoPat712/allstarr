@@ -329,7 +329,7 @@ Chart entries add `position` for chart order. Chart playlist entries use a `user
 
 Deezer uses OAuth 2.0 when authentication and authorization are required.
 
-Permissions documented in the pasted reference:
+The Deezer API reference lists these permissions:
 
 | Permission | Use |
 | --- | --- |
