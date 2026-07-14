@@ -21,6 +21,7 @@ public class ExtensionManager
 {
     private const string DisabledMarkerFile = ".disabled";
     private const int MaximumExtensionIdLength = 128;
+    private const int MaximumRegistryBytes = 4 * 1024 * 1024;
     private static readonly Regex ExtensionIdPattern = new(
         "^[a-z0-9]+(?:-[a-z0-9]+)*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -157,21 +158,10 @@ public class ExtensionManager
             try
             {
                 using var response = await client.GetAsync(repo, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                if (!response.IsSuccessStatusCode) continue;
-                if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
-                    throw new InvalidDataException("Extension registry exceeds 4 MiB.");
-                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                using var reader = new StreamReader(stream);
-                var buffer = new char[64 * 1024];
-                var jsonBuilder = new StringBuilder();
-                int read;
-                while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
-                {
-                    if (jsonBuilder.Length + read > 4 * 1024 * 1024)
-                        throw new InvalidDataException("Extension registry exceeds 4 MiB.");
-                    jsonBuilder.Append(buffer, 0, read);
-                }
-                var json = jsonBuilder.ToString();
+                if (!response.IsSuccessStatusCode)
+                    throw new InvalidDataException(
+                        $"Extension registry returned HTTP {(int)response.StatusCode} ({response.ReasonPhrase}).");
+                var json = await ReadRegistryJsonAsync(response.Content, cancellationToken);
                 var parsedItems = ParseStoreRegistry(json, repo);
                 foreach (var item in parsedItems)
                 {
@@ -201,6 +191,79 @@ public class ExtensionManager
             .ToList();
 
         return catalog;
+    }
+
+    public async Task<int> ValidateStoreRegistryAsync(
+        string registryUrl,
+        CancellationToken cancellationToken = default)
+    {
+        if (!OutboundRequestGuard.TryCreateSafeHttpUri(registryUrl, out var registryUri, out var reason) ||
+            registryUri!.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(registryUri.Fragment))
+        {
+            throw new InvalidDataException(
+                $"Registry URL must be a public HTTPS JSON document without credentials or a fragment: {reason}.");
+        }
+
+        if (registryUri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+            registryUri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).Length == 2)
+        {
+            throw new InvalidDataException(
+                "That URL is a GitHub repository page. Enter the direct raw URL to an Allstarr registry JSON document instead, such as https://raw.githubusercontent.com/owner/repository/main/registry.json.");
+        }
+
+        using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
+        client.Timeout = TimeSpan.FromSeconds(5);
+        using var response = await client.GetAsync(
+            registryUri,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidDataException(
+                $"Registry URL returned HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Enter a direct URL to the registry JSON document.");
+        }
+
+        var json = await ReadRegistryJsonAsync(response.Content, cancellationToken);
+        List<StoreExtensionItem> items;
+        try
+        {
+            items = ParseStoreRegistry(json, registryUri.AbsoluteUri);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException(
+                "Registry URL did not return JSON. Enter a direct URL to an Allstarr registry JSON document, not a repository or file-view page.",
+                exception);
+        }
+
+        if (items.Count == 0)
+        {
+            throw new InvalidDataException(
+                "Registry contains no installable Allstarr packages. Every entry needs a safe extension id, a direct HTTPS download URL, and a 64-character SHA-256 checksum. Registries made for another application are not compatible.");
+        }
+
+        return items.Count;
+    }
+
+    private static async Task<string> ReadRegistryJsonAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > MaximumRegistryBytes)
+            throw new InvalidDataException("Extension registry exceeds 4 MiB.");
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+        var buffer = new char[64 * 1024];
+        var jsonBuilder = new StringBuilder();
+        int read;
+        while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
+        {
+            if (jsonBuilder.Length + read > MaximumRegistryBytes)
+                throw new InvalidDataException("Extension registry exceeds 4 MiB.");
+            jsonBuilder.Append(buffer, 0, read);
+        }
+
+        return jsonBuilder.ToString();
     }
 
     public async Task<bool> InstallExtensionAsync(string downloadUrl, CancellationToken cancellationToken = default)

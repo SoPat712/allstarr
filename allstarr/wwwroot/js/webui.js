@@ -132,6 +132,8 @@ function providerLogoUrl(provider) {
   return logos.has(logoId) ? `/images/providers/${logoId}.svg` : "";
 }
 
+const providersWithoutCardMark = new Set(["lyricsplus", "squidwtf", "lrclib"]);
+
 function providerDisplayName(providerId, providers = []) {
   const provider = asArray(providers).find((item) =>
     String(item?.id || item?.Id || "").toLowerCase() === String(providerId).toLowerCase());
@@ -462,10 +464,12 @@ class AllstarrApp extends LitElement {
     appleMusicStatus: { state: true },
     serviceResults: { state: true },
     extensionActions: { state: true },
+    extensionRegistryError: { state: true },
     providerConfigOpen: { state: true },
     favoritePolicy: { state: true },
     intelligence: { state: true },
     intelligenceLoading: { state: true },
+    priorityDrag: { state: true },
     envMigration: { state: true },
     envMigrationStatus: { state: true },
     migrationPromptDismissed: { state: true },
@@ -510,10 +514,12 @@ class AllstarrApp extends LitElement {
     this.appleMusicStatus = null;
     this.serviceResults = {};
     this.extensionActions = {};
+    this.extensionRegistryError = "";
     this.providerConfigOpen = new Set();
     this.favoritePolicy = null;
     this.intelligence = null;
     this.intelligenceLoading = false;
+    this.priorityDrag = null;
     this.envMigration = { state: "idle", sourceName: "", preview: null, result: null, error: "" };
     this.envMigrationStatus = null;
     this.migrationPromptDismissed = sessionStorage.getItem(MIGRATION_PROMPT_DISMISSED_KEY) === "1";
@@ -988,12 +994,16 @@ class AllstarrApp extends LitElement {
   async createExtensionRegistry(event) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    this.extensionRegistryError = "";
     this.extensionActions = { ...this.extensionActions, registry: "Adding" };
     try {
       await API.createExtensionRegistry({ name: form.get("name"), registryUrl: form.get("registryUrl"), enabled: true });
       event.currentTarget.reset();
       await this.loadExtensionControlPlane();
-      this.toast("Extension registry added");
+      this.toast("Extension registry validated and added");
+    } catch (error) {
+      this.extensionRegistryError = error.message;
+      this.toast(error.message, "error");
     } finally {
       const nextActions = { ...this.extensionActions };
       delete nextActions.registry;
@@ -2358,18 +2368,23 @@ class AllstarrApp extends LitElement {
 
   renderProviderCard(provider) {
     const status = this.providerStatus(provider);
-    const providerId = provider.id || provider.Id;
+    const providerId = String(provider.id || provider.Id || "").toLowerCase();
     const logoUrl = providerLogoUrl(provider);
-    const open = this.providerConfigOpen.has(providerId) || ["needs_config", "needs_login"].includes(status);
+    const showBrandMark = Boolean(logoUrl) || !providersWithoutCardMark.has(providerId);
+    const hasEditableConfig = asArray(provider.configSchema).length > 0;
+    const open = hasEditableConfig &&
+      (this.providerConfigOpen.has(providerId) || ["needs_config", "needs_login"].includes(status));
     return html`
       <div class="card provider-card">
         <div class="provider-head">
           <div class="provider-brand">
-            <span class="provider-logo provider-${provider.id}">
-              ${logoUrl
-                ? html`<img src="${logoUrl}" alt="${provider.name} logo">`
-                : providerMark(provider)}
-            </span>
+            ${showBrandMark ? html`
+              <span class="provider-logo provider-${providerId}">
+                ${logoUrl
+                  ? html`<img src="${logoUrl}" alt="${provider.name} logo">`
+                  : providerMark(provider)}
+              </span>
+            ` : nothing}
             <div class="provider-title">
               <strong>${provider.name}</strong>
               <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
@@ -2378,7 +2393,7 @@ class AllstarrApp extends LitElement {
           <span class="status-chip ${status}">${titleCase(status)}</span>
         </div>
         <div class="row-actions provider-actions">
-          ${status !== "disabled" ? html`
+          ${status !== "disabled" && hasEditableConfig ? html`
             <button @click=${() => {
               const next = new Set(this.providerConfigOpen);
               next.has(providerId) ? next.delete(providerId) : next.add(providerId);
@@ -2480,20 +2495,28 @@ class AllstarrApp extends LitElement {
           ${asArray(this.schema?.priorityGroups).map((group) => html`
             <div class="card">
               <h3>${group.label}</h3>
-              <div class="priority-list">
+              <p class="muted priority-help">Drag providers into order. With the keyboard, use Alt + Up or Alt + Down.</p>
+              <div class="priority-list" role="list" aria-label=${group.label}>
                 ${asArray(group.providers).map((provider, index) => html`
-                  <span class="priority-item">
+                  <div
+                    class="priority-item ${this.priorityDrag?.groupId === group.id && this.priorityDrag?.index === index ? "dragging" : ""}"
+                    role="listitem"
+                    draggable="true"
+                    tabindex="0"
+                    data-priority-group=${group.id}
+                    aria-label=${`${providerDisplayName(provider, providers)}, position ${index + 1} of ${group.providers.length}`}
+                    @dragstart=${(event) => this.startPriorityDrag(event, group, index)}
+                    @dragover=${(event) => this.allowPriorityDrop(event, group)}
+                    @drop=${(event) => this.dropPriority(event, group, index)}
+                    @dragend=${() => { this.priorityDrag = null; }}
+                    @keydown=${(event) => this.handlePriorityKeydown(event, group, index)}
+                  >
+                    <span class="priority-drag-handle" aria-hidden="true">⠿</span>
                     ${this.renderProviderToken(provider, providers)}
-                    <button ?disabled=${index === 0} @click=${() => this.movePriority(group, index, -1)}>Up</button>
-                    <button ?disabled=${index === group.providers.length - 1} @click=${() => this.movePriority(group, index, 1)}>Down</button>
-                  </span>
+                    <span class="priority-position">${index + 1}</span>
+                  </div>
                 `)}
               </div>
-              ${group.enabledEnvKey ? html`
-                <div class="chip-list provider-enabled-list">
-                  ${this.capabilityProviders(group.id).map((provider) => html`<span class="chip success">${this.renderProviderToken(provider, providers)}</span>`)}
-                </div>
-              ` : nothing}
             </div>
           `)}
         </div>
@@ -2503,21 +2526,58 @@ class AllstarrApp extends LitElement {
 
   renderProviderToken(providerId, providers = asArray(this.schema?.providers)) {
     const label = providerDisplayName(providerId, providers);
-    const logoUrl = providerLogoUrl({ id: providerId, name: label });
+    const normalizedProviderId = String(providerId).toLowerCase();
+    const logoUrl = providerLogoUrl({ id: normalizedProviderId, name: label });
+    const showBrandMark = Boolean(logoUrl) || !providersWithoutCardMark.has(normalizedProviderId);
     return html`
       <span class="provider-token">
-        <span class="provider-token-logo provider-${providerId}">
-          ${logoUrl ? html`<img src="${logoUrl}" alt="">` : providerMark({ id: providerId, name: label }).slice(0, 2)}
-        </span>
+        ${showBrandMark ? html`
+          <span class="provider-token-logo provider-${normalizedProviderId}">
+            ${logoUrl ? html`<img src="${logoUrl}" alt="">` : providerMark({ id: normalizedProviderId, name: label }).slice(0, 2)}
+          </span>
+        ` : nothing}
         <span>${label}</span>
       </span>
     `;
   }
 
-  async movePriority(group, index, direction) {
+  startPriorityDrag(event, group, index) {
+    this.priorityDrag = { groupId: group.id, index };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(group.providers[index]));
+  }
+
+  allowPriorityDrop(event, group) {
+    if (this.priorityDrag?.groupId !== group.id) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  async dropPriority(event, group, targetIndex) {
+    if (this.priorityDrag?.groupId !== group.id) return;
+    event.preventDefault();
+    const sourceIndex = this.priorityDrag.index;
+    this.priorityDrag = null;
+    await this.reorderPriority(group, sourceIndex, targetIndex);
+  }
+
+  async handlePriorityKeydown(event, group, index) {
+    if (!event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const target = index + (event.key === "ArrowUp" ? -1 : 1);
+    if (target < 0 || target >= group.providers.length) return;
+    await this.reorderPriority(group, index, target);
+    this.updateComplete.then(() => {
+      const items = this.querySelectorAll(`[data-priority-group="${CSS.escape(group.id)}"]`);
+      items[target]?.focus();
+    });
+  }
+
+  async reorderPriority(group, sourceIndex, targetIndex) {
+    if (sourceIndex === targetIndex) return;
     const providers = [...group.providers];
-    const target = index + direction;
-    [providers[index], providers[target]] = [providers[target], providers[index]];
+    const [provider] = providers.splice(sourceIndex, 1);
+    providers.splice(targetIndex, 0, provider);
     await this.savePriority(group, providers);
   }
 
@@ -2546,9 +2606,10 @@ class AllstarrApp extends LitElement {
           <h3>Registries</h3>
           <form class="config-grid" @submit=${(event) => this.createExtensionRegistry(event)}>
             <label class="config-field"><span>Name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="Community registry"></label>
-            <label class="config-field"><span>HTTPS registry URL</span><input name="registryUrl" type="url" required pattern="https://.*" autocomplete="off" placeholder="https://example.org/allstarr/registry.json"></label>
+            <label class="config-field"><span>HTTPS registry JSON URL</span><input name="registryUrl" type="url" required pattern="https://.*" autocomplete="off" aria-describedby="extension-registry-help" placeholder="https://example.org/allstarr/registry.json"><small id="extension-registry-help">Use the direct URL to an Allstarr registry JSON document, not a GitHub repository or file-view page.</small></label>
             <div class="config-field extension-form-action"><span>&nbsp;</span><button class="primary" type="submit" ?disabled=${Boolean(this.extensionActions.registry)}>${this.extensionActions.registry || "Add registry"}</button></div>
           </form>
+          ${this.extensionRegistryError ? html`<div class="error-text" role="alert">${this.extensionRegistryError}</div>` : nothing}
           <div class="activity-list">
             ${registries.length ? registries.map((item) => {
               const enabled = item.enabled ?? item.Enabled;

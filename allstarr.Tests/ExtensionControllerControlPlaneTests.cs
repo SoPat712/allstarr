@@ -1,13 +1,21 @@
+using System.Net;
+using System.Text;
 using allstarr.Controllers;
 using allstarr.Core.Extensions;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -15,6 +23,7 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-controller", Guid.NewGuid().ToString("N"));
     private ExtensionControlPlaneService _service = null!;
+    private ExtensionManager _manager = null!;
 
     public async Task InitializeAsync()
     {
@@ -29,6 +38,22 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
             ["Extensions:Directory"] = Path.Combine(_root, "extensions")
         }).Build();
         _service = new ExtensionControlPlaneService(factory, new Clock(), configuration);
+        var clientFactory = new Mock<IHttpClientFactory>();
+        clientFactory.Setup(item => item.CreateClient("ExtensionSdkV1"))
+            .Returns(() => new HttpClient(new RegistryResponseHandler()));
+        var environment = new Mock<IWebHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns(Environments.Development);
+        environment.SetupGet(item => item.ContentRootPath).Returns(_root);
+        var adminHelper = new AdminHelperService(
+            NullLogger<AdminHelperService>.Instance,
+            Options.Create(new JellyfinSettings()),
+            environment.Object);
+        _manager = new ExtensionManager(
+            clientFactory.Object,
+            NullLogger<ExtensionManager>.Instance,
+            configuration,
+            adminHelper,
+            _service);
     }
 
     [Fact]
@@ -59,6 +84,25 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AddRegistry_RejectsRepositoryPagesWithActionableApiFeedback()
+    {
+        var administrator = Controller(Session(administrator: true));
+
+        var result = Assert.IsType<BadRequestObjectResult>(await administrator.AddRegistry(
+            new RegistryRequest
+            {
+                Name = "SpotiFLAC",
+                RegistryUrl = "https://github.com/spotiflacapp/SpotiFLAC-Extension"
+            },
+            default));
+        var serialized = System.Text.Json.JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains("GitHub repository page", serialized, StringComparison.Ordinal);
+        Assert.Contains("raw.githubusercontent.com", serialized, StringComparison.Ordinal);
+        Assert.Empty(await _service.ListRegistriesAsync());
+    }
+
+    [Fact]
     public async Task LogEndpoint_RejectsUnboundedRequests()
     {
         var administrator = Controller(Session(administrator: true));
@@ -86,7 +130,7 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         var context = new DefaultHttpContext();
         if (session != null)
             context.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
-        return new ExtensionController(null!, _service, NullLogger<ExtensionController>.Instance)
+        return new ExtensionController(_manager, _service, NullLogger<ExtensionController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -113,6 +157,30 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     private sealed class Clock : IPlatformClock
     {
         public DateTimeOffset UtcNow => new(2026, 7, 12, 8, 0, 0, TimeSpan.Zero);
+    }
+
+    private sealed class RegistryResponseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            const string registry = """
+            {
+              "extensions": [
+                {
+                  "id": "fixture-extension",
+                  "downloadUrl": "https://extensions.example.test/fixture.zip",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            }
+            """;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(registry, Encoding.UTF8, "application/json")
+            });
+        }
     }
 
     private sealed class DbFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>

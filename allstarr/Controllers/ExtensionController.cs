@@ -51,12 +51,29 @@ public class ExtensionController : ControllerBase
         if (RequireAdministrator() is { } error) return error;
         try
         {
+            await _extensionManager.ValidateStoreRegistryAsync(request.RegistryUrl ?? string.Empty, cancellationToken);
             var registry = await _controlPlane.AddRegistryAsync(
                 new ExtensionRegistryInput(request.Name ?? string.Empty, request.RegistryUrl ?? string.Empty, request.Enabled),
                 cancellationToken);
             return Ok(RegistryResponse(registry));
         }
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
+        catch (InvalidDataException exception) { return BadRequest(new { error = exception.Message }); }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(StatusCodes.Status504GatewayTimeout, new
+            {
+                error = "Registry validation timed out. Check that the URL points directly to a reachable JSON document."
+            });
+        }
+        catch (HttpRequestException exception)
+        {
+            _logger.LogWarning(exception, "Failed to validate extension registry {RegistryUrl}", request.RegistryUrl);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                error = "Registry could not be reached. Check the URL and try again."
+            });
+        }
     }
 
     [HttpPatch("registries/{registryId:guid}")]

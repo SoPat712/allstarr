@@ -714,23 +714,52 @@ tr:last-child td {
 
 .priority-list {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: var(--space-2);
 }
 
+.priority-help {
+    margin: 0 0 var(--space-3);
+    font-size: 0.78rem;
+}
+
 .priority-item {
-    display: inline-flex;
+    display: flex;
     align-items: center;
     gap: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-elevated);
-    padding: 6px 8px;
+    padding: 8px 10px;
+    cursor: grab;
+    transition: border-color 120ms ease, background 120ms ease, opacity 120ms ease;
 }
 
-.priority-item button {
-    min-height: 26px;
-    padding: 2px 7px;
+.priority-item:hover,
+.priority-item:focus-visible {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--surface-elevated), var(--accent) 6%);
+}
+
+.priority-item:active {
+    cursor: grabbing;
+}
+
+.priority-item.dragging {
+    opacity: 0.45;
+}
+
+.priority-drag-handle {
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.priority-position {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.75rem;
 }
 
 .provider-token {
@@ -970,8 +999,7 @@ tr:last-child td {
     gap: var(--space-3);
 }
 
-.capability-list,
-.provider-enabled-list {
+.capability-list {
     flex-wrap: wrap;
     align-items: flex-start;
     align-self: start;

@@ -50,6 +50,23 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void ProviderCards_HideUnwantedMarksAndConfigurationActions()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains(
+            "const providersWithoutCardMark = new Set([\"lyricsplus\", \"squidwtf\", \"lrclib\"]);",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains("const showBrandMark = Boolean(logoUrl) || !providersWithoutCardMark.has(providerId);", script, StringComparison.Ordinal);
+        Assert.Contains("${showBrandMark ? html`", script, StringComparison.Ordinal);
+        Assert.Contains("!providersWithoutCardMark.has(normalizedProviderId)", script, StringComparison.Ordinal);
+        Assert.Contains("const hasEditableConfig = asArray(provider.configSchema).length > 0;", script, StringComparison.Ordinal);
+        Assert.Contains("${status !== \"disabled\" && hasEditableConfig ? html`", script, StringComparison.Ordinal);
+        Assert.Contains("const open = hasEditableConfig &&", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LoginCopy_UsesTheSelectedBackendIdentity()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));

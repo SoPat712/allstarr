@@ -16,6 +16,62 @@ namespace allstarr.Tests;
 public class ExtensionManagerSecurityTests
 {
     [Fact]
+    public async Task ValidateStoreRegistryAsync_RejectsGitHubRepositoryPagesBeforeRequestingThem()
+    {
+        var testRoot = CreateTestRoot();
+        try
+        {
+            var httpClientFactory = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+            var manager = CreateManager(testRoot, httpClientFactory.Object);
+
+            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                manager.ValidateStoreRegistryAsync("https://github.com/spotiflacapp/SpotiFLAC-Extension"));
+
+            Assert.Contains("GitHub repository page", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("raw.githubusercontent.com", exception.Message, StringComparison.Ordinal);
+            httpClientFactory.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            DeleteTestRoot(testRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateStoreRegistryAsync_ExplainsWhenAnotherAppsRegistryHasNoChecksums()
+    {
+        const string registry = """
+        {
+          "extensions": [
+            {
+              "id": "spotify-web",
+              "download_url": "https://raw.githubusercontent.com/example/extensions/main/spotify-web.sflx"
+            }
+          ]
+        }
+        """;
+        var testRoot = CreateTestRoot();
+        try
+        {
+            var manager = CreateManager(
+                testRoot,
+                CreateHttpClientFactory(Encoding.UTF8.GetBytes(registry)));
+
+            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                manager.ValidateStoreRegistryAsync(
+                    "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json"));
+
+            Assert.Contains("no installable Allstarr packages", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("SHA-256 checksum", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("another application", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTestRoot(testRoot);
+        }
+    }
+
+    [Fact]
     public async Task InstallExtensionAsync_IsDisabledByDefaultWithoutMakingARequest()
     {
         var testRoot = CreateTestRoot();
