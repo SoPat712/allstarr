@@ -32,7 +32,9 @@ public sealed record ManagedFilePlacementRequest(
     Guid? SourceJobId,
     string ScopeKey,
     bool SourceIsAllstarrManaged,
-    bool SourceIsImmutable = true);
+    bool SourceIsImmutable = true,
+    string? ExpectedContentSha256 = null,
+    long? ExpectedLength = null);
 
 public sealed record ManagedFileRecord(
     Guid Id,

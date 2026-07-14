@@ -19,13 +19,20 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         var requestedTarget = ContainedPath(root, relative);
         var fingerprint = await FingerprintAsync(source, cancellationToken);
         var length = new FileInfo(source).Length;
+        ValidateExpectedSource(request, fingerprint, length);
         var compatible = await ownership.FindCompatibleAsync(request.Root.Id, fingerprint, request.ScopeKey, cancellationToken);
         if (compatible is not null && File.Exists(compatible.CanonicalPath))
+        {
+            await ValidateExistingManagedFileAsync(root, compatible, fingerprint, length, cancellationToken);
             return new(await ownership.AddReferenceAsync(compatible.Id, cancellationToken), true);
+        }
 
         var requestedRecord = await ownership.FindByPathAsync(requestedTarget, cancellationToken);
         if (requestedRecord is not null && requestedRecord.ContentSha256 == fingerprint && File.Exists(requestedTarget))
+        {
+            await ValidateExistingManagedFileAsync(root, requestedRecord, fingerprint, length, cancellationToken);
             return new(await ownership.AddReferenceAsync(requestedRecord.Id, cancellationToken), true);
+        }
 
         Directory.CreateDirectory(root);
         RejectSymlinkLeaf(root);
@@ -51,7 +58,8 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             finalized = true;
             var record = new ManagedFileRecord(Guid.NewGuid(), request.Root.Id, target, fingerprint, length, method,
                 request.Root.TenantId, request.Root.OwnerUserId, request.Root.LibraryScopeId, request.SourceJobId,
-                request.ScopeKey, 1, true, DateTimeOffset.UtcNow) { TargetRootPath = root };
+                request.ScopeKey, 1, true, DateTimeOffset.UtcNow)
+            { TargetRootPath = root };
             try
             {
                 return new(await ownership.AddAsync(record, cancellationToken), false);
@@ -147,5 +155,49 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
+    }
+
+    private static void ValidateExpectedSource(ManagedFilePlacementRequest request, string fingerprint, long length)
+    {
+        if (request.ExpectedLength.HasValue && request.ExpectedLength.Value != length)
+            throw new IOException("The placement source length no longer matches its verified artifact.");
+        if (request.ExpectedContentSha256 is null) return;
+
+        byte[] expected;
+        try
+        {
+            expected = Convert.FromHexString(request.ExpectedContentSha256);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException("The expected placement checksum is invalid.", exception);
+        }
+
+        if (expected.Length != SHA256.HashSizeInBytes ||
+            !CryptographicOperations.FixedTimeEquals(expected, Convert.FromHexString(fingerprint)))
+            throw new IOException("The placement source no longer matches its verified artifact.");
+    }
+
+    private static async Task ValidateExistingManagedFileAsync(
+        string root,
+        ManagedFileRecord record,
+        string expectedFingerprint,
+        long expectedLength,
+        CancellationToken cancellationToken)
+    {
+        var path = Path.GetFullPath(record.CanonicalPath);
+        if (!path.StartsWith(root + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("The existing managed file is outside its recorded root.");
+        RejectSymlinksUnder(root, path);
+        var info = new FileInfo(path);
+        if (info.Length != record.Length || info.Length != expectedLength)
+            throw new IOException("The existing managed file length no longer matches its ownership record.");
+        var actual = await FingerprintAsync(path, cancellationToken);
+        if (!CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(expectedFingerprint), Convert.FromHexString(actual)) ||
+            !CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(record.ContentSha256), Convert.FromHexString(actual)))
+            throw new IOException("The existing managed file content no longer matches its ownership record.");
     }
 }

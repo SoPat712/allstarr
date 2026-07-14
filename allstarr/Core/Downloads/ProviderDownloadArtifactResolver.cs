@@ -17,11 +17,17 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         RejectSymlink(directory);
         var entity = await store.CreateWorkspaceAsync(new()
         {
-            Id = Guid.CreateVersion7(), WorkspaceId = workspaceId, TenantId = request.TenantId,
-            OwnerUserId = request.OwnerUserId, DurableJobId = request.DurableJobId,
+            Id = Guid.CreateVersion7(),
+            WorkspaceId = workspaceId,
+            TenantId = request.TenantId,
+            OwnerUserId = request.OwnerUserId,
+            DurableJobId = request.DurableJobId,
             LibraryScopeId = request.LibraryScopeId,
-            ProviderId = request.ProviderId.Trim().ToLowerInvariant(), ProviderAccountId = request.ProviderAccountId,
-            IdempotencyKey = request.IdempotencyKey, CreatedAt = DateTimeOffset.UtcNow, Revision = 1
+            ProviderId = request.ProviderId.Trim().ToLowerInvariant(),
+            ProviderAccountId = request.ProviderAccountId,
+            IdempotencyKey = request.IdempotencyKey,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Revision = 1
         }, cancellationToken);
         return new(entity.Id, new ProviderManagedWorkspaceReference(entity.WorkspaceId));
     }
@@ -45,13 +51,23 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             throw new InvalidOperationException("The provider download artifact checksum does not match its contract.");
         var stored = await store.AddVerifiedAsync(new()
         {
-            Id = Guid.CreateVersion7(), WorkspaceRecordId = persistedWorkspace.Id, WorkspaceId = persistedWorkspace.WorkspaceId, TenantId = persistedWorkspace.TenantId,
-            OwnerUserId = persistedWorkspace.OwnerUserId, DurableJobId = persistedWorkspace.DurableJobId,
+            Id = Guid.CreateVersion7(),
+            WorkspaceRecordId = persistedWorkspace.Id,
+            WorkspaceId = persistedWorkspace.WorkspaceId,
+            TenantId = persistedWorkspace.TenantId,
+            OwnerUserId = persistedWorkspace.OwnerUserId,
+            DurableJobId = persistedWorkspace.DurableJobId,
             LibraryScopeId = persistedWorkspace.LibraryScopeId,
-            ProviderId = persistedWorkspace.ProviderId, ProviderAccountId = persistedWorkspace.ProviderAccountId,
-            ProviderArtifactId = output.ArtifactId, RelativePath = relative, ContentSha256 = hash, Length = info.Length,
-            State = ProviderDownloadArtifactState.Verified, CreatedAt = DateTimeOffset.UtcNow,
-            VerifiedAt = DateTimeOffset.UtcNow, Revision = 1
+            ProviderId = persistedWorkspace.ProviderId,
+            ProviderAccountId = persistedWorkspace.ProviderAccountId,
+            ProviderArtifactId = output.ArtifactId,
+            RelativePath = relative,
+            ContentSha256 = hash,
+            Length = info.Length,
+            State = ProviderDownloadArtifactState.Verified,
+            CreatedAt = DateTimeOffset.UtcNow,
+            VerifiedAt = DateTimeOffset.UtcNow,
+            Revision = 1
         }, cancellationToken);
         return Result(stored, path);
     }
@@ -60,7 +76,33 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     {
         var item = await store.FindByJobAsync(tenantId, jobId, providerId, cancellationToken);
         if (item is null) return null;
-        return Result(item, Contained(Contained(WorkspaceRoot(), item.WorkspaceId), item.RelativePath));
+        if (item.State != ProviderDownloadArtifactState.Verified)
+            return Result(item, Contained(Contained(WorkspaceRoot(), item.WorkspaceId), item.RelativePath));
+
+        var workspaceRoot = Contained(WorkspaceRoot(), item.WorkspaceId);
+        RejectSymlink(workspaceRoot);
+        var path = Contained(workspaceRoot, NormalizeArtifactReference(item.RelativePath));
+        RejectPathSymlinks(workspaceRoot, path);
+        if (!File.Exists(path))
+            throw new InvalidOperationException("The verified provider download artifact is missing.");
+        var info = new FileInfo(path);
+        if (info.Length != item.Length)
+            throw new InvalidOperationException("The verified provider download artifact length changed.");
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        byte[] expected;
+        try
+        {
+            expected = Convert.FromHexString(item.ContentSha256);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException("The stored provider download artifact checksum is invalid.", exception);
+        }
+        if (expected.Length != SHA256.HashSizeInBytes || !CryptographicOperations.FixedTimeEquals(hash, expected))
+            throw new InvalidOperationException("The verified provider download artifact content changed.");
+        return Result(item, path);
     }
 
     public Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken cancellationToken = default) =>
@@ -115,5 +157,5 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     private static VerifiedProviderDownloadArtifact Result(ProviderDownloadArtifactEntity item, string path) => new(
         item.Id, item.WorkspaceRecordId, path, item.ContentSha256, item.Length, item.TenantId, item.OwnerUserId,
         item.DurableJobId, item.ProviderId, item.ProviderAccountId, item.State, item.ManagedFileId)
-        { LibraryScopeId = item.LibraryScopeId };
+    { LibraryScopeId = item.LibraryScopeId };
 }

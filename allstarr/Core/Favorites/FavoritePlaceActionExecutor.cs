@@ -58,7 +58,10 @@ public sealed class FavoritePlaceActionExecutor(
                         favoriteEvent.OwnerUserId), favoriteEvent.TenantId,
                     favoriteEvent.OwnerUserId, favoriteEvent.LibraryScopeId),
                 artifact.SourcePath, options.PathTemplate, track, favoriteEvent.JobId, action.IdempotencyKey,
-                SourceIsAllstarrManaged: true), cancellationToken);
+                SourceIsAllstarrManaged: true,
+                SourceIsImmutable: false,
+                ExpectedContentSha256: artifact.ContentSha256,
+                ExpectedLength: artifact.Length), cancellationToken);
             await artifacts.MarkPlacedAsync(artifact.Id, result.File.Id, cancellationToken);
             return FavoriteActionExecutionResult.Success();
         }

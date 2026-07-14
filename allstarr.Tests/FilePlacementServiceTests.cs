@@ -1,4 +1,6 @@
 using allstarr.Core.ManagedFiles;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace allstarr.Tests;
 
@@ -77,6 +79,49 @@ public sealed class FilePlacementServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PlaceAsync_RejectsSourceThatNoLongerMatchesVerifiedArtifact()
+    {
+        var source = CreateSource("source/song.flac", "modified-audio");
+        var expected = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("verified-audio")))
+            .ToLowerInvariant();
+        var operations = new RecordingOperations(hardLinkResult: true, reflinkResult: false);
+        var service = new FilePlacementService(new MemoryOwnershipStore(), operations);
+        var request = Request(source, Path.Combine(testRoot, "managed"), true) with
+        {
+            SourceIsImmutable = false,
+            ExpectedContentSha256 = expected,
+            ExpectedLength = Encoding.UTF8.GetByteCount("verified-audio")
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => service.PlaceAsync(request));
+
+        Assert.Equal(0, operations.HardLinkCalls);
+        Assert.False(Directory.Exists(Path.Combine(testRoot, "managed")));
+    }
+
+    [Fact]
+    public async Task PlaceAsync_DoesNotHardLinkProviderWritableSource()
+    {
+        var source = CreateSource("source/song.flac", "verified-audio");
+        var expected = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("verified-audio")))
+            .ToLowerInvariant();
+        var operations = new RecordingOperations(hardLinkResult: true, reflinkResult: false);
+        var service = new FilePlacementService(new MemoryOwnershipStore(), operations);
+        var request = Request(source, Path.Combine(testRoot, "managed"), true) with
+        {
+            SourceIsImmutable = false,
+            ExpectedContentSha256 = expected,
+            ExpectedLength = Encoding.UTF8.GetByteCount("verified-audio")
+        };
+
+        var result = await service.PlaceAsync(request);
+
+        Assert.Equal(0, operations.HardLinkCalls);
+        Assert.Equal(1, operations.ReflinkCalls);
+        Assert.Equal(ManagedFilePlacementMethod.Copy, result.File.PlacementMethod);
+    }
+
+    [Fact]
     public async Task PlaceAsync_RepeatedRequestReusesOwnedContentAndIncrementsReference()
     {
         var source = CreateSource("source/song.flac", "same-audio");
@@ -92,6 +137,21 @@ public sealed class FilePlacementServiceTests : IDisposable
         Assert.Equal(first.File.Id, second.File.Id);
         Assert.Equal(2, second.File.ReferenceCount);
         Assert.Equal(1, operations.CopyCalls);
+    }
+
+    [Fact]
+    public async Task PlaceAsync_RejectsMutatedManagedFileInsteadOfAddingAReference()
+    {
+        var source = CreateSource("source/song.flac", "same-audio");
+        var store = new MemoryOwnershipStore();
+        var service = new FilePlacementService(store, new RecordingOperations(false, false));
+        var request = Request(source, Path.Combine(testRoot, "managed"), false);
+        var first = await service.PlaceAsync(request);
+        await File.WriteAllTextAsync(first.File.CanonicalPath, "evil-audio");
+
+        await Assert.ThrowsAsync<IOException>(() => service.PlaceAsync(request));
+
+        Assert.Equal(1, first.File.ReferenceCount);
     }
 
     [Fact]
@@ -131,7 +191,8 @@ public sealed class FilePlacementServiceTests : IDisposable
         var path = CreateSource("managed/song.flac", "managed");
         var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), path, new string('a', 64), 7,
             ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
-            "owned-scope", 2, true, DateTimeOffset.UtcNow);
+            "owned-scope", 2, true, DateTimeOffset.UtcNow)
+        { TargetRootPath = Path.GetDirectoryName(path)! };
         var store = new MemoryRemovalStore(record);
         var service = new ManagedFileRemovalService(store);
 
@@ -148,13 +209,37 @@ public sealed class FilePlacementServiceTests : IDisposable
         var path = CreateSource("managed/song.flac", "managed");
         var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), path, new string('a', 64), 7,
             ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
-            "owned-scope", 1, true, DateTimeOffset.UtcNow);
+            "owned-scope", 1, true, DateTimeOffset.UtcNow)
+        { TargetRootPath = Path.GetDirectoryName(path)! };
         var store = new MemoryRemovalStore(record);
 
         await new ManagedFileRemovalService(store).RemoveAsync(record.Id, "owned-scope", true);
 
         Assert.False(File.Exists(path));
         Assert.True(store.Removed);
+    }
+
+    [Fact]
+    public async Task RemoveAsync_RejectsAncestorSymlinkSwapOutsideRecordedRoot()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var managedRoot = Path.Combine(testRoot, "managed");
+        var artistDirectory = Path.Combine(managedRoot, "Artist");
+        var original = CreateSource("managed/Artist/song.flac", "managed");
+        var outside = CreateSource("outside/song.flac", "outside-safe");
+        Directory.Delete(artistDirectory, recursive: true);
+        Directory.CreateSymbolicLink(artistDirectory, Path.GetDirectoryName(outside)!);
+        var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), original, new string('a', 64), 7,
+            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
+            "owned-scope", 1, true, DateTimeOffset.UtcNow)
+        { TargetRootPath = managedRoot };
+        var store = new MemoryRemovalStore(record);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            new ManagedFileRemovalService(store).RemoveAsync(record.Id, "owned-scope", true));
+
+        Assert.Equal("outside-safe", await File.ReadAllTextAsync(outside));
+        Assert.False(store.Removed);
     }
 
     private ManagedFilePlacementRequest Request(string source, string root, bool sourceManaged) => new(
