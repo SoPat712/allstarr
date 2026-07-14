@@ -87,7 +87,9 @@ public sealed class WebUiEnvMigrationContractTests
     [Fact]
     public void Wizard_AcceptsFileOrPasteAndShowsAllLifecycleStates()
     {
-        Assert.Contains("type=\"file\" accept=\".env,text/plain\"", _script, StringComparison.Ordinal);
+        Assert.Contains("id=\"legacy-env-file\" type=\"file\" @change=", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("type=\"file\" accept=", _script, StringComparison.Ordinal);
+        Assert.Contains("The picker shows all files", _script, StringComparison.Ordinal);
         Assert.Contains("this.previewEnvMigration(file, file.name)", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("file.text()", _script, StringComparison.Ordinal);
         Assert.Contains("Paste legacy .env contents", _script, StringComparison.Ordinal);

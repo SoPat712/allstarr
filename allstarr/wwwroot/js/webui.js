@@ -3222,7 +3222,8 @@ class AllstarrApp extends LitElement {
           <div class="env-migration-source">
             <label class="config-field" for="legacy-env-file">
               <span>Choose a legacy .env file</span>
-              <input id="legacy-env-file" type="file" accept=".env,text/plain" @change=${(event) => this.selectEnvMigrationFile(event)}>
+              <input id="legacy-env-file" type="file" @change=${(event) => this.selectEnvMigrationFile(event)}>
+              <small>The picker shows all files because macOS and other systems may hide extensionless <code>.env</code> files. The preview still accepts only a valid <code>.env</code> filename.</small>
             </label>
             <span class="env-migration-or" aria-hidden="true">or</span>
             <form class="config-field" @submit=${(event) => this.previewPastedEnv(event)}>
