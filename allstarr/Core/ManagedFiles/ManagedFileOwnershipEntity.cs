@@ -10,6 +10,9 @@ public sealed class ManagedFileOwnershipEntity
     public string CanonicalPath { get; set; } = string.Empty;
     public string ContentSha256 { get; set; } = string.Empty;
     public long Length { get; set; }
+    public string? FileSystemDeviceId { get; set; }
+    public string? FileSystemFileId { get; set; }
+    public uint? FileSystemLinkCount { get; set; }
     public ManagedFilePlacementMethod PlacementMethod { get; set; }
     public Guid TenantId { get; set; }
     public Guid? OwnerUserId { get; set; }

@@ -136,23 +136,50 @@ public sealed class MetadataEnrichmentPlanner : IMetadataEnrichmentPlanner
     }
 }
 
-public sealed record ManagedMetadataArtifact(string Path, string ContentSha256, bool IsAllstarrManaged, bool IsSourceLibraryFile);
+public sealed record ManagedMetadataArtifact(string Path, string ContentSha256, bool IsAllstarrManaged, bool IsSourceLibraryFile)
+{
+    public string TargetRootPath { get; init; } = string.Empty;
+    public string? FileSystemDeviceId { get; init; }
+    public string? FileSystemFileId { get; init; }
+    public string OperationFingerprint { get; init; } = string.Empty;
+}
+
+public interface IManagedMetadataWriteLease : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
+}
+
+public sealed record ManagedMetadataWriteResult(string ContentSha256, long Length, bool Reused)
+{
+    public string? FileSystemDeviceId { get; init; }
+    public string? FileSystemFileId { get; init; }
+    public uint? FileSystemLinkCount { get; init; }
+    public IManagedMetadataWriteLease? Lease { get; init; }
+}
 public interface IManagedMetadataWriter
 {
-    Task WriteAsync(ManagedMetadataArtifact artifact, IReadOnlyDictionary<string, string> tags, CancellationToken cancellationToken);
+    Task<ManagedMetadataWriteResult> WriteAsync(
+        ManagedMetadataArtifact artifact,
+        IReadOnlyDictionary<string, string> tags,
+        CancellationToken cancellationToken);
 }
 
 public sealed class ManagedMetadataPlanApplicator(IManagedMetadataWriter writer)
 {
-    public async Task ApplyAsync(ManagedMetadataArtifact artifact, MetadataEnrichmentPlan plan, CancellationToken cancellationToken = default)
+    public async Task<ManagedMetadataWriteResult> ApplyAsync(
+        ManagedMetadataArtifact artifact,
+        MetadataEnrichmentPlan plan,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
         ArgumentNullException.ThrowIfNull(plan);
         if (!plan.ManagedArtifactsOnly || !artifact.IsAllstarrManaged || artifact.IsSourceLibraryFile)
             throw new InvalidOperationException("Metadata plans may be applied only to an Allstarr-managed artifact, never a source-library file.");
         if (string.IsNullOrWhiteSpace(artifact.Path) || artifact.Path.IndexOf('\0') >= 0 ||
-            artifact.ContentSha256.Length != 64 || !artifact.ContentSha256.All(Uri.IsHexDigit))
+            string.IsNullOrWhiteSpace(artifact.TargetRootPath) ||
+            artifact.ContentSha256.Length != 64 || !artifact.ContentSha256.All(Uri.IsHexDigit) ||
+            artifact.OperationFingerprint.Length != 64 || !artifact.OperationFingerprint.All(Uri.IsHexDigit))
             throw new ArgumentException("The managed artifact reference is invalid.", nameof(artifact));
-        await writer.WriteAsync(artifact, plan.Tags, cancellationToken);
+        return await writer.WriteAsync(artifact, plan.Tags, cancellationToken);
     }
 }

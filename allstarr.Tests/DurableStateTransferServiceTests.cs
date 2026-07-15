@@ -10,6 +10,7 @@ using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
+using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -65,6 +66,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var playbackJobId = Guid.CreateVersion7();
         var recommendationRunId = Guid.CreateVersion7();
         var generatedSetId = Guid.CreateVersion7();
+        var routeDecisionId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
         var stableHash = HashExternalId("phase4-transfer");
         context.Tenants.Add(new TenantRecord
@@ -153,6 +155,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             ScopeKey = tenantId.ToString("N"),
             TenantId = tenantId,
             OwnerUserId = userId,
+            LibraryScopeId = "music",
             Type = "fixture.transfer",
             PayloadJson = "{\"secretReferenceId\":\"fixture\"}",
             IdempotencyKey = "transfer-1",
@@ -186,6 +189,40 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             UpdatedAt = now
         });
         await context.SaveChangesAsync();
+        context.ProviderRouteDecisions.Add(new ProviderRouteDecisionEntity
+        {
+            Id = routeDecisionId,
+            TenantId = tenantId,
+            ActorUserId = userId,
+            DurableJobId = jobId,
+            RouteKey = new string('7', 64),
+            OperationId = "favorite-download",
+            CorrelationId = "phase6-transfer",
+            Capability = ProviderCapabilityKind.Download,
+            LibraryScopeId = "music",
+            SelectedProviderId = "fixture",
+            SelectedProviderAccountId = accountId,
+            CandidateDecisionsJson = JsonSerializer.Serialize(
+                new[] { new ProviderRouteCandidateDecision("fixture", accountId,
+                    ProviderRouteDecisionStatus.Accepted, "selected", 0) },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            CreatedAt = now
+        });
+        context.ProviderRouteOutcomes.Add(new ProviderRouteOutcomeEntity
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            RouteDecisionId = routeDecisionId,
+            OutcomeKey = new string('8', 64),
+            Sequence = 0,
+            Stage = "download",
+            ProviderId = "fixture",
+            ProviderAccountId = accountId,
+            Status = ProviderRouteOutcomeStatus.Succeeded,
+            ReasonCode = "download-verified",
+            CreatedAt = now
+        });
+        await context.SaveChangesAsync();
         context.FavoriteEvents.Add(new FavoriteEventRecord
         {
             Id = favoriteEventId,
@@ -215,6 +252,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             CanonicalPath = "/managed/music/Fixture/Transfer.flac",
             ContentSha256 = new string('a', 64),
             Length = 1234,
+            FileSystemDeviceId = "2a",
+            FileSystemFileId = "3b",
+            FileSystemLinkCount = 1,
             PlacementMethod = ManagedFilePlacementMethod.Copy,
             TenantId = tenantId,
             OwnerUserId = userId,
@@ -225,12 +265,24 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             IsManaged = true,
             CreatedAt = now
         });
+        context.ManagedFileReferences.Add(new ManagedFileReferenceEntity
+        {
+            Id = Guid.CreateVersion7(),
+            ManagedFileId = managedFileId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            ScopeKey = "user:transfer",
+            ReferenceKey = "favorite:transfer",
+            CreatedAt = now,
+            Revision = 1
+        });
         context.ProviderDownloadWorkspaces.Add(new ProviderDownloadWorkspaceEntity
         {
             Id = downloadWorkspaceId,
             WorkspaceId = new string('c', 64),
             TenantId = tenantId,
             OwnerUserId = userId,
+            LibraryScopeId = "music",
             DurableJobId = jobId,
             ProviderId = "fixture",
             ProviderAccountId = accountId,
@@ -239,6 +291,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             CompletedAt = now,
             Revision = 1
         });
+        // Persist the managed parent before the placed artifact so SQLite's
+        // database-native lineage trigger can validate the child insert.
+        await context.SaveChangesAsync();
         context.ProviderDownloadArtifacts.Add(new ProviderDownloadArtifactEntity
         {
             Id = downloadArtifactId,
@@ -246,6 +301,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             WorkspaceId = new string('c', 64),
             TenantId = tenantId,
             OwnerUserId = userId,
+            LibraryScopeId = "music",
             DurableJobId = jobId,
             ProviderId = "fixture",
             ProviderAccountId = accountId,
@@ -788,6 +844,11 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var managedFile = await target.ManagedFiles.SingleAsync();
         Assert.Equal("/managed/music/Fixture/Transfer.flac", managedFile.CanonicalPath);
         Assert.True(managedFile.IsManaged);
+        Assert.Equal("2a", managedFile.FileSystemDeviceId);
+        var managedReference = await target.ManagedFileReferences.SingleAsync();
+        Assert.Equal(managedFile.Id, managedReference.ManagedFileId);
+        Assert.Equal("favorite:transfer", managedReference.ReferenceKey);
+        Assert.Null(managedReference.ReleasedAt);
         var workspace = await target.ProviderDownloadWorkspaces.SingleAsync();
         Assert.Equal((await target.Jobs.SingleAsync(item => item.Type == "fixture.transfer")).Id, workspace.DurableJobId);
         var downloadArtifact = await target.ProviderDownloadArtifacts.SingleAsync();
@@ -944,6 +1005,80 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Import_RejectsManagedReferenceCountThatDoesNotMatchActiveReferences()
+    {
+        var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
+        artifact = await RewriteJsonArrayEntryAsync(artifact, "managed-files.json",
+            values => values[0]!["referenceCount"] = 2);
+
+        var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
+            DurableStateTransferService.ImportAsync(artifact,
+                Factory($"Data Source={Path.Combine(_root, "invalid-managed-reference-count.db")}"), true));
+
+        Assert.Contains("reference count", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Import_RejectsManagedReferenceOutsideFileOwnershipScope()
+    {
+        var second = await AddTenantFixtureAsync("managed-reference-cross-scope");
+        var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
+        artifact = await RewriteJsonArrayEntryAsync(artifact, "managed-file-references.json", values =>
+        {
+            values[0]!["tenantId"] = second.TenantId;
+            values[0]!["ownerUserId"] = second.UserId;
+        });
+
+        var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
+            DurableStateTransferService.ImportAsync(artifact,
+                Factory($"Data Source={Path.Combine(_root, "cross-scope-managed-reference.db")}"), true));
+
+        Assert.Contains("managed file reference", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Import_RejectsRouteCandidateUsingAnotherSameTenantUsersAccount()
+    {
+        var other = await AddSameTenantRouteUserAsync("candidate");
+        var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
+        artifact = await RewriteJsonArrayEntryAsync(artifact, "provider-route-decisions.json", values =>
+        {
+            var route = values[0]!.AsObject();
+            var candidates = JsonNode.Parse(route["candidateDecisionsJson"]!.GetValue<string>())!.AsArray();
+            candidates.Add(new JsonObject
+            {
+                ["providerId"] = "other-fixture",
+                ["providerAccountId"] = other.AccountId,
+                ["status"] = (int)ProviderRouteDecisionStatus.Rejected,
+                ["reasonCode"] = "not-selected",
+                ["priority"] = 1
+            });
+            route["candidateDecisionsJson"] = candidates.ToJsonString();
+        });
+
+        var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
+            DurableStateTransferService.ImportAsync(artifact,
+                Factory($"Data Source={Path.Combine(_root, "cross-user-route-candidate.db")}"), true));
+
+        Assert.Contains("provider route", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Import_RejectsRouteJobOwnedByAnotherSameTenantUser()
+    {
+        var other = await AddSameTenantRouteUserAsync("job");
+        var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
+        artifact = await RewriteJsonArrayEntryAsync(artifact, "provider-route-decisions.json",
+            values => values[0]!["durableJobId"] = other.JobId);
+
+        var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
+            DurableStateTransferService.ImportAsync(artifact,
+                Factory($"Data Source={Path.Combine(_root, "cross-user-route-job.db")}"), true));
+
+        Assert.Contains("provider route", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Export_IncludesProviderDownloadWorkspaceAndArtifactEntries()
     {
         var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
@@ -1047,6 +1182,17 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
                 ReferenceCount = 1,
                 IsManaged = true,
                 CreatedAt = DateTimeOffset.UtcNow
+            });
+            source.ManagedFileReferences.Add(new ManagedFileReferenceEntity
+            {
+                Id = Guid.CreateVersion7(),
+                ManagedFileId = foreignManagedFileId,
+                TenantId = second.TenantId,
+                OwnerUserId = second.UserId,
+                ScopeKey = "foreign",
+                ReferenceKey = "foreign:fixture",
+                CreatedAt = DateTimeOffset.UtcNow,
+                Revision = 1
             });
             await source.SaveChangesAsync();
         }
@@ -1393,24 +1539,65 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Import_RejectsTargetContainingOnlyProviderDownloadWorkspaceState()
+    public async Task Import_RejectsTargetContainingProviderDownloadWorkspaceState()
     {
         var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
         var targetFactory = Factory($"Data Source={Path.Combine(_root, "download-workspace-state-target.db")}");
         await using (var target = await targetFactory.CreateDbContextAsync())
         {
             await target.Database.MigrateAsync();
-            await target.Database.OpenConnectionAsync();
-            try
+            var tenantId = Guid.CreateVersion7();
+            var userId = Guid.CreateVersion7();
+            var jobId = Guid.CreateVersion7();
+            var now = DateTimeOffset.UtcNow;
+            target.Tenants.Add(new TenantRecord
             {
-                await target.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF");
-                await target.Database.ExecuteSqlRawAsync(
-                    "INSERT INTO provider_download_workspaces " +
-                    "(Id, WorkspaceId, TenantId, DurableJobId, ProviderId, IdempotencyKey, CreatedAt, Revision) " +
-                    "VALUES ({0}, {1}, {2}, {3}, 'fixture', 'target-only', 1, 1)",
-                    Guid.CreateVersion7(), new string('f', 64), Guid.CreateVersion7(), Guid.CreateVersion7());
-            }
-            finally { await target.Database.CloseConnectionAsync(); }
+                Id = tenantId,
+                Slug = "target-download-state",
+                Name = "Target download state",
+                CreatedAt = now
+            });
+            target.Users.Add(new PlatformUserRecord
+            {
+                Id = userId,
+                TenantId = tenantId,
+                DisplayName = "Target user",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            target.Jobs.Add(new DurableJobRecord
+            {
+                Id = jobId,
+                ScopeKey = $"user:{tenantId:N}:{userId:N}",
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                PolicySnapshotJson = "{}",
+                RequestFingerprint = new string('f', 64),
+                CorrelationId = "target-download-state",
+                Type = "fixture.download",
+                PayloadJson = "{}",
+                IdempotencyKey = "target-only",
+                State = DurableJobState.Pending,
+                MaxAttempts = 3,
+                MaxDeferrals = 3,
+                AvailableAt = now,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            target.ProviderDownloadWorkspaces.Add(new ProviderDownloadWorkspaceEntity
+            {
+                Id = Guid.CreateVersion7(),
+                WorkspaceId = new string('f', 64),
+                TenantId = tenantId,
+                OwnerUserId = userId,
+                DurableJobId = jobId,
+                ProviderId = "fixture",
+                IdempotencyKey = "target-only",
+                CreatedAt = now,
+                Revision = 1
+            });
+            await target.SaveChangesAsync();
         }
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -1656,6 +1843,59 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         });
         await source.SaveChangesAsync();
         return (tenantId, userId, canonicalRecordingId);
+    }
+
+    private async Task<(Guid UserId, Guid AccountId, Guid JobId)> AddSameTenantRouteUserAsync(string suffix)
+    {
+        await using var source = await _sourceFactory.CreateDbContextAsync();
+        var route = await source.ProviderRouteDecisions.AsNoTracking().SingleAsync();
+        var userId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var jobId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        source.Users.Add(new PlatformUserRecord
+        {
+            Id = userId,
+            TenantId = route.TenantId,
+            DisplayName = $"Other route {suffix} user",
+            Status = PlatformUserStatus.Active,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        source.ProviderAccounts.Add(new ProviderAccountRecord
+        {
+            Id = accountId,
+            TenantId = route.TenantId,
+            OwnerUserId = userId,
+            ProviderId = "other-fixture",
+            DisplayName = $"Other route {suffix} account",
+            Scope = ProviderAccountScope.User,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        source.Jobs.Add(new DurableJobRecord
+        {
+            Id = jobId,
+            TenantId = route.TenantId,
+            OwnerUserId = userId,
+            ScopeKey = $"user:{route.TenantId:N}:{userId:N}",
+            Type = "route.transfer.test",
+            PayloadJson = "{}",
+            IdempotencyKey = $"route-transfer-{suffix}",
+            State = DurableJobState.Succeeded,
+            MaxAttempts = 3,
+            MaxDeferrals = 3,
+            AvailableAt = now,
+            PolicySnapshotJson = "{}",
+            RequestFingerprint = new string('9', 64),
+            CorrelationId = $"route-transfer-{suffix}",
+            CreatedAt = now,
+            UpdatedAt = now,
+            CompletedAt = now
+        });
+        await source.SaveChangesAsync();
+        return (userId, accountId, jobId);
     }
 
     private static ProviderTrackIdentityRecord CreateAccountIdentity(

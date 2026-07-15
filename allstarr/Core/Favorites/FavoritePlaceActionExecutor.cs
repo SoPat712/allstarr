@@ -57,11 +57,17 @@ public sealed class FavoritePlaceActionExecutor(
                 new ManagedFileRoot(options.RootId, ScopedRoot(options.RootPath, favoriteEvent.TenantId,
                         favoriteEvent.OwnerUserId), favoriteEvent.TenantId,
                     favoriteEvent.OwnerUserId, favoriteEvent.LibraryScopeId),
-                artifact.SourcePath, options.PathTemplate, track, favoriteEvent.JobId, action.IdempotencyKey,
+                artifact.SourcePath, options.PathTemplate, track, favoriteEvent.JobId,
+                ManagedFileScopeKey.Create(favoriteEvent.TenantId, favoriteEvent.OwnerUserId,
+                    options.RootId, favoriteEvent.LibraryScopeId),
                 SourceIsAllstarrManaged: true,
                 SourceIsImmutable: false,
                 ExpectedContentSha256: artifact.ContentSha256,
-                ExpectedLength: artifact.Length), cancellationToken);
+                ExpectedLength: artifact.Length)
+            {
+                ReferenceKey = action.IdempotencyKey,
+                DestinationIsImmutable = false
+            }, cancellationToken);
             await artifacts.MarkPlacedAsync(artifact.Id, result.File.Id, cancellationToken);
             return FavoriteActionExecutionResult.Success();
         }
@@ -89,4 +95,5 @@ public sealed class FavoritePlaceActionExecutor(
         var root = Path.GetFullPath(configuredRoot);
         return Path.Combine(root, tenantId.ToString("N"), ownerUserId.ToString("N"));
     }
+
 }

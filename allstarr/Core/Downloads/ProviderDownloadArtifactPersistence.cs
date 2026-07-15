@@ -102,6 +102,15 @@ public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDb
         if (item.State == ProviderDownloadArtifactState.Placed)
         { if (item.ManagedFileId != managedFileId) throw new InvalidOperationException("The artifact is already linked to another managed file."); return; }
         if (item.State != ProviderDownloadArtifactState.Verified) throw new InvalidOperationException("Only a verified download artifact can be placed.");
+        var exactManagedScope = await db.Set<ManagedFileOwnershipEntity>().AsNoTracking().AnyAsync(file =>
+            file.Id == managedFileId &&
+            file.TenantId == item.TenantId &&
+            file.OwnerUserId == item.OwnerUserId &&
+            file.LibraryScopeId == item.LibraryScopeId &&
+            file.RemovedAt == null,
+            cancellationToken);
+        if (!exactManagedScope)
+            throw new UnauthorizedAccessException("The managed file is outside the verified artifact ownership or library scope.");
         item.State = ProviderDownloadArtifactState.Placed; item.ManagedFileId = managedFileId; item.PlacedAt = DateTimeOffset.UtcNow; item.Revision++;
         await db.SaveChangesAsync(cancellationToken);
     }

@@ -89,6 +89,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("SETUP_GUIDE_STEP_KEY", script, StringComparison.Ordinal);
         Assert.Contains("localStorage.setItem(SETUP_GUIDE_STEP_KEY, String(this.setupStep))", script, StringComparison.Ordinal);
         Assert.Contains("Refresh readiness", script, StringComparison.Ordinal);
+        Assert.Contains("Connected as ${backendUser}", script, StringComparison.Ordinal);
+        Assert.Contains("signed-in session is the connection test", script, StringComparison.Ordinal);
         Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
         Assert.Contains("First playlist", script, StringComparison.Ordinal);
         Assert.Contains("leaveSetupGuideFor(\"/library/link\")", script, StringComparison.Ordinal);

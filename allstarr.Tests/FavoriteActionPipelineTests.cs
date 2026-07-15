@@ -275,7 +275,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Contains(libraryTrackId.ToString(), audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/source/never-touched.flac", audit.DetailsJson, StringComparison.Ordinal);
 
-        var download = await new FavoriteDownloadActionExecutor(null!, null!, null!, _clock, _factory)
+        var download = await new FavoriteDownloadActionExecutor(null!, null!, null!, _clock, _factory, null!)
             .ExecuteAsync(favoriteEvent, Action("download"), default);
         var place = await new FavoritePlaceActionExecutor(_factory, null!, null!, null!, new FavoritePlacementOptions())
             .ExecuteAsync(favoriteEvent, Action("place"), default);

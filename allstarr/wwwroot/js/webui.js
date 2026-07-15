@@ -3139,7 +3139,7 @@ class AllstarrApp extends LitElement {
     try {
       // Loading provider accounts also refreshes provider health for administrators.
       await Promise.all([this.loadStatus(), this.loadProviderAccounts()]);
-      this.serviceResults = { ...this.serviceResults, setup: { state: "success", message: "Readiness refreshed. Review anything marked as needing setup before you finish." } };
+      this.serviceResults = { ...this.serviceResults, setup: { state: "success", message: "Readiness refreshed. Your signed-in media server session is connected; review any source marked as needing setup." } };
     } catch (error) {
       this.serviceResults = { ...this.serviceResults, setup: { state: "error", message: error.message } };
     }
@@ -3179,6 +3179,10 @@ class AllstarrApp extends LitElement {
       String(backend.id).toLowerCase() === String(activeBackendName).toLowerCase());
     const backendFields = asArray(activeBackend?.configSchema);
     const backendUrl = getPathValue(this.config, String(activeBackendName).toLowerCase() === "subsonic" ? "subsonic.url" : "jellyfin.url", "");
+    const signedInBackend = String(this.authBackend || "").toLowerCase();
+    const expectedBackend = String(activeBackendName).toLowerCase();
+    const backendConnected = this.authenticated && signedInBackend === expectedBackend;
+    const backendUser = display(this.session?.name || this.session?.Name, "your account");
     const providers = asArray(this.schema?.providers).filter((provider) => provider.status !== "disabled").slice(0, 6);
     const stepBody = [
       html`
@@ -3207,7 +3211,8 @@ class AllstarrApp extends LitElement {
           ${backendFields.length ? backendFields.map((field) => this.renderConfigField(field)) : html`<div class="empty">No media server fields are available.</div>`}
         </div>
         <div class="setup-legacy-path">
-          <div class="actions"><span class="status-chip ${backendUrl ? "configured" : "needs_config"}">${backendUrl ? "Server URL configured" : "Server URL needed"}</span><button @click=${() => this.refreshSetupChecks()}>Refresh readiness</button></div>
+          <div class="actions"><span class="status-chip ${backendConnected ? "healthy" : backendUrl ? "configured" : "needs_config"}">${backendConnected ? `Connected as ${backendUser}` : backendUrl ? "Server URL configured; sign-in check needed" : "Server URL needed"}</span><button @click=${() => this.refreshSetupChecks()}>Refresh readiness</button></div>
+          <p class="muted">The WebUI only opens after the selected media server accepts your login, so this signed-in session is the connection test. Refresh checks the Allstarr control plane and configured source accounts.</p>
           ${this.serviceResults.setup ? html`<div class="callout ${this.serviceResults.setup.state}" role="status">${this.serviceResults.setup.message}</div>` : nothing}
         </div>
       `,
@@ -3242,7 +3247,7 @@ class AllstarrApp extends LitElement {
         <h2 id="setup-guide-title" tabindex="-1" autofocus>Your hub is ready to shape</h2>
         <p>The basics are in place. Allstarr will keep your original music files in their library folders while its database stores settings, matches, jobs, and other durable state.</p>
         <div class="setup-summary">
-          <div class="setup-summary-item"><strong>${display(activeBackend?.name, activeBackendName)}</strong><small>${backendUrl ? "Server URL configured" : "Server URL still needs attention"}</small></div>
+          <div class="setup-summary-item"><strong>${display(activeBackend?.name, activeBackendName)}</strong><small>${backendConnected ? `Connected as ${backendUser}` : backendUrl ? "Server URL configured; reconnect to verify it" : "Server URL still needs attention"}</small></div>
           <div class="setup-summary-item"><strong>Sources</strong><small>Connect only the providers you want, then drag them into your preferred order.</small></div>
           <div class="setup-summary-item"><strong>Playlists</strong><small>Link external playlists when you are ready. Preview matching before the first run.</small></div>
         </div>

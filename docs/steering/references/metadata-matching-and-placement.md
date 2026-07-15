@@ -238,22 +238,32 @@ Behavior:
 - Validate target root.
 - Generate path from template.
 - Avoid path traversal.
-- Try hardlink first.
-- Try reflink/copy-on-write later where supported.
+- Keep hardlinks disabled until source and destination immutability are represented by a durable lease. A runtime boolean is not an ownership guarantee.
+- Try native reflink/copy-on-write on Linux and macOS where the target filesystem supports it.
 - Fall back to copy.
 - Record placement method.
 - Avoid overwriting existing files unless configured and safe.
 
 ### Managed-File Safety Contract
 
-This is a target contract for `FilePlacementService`; current code still relies on `PathHelper`, `LocalLibraryService`, and provider download services. Preserve current behavior until this contract is implemented with migration tests.
+`FilePlacementService` owns this contract. Older provider download paths can still stage their artifacts, but a file does not become a managed library output until placement records ownership and a durable reference.
 
-- Record every managed output with root ID, canonical path, content fingerprint, placement method, source/download job, owner/scope, managed-state flag, and reference count before it can be deleted or reused.
+- Record every managed output with root ID, canonical path, content fingerprint, filesystem device/file identity where supported, placement method, source/download job, owner/scope, managed-state flag, and durable references before it can be deleted or reused.
 - Build and validate the target path against the configured root before writing, then validate resolved parents/final path again without allowing symlink escapes. Do not trust a string-prefix check or raw provider metadata as containment proof.
 - Download or transform into a uniquely named staging file under controlled storage, validate it, then atomically finalize within the target filesystem. A crash, cancellation, or retry may clean only its own staging file and must leave a completed managed file untouched.
+- The filesystem rename and database ownership commit are not yet one transaction. If a process stops in that narrow gap, the finalized path remains unowned: current recovery will not adopt it, overwrite it, or delete it. A future placement journal/reconciler must prove the operation identity before claiming or cleaning that orphan.
 - Resolve collisions by content fingerprint and managed-record compatibility. Reuse/increment a compatible managed record, otherwise choose a deterministic safe suffix; never overwrite an unrelated file.
-- Hardlink only an immutable, eligible managed file on the same filesystem. A hardlink shares an inode: tagging, transcoding, or metadata rewriting after linking can mutate the original library file. Tag the staged/owned output before linking, use a separate copy/reflink for mutable work, or store the metadata externally.
-- Delete only an explicitly selected Allstarr-managed output after ownership and reference-count checks. Never delete an existing backend-library source, infer deletion from a playlist change, or remove a shared file because one user unfavorited it.
+- The target design may hardlink only an immutable, eligible managed file on the same filesystem. Current production placement deliberately does not hardlink because immutability is not yet a durable lease. It uses reflink or copy instead. A hardlink shares an inode, so any output that may be tagged, transcoded, or rewritten must remain independent.
+- Give each consumer a stable durable reference key. Retrying that consumer is idempotent. A different consumer adds a reference, and explicit release marks only that reference released and decrements the protected count once.
+- Delete only an explicitly selected Allstarr-managed output after ownership and reference-count checks. Removal releases the final active reference in the same durable update. Never delete an existing backend-library source, infer deletion from a playlist change, or remove a shared file because one user unfavorited it.
+
+Managed favorite placement renders the configured path template from the resolved local/provider metadata before
+the file enters the library. Enrichment then creates a versioned, explainable merge plan. Local values win,
+MusicBrainz identity and release data fill safe gaps, and provider snapshots fill only what remains. Tag writes use
+a same-directory staging file and atomic replacement, update the managed ownership checksum and revision, and map
+MusicBrainz recording, release, release-group, and artist IDs to TagLib's Picard-compatible native fields. A retry
+recognizes an already completed atomic swap instead of applying the same tags twice. Path-plan values are retained
+for audit and future template changes; enrichment does not rename a file that a backend may already have indexed.
 
 Templates:
 
@@ -301,12 +311,14 @@ Required test areas:
 - path template rendering
 - invalid path rejection
 - hardlink fallback to copy
+- native reflink independence or clean fallback without a partial destination
 - local library indexing
 - ISRC match
 - MusicBrainz ID match
 - fuzzy title/artist/duration match
 - manual override priority
 - metadata merge precedence
+- atomic managed tag staging, completed-swap recovery, and Picard-compatible MusicBrainz fields
 - favorite event without auto-download
 - favorite event with fake download provider
 - identity and candidate isolation across users, libraries, and provider accounts
@@ -325,3 +337,4 @@ Required test areas:
 - atomic placement finalization and safe cleanup after interrupted work
 - symlink/path-containment rejection, collision handling, and reference-counted managed-file removal
 - tagging after hardlink is rejected or uses an independent output, proving the source inode is unchanged
+- stable filesystem identity capture, idempotent reference acquisition, and one-time explicit reference release

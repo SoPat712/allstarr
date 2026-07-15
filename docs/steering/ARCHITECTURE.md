@@ -177,8 +177,12 @@ Durable playback/scrobble work and scoped recommendation policy now build on tho
 - Provider download artifacts and managed-file records hold checksums, lengths, scope, lifecycle, and job lineage.
   Audio bytes stay in accessible filesystem roots. Postgres and SQLite store control data and paths only.
 - `FilePlacementService` stages and verifies an owned output, rejects traversal and symlink escapes, and uses a
-  safe hardlink, reflink, or copy decision. Metadata plans can be applied only to an Allstarr-managed artifact,
-  never to a source-library file or a hardlink that would rewrite its inode.
+  native reflink or verified-copy decision. Hardlinks remain disabled until immutability is a durable lease. Managed outputs retain filesystem identity where the OS
+  supports it, and each consumer owns an idempotent durable reference with explicit release semantics. Metadata
+  plans can be applied only to an Allstarr-managed artifact, never to a source-library file or a hardlink that would
+  rewrite its inode. Managed tag changes stage beside the file and atomically replace it, then advance the ownership
+  checksum and revision. MusicBrainz IDs use Picard-compatible native tag fields; path templates are rendered before
+  backend refresh, and enrichment never silently renames an already indexed file.
 - Unfavorite updates logical favorite state and may cancel work that has not started. It does not remove source
   media or a managed copy. Managed-file removal is a separate confirmed action with ownership and reference checks.
 - Jellyfin refresh uses the configured server API key. Subsonic/Navidrome refresh resolves an encrypted,

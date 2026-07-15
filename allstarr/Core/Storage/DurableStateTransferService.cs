@@ -10,6 +10,7 @@ using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
+using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -45,6 +46,8 @@ public sealed class DurableStateTransferService
         "provider-accounts.json",
         "canonical-recordings.json",
         "provider-track-identities.json",
+        "provider-route-decisions.json",
+        "provider-route-outcomes.json",
         "extension-registries.json",
         "extension-packages.json",
         "extension-permission-reviews.json",
@@ -54,6 +57,7 @@ public sealed class DurableStateTransferService
         "favorite-states.json",
         "favorite-action-policies.json",
         "managed-files.json",
+        "managed-file-references.json",
         "provider-download-workspaces.json",
         "provider-download-artifacts.json",
         "metadata-enrichment-plans.json",
@@ -162,6 +166,8 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "provider-accounts.json", await context.ProviderAccounts.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "canonical-recordings.json", await context.CanonicalRecordings.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "provider-track-identities.json", await context.ProviderTrackIdentities.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "provider-route-decisions.json", await context.ProviderRouteDecisions.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "provider-route-outcomes.json", await context.ProviderRouteOutcomes.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "extension-registries.json", await context.ExtensionRegistries.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "extension-packages.json", await context.ExtensionPackages.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "extension-permission-reviews.json", await context.ExtensionPermissionReviews.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -171,6 +177,7 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "favorite-states.json", await context.FavoriteStates.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "favorite-action-policies.json", await context.FavoriteActionPolicies.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "managed-files.json", await context.ManagedFiles.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "managed-file-references.json", await context.ManagedFileReferences.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "provider-download-workspaces.json", await context.ProviderDownloadWorkspaces.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "provider-download-artifacts.json", await context.ProviderDownloadArtifacts.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "metadata-enrichment-plans.json", await context.MetadataEnrichmentPlans.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -296,6 +303,8 @@ public sealed class DurableStateTransferService
             await context.ProviderAccounts.AnyAsync(cancellationToken) ||
             await context.CanonicalRecordings.AnyAsync(cancellationToken) ||
             await context.ProviderTrackIdentities.AnyAsync(cancellationToken) ||
+            await context.ProviderRouteDecisions.AnyAsync(cancellationToken) ||
+            await context.ProviderRouteOutcomes.AnyAsync(cancellationToken) ||
             await context.ExtensionRegistries.AnyAsync(cancellationToken) ||
             await context.ExtensionPackages.AnyAsync(cancellationToken) ||
             await context.ExtensionPermissionReviews.AnyAsync(cancellationToken) ||
@@ -305,6 +314,7 @@ public sealed class DurableStateTransferService
             await context.FavoriteStates.AnyAsync(cancellationToken) ||
             await context.FavoriteActionPolicies.AnyAsync(cancellationToken) ||
             await context.ManagedFiles.AnyAsync(cancellationToken) ||
+            await context.ManagedFileReferences.AnyAsync(cancellationToken) ||
             await context.ProviderDownloadWorkspaces.AnyAsync(cancellationToken) ||
             await context.ProviderDownloadArtifacts.AnyAsync(cancellationToken) ||
             await context.MetadataEnrichmentPlans.AnyAsync(cancellationToken) ||
@@ -350,6 +360,8 @@ public sealed class DurableStateTransferService
         var secretReferences = await ReadEntryAsync<SecretReferenceRecord>(archive, "secret-references.json", cancellationToken);
         var canonicalRecordings = await ReadEntryAsync<CanonicalRecordingRecord>(archive, "canonical-recordings.json", cancellationToken);
         var providerTrackIdentities = await ReadEntryAsync<ProviderTrackIdentityRecord>(archive, "provider-track-identities.json", cancellationToken);
+        var providerRouteDecisions = await ReadEntryAsync<ProviderRouteDecisionEntity>(archive, "provider-route-decisions.json", cancellationToken);
+        var providerRouteOutcomes = await ReadEntryAsync<ProviderRouteOutcomeEntity>(archive, "provider-route-outcomes.json", cancellationToken);
         var jobs = await ReadEntryAsync<DurableJobRecord>(archive, "jobs.json", cancellationToken);
         var backendIdentities = await ReadEntryAsync<BackendIdentityRecord>(archive, "backend-identities.json", cancellationToken);
         var favoriteEvents = await ReadEntryAsync<FavoriteEventRecord>(archive, "favorite-events.json", cancellationToken);
@@ -357,6 +369,7 @@ public sealed class DurableStateTransferService
         var favoriteStates = await ReadEntryAsync<FavoriteStateRecord>(archive, "favorite-states.json", cancellationToken);
         var favoritePolicies = await ReadEntryAsync<FavoriteActionPolicyRecord>(archive, "favorite-action-policies.json", cancellationToken);
         var managedFiles = await ReadEntryAsync<ManagedFileOwnershipEntity>(archive, "managed-files.json", cancellationToken);
+        var managedFileReferences = await ReadEntryAsync<ManagedFileReferenceEntity>(archive, "managed-file-references.json", cancellationToken);
         var downloadWorkspaces = await ReadEntryAsync<ProviderDownloadWorkspaceEntity>(archive, "provider-download-workspaces.json", cancellationToken);
         var downloadArtifacts = await ReadEntryAsync<ProviderDownloadArtifactEntity>(archive, "provider-download-artifacts.json", cancellationToken);
         var enrichmentPlans = await ReadEntryAsync<MetadataEnrichmentPlanRecord>(archive, "metadata-enrichment-plans.json", cancellationToken);
@@ -379,9 +392,16 @@ public sealed class DurableStateTransferService
             canonicalRecordings,
             providerTrackIdentities);
         ValidateRuntimeSettingsArchive(tenants, users, runtimeSettings);
+        ValidateProviderRouteArchive(
+            tenants,
+            users,
+            jobs,
+            providerAccounts,
+            providerRouteDecisions,
+            providerRouteOutcomes);
         ValidateLegacyEnvImportsArchive(tenants, users, auditEvents, legacyEnvImports);
         ValidatePhase6Archive(tenants, users, backendIdentities, jobs, secretReferences, favoriteEvents, favoriteActions, favoriteStates,
-            favoritePolicies, managedFiles, enrichmentPlans, enrichmentApplications);
+            favoritePolicies, managedFiles, managedFileReferences, enrichmentPlans, enrichmentApplications);
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
         ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, secretReferences, libraryTracks, intelligencePolicies, listeningSignals,
             playbackDeliveryCheckpoints,
@@ -396,6 +416,8 @@ public sealed class DurableStateTransferService
         context.ProviderAccounts.AddRange(providerAccounts);
         context.CanonicalRecordings.AddRange(canonicalRecordings);
         context.ProviderTrackIdentities.AddRange(providerTrackIdentities);
+        context.ProviderRouteDecisions.AddRange(providerRouteDecisions);
+        context.ProviderRouteOutcomes.AddRange(providerRouteOutcomes);
         context.ExtensionRegistries.AddRange(await ReadEntryAsync<ExtensionRegistryRecord>(archive, "extension-registries.json", cancellationToken));
         context.ExtensionPackages.AddRange(await ReadEntryAsync<ExtensionPackageRecord>(archive, "extension-packages.json", cancellationToken));
         context.ExtensionPermissionReviews.AddRange(await ReadEntryAsync<ExtensionPermissionReviewRecord>(archive, "extension-permission-reviews.json", cancellationToken));
@@ -405,6 +427,7 @@ public sealed class DurableStateTransferService
         context.FavoriteStates.AddRange(favoriteStates);
         context.FavoriteActionPolicies.AddRange(favoritePolicies);
         context.ManagedFiles.AddRange(managedFiles);
+        context.ManagedFileReferences.AddRange(managedFileReferences);
         context.ProviderDownloadWorkspaces.AddRange(downloadWorkspaces);
         context.ProviderDownloadArtifacts.AddRange(downloadArtifacts);
         context.MetadataEnrichmentPlans.AddRange(enrichmentPlans);
@@ -471,6 +494,150 @@ public sealed class DurableStateTransferService
             }
         }
     }
+
+    private static void ValidateProviderRouteArchive(
+        IReadOnlyCollection<TenantRecord> tenants,
+        IReadOnlyCollection<PlatformUserRecord> users,
+        IReadOnlyCollection<DurableJobRecord> jobs,
+        IReadOnlyCollection<ProviderAccountRecord> accounts,
+        IReadOnlyCollection<ProviderRouteDecisionEntity> decisions,
+        IReadOnlyCollection<ProviderRouteOutcomeEntity> outcomes)
+    {
+        var tenantIds = tenants.Select(item => item.Id).ToHashSet();
+        var usersById = users.ToDictionary(item => item.Id);
+        var jobsById = jobs.ToDictionary(item => item.Id);
+        var accountsById = accounts.ToDictionary(item => item.Id);
+        var decisionsById = IndexUnique(decisions, item => item.Id, "provider route decision");
+        IndexUnique(outcomes, item => item.Id, "provider route outcome");
+        var routeKeys = new HashSet<(Guid TenantId, string RouteKey)>();
+
+        bool ValidAccount(
+            Guid tenantId,
+            Guid? actorUserId,
+            string providerId,
+            string? libraryScopeId,
+            Guid? accountId)
+        {
+            if (accountId == null) return true;
+            if (!accountsById.TryGetValue(accountId.Value, out var account) || account.ProviderId != providerId)
+                return false;
+            return account.Scope switch
+            {
+                ProviderAccountScope.Global =>
+                    account.TenantId == null && account.OwnerUserId == null && account.LibraryScopeId == null,
+                ProviderAccountScope.User => actorUserId != null && account.TenantId == tenantId &&
+                                             account.OwnerUserId == actorUserId,
+                ProviderAccountScope.Library =>
+                    account.TenantId == tenantId && account.OwnerUserId == null &&
+                    account.LibraryScopeId == libraryScopeId,
+                _ => false
+            };
+        }
+
+        foreach (var decision in decisions)
+        {
+            ProviderRouteCandidateDecision[]? candidates;
+            try
+            {
+                candidates = JsonSerializer.Deserialize<ProviderRouteCandidateDecision[]>(
+                    decision.CandidateDecisionsJson,
+                    JsonOptions);
+            }
+            catch (JsonException)
+            {
+                candidates = null;
+            }
+
+            var actorValid = decision.ActorUserId == null ||
+                usersById.TryGetValue(decision.ActorUserId.Value, out var actor) && actor.TenantId == decision.TenantId;
+            var jobValid = decision.DurableJobId == null ||
+                jobsById.TryGetValue(decision.DurableJobId.Value, out var job) &&
+                job.TenantId == decision.TenantId && job.OwnerUserId == decision.ActorUserId;
+            var selectedShapeValid = decision.SelectedProviderId == null
+                ? decision.SelectedProviderAccountId == null
+                : IsNormalizedProviderId(decision.SelectedProviderId) &&
+                  ValidAccount(
+                      decision.TenantId,
+                      decision.ActorUserId,
+                      decision.SelectedProviderId,
+                      decision.LibraryScopeId,
+                      decision.SelectedProviderAccountId);
+            var candidatesValid = candidates is { Length: <= 256 } && candidates.All(candidate =>
+                IsNormalizedProviderId(candidate.ProviderId) &&
+                Enum.IsDefined(candidate.Status) &&
+                IsRouteCode(candidate.ReasonCode) &&
+                candidate.Priority >= 0 &&
+                ValidAccount(
+                    decision.TenantId,
+                    decision.ActorUserId,
+                    candidate.ProviderId,
+                    decision.LibraryScopeId,
+                    candidate.ProviderAccountId));
+            var selectedCandidateValid = decision.SelectedProviderId == null
+                ? candidates?.All(item => item.Status == ProviderRouteDecisionStatus.Rejected) == true
+                : candidates?.Any(item =>
+                    item.ProviderId == decision.SelectedProviderId &&
+                    item.ProviderAccountId == decision.SelectedProviderAccountId &&
+                    item.Status == ProviderRouteDecisionStatus.Accepted) == true;
+
+            if (!tenantIds.Contains(decision.TenantId) || !actorValid || !jobValid || !selectedShapeValid ||
+                !candidatesValid || !selectedCandidateValid ||
+                !IsNormalizedSha256(decision.RouteKey) ||
+                !routeKeys.Add((decision.TenantId, decision.RouteKey)) ||
+                !IsRequiredText(decision.OperationId, 100) ||
+                !IsRequiredText(decision.CorrelationId, 100) ||
+                !Enum.IsDefined(decision.Capability) ||
+                !IsOptionalText(decision.LibraryScopeId, 300) ||
+                decision.CreatedAt == default)
+                RejectProviderRouteArchive("a route decision is malformed, repeated, or crosses its tenant, actor, job, library, or provider-account scope");
+        }
+
+        var outcomeKeys = new HashSet<(Guid RouteDecisionId, string OutcomeKey)>();
+        foreach (var outcome in outcomes)
+        {
+            var routeValid = decisionsById.TryGetValue(outcome.RouteDecisionId, out var route) &&
+                route.TenantId == outcome.TenantId;
+            var accountValid = outcome.ProviderId == null
+                ? outcome.ProviderAccountId == null
+                : IsNormalizedProviderId(outcome.ProviderId) && route != null &&
+                  ValidAccount(
+                      outcome.TenantId,
+                      route.ActorUserId,
+                      outcome.ProviderId,
+                      route.LibraryScopeId,
+                      outcome.ProviderAccountId);
+            var lifecycleValid = outcome.Status switch
+            {
+                ProviderRouteOutcomeStatus.FallbackAdvanced =>
+                    outcome.ProviderId != null && outcome.NextProviderId != null &&
+                    outcome.ProviderId != outcome.NextProviderId,
+                ProviderRouteOutcomeStatus.Stopped or ProviderRouteOutcomeStatus.Succeeded =>
+                    outcome.NextProviderId == null,
+                _ => false
+            };
+            if (!routeValid || !accountValid || !lifecycleValid ||
+                !IsNormalizedSha256(outcome.OutcomeKey) ||
+                !outcomeKeys.Add((outcome.RouteDecisionId, outcome.OutcomeKey)) ||
+                outcome.Sequence < 0 ||
+                !IsRouteStage(outcome.Stage) ||
+                !IsRouteCode(outcome.ReasonCode) ||
+                !IsOptionalNormalizedProviderId(outcome.NextProviderId) ||
+                outcome.CreatedAt == default || outcome.CreatedAt < route!.CreatedAt)
+                RejectProviderRouteArchive("a route outcome is malformed, repeated, or crosses its route, tenant, provider-account, or fallback scope");
+        }
+    }
+
+    private static bool IsRouteStage(string value) =>
+        IsRequiredText(value, 50) && value.All(ch => ch is >= 'a' and <= 'z' || char.IsAsciiDigit(ch) || ch == '-');
+
+    private static bool IsRouteCode(string value) =>
+        IsRequiredText(value, 100) && value.All(ch => ch is >= 'a' and <= 'z' || char.IsAsciiDigit(ch) || ch is '-' or '_' or '.');
+
+    private static bool IsOptionalNormalizedProviderId(string? value) =>
+        value == null || IsNormalizedProviderId(value);
+
+    private static void RejectProviderRouteArchive(string reason) =>
+        throw new BackupVerificationException($"State transfer provider route data is invalid because {reason}.");
 
     private static void ValidateLegacyEnvImportsArchive(
         IReadOnlyCollection<TenantRecord> tenants,
@@ -681,6 +848,7 @@ public sealed class DurableStateTransferService
         IReadOnlyCollection<FavoriteStateRecord> favoriteStates,
         IReadOnlyCollection<FavoriteActionPolicyRecord> favoritePolicies,
         IReadOnlyCollection<ManagedFileOwnershipEntity> managedFiles,
+        IReadOnlyCollection<ManagedFileReferenceEntity> managedFileReferences,
         IReadOnlyCollection<MetadataEnrichmentPlanRecord> enrichmentPlans,
         IReadOnlyCollection<MetadataEnrichmentApplicationRecord> enrichmentApplications)
     {
@@ -690,6 +858,7 @@ public sealed class DurableStateTransferService
         var secretById = IndexUnique(secretReferences, item => item.Id, "secret reference");
         var eventById = IndexUnique(favoriteEvents, item => item.Id, "favorite event");
         var fileById = IndexUnique(managedFiles, item => item.Id, "managed file");
+        IndexUnique(managedFileReferences, item => item.Id, "managed file reference");
         var planById = IndexUnique(enrichmentPlans, item => item.Id, "metadata enrichment plan");
         IndexUnique(favoriteActions, item => item.Id, "favorite action");
         IndexUnique(favoriteStates, item => item.Id, "favorite state");
@@ -765,12 +934,43 @@ public sealed class DurableStateTransferService
         {
             var ownerValid = tenantById.ContainsKey(file.TenantId) &&
                 (file.OwnerUserId == null || ValidOwner(file.TenantId, file.OwnerUserId.Value));
+            var identityValid = (string.IsNullOrWhiteSpace(file.FileSystemDeviceId) &&
+                                 string.IsNullOrWhiteSpace(file.FileSystemFileId) &&
+                                 file.FileSystemLinkCount == null) ||
+                                (IsRequiredText(file.FileSystemDeviceId, 64) &&
+                                 IsRequiredText(file.FileSystemFileId, 64) &&
+                                 file.FileSystemLinkCount > 0);
             if (!ownerValid || file.RootId == Guid.Empty || !file.IsManaged || file.Length < 0 || file.ReferenceCount < 0 ||
+                !identityValid || file.RemovedAt != null && file.ReferenceCount != 0 ||
                 !Enum.IsDefined(file.PlacementMethod) || !IsNormalizedSha256(file.ContentSha256) ||
                 !IsRequiredText(file.ScopeKey, 1000) || !IsOptionalText(file.LibraryScopeId, 300) ||
                 !IsSafeManagedPath(file.TargetRootPath, file.CanonicalPath) ||
                 file.SourceJobId is { } jobId && !ValidJob(jobId, file.TenantId, file.OwnerUserId))
                 RejectPhase6Archive("a managed file is malformed, unsafe, or crosses its tenant, owner, or job boundary");
+        }
+
+        var referenceKeys = new HashSet<(Guid ManagedFileId, string ReferenceKey)>();
+        var activeReferenceCounts = new Dictionary<Guid, int>();
+        foreach (var reference in managedFileReferences)
+        {
+            var fileValid = fileById.TryGetValue(reference.ManagedFileId, out var file) &&
+                file.TenantId == reference.TenantId && file.OwnerUserId == reference.OwnerUserId &&
+                StringComparer.Ordinal.Equals(file.ScopeKey, reference.ScopeKey);
+            if (!fileValid || !IsRequiredText(reference.ScopeKey, 1000) ||
+                !IsRequiredText(reference.ReferenceKey, 1000) || reference.CreatedAt == default ||
+                reference.CreatedAt < file!.CreatedAt ||
+                (reference.ReleasedAt is { } releasedAt && releasedAt < reference.CreatedAt) || reference.Revision <= 0 ||
+                !referenceKeys.Add((reference.ManagedFileId, reference.ReferenceKey)))
+                RejectPhase6Archive("a managed file reference is malformed, repeated, or crosses its file ownership scope");
+            if (reference.ReleasedAt is null)
+                activeReferenceCounts[reference.ManagedFileId] =
+                    activeReferenceCounts.GetValueOrDefault(reference.ManagedFileId) + 1;
+        }
+
+        foreach (var file in managedFiles)
+        {
+            if (file.ReferenceCount != activeReferenceCounts.GetValueOrDefault(file.Id))
+                RejectPhase6Archive("a managed file reference count does not match its durable active references");
         }
 
         foreach (var plan in enrichmentPlans)
@@ -995,7 +1195,8 @@ public sealed class DurableStateTransferService
             return account.Scope switch
             {
                 ProviderAccountScope.Global => account.TenantId == null && account.OwnerUserId == null && account.LibraryScopeId == null,
-                ProviderAccountScope.User => account.TenantId == workspace.TenantId && account.OwnerUserId == workspace.OwnerUserId && workspace.LibraryScopeId == null,
+                ProviderAccountScope.User => account.TenantId == workspace.TenantId &&
+                                             account.OwnerUserId == workspace.OwnerUserId,
                 ProviderAccountScope.Library => account.TenantId == workspace.TenantId && account.OwnerUserId == null && account.LibraryScopeId == workspace.LibraryScopeId,
                 _ => false
             };

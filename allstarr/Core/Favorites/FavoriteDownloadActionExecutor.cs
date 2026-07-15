@@ -12,7 +12,8 @@ public sealed class FavoriteDownloadActionExecutor(
     IProviderRegistry providers,
     ProviderDownloadArtifactResolver artifacts,
     IPlatformClock clock,
-    IDbContextFactory<AllstarrDbContext> factory) : IFavoriteActionExecutor
+    IDbContextFactory<AllstarrDbContext> factory,
+    IProviderRouteDecisionStore routeDecisions) : IFavoriteActionExecutor
 {
     public string ActionType => "download";
 
@@ -56,16 +57,48 @@ public sealed class FavoriteDownloadActionExecutor(
             return FavoriteActionExecutionResult.Failure("favorite_download_route_denied",
                 "No authorized managed download route is available.");
         }
+        var routeDecision = await routeDecisions.RecordPlanAsync(
+            plan.Request,
+            plan.Decision,
+            action.IdempotencyKey,
+            cancellationToken);
         if (plan.Candidates.Count == 0)
+        {
+            await RecordOutcomeAsync(
+                routeDecision,
+                action,
+                sequence: 0,
+                stage: "planning",
+                providerId: null,
+                providerAccountId: null,
+                ProviderRouteOutcomeStatus.Stopped,
+                "no-authorized-candidate",
+                nextProviderId: null,
+                cancellationToken);
             return FavoriteActionExecutionResult.Failure("favorite_download_route_unavailable",
                 "No authorized managed download route is available.");
+        }
 
         for (var index = 0; index < plan.Candidates.Count; index++)
         {
             var candidate = plan.Candidates[index];
             var prior = await artifacts.FindByJobAsync(favoriteEvent.TenantId, favoriteEvent.JobId,
                 candidate.Provider.Id, cancellationToken);
-            if (prior != null) return FavoriteActionExecutionResult.Success();
+            if (prior != null)
+            {
+                await RecordOutcomeAsync(
+                    routeDecision,
+                    action,
+                    index,
+                    "existing-artifact",
+                    candidate.Provider.Id,
+                    candidate.Context.Account?.AccountId,
+                    ProviderRouteOutcomeStatus.Succeeded,
+                    "verified-artifact-reused",
+                    nextProviderId: null,
+                    cancellationToken);
+                return FavoriteActionExecutionResult.Success();
+            }
             var workspace = await artifacts.CreateWorkspaceAsync(new ProviderDownloadWorkspaceRequest(
                 favoriteEvent.TenantId, favoriteEvent.OwnerUserId, favoriteEvent.JobId, candidate.Provider.Id,
                 candidate.Context.Account?.AccountId, action.IdempotencyKey)
@@ -80,7 +113,10 @@ public sealed class FavoriteDownloadActionExecutor(
                 if (!availability.IsSuccess || availability.RequireValue().State != ProviderDownloadAvailabilityState.Available)
                 {
                     var error = availability.Error ?? new ProviderError(ProviderErrorKind.IncompatibleMedia);
-                    if (router.EvaluateFallback(plan, index, error).NextCandidate != null) continue;
+                    var fallback = router.EvaluateFallback(plan, index, error);
+                    await RecordFallbackAsync(routeDecision, action, index, "availability", candidate, fallback,
+                        cancellationToken);
+                    if (fallback.NextCandidate != null) continue;
                     return FavoriteActionExecutionResult.Failure("favorite_download_unavailable",
                         "The track is unavailable from authorized download providers.");
                 }
@@ -96,7 +132,10 @@ public sealed class FavoriteDownloadActionExecutor(
             }
             if (!outcome.IsSuccess)
             {
-                if (router.EvaluateFallback(plan, index, outcome.Error!).NextCandidate != null) continue;
+                var fallback = router.EvaluateFallback(plan, index, outcome.Error!);
+                await RecordFallbackAsync(routeDecision, action, index, "download", candidate, fallback,
+                    cancellationToken);
+                if (fallback.NextCandidate != null) continue;
                 return outcome.Error!.Kind is ProviderErrorKind.TransientFailure or ProviderErrorKind.RateLimited
                     ? FavoriteActionExecutionResult.Retry("favorite_download_temporary_failure",
                         "The managed download temporarily failed.")
@@ -106,20 +145,101 @@ public sealed class FavoriteDownloadActionExecutor(
             try
             {
                 await artifacts.ResolveAsync(workspace.Reference, outcome.RequireValue(), cancellationToken);
+                await RecordOutcomeAsync(
+                    routeDecision,
+                    action,
+                    index,
+                    "artifact-verification",
+                    candidate.Provider.Id,
+                    candidate.Context.Account?.AccountId,
+                    ProviderRouteOutcomeStatus.Succeeded,
+                    "download-verified",
+                    nextProviderId: null,
+                    cancellationToken);
                 return FavoriteActionExecutionResult.Success();
             }
             catch (IOException)
             {
+                await RecordOutcomeAsync(
+                    routeDecision,
+                    action,
+                    index,
+                    "artifact-verification",
+                    candidate.Provider.Id,
+                    candidate.Context.Account?.AccountId,
+                    ProviderRouteOutcomeStatus.Stopped,
+                    "artifact-io-failed",
+                    nextProviderId: null,
+                    cancellationToken);
                 return FavoriteActionExecutionResult.Retry("favorite_download_artifact_io_failed",
                     "The downloaded artifact could not be verified.");
             }
             catch (InvalidOperationException)
             {
+                await RecordOutcomeAsync(
+                    routeDecision,
+                    action,
+                    index,
+                    "artifact-verification",
+                    candidate.Provider.Id,
+                    candidate.Context.Account?.AccountId,
+                    ProviderRouteOutcomeStatus.Stopped,
+                    "artifact-invalid",
+                    nextProviderId: null,
+                    cancellationToken);
                 return FavoriteActionExecutionResult.Failure("favorite_download_artifact_invalid",
                     "The downloaded artifact failed verification.");
             }
         }
         return FavoriteActionExecutionResult.Failure("favorite_download_route_exhausted",
             "Authorized download providers were exhausted.");
+    }
+
+    private async Task RecordFallbackAsync(
+        ProviderRouteDecisionHandle decision,
+        FavoriteActionRecord action,
+        int sequence,
+        string stage,
+        ProviderRouteCandidate<IProviderDownloadCapability> candidate,
+        ProviderFallbackDecision<IProviderDownloadCapability> fallback,
+        CancellationToken cancellationToken) =>
+        await RecordOutcomeAsync(
+            decision,
+            action,
+            sequence,
+            stage,
+            candidate.Provider.Id,
+            candidate.Context.Account?.AccountId,
+            fallback.Disposition == ProviderFallbackDisposition.Advance
+                ? ProviderRouteOutcomeStatus.FallbackAdvanced
+                : ProviderRouteOutcomeStatus.Stopped,
+            fallback.ReasonCode,
+            fallback.NextCandidate?.Provider.Id,
+            cancellationToken);
+
+    private async Task RecordOutcomeAsync(
+        ProviderRouteDecisionHandle decision,
+        FavoriteActionRecord action,
+        int sequence,
+        string stage,
+        string? providerId,
+        Guid? providerAccountId,
+        ProviderRouteOutcomeStatus status,
+        string reasonCode,
+        string? nextProviderId,
+        CancellationToken cancellationToken)
+    {
+        await routeDecisions.RecordOutcomeAsync(
+            decision,
+            new ProviderRouteExecutionOutcome(
+                $"{action.Id:N}|attempt:{action.AttemptCount}|{sequence}|{stage}",
+                sequence,
+                stage,
+                providerId,
+                providerAccountId,
+                status,
+                reasonCode,
+                nextProviderId),
+            cancellationToken);
     }
 }

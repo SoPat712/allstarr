@@ -61,8 +61,23 @@ public sealed class DurableMetadataEnrichmentService(IDbContextFactory<AllstarrD
         var checksum = request.ArtifactContentSha256.ToLowerInvariant();
         var existing = await db.MetadataEnrichmentApplications.AsNoTracking().SingleOrDefaultAsync(item =>
             item.TenantId == request.TenantId && item.OwnerUserId == request.OwnerUserId && item.PlanId == request.PlanId &&
-            item.ManagedArtifactId == request.ManagedArtifactId && item.ArtifactContentSha256 == checksum, cancellationToken);
+            item.ManagedArtifactId == request.ManagedArtifactId && item.LineageJobId == request.LineageJobId &&
+            item.ArtifactContentSha256 == checksum, cancellationToken);
         if (existing != null) return existing;
+        // A crash can leave this application pending after the atomic file swap,
+        // including after managed ownership has advanced to the output checksum.
+        // Reuse only the pending application in the exact plan/job scope. Its old
+        // input checksum is intentional: the writer must prove the matching
+        // input/output/operation journal before accepting recovery.
+        var recoverable = await db.MetadataEnrichmentApplications.AsNoTracking()
+            .Where(item => item.TenantId == request.TenantId && item.OwnerUserId == request.OwnerUserId &&
+                           item.PlanId == request.PlanId && item.ManagedArtifactId == request.ManagedArtifactId &&
+                           item.LineageJobId == request.LineageJobId &&
+                           item.State == MetadataEnrichmentApplicationState.Pending)
+            .OrderBy(item => item.CreatedAt)
+            .ThenBy(item => item.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (recoverable != null) return recoverable;
         var record = new MetadataEnrichmentApplicationRecord
         {
             Id = Guid.CreateVersion7(),

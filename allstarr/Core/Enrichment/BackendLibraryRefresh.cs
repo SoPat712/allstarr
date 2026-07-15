@@ -170,6 +170,7 @@ public static class MetadataEnrichmentRegistration
     public static IServiceCollection AddMetadataEnrichment(this IServiceCollection services)
     {
         services.AddSingleton<IMetadataEnrichmentPlanner, MetadataEnrichmentPlanner>();
+        services.AddSingleton<IManagedTagFileMutator, TagLibManagedTagFileMutator>();
         services.AddSingleton<IManagedMetadataWriter, TagLibManagedMetadataWriter>();
         services.AddSingleton<ManagedMetadataPlanApplicator>();
         services.AddSingleton<DurableMetadataEnrichmentService>();

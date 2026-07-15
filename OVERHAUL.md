@@ -519,18 +519,21 @@ Allstarr must never delete original library files. Allowed actions:
 - write new managed downloads
 - hardlink only between Allstarr-managed files when it is safe to share the inode
 - copy when hardlinks or copy-on-write cannot preserve ownership and metadata safety
-- later add reflink/copy-on-write where supported
+- use native reflink/copy-on-write on Linux and macOS where supported, then verified copy fallback
 - clean Allstarr cache, temp, and transcode files
 - remove Allstarr-managed downloads only after explicit user action
 
 Add `FilePlacementService`:
 
 - Writes and tags a temporary managed file, verifies it, then atomically places it.
+- Treats an interruption between final rename and the database ownership commit conservatively: the unowned output is not adopted, overwritten, or deleted until a future placement journal/reconciler can prove its operation identity.
 - Never tags, renames, or rewrites a source-library inode. A hardlink to a source file is not a safe tagging shortcut.
-- Tries hardlink only for managed ownership-compatible files; otherwise uses reflink/copy-on-write where supported, then copy.
-- Records placement type, file identity/checksum, ownership, target root, reference count, and job lineage in DB.
+- Keeps hardlinks disabled until managed immutability is represented by a durable lease; meanwhile uses reflink/copy-on-write where supported, then copy.
+- Records placement type, filesystem identity where supported, checksum, ownership, target root, durable reference keys/count, and job lineage in DB.
 - Supports per-user and per-library target roots.
 - Supports path templates.
+- Renders naming from resolved metadata before backend refresh; later tag enrichment does not silently rename an indexed file.
+- Writes Picard-compatible MusicBrainz identity tags through a same-directory staged copy and atomic replacement, then records the new managed checksum and revision.
 - Validates configured roots, symlinks, parent traversal, cross-volume behavior, naming collisions, and final paths before committing a placement.
 
 Path template examples:
@@ -1086,7 +1089,7 @@ workflow:
   and enrichment, so an existing library file is not touched. Otherwise the provider-neutral router selects an
   authorized account and writes only into a managed download workspace.
 - Provider output becomes a durable artifact only after path containment, symlink, length, and SHA-256 checks.
-  Placement uses atomic staging, safe templates, managed-source-only hardlinks, reflink or verified-copy fallback,
+  Placement uses atomic staging, safe templates, reflink or verified-copy fallback, with hardlinks held until durable immutability leases exist,
   deterministic collision handling, and exact tenant/user/job/library ownership. Explicit confirmed removal is
   separate from favorite and unstar behavior.
 - Enrichment plans are deterministic and preserve local or user-edited values. MusicBrainz/provider data, beets and

@@ -20,18 +20,23 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         var fingerprint = await FingerprintAsync(source, cancellationToken);
         var length = new FileInfo(source).Length;
         ValidateExpectedSource(request, fingerprint, length);
+        var referenceKey = ResolveReferenceKey(request);
         var compatible = await ownership.FindCompatibleAsync(request.Root.Id, fingerprint, request.ScopeKey, cancellationToken);
         if (compatible is not null && File.Exists(compatible.CanonicalPath))
         {
+            ValidateCompatibleOwnership(request, compatible);
             await ValidateExistingManagedFileAsync(root, compatible, fingerprint, length, cancellationToken);
-            return new(await ownership.AddReferenceAsync(compatible.Id, cancellationToken), true);
+            return new(await ownership.AddReferenceAsync(compatible.Id,
+                CreateReference(request, compatible.Id, referenceKey), cancellationToken), true);
         }
 
         var requestedRecord = await ownership.FindByPathAsync(requestedTarget, cancellationToken);
         if (requestedRecord is not null && requestedRecord.ContentSha256 == fingerprint && File.Exists(requestedTarget))
         {
+            ValidateCompatibleOwnership(request, requestedRecord);
             await ValidateExistingManagedFileAsync(root, requestedRecord, fingerprint, length, cancellationToken);
-            return new(await ownership.AddReferenceAsync(requestedRecord.Id, cancellationToken), true);
+            return new(await ownership.AddReferenceAsync(requestedRecord.Id,
+                CreateReference(request, requestedRecord.Id, referenceKey), cancellationToken), true);
         }
 
         Directory.CreateDirectory(root);
@@ -56,13 +61,19 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             RejectSymlinksUnder(root, Path.GetDirectoryName(target)!);
             files.MoveNoReplace(staging, target);
             finalized = true;
+            var identity = files.TryGetFileIdentity(target, out var currentIdentity) ? currentIdentity : null;
             var record = new ManagedFileRecord(Guid.NewGuid(), request.Root.Id, target, fingerprint, length, method,
                 request.Root.TenantId, request.Root.OwnerUserId, request.Root.LibraryScopeId, request.SourceJobId,
                 request.ScopeKey, 1, true, DateTimeOffset.UtcNow)
-            { TargetRootPath = root };
+            {
+                TargetRootPath = root,
+                FileSystemDeviceId = identity?.DeviceId,
+                FileSystemFileId = identity?.FileId,
+                FileSystemLinkCount = identity?.LinkCount
+            };
             try
             {
-                return new(await ownership.AddAsync(record, cancellationToken), false);
+                return new(await ownership.AddAsync(record, CreateReference(request, record.Id, referenceKey), cancellationToken), false);
             }
             catch
             {
@@ -81,8 +92,8 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
 
     private async Task<ManagedFilePlacementMethod> MaterializeAsync(ManagedFilePlacementRequest request, string source, string staging, CancellationToken cancellationToken)
     {
-        if (request.SourceIsAllstarrManaged && request.SourceIsImmutable && files.TryCreateHardLink(staging, source))
-            return ManagedFilePlacementMethod.HardLink;
+        // Hardlinks remain disabled until immutability is represented by a durable
+        // lease. A caller boolean cannot prevent later tagging of the shared inode.
         if (files.TryCreateReflink(staging, source))
             return ManagedFilePlacementMethod.Reflink;
         await files.CopyAsync(source, staging, cancellationToken);
@@ -178,7 +189,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             throw new IOException("The placement source no longer matches its verified artifact.");
     }
 
-    private static async Task ValidateExistingManagedFileAsync(
+    private async Task ValidateExistingManagedFileAsync(
         string root,
         ManagedFileRecord record,
         string expectedFingerprint,
@@ -193,11 +204,42 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         var info = new FileInfo(path);
         if (info.Length != record.Length || info.Length != expectedLength)
             throw new IOException("The existing managed file length no longer matches its ownership record.");
+        if (!string.IsNullOrWhiteSpace(record.FileSystemDeviceId) &&
+            !string.IsNullOrWhiteSpace(record.FileSystemFileId) &&
+            (!files.TryGetFileIdentity(path, out var identity) ||
+             !StringComparer.Ordinal.Equals(record.FileSystemDeviceId, identity.DeviceId) ||
+             !StringComparer.Ordinal.Equals(record.FileSystemFileId, identity.FileId)))
+            throw new IOException("The existing managed file identity no longer matches its ownership record.");
         var actual = await FingerprintAsync(path, cancellationToken);
         if (!CryptographicOperations.FixedTimeEquals(
                 Convert.FromHexString(expectedFingerprint), Convert.FromHexString(actual)) ||
             !CryptographicOperations.FixedTimeEquals(
                 Convert.FromHexString(record.ContentSha256), Convert.FromHexString(actual)))
             throw new IOException("The existing managed file content no longer matches its ownership record.");
+    }
+
+    private static string ResolveReferenceKey(ManagedFilePlacementRequest request)
+    {
+        var value = string.IsNullOrWhiteSpace(request.ReferenceKey)
+            ? request.SourceJobId?.ToString("N") ?? Guid.NewGuid().ToString("N")
+            : request.ReferenceKey.Trim();
+        if (value.Length > 1000)
+            throw new ArgumentException("Managed-file reference keys cannot exceed 1000 characters.", nameof(request));
+        return value;
+    }
+
+    private static ManagedFileReference CreateReference(
+        ManagedFilePlacementRequest request,
+        Guid managedFileId,
+        string referenceKey) => new(
+        Guid.NewGuid(), managedFileId, request.Root.TenantId!.Value, request.Root.OwnerUserId,
+        request.ScopeKey, referenceKey, DateTimeOffset.UtcNow);
+
+    private static void ValidateCompatibleOwnership(ManagedFilePlacementRequest request, ManagedFileRecord record)
+    {
+        if (record.TenantId != request.Root.TenantId || record.OwnerUserId != request.Root.OwnerUserId ||
+            !StringComparer.Ordinal.Equals(record.LibraryScopeId, request.Root.LibraryScopeId) ||
+            !StringComparer.Ordinal.Equals(record.ScopeKey, request.ScopeKey))
+            throw new UnauthorizedAccessException("The existing managed file is outside the requested ownership scope.");
     }
 }

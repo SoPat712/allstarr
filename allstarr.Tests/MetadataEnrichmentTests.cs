@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Enrichment;
@@ -11,6 +12,7 @@ using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -71,9 +73,276 @@ public sealed class MetadataEnrichmentTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.ApplyAsync(new("/library/source.flac", sha, false, true), plan));
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.ApplyAsync(new("/managed/link.flac", sha, true, true), plan));
-        await service.ApplyAsync(new("/managed/copy.flac", sha, true, false), plan);
+        var result = await service.ApplyAsync(new("/managed/copy.flac", sha, true, false)
+        {
+            TargetRootPath = "/managed",
+            OperationFingerprint = plan.Fingerprint
+        }, plan);
 
         Assert.Equal("/managed/copy.flac", Assert.Single(writer.Artifacts).Path);
+        Assert.Equal(sha, result.ContentSha256);
+    }
+
+    [Fact]
+    public async Task ManagedWriter_RecoversWhenApplicationTransitionFailsAfterOwnershipUpdate()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-enrichment-writer", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "track.flac");
+            await File.WriteAllTextAsync(path, "original");
+            var original = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(path)));
+            var mutator = new AppendingMutator();
+            var operations = new allstarr.Core.ManagedFiles.PhysicalManagedFileOperations();
+            Assert.True(operations.TryGetFileIdentity(path, out var originalIdentity));
+            var writer = new TagLibManagedMetadataWriter(mutator, operations);
+            var artifact = new ManagedMetadataArtifact(path, original, true, false)
+            {
+                TargetRootPath = root,
+                FileSystemDeviceId = originalIdentity.DeviceId,
+                FileSystemFileId = originalIdentity.FileId,
+                OperationFingerprint = new string('b', 64)
+            };
+
+            var written = await writer.WriteAsync(artifact, new Dictionary<string, string> { ["title"] = "Tagged" }, default);
+
+            Assert.False(written.Reused);
+            Assert.NotEqual(original, written.ContentSha256);
+            Assert.NotEqual(originalIdentity.FileId, written.FileSystemFileId);
+            Assert.Equal("original\ntagged", await File.ReadAllTextAsync(path));
+            Assert.NotEqual(path, mutator.LastAppliedPath);
+            Assert.NotNull(written.Lease);
+            await written.Lease!.DisposeAsync(); // Simulate a crash after the swap but before DB commit.
+
+            var retryArtifact = artifact with
+            {
+                FileSystemDeviceId = written.FileSystemDeviceId,
+                FileSystemFileId = written.FileSystemFileId
+            };
+            var recovered = await writer.WriteAsync(retryArtifact,
+                new Dictionary<string, string> { ["title"] = "Tagged" }, default);
+            Assert.True(recovered.Reused);
+            Assert.Equal(written.ContentSha256, recovered.ContentSha256);
+            Assert.Equal(1, mutator.ApplyCount);
+            await recovered.Lease!.CommitAsync(default);
+            Assert.DoesNotContain(Directory.EnumerateFiles(root), item => item != path);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task ManagedWriter_RejectsAncestorSymlinkSwapWithoutTouchingOutsideFile()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-enrichment-symlink", Guid.NewGuid().ToString("N"));
+        var managed = Path.Combine(root, "managed");
+        var outside = Path.Combine(root, "outside");
+        Directory.CreateDirectory(managed);
+        Directory.CreateDirectory(outside);
+        try
+        {
+            var outsideFile = Path.Combine(outside, "track.flac");
+            await File.WriteAllTextAsync(outsideFile, "outside-safe");
+            Directory.CreateSymbolicLink(Path.Combine(managed, "Artist"), outside);
+            var path = Path.Combine(managed, "Artist", "track.flac");
+            var hash = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(outsideFile)));
+            var writer = new TagLibManagedMetadataWriter(new AppendingMutator(),
+                new allstarr.Core.ManagedFiles.PhysicalManagedFileOperations());
+
+            await Assert.ThrowsAsync<IOException>(() => writer.WriteAsync(new(path, hash, true, false)
+            {
+                TargetRootPath = managed,
+                OperationFingerprint = new string('c', 64)
+            }, new Dictionary<string, string> { ["title"] = "Tagged" }, default));
+
+            Assert.Equal("outside-safe", await File.ReadAllTextAsync(outsideFile));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task ManagedWriter_DoesNotTreatExternalSameTagEditAsCompletedSwap()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-enrichment-external", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "track.flac");
+            await File.WriteAllTextAsync(path, "original");
+            var original = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(path)));
+            await File.AppendAllTextAsync(path, "\ntagged");
+            var writer = new TagLibManagedMetadataWriter(new AppendingMutator(),
+                new allstarr.Core.ManagedFiles.PhysicalManagedFileOperations());
+
+            await Assert.ThrowsAsync<IOException>(() => writer.WriteAsync(new(path, original, true, false)
+            {
+                TargetRootPath = root,
+                OperationFingerprint = new string('d', 64)
+            }, new Dictionary<string, string> { ["title"] = "Tagged" }, default));
+
+            Assert.Equal("original\ntagged", await File.ReadAllTextAsync(path));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task ManagedWriter_DifferentOperationCannotAdoptOrOverwritePendingSwap()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-enrichment-conflict", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "track.flac");
+            await File.WriteAllTextAsync(path, "original");
+            var original = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(path)));
+            var operations = new allstarr.Core.ManagedFiles.PhysicalManagedFileOperations();
+            Assert.True(operations.TryGetFileIdentity(path, out var identity));
+            var writer = new TagLibManagedMetadataWriter(new AppendingMutator(), operations);
+            var first = await writer.WriteAsync(new(path, original, true, false)
+            {
+                TargetRootPath = root,
+                FileSystemDeviceId = identity.DeviceId,
+                FileSystemFileId = identity.FileId,
+                OperationFingerprint = new string('e', 64)
+            }, new Dictionary<string, string> { ["title"] = "First" }, default);
+            await first.Lease!.DisposeAsync();
+
+            await Assert.ThrowsAsync<IOException>(() => writer.WriteAsync(new(path, original, true, false)
+            {
+                TargetRootPath = root,
+                FileSystemDeviceId = identity.DeviceId,
+                FileSystemFileId = identity.FileId,
+                OperationFingerprint = new string('f', 64)
+            }, new Dictionary<string, string> { ["title"] = "Second" }, default));
+
+            Assert.Equal("original\ntagged", await File.ReadAllTextAsync(path));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task DurableApplications_DoNotReuseAnAppliedRecordForAChangedArtifactChecksum()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-enrichment-applications", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var factory = new DbFactory(new DbContextOptionsBuilder<AllstarrDbContext>()
+                .UseSqlite($"Data Source={Path.Combine(root, "test.db")}").Options);
+            var tenantId = Guid.CreateVersion7();
+            var userId = Guid.CreateVersion7();
+            var jobId = Guid.CreateVersion7();
+            var fileId = Guid.CreateVersion7();
+            var planId = Guid.CreateVersion7();
+            var now = DateTimeOffset.UtcNow;
+            await using (var db = await factory.CreateDbContextAsync())
+            {
+                await db.Database.EnsureCreatedAsync();
+                db.Tenants.Add(new TenantRecord { Id = tenantId, Slug = "enrichment-apps", Name = "Enrichment apps", CreatedAt = now });
+                db.Users.Add(new PlatformUserRecord
+                {
+                    Id = userId,
+                    TenantId = tenantId,
+                    DisplayName = "Owner",
+                    Status = PlatformUserStatus.Active,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                db.Jobs.Add(new DurableJobRecord
+                {
+                    Id = jobId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    ScopeKey = $"user:{tenantId:N}:{userId:N}",
+                    Type = "enrichment.test",
+                    PayloadJson = "{}",
+                    IdempotencyKey = "enrichment-test",
+                    State = DurableJobState.Running,
+                    MaxAttempts = 3,
+                    MaxDeferrals = 3,
+                    AvailableAt = now,
+                    PolicySnapshotJson = "{}",
+                    RequestFingerprint = new string('1', 64),
+                    CorrelationId = "enrichment-test",
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                db.ManagedFiles.Add(new allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity
+                {
+                    Id = fileId,
+                    RootId = Guid.CreateVersion7(),
+                    TargetRootPath = root,
+                    CanonicalPath = Path.Combine(root, "track.flac"),
+                    ContentSha256 = new string('a', 64),
+                    Length = 1,
+                    PlacementMethod = allstarr.Core.ManagedFiles.ManagedFilePlacementMethod.Copy,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    SourceJobId = jobId,
+                    ScopeKey = $"user:{tenantId:N}:{userId:N}",
+                    ReferenceCount = 0,
+                    IsManaged = true,
+                    CreatedAt = now
+                });
+                db.MetadataEnrichmentPlans.Add(new MetadataEnrichmentPlanRecord
+                {
+                    Id = planId,
+                    TenantId = tenantId,
+                    OwnerUserId = userId,
+                    LineageJobId = jobId,
+                    ManagedArtifactId = fileId,
+                    Fingerprint = new string('b', 64),
+                    PlanVersion = 1,
+                    SourceRevisionsJson = "[]",
+                    DecisionsJson = "[]",
+                    TagsJson = "{}",
+                    PathValuesJson = "{}",
+                    CreatedAt = now
+                });
+                await db.SaveChangesAsync();
+            }
+            var service = new DurableMetadataEnrichmentService(factory, new Clock());
+            var first = await service.BeginApplicationAsync(new(
+                tenantId, userId, jobId, fileId, planId, new string('a', 64)));
+            await service.MarkAppliedAsync(tenantId, userId, first.Id);
+            var changed = await service.BeginApplicationAsync(new(
+                tenantId, userId, jobId, fileId, planId, new string('c', 64)));
+            var recoveredPending = await service.BeginApplicationAsync(new(
+                tenantId, userId, jobId, fileId, planId, new string('d', 64)));
+
+            Assert.NotEqual(first.Id, changed.Id);
+            Assert.Equal(MetadataEnrichmentApplicationState.Pending, changed.State);
+            Assert.Equal(changed.Id, recoveredPending.Id);
+            Assert.Equal(new string('c', 64), recoveredPending.ArtifactContentSha256);
+            await using var verify = await factory.CreateDbContextAsync();
+            Assert.Equal(2, await verify.MetadataEnrichmentApplications.CountAsync());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TagMutator_WritesPicardCompatibleMusicBrainzFields()
+    {
+        var tag = new Mock<TagLib.Tag>();
+        tag.SetupAllProperties();
+        var values = new Dictionary<string, string>
+        {
+            ["musicbrainz_recordingid"] = "31e68c1d-31f9-432c-a3a4-13aef4a53833",
+            ["musicbrainz_releaseid"] = "41e68c1d-31f9-432c-a3a4-13aef4a53833",
+            ["musicbrainz_releasegroupid"] = "51e68c1d-31f9-432c-a3a4-13aef4a53833",
+            ["musicbrainz_artistid"] = "61e68c1d-31f9-432c-a3a4-13aef4a53833"
+        };
+
+        TagLibManagedTagFileMutator.ApplyTags(tag.Object, values);
+
+        Assert.Equal(values["musicbrainz_recordingid"], tag.Object.MusicBrainzTrackId);
+        Assert.Equal(values["musicbrainz_releaseid"], tag.Object.MusicBrainzReleaseId);
+        Assert.Equal(values["musicbrainz_releasegroupid"], tag.Object.MusicBrainzReleaseGroupId);
+        Assert.Equal(values["musicbrainz_artistid"], tag.Object.MusicBrainzArtistId);
     }
 
     [Fact]
@@ -176,8 +445,28 @@ public sealed class MetadataEnrichmentTests
     private sealed class RecordingWriter : IManagedMetadataWriter
     {
         public List<ManagedMetadataArtifact> Artifacts { get; } = [];
-        public Task WriteAsync(ManagedMetadataArtifact artifact, IReadOnlyDictionary<string, string> tags, CancellationToken cancellationToken)
-        { Artifacts.Add(artifact); return Task.CompletedTask; }
+        public Task<ManagedMetadataWriteResult> WriteAsync(ManagedMetadataArtifact artifact,
+            IReadOnlyDictionary<string, string> tags, CancellationToken cancellationToken)
+        {
+            Artifacts.Add(artifact);
+            return Task.FromResult(new ManagedMetadataWriteResult(artifact.ContentSha256, 1, Reused: false));
+        }
+    }
+    private sealed class AppendingMutator : IManagedTagFileMutator
+    {
+        public int ApplyCount { get; private set; }
+        public string? LastAppliedPath { get; private set; }
+
+        public void Apply(string path, IReadOnlyDictionary<string, string> tags, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ApplyCount++;
+            LastAppliedPath = path;
+            File.AppendAllText(path, "\ntagged");
+        }
+
+        public bool Matches(string path, IReadOnlyDictionary<string, string> tags) =>
+            File.ReadAllText(path).EndsWith("\ntagged", StringComparison.Ordinal);
     }
     private sealed class AuthenticationResolver : IBackendPlaylistAuthenticationResolver
     {

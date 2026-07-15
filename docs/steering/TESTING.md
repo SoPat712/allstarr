@@ -180,7 +180,7 @@ Required coverage for new or migrated behavior:
 - `TrackIdentityService` respects scoped manual overrides, records snapshot/reason versions, isolates private candidates, and leaves ambiguous matches unresolved below the policy threshold.
 - Favorite/star events are idempotent across retries, preserve the original backend result, record account/policy context, and leave favorite state intact after a failed optional action or cancellation.
 - Playlist snapshots preserve order and last-known-good stale state; virtual reads do not write the backend; materialized retries do not duplicate tracks and use source-revision/rule-version keys.
-- Placement rejects traversal and symlink escapes, finalizes atomically, handles collision/reference counts, and proves that tagging a hardlinked managed copy cannot alter a source-library inode.
+- Placement rejects traversal and symlink escapes, finalizes atomically, handles collision/durable references, captures filesystem identity where supported, and proves that a source-library inode is never shared with a mutable managed output. Native reflink tests accept a clean copy fallback on unsupported filesystems but never a partial clone.
 - Download and placement jobs recover from interrupted staging work without deleting a completed file or relying on Redis as the only durable state.
 
 Use fake providers, deterministic clock/queue fixtures, temporary roots, mocked HTTP, and protocol fixtures. No automated test should require a real provider account, a real backend library, or live provider traffic.

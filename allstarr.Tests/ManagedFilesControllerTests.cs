@@ -19,6 +19,8 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
     private AllstarrDbContext removalContext = null!;
     private ManagedFileOwnershipEntity owned = null!;
     private ManagedFileOwnershipEntity other = null!;
+    private ManagedFileReferenceEntity ownedReference = null!;
+    private ManagedFileReferenceEntity otherReference = null!;
 
     public async Task InitializeAsync()
     {
@@ -33,6 +35,9 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
         owned = File(owner, "owned.flac", 'a');
         other = File(otherUser, "other.flac", 'b');
         db.ManagedFiles.AddRange(owned, other);
+        ownedReference = Reference(owned, "favorite:owned");
+        otherReference = Reference(other, "favorite:other");
+        db.ManagedFileReferences.AddRange(ownedReference, otherReference);
         await db.SaveChangesAsync();
         removalContext = new AllstarrDbContext(options);
     }
@@ -90,6 +95,43 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OwnerCanExplicitlyReleaseOneDurableReferenceWithoutDeletingFile()
+    {
+        var result = Assert.IsType<OkObjectResult>(await Controller(Session(owner)).ReleaseReference(
+            owned.Id, new() { ReferenceId = ownedReference.Id, ExplicitlyConfirmed = true }, default));
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+
+        Assert.Equal(0, response.RootElement.GetProperty("ReferenceCount").GetInt32());
+        Assert.True(System.IO.File.Exists(owned.CanonicalPath));
+        await using var db = await factory.CreateDbContextAsync();
+        var reference = await db.ManagedFileReferences.SingleAsync(item => item.ManagedFileId == owned.Id);
+        Assert.NotNull(reference.ReleasedAt);
+        Assert.Equal(0, (await db.ManagedFiles.SingleAsync(item => item.Id == owned.Id)).ReferenceCount);
+    }
+
+    [Fact]
+    public async Task OwnerCanListOnlyReferencesForOwnManagedFile()
+    {
+        var result = Assert.IsType<OkObjectResult>(await Controller(Session(owner)).ListReferences(owned.Id));
+        var serialized = JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains(ownedReference.Id.ToString(), serialized, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("favorite:owned", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain(otherReference.Id.ToString(), serialized, StringComparison.OrdinalIgnoreCase);
+        Assert.IsType<NotFoundResult>(await Controller(Session(owner)).ListReferences(other.Id));
+    }
+
+    [Fact]
+    public async Task ReferenceReleaseRequiresConfirmationAndOwnerScope()
+    {
+        var controller = Controller(Session(owner));
+        Assert.IsType<BadRequestObjectResult>(await controller.ReleaseReference(owned.Id,
+            new() { ReferenceKey = "favorite:owned", ExplicitlyConfirmed = false }, default));
+        Assert.IsType<NotFoundResult>(await controller.ReleaseReference(other.Id,
+            new() { ReferenceKey = "favorite:other", ExplicitlyConfirmed = true }, default));
+    }
+
+    [Fact]
     public async Task AdministratorCanListAndRemoveAcrossOwners()
     {
         var controller = Controller(Session(owner, administrator: true));
@@ -116,7 +158,8 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
     {
         var context = new DefaultHttpContext();
         if (session is not null) context.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
-        return new(factory, new ManagedFileRemovalService(new EfManagedFileOwnershipStore(removalContext)))
+        var store = new EfManagedFileOwnershipStore(removalContext);
+        return new(factory, new ManagedFileRemovalService(store), new ManagedFileReferenceService(store, store))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -170,6 +213,18 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
             Revision = 1
         };
     }
+
+    private ManagedFileReferenceEntity Reference(ManagedFileOwnershipEntity file, string key) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        ManagedFileId = file.Id,
+        TenantId = file.TenantId,
+        OwnerUserId = file.OwnerUserId,
+        ScopeKey = file.ScopeKey,
+        ReferenceKey = key,
+        CreatedAt = DateTimeOffset.UtcNow,
+        Revision = 1
+    };
 
     public async Task DisposeAsync()
     {

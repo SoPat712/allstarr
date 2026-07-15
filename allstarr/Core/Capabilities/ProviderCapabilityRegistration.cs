@@ -15,6 +15,7 @@ public static class ProviderCapabilityRegistration
         services.TryAddSingleton<IProviderRouteAccountResolver, DurableProviderRouteAccountResolver>();
         services.TryAddSingleton<IProviderRouteHealthSource, DurableProviderRouteHealthSource>();
         services.TryAddSingleton<IProviderRouteSidecarSource, DurableProviderRouteSidecarSource>();
+        services.TryAddSingleton<IProviderRouteDecisionStore, DurableProviderRouteDecisionStore>();
         services.TryAddSingleton<IProviderRouter, ProviderRouter>();
         return services;
     }

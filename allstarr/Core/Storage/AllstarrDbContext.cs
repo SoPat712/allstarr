@@ -5,6 +5,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Playback;
+using allstarr.Core.Routing;
 
 namespace allstarr.Core.Storage;
 
@@ -46,9 +47,12 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<FavoriteActionRecord> FavoriteActions => Set<FavoriteActionRecord>();
     public DbSet<FavoriteStateRecord> FavoriteStates => Set<FavoriteStateRecord>();
     public DbSet<ManagedFileOwnershipEntity> ManagedFiles => Set<ManagedFileOwnershipEntity>();
+    public DbSet<ManagedFileReferenceEntity> ManagedFileReferences => Set<ManagedFileReferenceEntity>();
     public DbSet<ProviderDownloadWorkspaceEntity> ProviderDownloadWorkspaces => Set<ProviderDownloadWorkspaceEntity>();
     public DbSet<ProviderDownloadArtifactEntity> ProviderDownloadArtifacts => Set<ProviderDownloadArtifactEntity>();
     public DbSet<PlaybackDeliveryCheckpointEntity> PlaybackDeliveryCheckpoints => Set<PlaybackDeliveryCheckpointEntity>();
+    public DbSet<ProviderRouteDecisionEntity> ProviderRouteDecisions => Set<ProviderRouteDecisionEntity>();
+    public DbSet<ProviderRouteOutcomeEntity> ProviderRouteOutcomes => Set<ProviderRouteOutcomeEntity>();
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -83,6 +87,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
+        modelBuilder.ConfigureProviderRouteDecisions();
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Keep the checked-in snapshot provider-neutral. Neither convention is
         // required because Allstarr assigns durable identifiers explicitly.
@@ -157,7 +162,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasIndex(item => new { item.ProviderId, item.TenantId, item.OwnerUserId });
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.OwnerUserId)
+            entity.HasOne<PlatformUserRecord>().WithMany()
+                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
+                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+                .HasConstraintName("FK_provider_account_tenant_owner")
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }
@@ -219,10 +227,20 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.LastErrorMessage).HasMaxLength(1000);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.ScopeKey, item.Type, item.IdempotencyKey }).IsUnique();
+            // These unique indexes are the principal side of database-native lineage constraints.
+            // They remain indexes (rather than EF alternate keys) because legacy/global jobs may
+            // legitimately have nullable tenant and owner values.
+            entity.HasIndex(item => new { item.Id, item.TenantId }).IsUnique()
+                .HasDatabaseName("UX_durable_job_tenant_lineage");
+            entity.HasIndex(item => new { item.Id, item.TenantId, item.OwnerUserId }).IsUnique()
+                .HasDatabaseName("UX_durable_job_owner_lineage");
             entity.HasIndex(item => new { item.State, item.AvailableAt, item.Priority });
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.OwnerUserId)
+            entity.HasOne<PlatformUserRecord>().WithMany()
+                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
+                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+                .HasConstraintName("FK_durable_job_tenant_owner")
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(item => item.ProviderAccountId)
                 .OnDelete(DeleteBehavior.Restrict);

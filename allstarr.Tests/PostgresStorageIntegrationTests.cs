@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Configuration;
+using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
@@ -23,6 +24,66 @@ namespace allstarr.Tests;
 
 public sealed class PostgresStorageIntegrationTests
 {
+    [Fact]
+    [Trait("Category", "Postgres")]
+    public async Task NativePostgresLineageConstraints_RejectCrossTenantFavoriteJob()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+
+        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
+            .UseNpgsql(connectionString)
+            .Options;
+        await using var db = new AllstarrDbContext(options);
+        await db.Database.ExecuteSqlRawAsync("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
+        await db.Database.MigrateAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        var tenantA = Guid.CreateVersion7();
+        var tenantB = Guid.CreateVersion7();
+        var userA = Guid.CreateVersion7();
+        var userB = Guid.CreateVersion7();
+        var jobA = Guid.CreateVersion7();
+        db.Tenants.AddRange(
+            new TenantRecord { Id = tenantA, Slug = "pg-lineage-a", Name = "Lineage A", CreatedAt = now },
+            new TenantRecord { Id = tenantB, Slug = "pg-lineage-b", Name = "Lineage B", CreatedAt = now });
+        db.Users.AddRange(
+            new PlatformUserRecord { Id = userA, TenantId = tenantA, DisplayName = "A", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now },
+            new PlatformUserRecord { Id = userB, TenantId = tenantB, DisplayName = "B", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
+        db.Jobs.Add(DatabaseLineageConstraintTests.Job(jobA, tenantA, userA, "pg-lineage", now));
+        await db.SaveChangesAsync();
+
+        db.FavoriteEvents.Add(new FavoriteEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantB,
+            OwnerUserId = userB,
+            Protocol = "subsonic",
+            BackendInstanceId = "primary",
+            BackendPrincipalId = "user-b",
+            ItemId = "track",
+            Operation = FavoriteOperation.Favorite,
+            SourceRevision = "1",
+            EventKey = Convert.ToHexString(Guid.NewGuid().ToByteArray()).ToLowerInvariant(),
+            CorrelationId = "pg-lineage",
+            PolicySnapshotJson = "{}",
+            JobId = jobA,
+            State = FavoriteEventState.Pending,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+
+        db.ChangeTracker.Clear();
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT count(*) FROM pg_constraint WHERE conname IN " +
+            "('FK_favorite_event_job_lineage', 'FK_managed_file_job_tenant_lineage', " +
+            "'FK_download_workspace_job_tenant_lineage', 'FK_enrichment_plan_job_lineage', " +
+            "'FK_enrichment_plan_file_lineage', 'FK_enrichment_application_job_lineage')";
+        if (command.Connection!.State != System.Data.ConnectionState.Open) await command.Connection.OpenAsync();
+        Assert.Equal(6L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+    }
+
     [Fact]
     [Trait("Category", "Postgres")]
     public async Task NativePostgresHostOptions_SupportIdentityJobAndOutboxTransactions()

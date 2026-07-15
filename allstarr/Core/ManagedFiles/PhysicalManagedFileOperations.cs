@@ -1,6 +1,7 @@
 namespace allstarr.Core.ManagedFiles;
 
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 public sealed class PhysicalManagedFileOperations : IManagedFileOperations
 {
@@ -18,9 +19,78 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
         }
     }
 
-    // .NET has no portable reflink API. Platform-specific implementations can replace
-    // this service; returning false deliberately advances to the safe copy fallback.
-    public bool TryCreateReflink(string destinationPath, string sourcePath) => false;
+    public bool TryCreateReflink(string destinationPath, string sourcePath)
+    {
+        var succeeded = false;
+        try
+        {
+            if (OperatingSystem.IsMacOS())
+            {
+                succeeded = CloneFileMac(sourcePath, destinationPath, 0) == 0;
+                return succeeded;
+            }
+            if (!OperatingSystem.IsLinux()) return false;
+
+            using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            succeeded = IoctlClone(
+                destination.SafeFileHandle.DangerousGetHandle().ToInt32(),
+                LinuxFiClone,
+                source.SafeFileHandle.DangerousGetHandle().ToInt32()) == 0;
+            return succeeded;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          PlatformNotSupportedException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+        finally
+        {
+            // Failed clone syscalls can leave a newly-created empty destination.
+            // Placement must be able to continue through the verified copy fallback.
+            if (!succeeded && File.Exists(destinationPath))
+            {
+                try { File.Delete(destinationPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    public bool TryGetFileIdentity(string path, out ManagedFileSystemIdentity identity)
+    {
+        identity = null!;
+        try
+        {
+            if (OperatingSystem.IsWindows()) return TryGetWindowsIdentity(path, out identity);
+            if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return false;
+
+            var buffer = Marshal.AllocHGlobal(512);
+            try
+            {
+                for (var index = 0; index < 512; index++) Marshal.WriteByte(buffer, index, 0);
+                if (StatUnix(path, buffer) != 0) return false;
+                var device = OperatingSystem.IsMacOS()
+                    ? unchecked((uint)Marshal.ReadInt32(buffer, 0)).ToString("x")
+                    : unchecked((ulong)Marshal.ReadInt64(buffer, 0)).ToString("x");
+                var file = unchecked((ulong)Marshal.ReadInt64(buffer, 8)).ToString("x");
+                var links = OperatingSystem.IsMacOS()
+                    ? unchecked((ushort)Marshal.ReadInt16(buffer, 6))
+                    : (uint)Math.Min(uint.MaxValue, unchecked((ulong)Marshal.ReadInt64(buffer, 16)));
+                identity = new ManagedFileSystemIdentity(device, file, links);
+                return true;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          PlatformNotSupportedException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
 
     public async Task CopyAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {
@@ -38,4 +108,49 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLinkWindows(string fileName, string existingFileName, IntPtr securityAttributes);
+
+    private const nuint LinuxFiClone = 0x40049409;
+
+    [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+    private static extern int IoctlClone(int descriptor, nuint request, int sourceDescriptor);
+
+    [DllImport("libc", EntryPoint = "clonefile", SetLastError = true)]
+    private static extern int CloneFileMac(string source, string destination, int flags);
+
+    [DllImport("libc", EntryPoint = "stat", SetLastError = true)]
+    private static extern int StatUnix(string path, IntPtr buffer);
+
+    private static bool TryGetWindowsIdentity(string path, out ManagedFileSystemIdentity identity)
+    {
+        identity = null!;
+        using SafeFileHandle handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        if (!GetFileInformationByHandle(handle, out var info)) return false;
+        identity = new ManagedFileSystemIdentity(
+            info.VolumeSerialNumber.ToString("x"),
+            $"{info.FileIndexHigh:x8}{info.FileIndexLow:x8}",
+            info.NumberOfLinks);
+        return true;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle fileHandle,
+        out ByHandleFileInformation fileInformation);
 }
