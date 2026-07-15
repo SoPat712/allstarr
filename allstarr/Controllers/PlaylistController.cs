@@ -1697,24 +1697,21 @@ public class PlaylistController : ControllerBase
             {
                 _logger.LogInformation("Triggering immediate playlist rebuild for {Playlist} with new manual mapping", decodedName);
 
-                // Run rebuild in background with timeout to avoid blocking the response
-                _ = Task.Run(async () =>
+                try
                 {
-                    try
-                    {
-                        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2)); // 2 minute timeout
-                        await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
-                        _logger.LogInformation("✓ Playlist {Playlist} rebuilt successfully with manual mapping", decodedName);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        _logger.LogWarning("Playlist rebuild for {Playlist} timed out after 2 minutes", decodedName);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to rebuild playlist {Playlist} after manual mapping", decodedName);
-                    }
-                });
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+                    cts.CancelAfter(TimeSpan.FromMinutes(2));
+                    await _matchingService.TriggerMatchingForPlaylistAsync(decodedName).WaitAsync(cts.Token);
+                    _logger.LogInformation("✓ Playlist {Playlist} rebuilt successfully with manual mapping", decodedName);
+                }
+                catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Playlist rebuild for {Playlist} timed out after 2 minutes", decodedName);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Failed to rebuild playlist {Playlist} after manual mapping", decodedName);
+                }
             }
             else
             {

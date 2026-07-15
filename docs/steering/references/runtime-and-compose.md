@@ -180,7 +180,11 @@ of truth for jobs, attempts, cancellation, progress, and terminal results. State
 follow-up action write an outbox record in the same transaction as the state change.
 
 - Workers claim jobs with an atomic lease, use idempotency keys, record attempts, and retry with bounded backoff.
-- Outbox delivery is at-least-once; consumers and external effects must be idempotent.
+- Outbox sink invocation is at-least-once; consumers and external effects must be idempotent. The built-in
+  `DiagnosticOutboxSink` acknowledges events by recording only their type and message ID. It does not publish
+  externally. In the outbox table, `Delivered` means the configured sink accepted the record, not that a
+  webhook, event bus, or third-party integration received it. Replace `IOutboxSink` when real external delivery
+  is configured.
 - Valkey may accelerate dispatch, locking, and wakeups, but a Valkey restart must be recoverable by scanning durable pending jobs and outbox records.
 - A job blocked by an unavailable sidecar or provider should be deferred or paused with a visible reason, not discarded or retried in a tight loop.
 - Job ownership, account scope, and cancellation must be checked again by the worker, not trusted only from the request that enqueued it.

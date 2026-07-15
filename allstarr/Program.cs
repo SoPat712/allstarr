@@ -463,6 +463,7 @@ else
     builder.Services.AddScoped<SubsonicLyricsProtocolAdapter>();
     builder.Services.AddSingleton<SubsonicRelayProtocolAdapter>();
     builder.Services.AddSingleton<SubsonicSearchProtocolAdapter>();
+    builder.Services.AddSingleton<SubsonicScrobbleProtocolAdapter>();
     builder.Services.AddScoped<SubsonicAuthFilter>();
 }
 

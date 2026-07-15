@@ -16,6 +16,7 @@ using allstarr.Filters;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Protocols;
 using allstarr.Core.Favorites;
+using allstarr.Core.Playback;
 
 namespace allstarr.Controllers;
 
@@ -36,11 +37,13 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicLyricsProtocolAdapter _lyricsProtocolAdapter;
     private readonly SubsonicRelayProtocolAdapter _relayProtocolAdapter;
     private readonly SubsonicSearchProtocolAdapter _searchProtocolAdapter;
+    private readonly SubsonicScrobbleProtocolAdapter _scrobbleProtocolAdapter;
     private readonly SubsonicVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly PlaylistSyncService? _playlistSyncService;
     private readonly RedisCacheService _cache;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
+    private readonly IPlaybackSignalPipeline? _playbackSignals;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -54,11 +57,13 @@ public class SubsonicController : ControllerBase
         SubsonicLyricsProtocolAdapter lyricsProtocolAdapter,
         SubsonicRelayProtocolAdapter relayProtocolAdapter,
         SubsonicSearchProtocolAdapter searchProtocolAdapter,
+        SubsonicScrobbleProtocolAdapter scrobbleProtocolAdapter,
         SubsonicVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
         RedisCacheService cache,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null,
-        IFavoriteActionPipeline? favoriteActions = null)
+        IFavoriteActionPipeline? favoriteActions = null,
+        IPlaybackSignalPipeline? playbackSignals = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _metadataService = metadataService;
@@ -71,11 +76,13 @@ public class SubsonicController : ControllerBase
         _lyricsProtocolAdapter = lyricsProtocolAdapter;
         _relayProtocolAdapter = relayProtocolAdapter;
         _searchProtocolAdapter = searchProtocolAdapter;
+        _scrobbleProtocolAdapter = scrobbleProtocolAdapter;
         _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
         _playlistSyncService = playlistSyncService;
         _cache = cache;
         _logger = logger;
         _favoriteActions = favoriteActions;
+        _playbackSignals = playbackSignals;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
         {
@@ -925,9 +932,10 @@ public class SubsonicController : ControllerBase
                 Request.Headers);
             if ((int)result.StatusCode is >= 200 and < 300 && CurrentProtocolContext.Actor != null)
             {
-                var itemId = parameters.GetValueOrDefault("id", "");
-                if (!string.IsNullOrWhiteSpace(itemId))
+                foreach (var itemId in parameters.GetAllValues("id").Where(item => !string.IsNullOrWhiteSpace(item)))
+                {
                     await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
+                }
             }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
@@ -954,9 +962,10 @@ public class SubsonicController : ControllerBase
                 relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
             if ((int)result.StatusCode is >= 200 and < 300 && CurrentProtocolContext.Actor != null)
             {
-                var itemId = parameters.GetValueOrDefault("id", "");
-                if (!string.IsNullOrWhiteSpace(itemId))
+                foreach (var itemId in parameters.GetAllValues("id").Where(item => !string.IsNullOrWhiteSpace(item)))
+                {
                     await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
+                }
             }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
@@ -971,16 +980,76 @@ public class SubsonicController : ControllerBase
     [HttpGet, HttpPost]
     [Route("rest/updatePlaylist")]
     [Route("rest/updatePlaylist.view")]
-    public Task<IActionResult> UpdatePlaylist() => RelayMutation("rest/updatePlaylist");
+    public async Task<IActionResult> UpdatePlaylist()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var playlistId = parameters.GetValueOrDefault("playlistId", "");
+        if (!_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
+        {
+            return await RelayMutation("rest/updatePlaylist", parameters);
+        }
+
+        var route = await _virtualPlaylistProtocolAdapter.ResolveMutationAsync(
+            CurrentProtocolContext,
+            playlistId,
+            HttpContext.RequestAborted);
+        if (route == null)
+        {
+            return _responseBuilder.CreateError(format, 50, "Playlist is not available to this user");
+        }
+
+        if (!route.Writable || string.IsNullOrWhiteSpace(route.TargetPlaylistId))
+        {
+            return _responseBuilder.CreateError(format, 50, "Playlist is read-only");
+        }
+
+        return await RelayMutation(
+            "rest/updatePlaylist",
+            parameters.ReplaceValue("playlistId", route.TargetPlaylistId));
+    }
 
     [HttpGet, HttpPost]
     [Route("rest/scrobble")]
     [Route("rest/scrobble.view")]
-    public Task<IActionResult> Scrobble() => RelayMutation("rest/scrobble");
+    public async Task<IActionResult> Scrobble()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/scrobble";
+        try
+        {
+            var result = await _proxyService.RelayRawAsync(
+                relayEndpoint,
+                parameters,
+                HttpContext.RequestAborted,
+                Request.Headers);
+            if ((int)result.StatusCode is >= 200 and < 300)
+            {
+                await RecordScrobbleSignalsSafelyAsync(parameters);
+            }
+            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                "Error connecting to Subsonic server for {Endpoint} ({ExceptionType})",
+                relayEndpoint,
+                ex.GetType().Name);
+            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
+        }
+    }
 
     private async Task<IActionResult> RelayMutation(string endpoint)
     {
         var parameters = await ExtractAllParameters();
+        return await RelayMutation(endpoint, parameters);
+    }
+
+    private async Task<IActionResult> RelayMutation(
+        string endpoint,
+        SubsonicRequestParameters parameters)
+    {
         var format = parameters.GetValueOrDefault("f", "xml");
         var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? endpoint;
         try
@@ -1017,6 +1086,37 @@ public class SubsonicController : ControllerBase
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning("Favorite workflow recording failed ({ExceptionType})", ex.GetType().Name);
+        }
+    }
+
+    private async Task RecordScrobbleSignalsSafelyAsync(SubsonicRequestParameters parameters)
+    {
+        if (_playbackSignals == null || CurrentProtocolContext.Actor == null) return;
+
+        foreach (var signal in _scrobbleProtocolAdapter.Parse(parameters, DateTimeOffset.UtcNow))
+        {
+            try
+            {
+                await _playbackSignals.RecordAsync(new PlaybackSignalRequest(
+                    CurrentProtocolContext,
+                    signal.Transition,
+                    signal.ItemId,
+                    CurrentProtocolContext.Client.DeviceId ?? CurrentProtocolContext.Client.ClientId,
+                    $"subsonic:{signal.EventKey}:{signal.Index}",
+                    null,
+                    signal.ObservedAt), HttpContext.RequestAborted);
+            }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    "Could not durably record Subsonic scrobble item {ItemIndex} ({ExceptionType})",
+                    signal.Index,
+                    ex.GetType().Name);
+            }
         }
     }
 

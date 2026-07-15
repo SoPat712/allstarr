@@ -955,6 +955,105 @@ fieldset.form-row > label small {
     gap: var(--space-3);
 }
 
+.architecture-flow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr) auto minmax(0, 1fr);
+    align-items: stretch;
+    gap: var(--space-3);
+}
+
+.architecture-node,
+.architecture-lane {
+    min-width: 0;
+    text-align: left;
+}
+
+.architecture-node {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    min-height: 150px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+}
+
+.architecture-node.active {
+    border-color: color-mix(in srgb, var(--accent), var(--border) 45%);
+    background: linear-gradient(145deg, var(--accent-soft), var(--surface-elevated) 68%);
+}
+
+.architecture-kicker {
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.architecture-node small,
+.architecture-lane small {
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+.architecture-arrow {
+    align-self: center;
+    color: var(--accent-secondary);
+    font-size: 1.4rem;
+    font-weight: 800;
+}
+
+.architecture-lanes {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.architecture-lane {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-3);
+    min-height: 94px;
+    padding: var(--space-4);
+}
+
+.architecture-lane > span:first-child {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.architecture-details {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+    .architecture-flow {
+        grid-template-columns: 1fr;
+    }
+
+    .architecture-arrow {
+        justify-self: center;
+        transform: rotate(90deg);
+    }
+
+    .architecture-node {
+        min-height: 0;
+    }
+
+    .architecture-lanes,
+    .architecture-details {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    .architecture-lanes,
+    .architecture-details {
+        grid-template-columns: 1fr;
+    }
+}
+
 .activity-item {
     display: grid;
     gap: var(--space-2);
@@ -1527,7 +1626,7 @@ fieldset.form-row > label small {
 
 .setup-progress {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--space-2);
     margin: 0;
     padding: 0;

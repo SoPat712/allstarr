@@ -33,7 +33,9 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     [Fact]
     public async Task SubsonicRead_ShapesJsonAndXmlWithoutExternalStreamIds()
     {
-        var adapter = new SubsonicVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()));
+        var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(Model()),
+            new StubMutationResolver(null));
         var jsonResult = Assert.IsType<JsonResult>(await adapter.ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
@@ -55,7 +57,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var service = new StubVirtualizationService(null);
         Assert.Null(await new JellyfinVirtualPlaylistProtocolAdapter(service).ReadItemAsync(
             Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
-        Assert.Null(await new SubsonicVirtualPlaylistProtocolAdapter(service).ReadAsync(
+        Assert.Null(await new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null)).ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
         Assert.False(PlaylistVirtualizationService.TryParseProtocolId("ext-spotify-playlist-123", out _));
     }
@@ -77,5 +79,14 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         public Task<VirtualPlaylistReadModel?> ReadAsync(
             ProtocolExecutionContext context, string protocolId, CancellationToken cancellationToken = default) =>
             Task.FromResult(model);
+    }
+
+    private sealed class StubMutationResolver(SubsonicPlaylistMutationRoute? route)
+        : ISubsonicPlaylistMutationResolver
+    {
+        public Task<SubsonicPlaylistMutationRoute?> ResolveAsync(
+            ProtocolExecutionContext context,
+            string protocolId,
+            CancellationToken cancellationToken = default) => Task.FromResult(route);
     }
 }

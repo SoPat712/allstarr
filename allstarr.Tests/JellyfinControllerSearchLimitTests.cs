@@ -40,4 +40,21 @@ public class JellyfinControllerSearchLimitTests
         Assert.Equal(expectedAlbumLimit, result.AlbumLimit);
         Assert.Equal(expectedArtistLimit, result.ArtistLimit);
     }
+
+    [Theory]
+    [InlineData(0, 20, 20)]
+    [InlineData(20, 20, 40)]
+    [InlineData(480, 50, 500)]
+    [InlineData(-1, 20, 20)]
+    public void IntegratedSearchFetchLimit_LoadsTheMergedPagePrefixOnce(
+        int startIndex,
+        int limit,
+        int expected)
+    {
+        var method = typeof(JellyfinController).GetMethod(
+            "GetIntegratedSearchFetchLimit",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.Equal(expected, (int)method!.Invoke(null, [startIndex, limit])!);
+    }
 }

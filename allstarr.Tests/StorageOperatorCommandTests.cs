@@ -73,6 +73,35 @@ public sealed class StorageOperatorCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task PostgresRestore_CliRequiresExactIsolatedTargetProof()
+    {
+        var services = Services(
+            Path.Combine(_root, "operator-proof.db"),
+            Path.Combine(_root, "operator-proof-backups"));
+        var error = new StringWriter();
+
+        var exit = await StorageOperatorCommand.RunAsync(
+            services,
+            ["storage", "restore-postgres", "--confirm-destructive-restore"],
+            TextWriter.Null,
+            error);
+
+        Assert.Equal(1, exit);
+        Assert.Contains("invalid_arguments", error.ToString(), StringComparison.Ordinal);
+
+        var help = new StringWriter();
+        Assert.Equal(0, await StorageOperatorCommand.RunAsync(
+            services,
+            ["storage", "help"],
+            help,
+            TextWriter.Null));
+        Assert.Contains(
+            "--confirm-isolated-target-database <name>",
+            help.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProviderTransfer_RequiresConfirmationsAndImportsIntoEmptyTarget()
     {
         var sourcePath = Path.Combine(_root, "transfer-source.db");

@@ -43,7 +43,9 @@ state, but it does not replace `BackendIdentityResolver` or select a provider ac
 
 - [protocol-source-lock.json](../../../allstarr.Tests/Fixtures/Protocols/protocol-source-lock.json) is the
   machine-checked source lock for the local Jellyfin OpenAPI version/content hash and the local octo-fiesta
-  and Last.fm reference revisions. Update that lock deliberately when a source changes.
+  and Last.fm reference revisions. It records license provenance only when the pinned artifact or repository
+  states it. `not-declared` entries are deliberate and must not be replaced with an inferred project license.
+  Update that lock deliberately when a source changes.
 - [protocol-support-matrix.json](../../../allstarr.Tests/Fixtures/Protocols/protocol-support-matrix.json)
   is the endpoint-level current/target inventory. Every named fixture must be a checked-in valid JSON file;
   `ProtocolSupportMatrixTests` enforces that rule, while the accompanying `testLocation` identifies executable coverage.

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
@@ -1228,11 +1230,10 @@ public partial class JellyfinController : ControllerBase
                     mixSongs.AddRange(searchResult.Where(s => !mixSongs.Any(m => m.Id == s.Id)));
                 }
 
-                // Shuffle and limit
-                var random = new Random();
+                // Keep the same seed stable across retries and process restarts.
                 var shuffledMix = mixSongs
                     .Where(s => s.Id != itemId) // Exclude the seed song
-                    .OrderBy(_ => random.Next())
+                    .OrderBy(songItem => StableInstantMixOrder(itemId, songItem.Id), StringComparer.Ordinal)
                     .Take(limit)
                     .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
                     .ToList();
@@ -1262,6 +1263,10 @@ public partial class JellyfinController : ControllerBase
 
         return HandleProxyResponse(result, statusCode);
     }
+
+    private static string StableInstantMixOrder(string seedItemId, string candidateItemId) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{seedItemId}\n{candidateItemId}")));
 
     private bool CanRunOptionalUserScopedWork() =>
         _interactionProtocolAdapter.CanRunOptionalUserWork(HttpContext.GetProtocolExecutionContext());

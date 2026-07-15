@@ -58,7 +58,8 @@ public sealed class ProviderRouter(
 
         var orderedProviders = registry
             .FindByCapability(request.Capability, includeNonOperational: true)
-            .OrderBy(provider => Priority(request, provider.Id))
+            .OrderBy(provider => ExplicitPriority(request, provider.Id))
+            .ThenBy(provider => Priority(request, provider.Id))
             .ThenBy(provider => provider.Id, StringComparer.Ordinal)
             .ToArray();
         var decisions = new List<ProviderRouteCandidateDecision>(orderedProviders.Length);
@@ -90,6 +91,25 @@ public sealed class ProviderRouter(
             if (!state.CapabilityEnabled)
             {
                 Reject("capability-disabled");
+                continue;
+            }
+
+            if (!state.ProviderTermsAllowed)
+            {
+                Reject("provider-terms-denied");
+                continue;
+            }
+
+            if (!state.RateLimitBudgetAvailable)
+            {
+                Reject("rate-limit-budget-exhausted");
+                continue;
+            }
+
+            if (request.Policy.ExplicitContent == ProviderExplicitContentPolicy.CleanOnly &&
+                state.IsExplicit != false)
+            {
+                Reject(state.IsExplicit == true ? "explicit-content-denied" : "explicit-state-unknown");
                 continue;
             }
 
@@ -172,6 +192,13 @@ public sealed class ProviderRouter(
                 !request.Policy.AllowManagedDownloads)
             {
                 Reject("managed-download-denied");
+                continue;
+            }
+
+            if (request.Capability == ProviderCapabilityKind.Download &&
+                !state.StorageCapacityAvailable)
+            {
+                Reject("storage-capacity-unavailable");
                 continue;
             }
 
@@ -379,6 +406,13 @@ public sealed class ProviderRouter(
         }
 
         return int.MaxValue;
+    }
+
+    private static int ExplicitPriority(ProviderRouteRequest request, string providerId)
+    {
+        if (request.Policy.ExplicitContent != ProviderExplicitContentPolicy.PreferClean) return 0;
+        var state = request.ProviderStates.GetValueOrDefault(providerId);
+        return state?.IsExplicit switch { false => 0, null => 1, true => 2 };
     }
 
     private static void RequireTypedContract<TCapability>(ProviderCapabilityKind capability)

@@ -66,7 +66,8 @@ public sealed class FavoriteActionPipeline(
     DurableJobQueue jobs,
     IPlatformClock clock,
     FavoriteActionPolicyOptions? policy = null,
-    IDurableFavoriteActionPolicyResolver? policyResolver = null) : IFavoriteActionPipeline
+    IDurableFavoriteActionPolicyResolver? policyResolver = null,
+    IProtocolLibraryScopeResolver? libraryScopes = null) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
@@ -80,12 +81,15 @@ public sealed class FavoriteActionPipeline(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var actor = request.ExecutionContext.RequireActor();
+        var execution = request.ExecutionContext;
+        if (string.IsNullOrWhiteSpace(execution.LibraryScopeId) && libraryScopes != null)
+            execution = await libraryScopes.ResolveAsync(execution, request.ItemId, cancellationToken);
+        var actor = execution.RequireActor();
         var userId = actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A canonical user is required.");
         var itemId = Required(request.ItemId, nameof(request.ItemId), 500);
         var sourceRevision = Required(request.SourceRevision, nameof(request.SourceRevision), 300);
-        var protocol = request.ExecutionContext.Protocol.ToString().ToLowerInvariant();
-        var backend = request.ExecutionContext.BackendInstanceId;
+        var protocol = execution.Protocol.ToString().ToLowerInvariant();
+        var backend = execution.BackendInstanceId;
         var eventKey = HashKey(actor.TenantId, userId, protocol, backend, itemId, request.Operation, sourceRevision);
         var now = clock.UtcNow;
 
@@ -131,7 +135,7 @@ public sealed class FavoriteActionPipeline(
         }
 
         var effectivePolicy = await _policyResolver.ResolveAsync(actor.TenantId, userId, protocol, backend,
-            request.ExecutionContext.LibraryScopeId, cancellationToken);
+            execution.LibraryScopeId, cancellationToken);
         var actionTypes = BuildActions(request, effectivePolicy);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
@@ -141,7 +145,7 @@ public sealed class FavoriteActionPipeline(
                 new FavoriteJobPayload(eventId),
                 actor.TenantId,
                 userId,
-                CorrelationId: request.ExecutionContext.CorrelationId),
+                CorrelationId: execution.CorrelationId),
             cancellationToken);
         var record = new FavoriteEventRecord
         {
@@ -150,13 +154,13 @@ public sealed class FavoriteActionPipeline(
             OwnerUserId = userId,
             Protocol = protocol,
             BackendInstanceId = backend,
-            BackendPrincipalId = request.ExecutionContext.VerifiedBackendPrincipalId,
-            LibraryScopeId = request.ExecutionContext.LibraryScopeId,
+            BackendPrincipalId = execution.VerifiedBackendPrincipalId,
+            LibraryScopeId = execution.LibraryScopeId,
             ItemId = itemId,
             Operation = request.Operation,
             SourceRevision = sourceRevision,
             EventKey = eventKey,
-            CorrelationId = request.ExecutionContext.CorrelationId,
+            CorrelationId = execution.CorrelationId,
             PolicySnapshotJson = JsonSerializer.Serialize(new
             {
                 actions = actionTypes,

@@ -1,6 +1,7 @@
 using System.Net;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Subsonic;
+using allstarr.Core.Playback;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Services.Subsonic;
@@ -68,5 +69,74 @@ public sealed class SubsonicProtocolAdapterTests
             new SubsonicSearchProtocolAdapter().Parse(
                 SubsonicRequestParameters.FromDictionary(new Dictionary<string, string>()),
                 context));
+    }
+
+    [Fact]
+    public void ScrobbleSignals_PreserveRepeatedIdsTimesAndSubmissionMeaning()
+    {
+        var receivedAt = DateTimeOffset.FromUnixTimeMilliseconds(5_000);
+        var parameters = new SubsonicRequestParameters(
+            "POST",
+            "application/x-www-form-urlencoded",
+            null,
+            [
+                new("id", "song-a", SubsonicParameterSource.Form),
+                new("id", "song-b", SubsonicParameterSource.Form),
+                new("time", "1000", SubsonicParameterSource.Form),
+                new("time", "2000", SubsonicParameterSource.Form),
+                new("submission", "false", SubsonicParameterSource.Form),
+                new("submission", "true", SubsonicParameterSource.Form)
+            ]);
+
+        var signals = new SubsonicScrobbleProtocolAdapter().Parse(parameters, receivedAt);
+
+        Assert.Collection(
+            signals,
+            first =>
+            {
+                Assert.Equal("song-a", first.ItemId);
+                Assert.Equal(PlaybackTransition.Start, first.Transition);
+                Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1000), first.ObservedAt);
+                Assert.Equal("1000", first.EventKey);
+            },
+            second =>
+            {
+                Assert.Equal("song-b", second.ItemId);
+                Assert.Equal(PlaybackTransition.Submission, second.Transition);
+                Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(2000), second.ObservedAt);
+                Assert.Equal("2000", second.EventKey);
+            });
+    }
+
+    [Fact]
+    public void ScrobbleSignals_DefaultToSubmissionAndUseRetryDedupeBucket()
+    {
+        var receivedAt = DateTimeOffset.FromUnixTimeSeconds(61);
+        var parameters = SubsonicRequestParameters.FromDictionary(
+            new Dictionary<string, string> { ["id"] = "song-a" });
+
+        var signal = Assert.Single(new SubsonicScrobbleProtocolAdapter().Parse(parameters, receivedAt));
+
+        Assert.Equal(PlaybackTransition.Submission, signal.Transition);
+        Assert.Equal(receivedAt, signal.ObservedAt);
+        Assert.Equal("2", signal.EventKey);
+    }
+
+    [Fact]
+    public void ControllerRecordsEachRepeatedFavoriteTrackInsteadOfACommaJoinedId()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "SubSonicController.cs"));
+
+        Assert.Contains("parameters.GetAllValues(\"id\")", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("var itemId = parameters.GetValueOrDefault(\"id\", \"\");\n                if (!string.IsNullOrWhiteSpace(itemId))", controller, StringComparison.Ordinal);
+    }
+
+    private static string FindRepositoryFile(params string[] parts)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "allstarr.sln")))
+            directory = directory.Parent;
+        return Path.Combine(directory?.FullName ?? throw new DirectoryNotFoundException(), Path.Combine(parts));
     }
 }

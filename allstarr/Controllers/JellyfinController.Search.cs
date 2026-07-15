@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text;
+using System.Globalization;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -288,12 +289,12 @@ public partial class JellyfinController
 
         // Run local and external searches in parallel
         var itemTypes = ParseItemTypes(includeItemTypes);
-        var externalSearchLimits = GetExternalSearchLimits(itemTypes, limit, includePlaylistsAsAlbums: true);
+        var integratedFetchLimit = GetIntegratedSearchFetchLimit(startIndex, limit);
+        var externalSearchLimits = GetExternalSearchLimits(itemTypes, integratedFetchLimit, includePlaylistsAsAlbums: true);
         var jellyfinTask = GetLocalSearchResultForCurrentRequest(
             cleanQuery,
             includeItemTypes,
-            limit,
-            startIndex,
+            integratedFetchLimit,
             recursive,
             userId);
 
@@ -323,7 +324,7 @@ public partial class JellyfinController
 
         var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
             ? Task.FromResult(new List<ExternalPlaylist>())
-            : _metadataService.SearchPlaylistsAsync(cleanQuery, limit, HttpContext.RequestAborted);
+            : _metadataService.SearchPlaylistsAsync(cleanQuery, integratedFetchLimit, HttpContext.RequestAborted);
 
         _logger.LogDebug("Playlist search enabled: {Enabled}, searching for: '{Query}'",
             _settings.EnableExternalPlaylists, cleanQuery);
@@ -446,47 +447,6 @@ public partial class JellyfinController
         _logger.LogDebug(
             "Merged results: Songs={Songs}, Albums+Playlists={AlbumsPlaylists}, Artists={Artists}",
             allSongs.Count, mergedAlbumsAndPlaylists.Count, allArtists.Count);
-
-        // Pre-fetch lyrics for top 3 LOCAL songs in background (don't await)
-        // Skip external tracks to avoid spamming LRCLIB with malformed titles
-        if (_lrclibService != null && allSongs.Count > 0)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var top3Local = allSongs.Where(IsLocalItem).Take(3).ToList();
-                    if (top3Local.Count > 0)
-                    {
-                        _logger.LogDebug("🎵 Pre-fetching lyrics for top {Count} LOCAL search results", top3Local.Count);
-
-                        foreach (var songItem in top3Local)
-                        {
-                            var title = songItem.TryGetValue("Name", out var nameObj) && nameObj is JsonElement nameEl ? nameEl.GetString() ?? "" : songItem["Name"]?.ToString() ?? "";
-                            var artist = "";
-
-                            if (songItem.TryGetValue("Artists", out var artistsObj) && artistsObj is JsonElement artistsEl && artistsEl.GetArrayLength() > 0)
-                            {
-                                artist = artistsEl[0].GetString() ?? "";
-                            }
-                            else if (songItem.TryGetValue("Artists", out var artistsListObj) && artistsListObj is object[] artistsList && artistsList.Length > 0)
-                            {
-                                artist = artistsList[0]?.ToString() ?? "";
-                            }
-
-                            if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(artist))
-                            {
-                                await _lrclibService.GetLyricsAsync(title, artist, "", 0);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to pre-fetch lyrics for search results");
-                }
-            });
-        }
 
         // Filter by item types if specified
         var items = new List<Dictionary<string, object?>>();
@@ -616,8 +576,7 @@ public partial class JellyfinController
     private async Task<(JsonDocument? Body, int StatusCode)> GetLocalSearchResultForCurrentRequest(
         string cleanQuery,
         string? includeItemTypes,
-        int limit,
-        int startIndex,
+        int fetchLimit,
         bool recursive,
         string? userId)
     {
@@ -633,6 +592,9 @@ public partial class JellyfinController
 
         // Preserve literal request semantics, only normalize recovered SearchTerm.
         queryParams["SearchTerm"] = cleanQuery;
+        // Every source contributes the same prefix. The merged response applies the client page once.
+        queryParams["StartIndex"] = "0";
+        queryParams["Limit"] = fetchLimit.ToString(CultureInfo.InvariantCulture);
 
         _logger.LogInformation(
             "SEARCH TRACE: local proxy request endpoint='{Endpoint}' query='{SafeQuery}'",
@@ -792,6 +754,9 @@ public partial class JellyfinController
             includeAlbums ? limit : 0,
             includeArtists ? limit : 0);
     }
+
+    private static int GetIntegratedSearchFetchLimit(int startIndex, int limit) =>
+        Math.Min(Math.Max(0, startIndex) + Math.Max(0, limit), 500);
 
     private static IActionResult CreateEmptyItemsResponse(int startIndex)
     {

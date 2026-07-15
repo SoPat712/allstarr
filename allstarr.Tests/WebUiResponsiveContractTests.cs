@@ -76,6 +76,11 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.Contains("SETUP_GUIDE_DISMISSED_KEY", script, StringComparison.Ordinal);
         Assert.Contains("localStorage.setItem(SETUP_GUIDE_DISMISSED_KEY, \"1\")", script, StringComparison.Ordinal);
+        Assert.Contains("/api/admin/onboarding/status", script, StringComparison.Ordinal);
+        Assert.Contains("/api/admin/onboarding/complete", script, StringComparison.Ordinal);
+        Assert.Contains("this.onboardingStatus = await API.onboardingStatus()", script, StringComparison.Ordinal);
+        Assert.Contains("this.onboardingStatus = await API.completeOnboarding()", script, StringComparison.Ordinal);
+        Assert.Contains("completeSetupGuide()", script, StringComparison.Ordinal);
         Assert.Contains("openSetupGuide()", script, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Setup progress\"", script, StringComparison.Ordinal);
         Assert.Contains("aria-current=${index === this.setupStep ? \"step\" : nothing}", script, StringComparison.Ordinal);
@@ -85,6 +90,11 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("localStorage.setItem(SETUP_GUIDE_STEP_KEY, String(this.setupStep))", script, StringComparison.Ordinal);
         Assert.Contains("Refresh readiness", script, StringComparison.Ordinal);
         Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
+        Assert.Contains("First playlist", script, StringComparison.Ordinal);
+        Assert.Contains("leaveSetupGuideFor(\"/library/link\")", script, StringComparison.Ordinal);
+        Assert.Contains("SETUP_GUIDE_LAST_STEP = 4", script, StringComparison.Ordinal);
+        Assert.Contains("Promise.all([this.loadStatus(), this.loadProviderAccounts()])", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("this.loadProviderHealth()", script, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -101,6 +111,21 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("recordLoadFailure(\"extensionRegistries\"", script, StringComparison.Ordinal);
         Assert.Contains("data?.[\"subsonic-response\"]?.error?.message", script, StringComparison.Ordinal);
         Assert.Contains("${fallback} (HTTP ${response.status})", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArchitectureRoute_IsDataBackedInteractiveAndResponsive()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
+
+        Assert.Contains("#/architecture", controller, StringComparison.Ordinal);
+        Assert.Contains("renderArchitecture()", script, StringComparison.Ordinal);
+        Assert.Contains("asArray(this.schema?.providers)", script, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Allstarr request and media flow\"", script, StringComparison.Ordinal);
+        Assert.Contains(".architecture-flow", css, StringComparison.Ordinal);
+        Assert.Contains("@media (max-width: 560px)", css, StringComparison.Ordinal);
     }
 
     [Fact]

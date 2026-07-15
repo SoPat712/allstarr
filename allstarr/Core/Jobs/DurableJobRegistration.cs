@@ -17,7 +17,7 @@ public static class DurableJobRegistration
         services.AddSingleton<DurableScheduleEngine>();
         services.AddSingleton<DurableOutbox>();
         services.AddSingleton<SidecarJobGate>();
-        services.AddSingleton<IOutboxSink, LoggingOutboxSink>();
+        services.AddSingleton<IOutboxSink, DiagnosticOutboxSink>();
         services.AddHostedService<DurableJobWorker>();
         services.AddHostedService<DurableScheduleWorker>();
         services.AddHostedService<DurableOutboxDispatcher>();

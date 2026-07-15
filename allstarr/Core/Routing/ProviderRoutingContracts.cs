@@ -55,7 +55,11 @@ public sealed record ProviderRouteProviderState
         Guid? requestedAccountId = null,
         long? expectedAccountRevision = null,
         IEnumerable<ProviderAudioQuality>? availableQualities = null,
-        string? trackCatalog = null)
+        string? trackCatalog = null,
+        bool? isExplicit = null,
+        bool rateLimitBudgetAvailable = true,
+        bool storageCapacityAvailable = true,
+        bool providerTermsAllowed = true)
     {
         ProviderId = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
         if (requestedAccountId == Guid.Empty)
@@ -83,6 +87,10 @@ public sealed record ProviderRouteProviderState
         TrackCatalog = trackCatalog == null
             ? null
             : ProviderContractValidation.Catalog(trackCatalog, nameof(trackCatalog));
+        IsExplicit = isExplicit;
+        RateLimitBudgetAvailable = rateLimitBudgetAvailable;
+        StorageCapacityAvailable = storageCapacityAvailable;
+        ProviderTermsAllowed = providerTermsAllowed;
     }
 
     public string ProviderId { get; }
@@ -96,6 +104,14 @@ public sealed record ProviderRouteProviderState
     public IReadOnlyList<ProviderAudioQuality> AvailableQualities { get; }
 
     public string? TrackCatalog { get; }
+
+    public bool? IsExplicit { get; }
+
+    public bool RateLimitBudgetAvailable { get; }
+
+    public bool StorageCapacityAvailable { get; }
+
+    public bool ProviderTermsAllowed { get; }
 }
 
 public sealed record ProviderRouteRequest

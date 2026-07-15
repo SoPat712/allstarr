@@ -103,26 +103,25 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
         var selected = _parameters
             .Where(parameter => names.Contains(parameter.Name))
             .ToList();
-        string? body = null;
+        return new SubsonicRequestParameters(Method, ContentType, BuildBody(selected), selected);
+    }
 
-        if (selected.Any(parameter => parameter.Source == SubsonicParameterSource.Form))
-        {
-            body = EncodePairs(selected.Where(parameter => parameter.Source == SubsonicParameterSource.Form));
-        }
-        else if (selected.Any(parameter => parameter.Source == SubsonicParameterSource.Json))
-        {
-            body = JsonSerializer.Serialize(selected
-                .Where(parameter => parameter.Source == SubsonicParameterSource.Json)
-                .GroupBy(parameter => parameter.Name, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.Count() == 1
-                        ? (object)group.First().Value
-                        : group.Select(parameter => parameter.Value).ToArray(),
-                    StringComparer.OrdinalIgnoreCase));
-        }
+    /// <summary>
+    /// Replaces a parameter without flattening repeated values or moving any parameter
+    /// between the query string and request body. This is used when an Allstarr protocol
+    /// identifier must be translated to the corresponding backend identifier.
+    /// </summary>
+    public SubsonicRequestParameters ReplaceValue(string name, string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(value);
 
-        return new SubsonicRequestParameters(Method, ContentType, body, selected);
+        var replaced = _parameters
+            .Select(parameter => parameter.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
+                ? parameter with { Value = value }
+                : parameter)
+            .ToList();
+        return new SubsonicRequestParameters(Method, ContentType, BuildBody(replaced), replaced);
     }
 
     public static SubsonicRequestParameters FromDictionary(
@@ -143,6 +142,29 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
         '&',
         parameters.Select(parameter =>
             $"{Uri.EscapeDataString(parameter.Name)}={Uri.EscapeDataString(parameter.Value)}"));
+
+    private static string? BuildBody(IReadOnlyList<SubsonicParameter> parameters)
+    {
+        if (parameters.Any(parameter => parameter.Source == SubsonicParameterSource.Form))
+        {
+            return EncodePairs(parameters.Where(parameter => parameter.Source == SubsonicParameterSource.Form));
+        }
+
+        if (parameters.Any(parameter => parameter.Source == SubsonicParameterSource.Json))
+        {
+            return JsonSerializer.Serialize(parameters
+                .Where(parameter => parameter.Source == SubsonicParameterSource.Json)
+                .GroupBy(parameter => parameter.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Count() == 1
+                        ? (object)group.First().Value
+                        : group.Select(parameter => parameter.Value).ToArray(),
+                    StringComparer.OrdinalIgnoreCase));
+        }
+
+        return null;
+    }
 
     public IEnumerator<KeyValuePair<string, string>> GetEnumerator() => Keys
         .Select(key => new KeyValuePair<string, string>(key, this[key]))

@@ -48,7 +48,7 @@ public sealed class WebUiEnvMigrationContractTests
 
 
     [Fact]
-    public void FirstRunGuide_OffersLegacyImportWithoutRepeatingAfterDismissal()
+    public void FirstRunGuide_OffersLegacyImportWithoutRepeatingAfterCompletion()
     {
         Assert.Contains("canOfferEnvMigration", _script, StringComparison.Ordinal);
         Assert.Contains("status.eligible ?? status.Eligible ?? status.firstRun ?? status.FirstRun", _script, StringComparison.Ordinal);
@@ -64,6 +64,12 @@ public sealed class WebUiEnvMigrationContractTests
         Assert.Contains("dialog.querySelector(\"[autofocus]\")?.focus()", _script, StringComparison.Ordinal);
         Assert.Contains("localStorage.setItem(SETUP_GUIDE_DISMISSED_KEY, \"1\")", _script, StringComparison.Ordinal);
         Assert.Contains("localStorage.getItem(SETUP_GUIDE_DISMISSED_KEY) !== \"1\"", _script, StringComparison.Ordinal);
+        Assert.Contains("/api/admin/onboarding/status", _script, StringComparison.Ordinal);
+        Assert.Contains("/api/admin/onboarding/complete", _script, StringComparison.Ordinal);
+        Assert.Contains("const completed = Boolean(this.onboardingStatus?.completed", _script, StringComparison.Ordinal);
+        Assert.Contains("this.completeSetupGuide()", _script, StringComparison.Ordinal);
+        Assert.Contains("This tenant already completed its legacy environment import", _script, StringComparison.Ordinal);
+        Assert.Contains("migrationCompleted && migration.state !== \"success\"", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("sessionStorage.setItem(MIGRATION_PROMPT_DISMISSED_KEY", _script, StringComparison.Ordinal);
     }
 

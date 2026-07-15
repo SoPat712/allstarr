@@ -59,6 +59,74 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MissingProtocolLibraryScope_ResolvesTheUniqueIndexedTrackScope()
+    {
+        var execution = Signal(PlaybackTransition.Start, "track-1", 0).ExecutionContext;
+        var unscoped = new ProtocolExecutionContext(
+            execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
+            execution.Principal, execution.CorrelationId, execution.Deadline, default);
+        var pipeline = new PlaybackSignalPipeline(jobs, new ProtocolLibraryScopeResolver(factory));
+
+        Assert.True(await pipeline.RecordAsync(new(
+            unscoped, PlaybackTransition.Start, "track-1", "device", "session", 0, clock.UtcNow)));
+
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Equal("music", Assert.Single(await db.Jobs.ToListAsync()).LibraryScopeId);
+    }
+
+    [Fact]
+    public async Task MissingProtocolLibraryScope_RejectsAnAmbiguousItem()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var original = await db.LibraryTracks.AsNoTracking().SingleAsync();
+            db.LibraryTracks.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenant,
+                OwnerUserId = user,
+                BackendIdentityId = original.BackendIdentityId,
+                LibraryScopeId = "other",
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendItemId = "track-1",
+                FilePath = "/media/other.flac",
+                Title = "Track",
+                Artist = "Artist",
+                DurationMilliseconds = 120000,
+                ProviderIdsJson = "{}",
+                IndexedAt = clock.UtcNow,
+                SourceModifiedAt = clock.UtcNow,
+                UpdatedAt = clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var execution = Signal(PlaybackTransition.Start, "track-1", 0).ExecutionContext;
+        var unscoped = new ProtocolExecutionContext(
+            execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
+            execution.Principal, execution.CorrelationId, execution.Deadline, default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new ProtocolLibraryScopeResolver(factory).ResolveAsync(unscoped, "track-1"));
+    }
+
+    [Fact]
+    public async Task MissingPlaySession_DedupesRetriesButAllowsALaterOccurrence()
+    {
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        var first = Signal(PlaybackTransition.Start, "track-1", 0) with
+        {
+            PlaySessionId = null,
+            ObservedAt = clock.UtcNow
+        };
+        var later = first with { ObservedAt = clock.UtcNow.AddSeconds(31) };
+
+        Assert.True(await pipeline.RecordAsync(first));
+        Assert.False(await pipeline.RecordAsync(first));
+        Assert.True(await pipeline.RecordAsync(later));
+    }
+
+    [Fact]
     public async Task ProgressUsesStableTenSecondBucketsAndOrdersDistinctTransitions()
     {
         var pipeline = new PlaybackSignalPipeline(jobs);
@@ -127,6 +195,79 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Equal(expected, target.Successes);
     }
 
+    [Fact]
+    public async Task ExplicitSubsonicSubmission_BypassesPlaybackThreshold()
+    {
+        var target = new Target("lastfm", true);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+
+        await delivery.DeliverAsync(Payload() with
+        {
+            Transition = PlaybackTransition.Submission,
+            PositionTicks = null
+        }, default);
+
+        Assert.Equal(1, target.Successes);
+    }
+
+    [Fact]
+    public async Task Submission_WritesCompletedHabitSignal()
+    {
+        await new PlaybackSignalPipeline(jobs).RecordAsync(
+            Signal(PlaybackTransition.Submission, "track-1", 0));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var writer = new Writer();
+        var handler = new PlaybackSignalJobHandler(writer, new Scrobbles(), new Lyrics());
+
+        var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        Assert.Equal(1, writer.Calls);
+    }
+
+    [Theory]
+    [InlineData(10, "skip")]
+    [InlineData(60, "complete")]
+    public async Task StopSignal_ClassifiesShortAndCompletedPlayback(int playedSeconds, string expectedType)
+    {
+        await new PlaybackSignalPipeline(jobs).RecordAsync(
+            Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(playedSeconds).Ticks));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var writer = new Writer();
+        var handler = new PlaybackSignalJobHandler(
+            writer,
+            new Scrobbles(),
+            new Lyrics(),
+            new PlaybackTrackResolver(factory));
+
+        var result = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        Assert.Equal(expectedType, writer.LastType);
+    }
+
+    [Fact]
+    public async Task ProviderTrackId_ResolvesForScopedScrobbleDelivery()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var track = await db.LibraryTracks.SingleAsync();
+            track.ProviderIdsJson = "{\"deezer\":\"provider-track\"}";
+            await db.SaveChangesAsync();
+        }
+        var target = new Target("lastfm", true);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints());
+
+        await delivery.DeliverAsync(Payload() with
+        {
+            ItemId = "deezer:provider-track",
+            Transition = PlaybackTransition.Submission,
+            PositionTicks = null
+        }, default);
+
+        Assert.Equal(1, target.Successes);
+    }
+
     [Theory]
     [InlineData(29_000, 29, false)]
     [InlineData(600_000, 239, false)]
@@ -142,7 +283,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     public Task DisposeAsync() { try { Directory.Delete(root, true); } catch { } return Task.CompletedTask; }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext> { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken token = default) => Task.FromResult(new AllstarrDbContext(options)); }
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } }
-    private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) Calls++; return Task.FromResult(true); } }
+    private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public string? LastType; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; LastType = t; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) { Calls++; LastType = t; } return Task.FromResult(true); } }
     private sealed class Scrobbles : IScopedPlaybackScrobbleDelivery { public int Calls; public int Successes; public bool FailFirst; public Task DeliverAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
     private sealed class Lyrics : IPlaybackLyricsPrefetch { public int Calls; public Task PrefetchAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; return Task.CompletedTask; } }
     private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget { public string ProviderId => id; public int Successes; public bool FailFirst; public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured); public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p, DateTimeOffset o, string key, CancellationToken c) { if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }

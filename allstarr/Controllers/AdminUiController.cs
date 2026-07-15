@@ -138,6 +138,7 @@ public class AdminUiController : ControllerBase
         Route("sources", "#/sources", "Sources", "sources"),
         Route("activity", "#/activity", "Activity", "activity"),
         Route("intelligence", "#/intelligence", "Intelligence", "intelligence"),
+        Route("architecture", "#/architecture", "Architecture", "architecture"),
         Route("settings", "#/settings", "Settings", "settings")
     ];
 

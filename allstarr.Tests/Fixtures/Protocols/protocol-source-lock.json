@@ -3,14 +3,20 @@
     "path": "apis/specifications/jellyfin/openapi-12.0.0.json",
     "version": "12.0.0",
     "sourceUrl": "https://fra1.mirror.jellyfin.org/files/files/openapi/jellyfin-openapi-stable.json",
+    "license": "not-declared-in-artifact",
+    "licenseEvidence": "The pinned OpenAPI info object contains no license field.",
     "sha256": "91534097236d67af87df81dc2dabd063b9b5ea5de3386f8f322b2817e2ab47e4"
   },
   "octoFiesta": {
     "sourceUrl": "https://github.com/V1ck3s/octo-fiesta",
-    "commit": "a1ec833fc9805db6a5170a1a777a39534dae0eef"
+    "commit": "a1ec833fc9805db6a5170a1a777a39534dae0eef",
+    "license": "GPL-3.0",
+    "licenseSourceUrl": "https://github.com/V1ck3s/octo-fiesta/blob/a1ec833fc9805db6a5170a1a777a39534dae0eef/LICENSE"
   },
   "jellyfinLastFmReference": {
     "sourceUrl": "https://github.com/danielfariati/jellyfin-plugin-lastfm",
-    "commit": "8e060337953b52d2683aab4dc8c9c6fb7383ddf7"
+    "commit": "8e060337953b52d2683aab4dc8c9c6fb7383ddf7",
+    "license": "not-declared-at-pinned-repository-root",
+    "licenseEvidence": "No root license file or repository license declaration was available at the pinned revision; do not infer one from Jellyfin or the archived parent plugin."
   }
 }

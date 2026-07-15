@@ -126,6 +126,17 @@ public sealed record ProtocolExecutionContext
 
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(
         "The verified backend principal is not linked to an Allstarr user.");
+
+    public ProtocolExecutionContext WithLibraryScope(string libraryScopeId) => new(
+        Protocol,
+        BackendInstanceId,
+        VerifiedBackendPrincipalId,
+        Principal,
+        CorrelationId,
+        Deadline,
+        CancellationToken,
+        Client,
+        libraryScopeId);
 }
 
 public sealed class ProtocolExecutionOptions

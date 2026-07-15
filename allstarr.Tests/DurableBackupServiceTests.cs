@@ -168,35 +168,11 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
     [Fact]
     public async Task PostgresRestore_UsesEnvironmentForPasswordAndNeverCommandArguments()
     {
-        var artifactPath = Path.Combine(_root, "fixture.dump");
-        await File.WriteAllBytesAsync(artifactPath, [1, 2, 3, 4]);
-        var manifestPath = artifactPath + ".manifest.json";
-        await using var context = await _factory.CreateDbContextAsync();
-        var currentSchema = context.Database.GetMigrations().Last();
-        var id = Guid.CreateVersion7();
-        var createdAt = DateTimeOffset.UtcNow;
-        var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(artifactPath)))
-            .ToLowerInvariant();
-        await WriteManifest(
-            manifestPath,
-            id,
-            "Postgres",
-            Path.GetFileName(artifactPath),
-            hash,
-            currentSchema,
-            createdAt);
-        var artifact = new BackupArtifact(
-            id,
-            DurableStorageProvider.Postgres,
-            artifactPath,
-            manifestPath,
-            hash,
-            currentSchema,
-            createdAt);
+        var (artifact, currentSchema) = await PostgresArtifact("fixture.dump");
         var postgresOptions = new DurableStorageOptions
         {
             Provider = "Postgres",
-            ConnectionString = "Host=db.internal;Port=5433;Database=allstarr_restore;Username=operator;Password=fixture-password;SSL Mode=Require",
+            ConnectionString = "Host=db.internal;Port=5433;Database=allstarr_live;Username=operator;Password=fixture-password;SSL Mode=Require",
             BackupDirectory = Path.Combine(_root, "backups")
         };
         var state = new DurableStorageState(postgresOptions);
@@ -207,8 +183,9 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
 
         await service.RestorePostgresAsync(
             artifact,
-            postgresOptions.ConnectionString,
-            destructiveRestoreConfirmed: true);
+            "Host=db.internal;Port=5433;Database=allstarr_restore;Username=operator;Password=fixture-password;SSL Mode=Require",
+            destructiveRestoreConfirmed: true,
+            isolatedTargetDatabaseConfirmation: "allstarr_restore");
 
         Assert.Equal(2, runner.Requests.Count);
         Assert.Equal("pg_restore", runner.Requests[0].FileName);
@@ -226,10 +203,101 @@ public sealed class DurableBackupServiceTests : IAsyncLifetime
         Assert.NotNull(record.RestoreVerifiedAt);
     }
 
+    [Fact]
+    public async Task PostgresRestore_RejectsConfiguredCurrentDatabaseBeforeRunningRestore()
+    {
+        var (artifact, currentSchema) = await PostgresArtifact("live-target.dump");
+        var options = new DurableStorageOptions
+        {
+            Provider = "Postgres",
+            ConnectionString = "Host=db.internal;Port=5432;Database=allstarr_live;Username=operator;Password=live-secret",
+            BackupDirectory = Path.Combine(_root, "backups")
+        };
+        var state = new DurableStorageState(options);
+        state.Set(DurableStorageReadiness.Ready, currentSchema);
+        var runner = new RecordingProcessRunner();
+        var service = new DurableBackupService(
+            _factory,
+            options,
+            state,
+            runner,
+            new SequencedRestoreVerifier(currentSchema));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RestorePostgresAsync(
+                artifact,
+                "Host=db.internal;Port=5432;Database=ALLSTARR_LIVE;Username=operator;Password=other-secret",
+                destructiveRestoreConfirmed: true,
+                isolatedTargetDatabaseConfirmation: "ALLSTARR_LIVE"));
+
+        Assert.Contains("current database", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
+    public async Task PostgresRestore_RequiresExactIsolatedTargetDatabaseConfirmation()
+    {
+        var (artifact, currentSchema) = await PostgresArtifact("confirmation-target.dump");
+        var options = new DurableStorageOptions
+        {
+            Provider = "Postgres",
+            ConnectionString = "Host=db.internal;Database=allstarr_live;Username=operator;Password=live-secret",
+            BackupDirectory = Path.Combine(_root, "backups")
+        };
+        var state = new DurableStorageState(options);
+        state.Set(DurableStorageReadiness.Ready, currentSchema);
+        var runner = new RecordingProcessRunner();
+        var service = new DurableBackupService(
+            _factory,
+            options,
+            state,
+            runner,
+            new SequencedRestoreVerifier(currentSchema));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RestorePostgresAsync(
+                artifact,
+                "Host=db.internal;Database=allstarr_restore;Username=operator;Password=fixture",
+                destructiveRestoreConfirmed: true,
+                isolatedTargetDatabaseConfirmation: "wrong_target"));
+
+        Assert.Contains("confirmed exactly", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(runner.Requests);
+    }
+
     private DurableBackupService Service(
         IStorageProcessRunner runner,
         IDurableRestoreTargetVerifier? verifier = null) =>
         new(_factory, _options, _state, runner, verifier);
+
+    private async Task<(BackupArtifact Artifact, string SchemaVersion)> PostgresArtifact(string fileName)
+    {
+        var artifactPath = Path.Combine(_root, fileName);
+        await File.WriteAllBytesAsync(artifactPath, [1, 2, 3, 4]);
+        var manifestPath = artifactPath + ".manifest.json";
+        await using var context = await _factory.CreateDbContextAsync();
+        var currentSchema = context.Database.GetMigrations().Last();
+        var id = Guid.CreateVersion7();
+        var createdAt = DateTimeOffset.UtcNow;
+        var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(artifactPath)))
+            .ToLowerInvariant();
+        await WriteManifest(
+            manifestPath,
+            id,
+            "Postgres",
+            Path.GetFileName(artifactPath),
+            hash,
+            currentSchema,
+            createdAt);
+        return (new BackupArtifact(
+            id,
+            DurableStorageProvider.Postgres,
+            artifactPath,
+            manifestPath,
+            hash,
+            currentSchema,
+            createdAt), currentSchema);
+    }
 
     private static Task WriteManifest(
         string path,

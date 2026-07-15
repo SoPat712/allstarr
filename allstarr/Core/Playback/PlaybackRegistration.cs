@@ -8,6 +8,7 @@ public static class PlaybackRegistration
     public static IServiceCollection AddDurablePlaybackSignals(this IServiceCollection services)
     {
         services.AddSingleton<IPlaybackSignalPipeline, PlaybackSignalPipeline>();
+        services.AddSingleton<IPlaybackTrackResolver, PlaybackTrackResolver>();
         services.AddSingleton<IPlaybackLyricsPrefetch, PlaybackLyricsPrefetch>();
         services.AddSingleton<IScopedPlaybackScrobbleDelivery, ScopedPlaybackScrobbleDelivery>();
         services.AddSingleton<IPlaybackDeliveryCheckpointStore, EfPlaybackDeliveryCheckpointStore>();

@@ -9,6 +9,7 @@ using allstarr.Models.Subsonic;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
+using allstarr.Core.Playlists;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -182,7 +183,7 @@ public sealed class ProtocolRouteFixtureTests
         metadata
             .Setup(service => service.SearchAllAsync(
                 "fixture",
-                2,
+                3,
                 0,
                 0,
                 It.IsAny<CancellationToken>()))
@@ -190,7 +191,7 @@ public sealed class ProtocolRouteFixtureTests
         metadata
             .Setup(service => service.SearchPlaylistsAsync(
                 "fixture",
-                2,
+                3,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
@@ -221,7 +222,7 @@ public sealed class ProtocolRouteFixtureTests
             CanonicalJson(JsonDocument.Parse(body).RootElement));
         metadata.Verify(service => service.SearchAllAsync(
             "fixture",
-            2,
+            3,
             0,
             0,
             It.IsAny<CancellationToken>()), Times.Once);
@@ -715,6 +716,95 @@ public sealed class ProtocolRouteFixtureTests
             AssertObservedRequest(fixture.GetProperty("verification"), observedRequests[0]);
             AssertObservedRequest(relay, observedRequests[1]);
         }
+    }
+
+    [Theory]
+    [InlineData(
+        "GET",
+        "/rest/updatePlaylist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&playlistId=allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=2&songIndexToRemove=0",
+        null,
+        null,
+        "/rest/updatePlaylist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&playlistId=backend-target&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=2&songIndexToRemove=0",
+        null)]
+    [InlineData(
+        "POST",
+        "/rest/updatePlaylist.view?v=1.16.1&c=fixture&f=json",
+        "application/x-www-form-urlencoded",
+        "u=fixture&p=secret&playlistId=allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=1&songIndexToRemove=0",
+        "/rest/updatePlaylist.view?v=1.16.1&c=fixture&f=json",
+        "u=fixture&p=secret&playlistId=backend-target&songIdToAdd=song-a&songIdToAdd=song-b&songIndexToRemove=1&songIndexToRemove=0")]
+    public async Task SubsonicUpdatePlaylist_RewritesOnlyScopedVirtualTargetAndPreservesRelayFidelity(
+        string method,
+        string path,
+        string? contentType,
+        string? body,
+        string expectedPath,
+        string? expectedBody)
+    {
+        var observedRequests = new List<ObservedRequest>();
+        var resolver = new FixedPlaylistMutationResolver(
+            new SubsonicPlaylistMutationRoute(true, "backend-target"));
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request =>
+            {
+                observedRequests.Add(Observe(request));
+                return Json(
+                    observedRequests.Count == 1 ? StatusCodes.Status200OK : StatusCodes.Status202Accepted,
+                    """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+            },
+            services =>
+            {
+                services.RemoveAll<ISubsonicPlaylistMutationResolver>();
+                services.AddSingleton<ISubsonicPlaylistMutationResolver>(resolver);
+            });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        if (body != null)
+        {
+            request.Content = new StringContent(body, Encoding.UTF8, contentType!);
+        }
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(2, observedRequests.Count);
+        Assert.Equal(expectedPath, observedRequests[1].PathAndQuery);
+        Assert.Equal(expectedBody, observedRequests[1].Body);
+    }
+
+    [Fact]
+    public async Task SubsonicUpdatePlaylist_ReadOnlyVirtualLinkReturnsProtocolErrorWithoutMutation()
+    {
+        var observedRequests = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request =>
+            {
+                observedRequests.Add(Observe(request));
+                return Json(
+                    StatusCodes.Status200OK,
+                    """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+            },
+            services =>
+            {
+                services.RemoveAll<ISubsonicPlaylistMutationResolver>();
+                services.AddSingleton<ISubsonicPlaylistMutationResolver>(
+                    new FixedPlaylistMutationResolver(
+                        new SubsonicPlaylistMutationRoute(false, null)));
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/rest/updatePlaylist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&playlistId=allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0&songIdToAdd=song-a");
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var error = document.RootElement.GetProperty("subsonic-response").GetProperty("error");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(50, error.GetProperty("code").GetInt32());
+        Assert.Equal("Playlist is read-only", error.GetProperty("message").GetString());
+        Assert.Single(observedRequests);
+        Assert.Equal("/rest/ping.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json", observedRequests[0].PathAndQuery);
     }
 
     [Fact]
@@ -1221,6 +1311,18 @@ public sealed class ProtocolRouteFixtureTests
         JsonSerializer.Serialize(JsonSerializer.Deserialize<object>(value.GetRawText()));
 
     private sealed record ObservedRequest(string Method, string PathAndQuery, string? Body);
+
+    private sealed class FixedPlaylistMutationResolver(SubsonicPlaylistMutationRoute? route)
+        : ISubsonicPlaylistMutationResolver
+    {
+        public Task<SubsonicPlaylistMutationRoute?> ResolveAsync(
+            ProtocolExecutionContext context,
+            string protocolId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(route);
+        }
+    }
 
     private sealed class RecordingInteractionAdapter : IJellyfinInteractionProtocolAdapter
     {

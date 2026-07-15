@@ -9,12 +9,18 @@ public interface IOutboxSink
     Task PublishAsync(OutboxClaim message, CancellationToken cancellationToken);
 }
 
-public sealed class LoggingOutboxSink(ILogger<LoggingOutboxSink> logger) : IOutboxSink
+/// <summary>
+/// The built-in sink acknowledges an outbox record by writing redacted diagnostic metadata.
+/// It is not an external event publisher. Deployments that need integration delivery must
+/// replace <see cref="IOutboxSink"/> with a sink that performs and confirms that delivery.
+/// </summary>
+public sealed class DiagnosticOutboxSink(ILogger<DiagnosticOutboxSink> logger) : IOutboxSink
 {
     public Task PublishAsync(OutboxClaim message, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         logger.LogInformation(
-            "Delivered durable event {EventType} with message {MessageId}",
+            "Acknowledged durable event {EventType} with message {MessageId} in the diagnostic sink; external publication is not configured",
             message.Type,
             message.MessageId);
         return Task.CompletedTask;

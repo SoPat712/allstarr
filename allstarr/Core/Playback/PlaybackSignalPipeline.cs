@@ -7,7 +7,7 @@ using allstarr.Core.Protocols;
 
 namespace allstarr.Core.Playback;
 
-public enum PlaybackTransition { Start, Progress, Stop, InferredStart, InferredStop }
+public enum PlaybackTransition { Start, Progress, Stop, InferredStart, InferredStop, Submission }
 public sealed record PlaybackSignalRequest(ProtocolExecutionContext ExecutionContext, PlaybackTransition Transition,
     string ItemId, string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt);
 public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTransition Transition, string ItemId,
@@ -22,29 +22,38 @@ public interface IPlaybackLyricsPrefetch
     Task PrefetchAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken);
 }
 
-public sealed class PlaybackSignalPipeline(DurableJobQueue jobs) : IPlaybackSignalPipeline
+public sealed class PlaybackSignalPipeline(
+    DurableJobQueue jobs,
+    IProtocolLibraryScopeResolver? libraryScopes = null) : IPlaybackSignalPipeline
 {
     public const string JobType = "playback.signal.process";
     public async Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default)
     {
-        var actor = request.ExecutionContext.RequireActor(); var owner = actor.EffectiveUserId ?? throw new UnauthorizedAccessException();
+        var execution = request.ExecutionContext;
+        if (string.IsNullOrWhiteSpace(execution.LibraryScopeId) && libraryScopes != null)
+            execution = await libraryScopes.ResolveAsync(execution, request.ItemId, cancellationToken);
+        var actor = execution.RequireActor(); var owner = actor.EffectiveUserId ?? throw new UnauthorizedAccessException();
+        if (string.IsNullOrWhiteSpace(execution.LibraryScopeId))
+            throw new InvalidOperationException("Playback work requires an exact library scope.");
         if (string.IsNullOrWhiteSpace(request.ItemId) || request.ItemId.Length > 500 || request.ObservedAt == default) throw new ArgumentException("Playback signal is invalid.");
-        var scope = new IntelligenceScope(actor.TenantId, owner, request.ExecutionContext.Protocol.ToString().ToLowerInvariant(),
-            request.ExecutionContext.BackendInstanceId, request.ExecutionContext.LibraryScopeId ?? "default");
+        var scope = new IntelligenceScope(actor.TenantId, owner, execution.Protocol.ToString().ToLowerInvariant(),
+            execution.BackendInstanceId, execution.LibraryScopeId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
-        var identity = $"{scope.TenantId:N}|{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{scope.LibraryScopeId}|{request.DeviceId}|{request.PlaySessionId}|{request.ItemId}|{request.Transition}|{bucket}";
+        var occurrence = request.PlaySessionId ?? $"observed:{request.ObservedAt.ToUnixTimeSeconds() / 30}";
+        var identity = $"{scope.TenantId:N}|{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{scope.LibraryScopeId}|{request.DeviceId}|{occurrence}|{request.ItemId}|{request.Transition}|{bucket}";
         var key = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         var normalizedTicks = request.Transition == PlaybackTransition.Progress ? TimeSpan.FromSeconds(bucket * 10).Ticks : request.PositionTicks;
         var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaybackSignalPayload>(JobType, key,
             new(scope, request.Transition, request.ItemId, request.DeviceId, request.PlaySessionId, normalizedTicks, request.ObservedAt, key),
             scope.TenantId, scope.OwnerUserId, LibraryScopeId: scope.LibraryScopeId,
-            CorrelationId: request.ExecutionContext.CorrelationId), cancellationToken);
+            CorrelationId: execution.CorrelationId), cancellationToken);
         return result.Created;
     }
 }
 
 public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals,
-    IScopedPlaybackScrobbleDelivery scrobbles, IPlaybackLyricsPrefetch lyrics) : IDurableJobHandler
+    IScopedPlaybackScrobbleDelivery scrobbles, IPlaybackLyricsPrefetch lyrics,
+    IPlaybackTrackResolver? tracks = null) : IDurableJobHandler
 {
     public string JobType => PlaybackSignalPipeline.JobType;
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
@@ -57,8 +66,15 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         {
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart)
                 await WriteSignalAsync(payload, execution.Claim.JobId, "play", cancellationToken);
-            else if (payload.Transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop)
+            else if (payload.Transition == PlaybackTransition.Submission)
                 await WriteSignalAsync(payload, execution.Claim.JobId, "complete", cancellationToken);
+            else if (payload.Transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop)
+            {
+                var track = tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken);
+                var completed = track == null || ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(
+                    track.DurationMilliseconds, payload.PositionTicks);
+                await WriteSignalAsync(payload, execution.Claim.JobId, completed ? "complete" : "skip", cancellationToken);
+            }
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart) await lyrics.PrefetchAsync(payload, cancellationToken);
             await scrobbles.DeliverAsync(payload, cancellationToken);
             return DurableJobCompletion.Success();

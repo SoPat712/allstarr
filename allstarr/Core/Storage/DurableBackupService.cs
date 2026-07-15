@@ -295,6 +295,7 @@ public sealed class DurableBackupService
         BackupArtifact artifact,
         string targetConnectionString,
         bool destructiveRestoreConfirmed,
+        string isolatedTargetDatabaseConfirmation,
         CancellationToken cancellationToken = default)
     {
         if (artifact.Provider != DurableStorageProvider.Postgres)
@@ -307,12 +308,42 @@ public sealed class DurableBackupService
             throw new InvalidOperationException("Postgres restore requires explicit destructive confirmation.");
         }
 
+        var connection = new NpgsqlConnectionStringBuilder(targetConnectionString);
+        var targetDatabase = connection.Database?.Trim();
+        if (string.IsNullOrWhiteSpace(targetDatabase))
+        {
+            throw new ArgumentException(
+                "The Postgres restore target must name a database.",
+                nameof(targetConnectionString));
+        }
+
+        if (!string.Equals(
+                isolatedTargetDatabaseConfirmation?.Trim(),
+                targetDatabase,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Postgres restore requires the isolated target database name to be confirmed exactly.");
+        }
+
+        if (_options.ParseProvider() == DurableStorageProvider.Postgres)
+        {
+            var current = new NpgsqlConnectionStringBuilder(_options.ConnectionString);
+            if (string.Equals(
+                    current.Database?.Trim(),
+                    targetDatabase,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Postgres restore refuses the configured current database name. Restore into a new isolated database name.");
+            }
+        }
+
         await VerifyAsync(artifact, cancellationToken);
         await RecordRestoreStatusAsync(artifact, "verification_pending", null, cancellationToken);
         var restoreCompleted = false;
         try
         {
-            var connection = new NpgsqlConnectionStringBuilder(targetConnectionString);
             var result = await _processRunner.RunAsync(new StorageProcessRequest(
                 "pg_restore",
                 [

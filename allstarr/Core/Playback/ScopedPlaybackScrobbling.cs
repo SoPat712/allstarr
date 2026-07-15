@@ -19,12 +19,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
     public async Task DeliverAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
         if (payload.Transition == PlaybackTransition.Progress) return;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var id = payload.ItemId.StartsWith("backend:", StringComparison.Ordinal) ? payload.ItemId[8..] : payload.ItemId;
-        var item = await db.LibraryTracks.AsNoTracking().SingleOrDefaultAsync(track => track.TenantId == payload.Scope.TenantId &&
-            track.OwnerUserId == payload.Scope.OwnerUserId && track.Protocol == payload.Scope.Protocol &&
-            track.BackendInstanceId == payload.Scope.BackendInstanceId && track.LibraryScopeId == payload.Scope.LibraryScopeId &&
-            (track.BackendItemId == id || track.CanonicalRecordingId != null && track.CanonicalRecordingId.ToString() == id), cancellationToken);
+        var item = await new PlaybackTrackResolver(factory).ResolveAsync(payload, cancellationToken);
         if (item == null) return;
         var track = new ScopedPlaybackTrack(item.Title, item.Artist, item.Album, item.DurationMilliseconds);
         if (payload.Transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop &&

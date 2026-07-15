@@ -98,6 +98,20 @@ Provider credentials should be connected through the provider-account UI/API so 
 
 Current built-in or first-party integrations include provider work for Deezer, Qobuz, SquidWTF, Spotify, Apple MusicKit, lyrics services, Last.fm, ListenBrainz, MusicBrainz, and optional AudioMuse-AI. A feature is ready only when its account, permissions, optional sidecar, and health checks pass. An optional integration may be absent without breaking unrelated startup.
 
+AudioMuse-AI is deployment configuration in the current beta. Set its base URL before recreating the Allstarr
+container:
+
+```dotenv
+INTELLIGENCE__AUDIOMUSE__URL=https://audiomuse.example.internal
+```
+
+Use the real AudioMuse service base URL, not the Jellyfin plugin URL. Allstarr checks `api/health` and calls
+`api/sonic_fingerprint/generate`. The Intelligence screen then shows whether the source is ready for the selected
+user and library scope. The current adapter does not send an AudioMuse API key or authorization header. Keep the
+setting empty if the service requires separate HTTP authentication. Jellyfin users are identified with their
+resolved Jellyfin principal. Subsonic/Navidrome recommendation runs use the target credential reference stored on
+the exact intelligence policy; that credential is for the backend request body, not AudioMuse HTTP authentication.
+
 Provider extensions are installed packages with declared capability hooks, scopes, network hosts, and secret permissions. Installation verifies the package and uses staged activation and rollback. Allstarr does not add a third-party registry on your behalf. See [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md).
 
 ## Media, Downloads, And Favorites
@@ -120,7 +134,7 @@ The Spotify Import compatibility settings remain available for Jellyfin deployme
 
 Scrobbling is opt-in. Last.fm and ListenBrainz targets are user-scoped and delivered through durable jobs. Local-track scrobbling should generally stay disabled when the backend already has its own scrobbling plugin, which avoids duplicate submissions.
 
-Intelligence is also opt-in at an exact user/backend/library scope. Configure retention and available recommendation sources in the Intelligence UI. Habit profiles can feed Last.fm, ListenBrainz, MusicBrainz-informed local similarity, Jellyfin InstantMix, local rules, and optional AudioMuse-AI. Generated playlists materialize local matches only; recommendations do not silently trigger downloads. Disabling collection stops new signals, and purge removes retained intelligence data for the scope.
+Intelligence is also opt-in at an exact user/backend/library scope. Configure retention and available recommendation sources in the Intelligence UI. The AudioMuse service URL remains deployment-owned as described above; the UI shows its scoped readiness but does not configure that URL. Habit profiles can feed Last.fm, ListenBrainz, MusicBrainz-informed local similarity, Jellyfin InstantMix, local rules, and optional AudioMuse-AI. Generated playlists materialize local matches only; recommendations do not silently trigger downloads. Disabling collection stops new signals, and purge removes retained intelligence data for the scope.
 
 ## Cache Settings
 

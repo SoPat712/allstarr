@@ -17,7 +17,7 @@
     "authBoundary": "Users/Me verifies a backend principal and the shared protocol filter creates a ProtocolExecutionContext before the action can read cache or call local/external search; unresolved users remain transparent but cannot authorize user-owned work.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-search-shaping.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinSearchResponseSerializationTests; JellyfinSearchInterleaveTests; JellyfinControllerSearchLimitTests",
-    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and current paging semantics are fixture-covered behind the Jellyfin search protocol adapter. Repeated fields and double-paging remain parity gaps."
+    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and paging are fixture-covered behind the Jellyfin search protocol adapter. Integrated search fetches the shared result prefix from each source and applies the requested page once. Repeated-field normalization remains a parity gap."
   },
   {
     "protocol": "jellyfin",
@@ -47,7 +47,7 @@
     "authBoundary": "Users/Me verifies the backend caller and ProtocolExecutionContext requires a resolved canonical actor before optional external favorite work; route/query userId values shape the backend request only.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-favorite-playback.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; FavoriteFileSafetyTests",
-    "notes": "Backend status/body and the external UserItemDataDto shape are fixture-covered. Resolved-user Task.Run work must still be retired behind the Phase 6 durable pipeline; unfavorite preserves managed files."
+    "notes": "Backend status/body and the external UserItemDataDto shape are fixture-covered. Accepted mutations enter the durable favorite pipeline after resolving an exact indexed library scope; ambiguous scope is rejected instead of guessed. Unfavorite preserves managed files."
   },
   {
     "protocol": "jellyfin",
@@ -77,7 +77,7 @@
     "authBoundary": "Verified playback requests remain transparent, while scrobbling and synthetic played signals require a resolved canonical actor and cannot trust payload or route user IDs.",
     "fixture": "jellyfin-favorite-playback.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinSessionManagerTests; PlaybackSessionTests; ScrobblingOrchestratorTests",
-    "notes": "Capabilities status mapping and progress best-effort 204 behavior are route-fixture covered. Durable playback/scrobble events remain later work."
+    "notes": "Capabilities status mapping and progress best-effort 204 behavior are route-fixture covered. Accepted playback reports enter the durable exact-scope pipeline, retries are occurrence-idempotent, short stops become skip signals, and provider IDs resolve for scoped scrobble delivery."
   },
   {
     "protocol": "jellyfin",
@@ -87,7 +87,7 @@
     "authBoundary": "All routes require Users/Me verification; external synthesized provider work also requires a resolved canonical actor and cannot trust query userId.",
     "fixture": "jellyfin-instant-mix-paths.json",
     "testLocation": "ProtocolRouteFixtureTests; ProtocolSupportMatrixTests; JellyfinItemLyricsImageProtocolAdapterTests",
-    "notes": "All six pinned OpenAPI route classes are explicit and preserve local backend paths, queries, statuses, and bodies. Deterministic external recommendation policy remains Phase 7 work."
+    "notes": "All six pinned OpenAPI route classes are explicit and preserve local backend paths, queries, statuses, and bodies. The legacy external compatibility mix uses stable seed ordering; habit-aware generated recommendations remain owned by the separate intelligence workflow."
   },
   {
     "protocol": "jellyfin",
@@ -147,7 +147,7 @@
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede star/unstar; external optional work is skipped unless BackendIdentityResolver produced a linked canonical actor.",
     "fixture": "subsonic-auth-boundary.json; subsonic-relay-fidelity.json",
     "testLocation": "ProtocolRouteFixtureTests; FavoriteFileSafetyTests",
-    "notes": "Backend star/unstar preserves .view routes, GET/form POST, repeated IDs, status, body, and headers. External playlist star requires a linked actor, but optional favorite work remains non-durable Phase 6 work."
+    "notes": "Backend star/unstar preserves .view routes, GET/form POST, repeated IDs, status, body, and headers. Each accepted repeated track ID enters the durable favorite pipeline for a linked actor; album and artist optional actions are not synthesized as track downloads."
   },
   {
     "protocol": "subsonic",
@@ -162,7 +162,7 @@
   {
     "protocol": "subsonic",
     "feature": "playlist-update",
-    "currentStatus": "relay-partial",
+    "currentStatus": "explicit-partial",
     "target": "Repeated ordered adds/removes and provider-neutral tenant-scoped links.",
     "authBoundary": "Backend verification precedes relay; repeated ordered parameters retain query/form source, but canonical account scope is not resolved.",
     "fixture": "subsonic-relay-fidelity.json",
@@ -184,10 +184,10 @@
     "feature": "scrobble",
     "currentStatus": "relay-partial",
     "target": "Repeated id/time/submission events with durable provider-scoped idempotency.",
-    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede transparent scrobble relay; durable external-ID translation and provider-scoped idempotency remain later pipeline work.",
+    "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede transparent scrobble relay; accepted events require a linked actor before exact-scope durable provider work is recorded.",
     "fixture": "subsonic-relay-fidelity.json",
     "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests",
-    "notes": "Repeated id/time/submission form pairs retain order and source and backend status/body/headers are preserved. Durable external scrobble translation remains later pipeline work."
+    "notes": "Repeated id/time/submission form pairs retain order and source and backend status/body/headers are preserved. After an accepted relay, paired events enter the exact-scope durable pipeline; explicit time is the stable occurrence identity and provider IDs resolve against indexed track identities."
   },
   {
     "protocol": "subsonic",

@@ -135,6 +135,9 @@ public static class RuntimeSettingCatalog
         Bool("Scrobbling:Enabled"); Bool("Scrobbling:LocalTracksEnabled");
         Bool("Scrobbling:SyntheticLocalPlayedSignalEnabled"); Bool("Scrobbling:LastFm:Enabled");
         Bool("Scrobbling:ListenBrainz:Enabled");
+        // This is application state rather than deployment configuration. Keeping it in the
+        // tenant settings store makes first-run completion survive browsers and app restarts.
+        Bool("WebUi:SetupCompleted");
         return items.ToDictionary(item => item.Key, Comparer);
     }
 }

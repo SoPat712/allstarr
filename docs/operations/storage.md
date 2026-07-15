@@ -238,9 +238,15 @@ docker compose run --rm --no-deps \
       --artifact "/app/state/backups/$DUMP_NAME" \
       --sha256 "$DUMP_SHA256" \
       --target-connection-env ALLSTARR_RESTORE_TARGET \
+      --confirm-isolated-target-database "$RESTORE_DB" \
       --confirm-destructive-restore
   '
 ```
+
+The target database name confirmation is intentionally separate from the destructive confirmation. It must
+exactly match the database in `ALLSTARR_RESTORE_TARGET`, and that name must differ from the database configured
+for the running Allstarr instance. The command rejects the configured current database before it invokes
+`pg_restore`, even when `--confirm-destructive-restore` is present.
 
 The command prints `"status":"verified"` only after it has strictly parsed the manifest, matched it to the
 artifact and requested SHA-256, checked the Postgres dump catalog, completed `pg_restore`, opened the target,

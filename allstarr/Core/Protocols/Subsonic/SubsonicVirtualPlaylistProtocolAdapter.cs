@@ -1,16 +1,78 @@
 using System.Xml.Linq;
 using allstarr.Core.Playlists;
+using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Protocols.Subsonic;
 
-public sealed class SubsonicVirtualPlaylistProtocolAdapter(IPlaylistVirtualizationService playlists)
+public sealed record SubsonicPlaylistMutationRoute(bool Writable, string? TargetPlaylistId);
+
+public interface ISubsonicPlaylistMutationResolver
+{
+    Task<SubsonicPlaylistMutationRoute?> ResolveAsync(
+        ProtocolExecutionContext context,
+        string protocolId,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Resolves an Allstarr playlist identifier only when it belongs to the verified
+/// Subsonic actor, tenant, backend, protocol, and requested library scope.
+/// </summary>
+public sealed class SubsonicPlaylistMutationResolver(
+    IDbContextFactory<AllstarrDbContext> contextFactory) : ISubsonicPlaylistMutationResolver
+{
+    public async Task<SubsonicPlaylistMutationRoute?> ResolveAsync(
+        ProtocolExecutionContext context,
+        string protocolId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Protocol != ProtocolKind.Subsonic ||
+            !PlaylistVirtualizationService.TryParseProtocolId(protocolId, out var linkId) ||
+            context.Actor?.EffectiveUserId is not { } userId)
+        {
+            return null;
+        }
+
+        var actor = context.Actor;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == linkId &&
+            item.TenantId == actor.TenantId &&
+            item.OwnerUserId == userId &&
+            item.TargetBackendInstanceId == context.BackendInstanceId &&
+            (item.TargetProtocol == "subsonic" ||
+             item.TargetProtocol == "opensubsonic" ||
+             item.TargetProtocol == "navidrome") &&
+            (context.LibraryScopeId == null || item.LibraryScopeId == context.LibraryScopeId),
+            cancellationToken);
+        if (link == null) return null;
+
+        var writable = link.Mode != PlaylistLinkMode.Virtual &&
+                       !string.IsNullOrWhiteSpace(link.TargetPlaylistId);
+        return new SubsonicPlaylistMutationRoute(
+            writable,
+            writable ? link.TargetPlaylistId!.Trim() : null);
+    }
+}
+
+public sealed class SubsonicVirtualPlaylistProtocolAdapter(
+    IPlaylistVirtualizationService playlists,
+    ISubsonicPlaylistMutationResolver mutationResolver)
 {
     private const string Version = "1.16.1";
     private const string Namespace = "http://subsonic.org/restapi";
 
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
+
+    public Task<SubsonicPlaylistMutationRoute?> ResolveMutationAsync(
+        ProtocolExecutionContext context,
+        string id,
+        CancellationToken cancellationToken) =>
+        mutationResolver.ResolveAsync(context, id, cancellationToken);
 
     public async Task<IActionResult?> ReadAsync(
         ProtocolExecutionContext context, string id, string format, CancellationToken cancellationToken)

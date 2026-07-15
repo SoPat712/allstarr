@@ -736,6 +736,8 @@ public static class PlaylistOrchestrationRegistration
         services.AddSingleton<PlaylistMaterializationPlanner>();
         services.AddSingleton<TrackMatchDecisionEngine>();
         services.AddSingleton<IPlaylistVirtualizationService, PlaylistVirtualizationService>();
+        services.AddSingleton<allstarr.Core.Protocols.Subsonic.ISubsonicPlaylistMutationResolver,
+            allstarr.Core.Protocols.Subsonic.SubsonicPlaylistMutationResolver>();
         services.AddSingleton<allstarr.Core.Protocols.Jellyfin.JellyfinVirtualPlaylistProtocolAdapter>();
         services.AddSingleton<allstarr.Core.Protocols.Subsonic.SubsonicVirtualPlaylistProtocolAdapter>();
         services.AddSingleton<IBackendPlaylistTargetResolver, BackendPlaylistTargetResolver>();

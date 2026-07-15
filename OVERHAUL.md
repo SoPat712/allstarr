@@ -809,11 +809,12 @@ Files:
 
 - `docker-compose.yml`: core app, Postgres, Valkey.
 - `docker-compose.aio.yml`: verified offline first-party package bundle, with no provider sidecars.
-- `docker-compose.lyrics.yml`: lyrics sidecars only.
 - `docker-compose.dev.yml`: local build override.
-- `docker-compose.lowram.yml`: optional lower memory profile.
 - The operator deploys any Apple/GAMDL provider gateway separately. It is not an Allstarr Compose file or part of
   the Standard or AIO product contract. Allstarr receives only its URL and provider configuration.
+
+Lyrics and low-RAM overrides are ideas for later releases. They are not checked in, tested, or part of the current
+version 3 beta deployment contract. Optional lyrics services run separately and connect by URL today.
 
 Document commands:
 
@@ -1149,10 +1150,10 @@ SQLite rollback/reapply and SQLite/PostgreSQL model parity pass. Native PostgreS
 backup verification, and isolated restore passed against a fresh database. JavaScript syntax, standard Compose,
 `git diff --check`, and the provider contract tests pass.
 
-## Phase 8 Completion Record
+## Phase 8 Repository-Boundary Record
 
-Phase 8 establishes repository-ready boundaries for built-in providers without replacing working integrations with
-partial JavaScript adapters:
+Phase 8 establishes repository-ready boundaries for possible future built-in extraction without replacing working
+integrations with partial JavaScript adapters or claiming that separate provider repositories exist:
 
 - Deezer metadata, Spotify playlists, and Apple MusicKit playlists now have SDK v1 package source boundaries under
   `first-party/providers/`. Each package declares a stable provider ID, exact hooks, account requirements, scopes,
@@ -1171,10 +1172,12 @@ partial JavaScript adapters:
   need a managed-workspace SDK contract and scrobbling remains deliberately outside SDK v1. Jellyfin,
   Subsonic/Navidrome, local-file ownership, and the maintained download sidecars therefore remain in core.
 
-The Phase 8 full Release gate passed 1,406 .NET tests with no skips. The focused package, registry, policy, bootstrap,
+The Phase 8 repository-boundary gate passed 1,406 .NET tests with no skips. The focused package, registry, policy, bootstrap,
 control-plane, and Compose gate passed 29/29; the deterministic Python bundle suite passed 5/5; and all three locked
 archives independently verified. `git diff --check` and the standard Compose render pass. No package was published,
-no remote repository was created, and no incomplete package is presented as active.
+no remote repository was created, and no incomplete package is presented as active. These artifacts remain
+unpublished development inputs until a later release completes provider parity, external repository ownership,
+publication, and activation review.
 
 ## Final Release Reconciliation Record
 
@@ -1191,7 +1194,8 @@ The final pass reconciles the repository with the implemented version 3 beta bas
   script, nested research clones, and the redundant `originals/` tree are gone. Existing `.env`, secrets, downloads,
   kept media, and operator data were not touched.
 - `apis/` now contains only the versioned Jellyfin OpenAPI 12.0.0 specification. Maintainer guidance lives under
-  `docs/steering`; protocol source locks retain upstream URLs, revisions, licenses, and hashes.
+  `docs/steering`; protocol source locks retain upstream URLs, revisions, hashes, and either pinned license
+  provenance or an explicit `not-declared` status.
   Production-derived captures and private clone material are explicitly prohibited.
 - Standard, development, and AIO Compose files render. Standard stays small and AIO adds only the checksum-locked
   offline first-party bundle. Apple downloads are an independent external gateway configured by URL.
@@ -1294,12 +1298,15 @@ Exit: repeated events, restart, cross-volume placement, path attack, and failed 
 
 Exit: recommendation and automation data is tenant-scoped, explainable, opt-in, and independently disableable.
 
-### Phase 8: Split Built-Ins Into Repositories (Completed)
+### Phase 8: Prepare Built-In Extraction (Repository Boundary Completed; Publication Deferred)
 
-- Only after SDK v1 is stable, move built-ins into separate repositories where it improves maintenance.
-- Keep a first-party bundle for AIO installs and the compatibility matrix in this repository.
+- Define deterministic package and source boundaries for built-ins that may move into separate repositories after
+  SDK v1 compatibility is proven.
+- Keep the unpublished first-party development bundle and compatibility matrix in this repository until each
+  provider has parity, an owned external repository, and a reviewed publication path.
 
-Exit: externalized built-ins pass the same package, permission, contract, and compatibility suite as in-repo providers.
+Exit for the current phase: in-repository package boundaries pass the package, permission, contract, and compatibility
+suite. External repository creation, package publication, and built-in switchover remain future work.
 
 ### Final Release Reconciliation (Completed)
 

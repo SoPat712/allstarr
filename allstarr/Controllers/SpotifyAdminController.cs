@@ -243,34 +243,17 @@ public class SpotifyAdminController : ControllerBase
                 return BadRequest(new { error = "SpotifyMissingTracksFetcher service not found" });
             }
 
-            // Trigger the sync in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Use reflection to call the private ExecuteOnceAsync method
-                    var method = fetcherService.GetType().GetMethod("ExecuteOnceAsync",
-                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-                    if (method != null)
-                    {
-                        await (Task)method.Invoke(fetcherService, new object[] { CancellationToken.None })!;
-                        _logger.LogInformation("Manual Spotify sync completed successfully");
-                    }
-                    else
-                    {
-                        _logger.LogError("Could not find ExecuteOnceAsync method on SpotifyMissingTracksFetcher");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error during manual Spotify sync");
-                }
-            });
+            var method = fetcherService.GetType().GetMethod("ExecuteOnceAsync",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (method == null)
+                return StatusCode(500, new { error = "Spotify sync operation is unavailable" });
+            await ((Task)method.Invoke(fetcherService, new object[] { HttpContext.RequestAborted })!)
+                .WaitAsync(HttpContext.RequestAborted);
+            _logger.LogInformation("Manual Spotify sync completed successfully");
 
             return Ok(new
             {
-                message = "Spotify sync started in background",
+                message = "Spotify sync completed",
                 timestamp = DateTime.UtcNow
             });
         }
@@ -306,34 +289,17 @@ public class SpotifyAdminController : ControllerBase
                 return BadRequest(new { error = "SpotifyTrackMatchingService not found" });
             }
 
-            // Trigger matching in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Use reflection to call the private ExecuteOnceAsync method
-                    var method = matchingService.GetType().GetMethod("ExecuteOnceAsync",
-                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-                    if (method != null)
-                    {
-                        await (Task)method.Invoke(matchingService, new object[] { CancellationToken.None })!;
-                        _logger.LogInformation("Manual Spotify track matching completed successfully");
-                    }
-                    else
-                    {
-                        _logger.LogError("Could not find ExecuteOnceAsync method on SpotifyTrackMatchingService");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error during manual Spotify track matching");
-                }
-            });
+            var method = matchingService.GetType().GetMethod("ExecuteOnceAsync",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (method == null)
+                return StatusCode(500, new { error = "Spotify matching operation is unavailable" });
+            await ((Task)method.Invoke(matchingService, new object[] { HttpContext.RequestAborted })!)
+                .WaitAsync(HttpContext.RequestAborted);
+            _logger.LogInformation("Manual Spotify track matching completed successfully");
 
             return Ok(new
             {
-                message = "Spotify track matching started in background",
+                message = "Spotify track matching completed",
                 timestamp = DateTime.UtcNow
             });
         }

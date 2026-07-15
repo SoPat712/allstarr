@@ -138,6 +138,9 @@ public static class StorageOperatorCommand
         CancellationToken cancellationToken)
     {
         RequireFlag(arguments, "confirm-destructive-restore");
+        var isolatedTargetDatabase = RequireValue(
+            arguments,
+            "confirm-isolated-target-database");
         var service = provider.GetRequiredService<DurableBackupService>();
         var artifact = await BackupArtifactFromArguments(
             service,
@@ -156,6 +159,7 @@ public static class StorageOperatorCommand
             artifact,
             targetConnection,
             destructiveRestoreConfirmed: true,
+            isolatedTargetDatabaseConfirmation: isolatedTargetDatabase,
             cancellationToken);
         await WriteJson(output, new
         {
@@ -338,11 +342,13 @@ public static class StorageOperatorCommand
           storage backup
           storage export --output <directory> --confirm-writes-stopped
           storage restore-sqlite --artifact <file> --sha256 <hash> --target <file> --confirm-target-offline [--overwrite]
-          storage restore-postgres --artifact <file> --sha256 <hash> --target-connection-env <name> --confirm-destructive-restore
+          storage restore-postgres --artifact <file> --sha256 <hash> --target-connection-env <name> --confirm-isolated-target-database <name> --confirm-destructive-restore
           storage import --artifact <file> --sha256 <hash> --confirm-empty-target
           storage rotate-secrets --confirm-writes-stopped
 
         Stop normal Allstarr instances before export, restore, or import. Postgres target
         credentials must be passed through the named environment variable, never command arguments.
+        The isolated Postgres database name confirmation must exactly match the target connection
+        and must differ from the database configured for the running Allstarr instance.
         """;
 }

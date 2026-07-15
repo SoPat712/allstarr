@@ -40,7 +40,11 @@ user UI reads exact-scope readiness before allowing a source to be selected.
   recommendation service or user account.
 - Local rules use retained private habits and exact local-library coverage.
 - AudioMuse-AI is optional. It is selectable only after its configured URL passes the bounded health and contract
-  check. Missing, unhealthy, unauthorized, and degraded states stay truthful in the UI.
+  check. Configure the deployment-owned base URL as `INTELLIGENCE__AUDIOMUSE__URL`; the UI reports readiness but
+  does not edit the URL. The current adapter checks `api/health` and calls `api/sonic_fingerprint/generate`. It does
+  not send an AudioMuse API key or authorization header. Missing, unhealthy, unauthorized, and degraded states stay
+  truthful in the UI. A Subsonic target credential belongs to the scoped backend request and is not AudioMuse HTTP
+  authentication.
 
 Recommendation providers do not download a candidate. A generated playlist can contain only candidates that
 later resolve to exact accepted local backend items.

@@ -11,6 +11,7 @@ public static class ProtocolRegistration
         _ = options.GetOperationTimeout();
         services.AddSingleton(options);
         services.AddSingleton<ProtocolExecutionContextFactory>();
+        services.AddSingleton<IProtocolLibraryScopeResolver, ProtocolLibraryScopeResolver>();
         return services;
     }
 }

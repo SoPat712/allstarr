@@ -132,11 +132,11 @@ public static class CurrentProviderSupportCatalog
             "Trusted JavaScript extensions",
             "mixed",
             "Verified SDK v1 package, explicit permission review, declared account scopes, and staged activation.",
-            Capability("metadata", Supported, "Typed search and direct-get hooks run through the permissioned SDK adapter.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests"),
-            Capability("streaming", Supported, "Typed stream resolution is available to provider routing with network and secret permissions.", "ExtensionCapabilityAdapterTests; ProviderRouterTests"),
+            Capability("metadata", Partial, "Typed search and direct-get hooks run through the permissioned SDK adapter, but every legacy protocol search path has not yet moved to ProviderRouter.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests; protocol exposure gap"),
+            Capability("streaming", Partial, "Typed stream resolution is available to provider routing with network and secret permissions, but legacy Jellyfin and Subsonic external stream paths are not all routed through this lane.", "ExtensionCapabilityAdapterTests; ProviderRouterTests; protocol exposure gap"),
             Capability("download", Partial, "Typed download results are supported, but external providers do not yet receive the managed-workspace artifact writer required for first-party download extraction.", "ExtensionCapabilityAdapterTests; FirstPartyExtensionPackageTests"),
             Capability("playlist", Supported, "Typed playlist discovery, item paging, and write hooks are available; SDK v1 does not yet expose the built-in artwork resolver hook.", "ExtensionCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),
-            Capability("lyrics", Supported, "Typed lyrics lookup is available through the permissioned capability adapter.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests"),
+            Capability("lyrics", Partial, "Typed lyrics lookup is available through the permissioned capability adapter; legacy protocol lyrics orchestration still has built-in-only paths.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests; protocol exposure gap"),
             Capability("health", Supported, "Account-aware health hooks feed the same provider health path.", "ExtensionCapabilityAdapterTests; ProviderStatusManagerTests"))
     ];
 

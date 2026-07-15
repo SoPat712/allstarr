@@ -634,7 +634,8 @@ public sealed class PostgresStorageIntegrationTests
             await service.RestorePostgresAsync(
                 artifact,
                 targetBuilder.ConnectionString,
-                destructiveRestoreConfirmed: true);
+                destructiveRestoreConfirmed: true,
+                isolatedTargetDatabaseConfirmation: targetDatabase);
 
             var restoredOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
                 .UseNpgsql(targetBuilder.ConnectionString)

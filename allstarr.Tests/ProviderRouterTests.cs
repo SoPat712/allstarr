@@ -253,6 +253,62 @@ public sealed class ProviderRouterTests
     }
 
     [Fact]
+    public async Task Plan_EnforcesExplicitTermsRateLimitAndStoragePolicyInputs()
+    {
+        var metadataRouter = Router([
+            Metadata("clean"), Metadata("explicit"), Metadata("unknown"),
+            Metadata("terms"), Metadata("rate")
+        ]);
+        var metadata = await metadataRouter.PlanAsync<IProviderMetadataCapability>(Request(
+            ProviderCapabilityKind.Metadata,
+            ["explicit", "unknown", "clean", "terms", "rate"],
+            policy: Policy(explicitContent: ProviderExplicitContentPolicy.CleanOnly),
+            states:
+            [
+                new ProviderRouteProviderState("clean", isExplicit: false),
+                new ProviderRouteProviderState("explicit", isExplicit: true),
+                new ProviderRouteProviderState("terms", isExplicit: false, providerTermsAllowed: false),
+                new ProviderRouteProviderState("rate", isExplicit: false, rateLimitBudgetAvailable: false)
+            ]));
+
+        Assert.Equal("clean", Assert.Single(metadata.Candidates).Provider.Id);
+        Assert.Contains(metadata.Decision.Candidates, item => item.ProviderId == "explicit" && item.ReasonCode == "explicit-content-denied");
+        Assert.Contains(metadata.Decision.Candidates, item => item.ProviderId == "unknown" && item.ReasonCode == "explicit-state-unknown");
+        Assert.Contains(metadata.Decision.Candidates, item => item.ProviderId == "terms" && item.ReasonCode == "provider-terms-denied");
+        Assert.Contains(metadata.Decision.Candidates, item => item.ProviderId == "rate" && item.ReasonCode == "rate-limit-budget-exhausted");
+
+        var download = await Router([Download("full")]).PlanAsync<IProviderDownloadCapability>(Request(
+            ProviderCapabilityKind.Download,
+            ["full"],
+            idempotencyKey: "download-1",
+            states:
+            [
+                new ProviderRouteProviderState("full",
+                    availableQualities: [ProviderAudioQuality.Lossless],
+                    storageCapacityAvailable: false)
+            ]));
+        Assert.Empty(download.Candidates);
+        Assert.Equal("storage-capacity-unavailable", Assert.Single(download.Decision.Candidates).ReasonCode);
+    }
+
+    [Fact]
+    public async Task PreferClean_ReordersEligibleCandidatesWithoutDiscardingExplicitFallback()
+    {
+        var plan = await Router([Metadata("explicit"), Metadata("clean")])
+            .PlanAsync<IProviderMetadataCapability>(Request(
+                ProviderCapabilityKind.Metadata,
+                ["explicit", "clean"],
+                policy: Policy(explicitContent: ProviderExplicitContentPolicy.PreferClean),
+                states:
+                [
+                    new ProviderRouteProviderState("explicit", isExplicit: true),
+                    new ProviderRouteProviderState("clean", isExplicit: false)
+                ]));
+
+        Assert.Equal(["clean", "explicit"], plan.Candidates.Select(item => item.Provider.Id));
+    }
+
+    [Fact]
     public async Task Plan_RejectsAnExpiredRequestBeforeAccountOrProviderRouting()
     {
         var accounts = new FakeAccountResolver();
@@ -355,9 +411,10 @@ public sealed class ProviderRouterTests
 
     private static ProviderExecutionPolicy Policy(
         ProviderAudioQuality minimum = ProviderAudioQuality.Any,
-        IEnumerable<string>? allowedProviders = null) => new(
+        IEnumerable<string>? allowedProviders = null,
+        ProviderExplicitContentPolicy explicitContent = ProviderExplicitContentPolicy.Allow) => new(
         new ProviderQualityPolicy(minimum, ProviderAudioQuality.HighResolution, allowTranscode: false),
-        ProviderExplicitContentPolicy.Allow,
+        explicitContent,
         allowFallback: true,
         allowSharedAccount: true,
         allowManagedDownloads: true,

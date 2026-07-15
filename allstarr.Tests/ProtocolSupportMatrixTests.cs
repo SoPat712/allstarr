@@ -111,6 +111,26 @@ public sealed class ProtocolSupportMatrixTests
         }
     }
 
+    [Fact]
+    public void JellyfinSearchAndInstantMix_DoNotUseFireAndForgetOrRandomOrdering()
+    {
+        var root = FindRepositoryRoot();
+        var search = File.ReadAllText(Path.Combine(root, "allstarr", "Controllers", "JellyfinController.Search.cs"));
+        var controller = File.ReadAllText(Path.Combine(root, "allstarr", "Controllers", "JellyfinController.cs"));
+
+        Assert.DoesNotContain("Task.Run", search, StringComparison.Ordinal);
+        Assert.DoesNotContain("new Random()", controller, StringComparison.Ordinal);
+        Assert.Contains("StableInstantMixOrder", controller, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Controllers_DoNotStartUntrackedTaskRunWork()
+    {
+        var directory = Path.Combine(FindRepositoryRoot(), "allstarr", "Controllers");
+        foreach (var file in Directory.EnumerateFiles(directory, "*.cs", SearchOption.TopDirectoryOnly))
+            Assert.DoesNotContain("Task.Run", File.ReadAllText(file), StringComparison.Ordinal);
+    }
+
     private static void AssertRequired(JsonElement row, string property)
     {
         Assert.True(row.TryGetProperty(property, out var value), property);

@@ -642,6 +642,47 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RunningCooperativeHandler_IsCancelledWhenLeaseRenewalSeesCancellationRequest()
+    {
+        _options.LeaseSeconds = 3;
+        _options.PollIntervalMilliseconds = 20;
+        var queued = await Enqueue("cooperative", "cooperative-cancellation");
+        var storageOptions = new DurableStorageOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = $"Data Source={Path.Combine(_root, "jobs.db")}",
+            BackupDirectory = Path.Combine(_root, "backups")
+        };
+        var storageState = new DurableStorageState(storageOptions);
+        storageState.Set(DurableStorageReadiness.Ready, "fixture");
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        var handler = new CooperativeCancellationHandler();
+        var worker = new DurableJobWorker(
+            _queue,
+            _options,
+            storageState,
+            services,
+            [handler],
+            NullLogger<DurableJobWorker>.Instance,
+            new ReadyStorageProbe(storageState));
+
+        await worker.StartAsync(CancellationToken.None);
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(await _queue.RequestCancellationAsync(queued.JobId, _tenantId));
+
+        await handler.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForState(queued.JobId, DurableJobState.Cancelled);
+        await worker.StopAsync(CancellationToken.None);
+
+        await using var context = await _factory.CreateDbContextAsync();
+        var job = await context.Jobs.SingleAsync(item => item.Id == queued.JobId);
+        Assert.NotNull(job.CancellationRequestedAt);
+        Assert.Equal(DurableJobState.Cancelled, job.State);
+        var attempt = await context.JobAttempts.SingleAsync(item => item.JobId == queued.JobId);
+        Assert.Equal("cancelled", attempt.Outcome);
+    }
+
+    [Fact]
     public async Task Worker_DeniesDisabledSavedAccountWithoutRetargetingToAnotherAccount()
     {
         _options.PollIntervalMilliseconds = 25;
@@ -840,6 +881,32 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         {
             Interlocked.Increment(ref _invocationCount);
             return Task.FromResult(DurableJobCompletion.Success());
+        }
+    }
+
+    private sealed class CooperativeCancellationHandler : IDurableJobHandler
+    {
+        public string JobType => "cooperative";
+        public TaskCompletionSource Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CancellationObserved { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<DurableJobCompletion> ExecuteAsync(
+            DurableJobExecutionContext context,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return DurableJobCompletion.Success();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancellationObserved.TrySetResult();
+                throw;
+            }
         }
     }
 

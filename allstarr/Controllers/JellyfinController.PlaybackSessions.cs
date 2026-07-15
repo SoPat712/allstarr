@@ -233,7 +233,10 @@ public partial class JellyfinController
                             ghostStatusCode);
                     }
 
-                    await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
+                    if (ghostStatusCode == 200 || ghostStatusCode == 204)
+                    {
+                        await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
+                    }
 
                     // Scrobble external track playback start
                     _logger.LogDebug(
@@ -280,6 +283,7 @@ public partial class JellyfinController
             _logger.LogDebug("Forwarding playback start to Jellyfin...");
 
             // Fetch full item details to include in playback report
+            var playbackStartAccepted = false;
             try
             {
                 var (itemResult, itemStatus) =
@@ -314,6 +318,7 @@ public partial class JellyfinController
 
                     if (statusCode == 204 || statusCode == 200)
                     {
+                        playbackStartAccepted = true;
                         _logger.LogDebug("✓ Playback start forwarded to Jellyfin ({StatusCode})", statusCode);
 
                         // Scrobble local track playback start (only if enabled)
@@ -337,6 +342,7 @@ public partial class JellyfinController
                         await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
                     if (statusCode == 204 || statusCode == 200)
                     {
+                        playbackStartAccepted = true;
                         _logger.LogDebug("✓ Basic playback start forwarded to Jellyfin ({StatusCode})", statusCode);
                         _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
                             itemName ?? "Unknown", itemId ?? "unknown");
@@ -350,13 +356,17 @@ public partial class JellyfinController
                 var (result, statusCode) = await _proxyService.PostJsonAsync("Sessions/Playing", body, Request.Headers);
                 if (statusCode == 204 || statusCode == 200)
                 {
+                    playbackStartAccepted = true;
                     _logger.LogDebug("✓ Basic playback start forwarded to Jellyfin ({StatusCode})", statusCode);
                     _logger.LogInformation("🎵 Local track playback started: {Name} (ID: {ItemId})",
                         itemName ?? "Unknown", itemId ?? "unknown");
                 }
             }
 
-            await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
+            if (playbackStartAccepted)
+            {
+                await QueuePlaybackSignalAsync(PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
+            }
 
             // Ensure session exists for local playback regardless of start payload path taken.
             if (!string.IsNullOrEmpty(deviceId) && !string.IsNullOrEmpty(itemId))
@@ -491,7 +501,6 @@ public partial class JellyfinController
                         if (inferredStart &&
                             !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
                         {
-                            await QueuePlaybackSignalAsync(PlaybackTransition.InferredStart, itemId, deviceId, playSessionId, positionTicks);
                             var song = await _metadataService.GetSongAsync(provider!, externalId!);
                             var externalTrackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
                             _logger.LogInformation(
@@ -518,6 +527,7 @@ public partial class JellyfinController
 
                             if (inferredStartStatusCode == 200 || inferredStartStatusCode == 204)
                             {
+                                await QueuePlaybackSignalAsync(PlaybackTransition.InferredStart, itemId, deviceId, playSessionId, positionTicks);
                                 _logger.LogDebug("✓ Inferred external playback start forwarded to Jellyfin ({StatusCode})",
                                     inferredStartStatusCode);
                             }
@@ -563,7 +573,10 @@ public partial class JellyfinController
                     var (progressResult, progressStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Progress", progressJson, Request.Headers);
 
-                    await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
+                    if (progressStatusCode == 200 || progressStatusCode == 204)
+                    {
+                        await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
+                    }
 
                     // Log progress occasionally for debugging (every ~30 seconds)
                     if (positionTicks.HasValue)
@@ -626,7 +639,6 @@ public partial class JellyfinController
                     if (inferredStart &&
                         !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
                     {
-                        await QueuePlaybackSignalAsync(PlaybackTransition.InferredStart, itemId, deviceId, playSessionId, positionTicks);
                         var trackName = await TryGetLocalTrackNameAsync(itemId);
                         _logger.LogInformation("🎵 Local track playback started (inferred from progress): {Name} (ID: {ItemId})",
                             trackName ?? "Unknown", itemId);
@@ -642,6 +654,7 @@ public partial class JellyfinController
 
                         if (inferredStartStatusCode == 200 || inferredStartStatusCode == 204)
                         {
+                            await QueuePlaybackSignalAsync(PlaybackTransition.InferredStart, itemId, deviceId, playSessionId, positionTicks);
                             _logger.LogDebug("✓ Inferred playback start forwarded to Jellyfin ({StatusCode})", inferredStartStatusCode);
                         }
                         else
@@ -694,7 +707,10 @@ public partial class JellyfinController
             var (result, statusCode) =
                 await _proxyService.PostJsonAsync("Sessions/Playing/Progress", body, Request.Headers);
 
-            await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
+            if (statusCode == 200 || statusCode == 204)
+            {
+                await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
+            }
 
             if (statusCode != 204 && statusCode != 200)
             {
@@ -753,8 +769,6 @@ public partial class JellyfinController
             return;
         }
 
-        await QueuePlaybackSignalAsync(PlaybackTransition.InferredStop, previousItemId, deviceId, null, previousPositionTicks);
-
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(previousItemId);
 
         if (isExternal)
@@ -787,6 +801,7 @@ public partial class JellyfinController
 
             if (inferredExternalStopStatusCode == 200 || inferredExternalStopStatusCode == 204)
             {
+                await QueuePlaybackSignalAsync(PlaybackTransition.InferredStop, previousItemId, deviceId, null, previousPositionTicks);
                 _logger.LogDebug("✓ Inferred external playback stop forwarded to Jellyfin ({StatusCode})",
                     inferredExternalStopStatusCode);
             }
@@ -820,6 +835,7 @@ public partial class JellyfinController
 
         if (inferredStopStatusCode == 200 || inferredStopStatusCode == 204)
         {
+            await QueuePlaybackSignalAsync(PlaybackTransition.InferredStop, previousItemId, deviceId, null, previousPositionTicks);
             _logger.LogDebug("✓ Inferred playback stop forwarded to Jellyfin ({StatusCode})", inferredStopStatusCode);
         }
         else
@@ -1117,10 +1133,9 @@ public partial class JellyfinController
                     var (stopResult, stopStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, Request.Headers);
 
-                    await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
-
                     if (stopStatusCode == 204 || stopStatusCode == 200)
                     {
+                        await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
                         _logger.LogDebug("✓ Ghost playback stop forwarded to Jellyfin ({StatusCode})", stopStatusCode);
                     }
 
@@ -1228,10 +1243,9 @@ public partial class JellyfinController
             var (result, statusCode) =
                 await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", body, Request.Headers);
 
-            await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
-
             if (statusCode == 204 || statusCode == 200)
             {
+                await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
                 _logger.LogDebug("✓ Playback stop forwarded to Jellyfin ({StatusCode})", statusCode);
                 if (!string.IsNullOrWhiteSpace(deviceId))
                 {
