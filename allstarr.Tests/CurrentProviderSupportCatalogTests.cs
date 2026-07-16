@@ -39,6 +39,8 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("listenbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("squidwtf", "streaming", CurrentProviderSupportCatalog.PolicyBlocked);
         AssertState("squidwtf", "download", CurrentProviderSupportCatalog.PolicyBlocked);
+        AssertState("extensions", "metadata", CurrentProviderSupportCatalog.Supported);
+        AssertState("extensions", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "download", CurrentProviderSupportCatalog.Partial);
         AssertState("extensions", "playlist", CurrentProviderSupportCatalog.Supported);
     }

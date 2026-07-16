@@ -996,12 +996,12 @@ The Phase 3 completion record included:
   playback, all six pinned Jellyfin InstantMix route classes, star/unstar, playlist updates, scrobbling, and both
   generic relays. External Jellyfin playlist reads now intercept correctly and preserve source order. Valid
   backend `206` responses are no longer ranged a second time into false `416` failures.
-- A support-matrix gate that requires every claimed fixture to be a checked-in valid JSON file. At that checkpoint,
-  later-phase work included provider-account routing for legacy synthesized paths, durable favorite/scrobble jobs,
-  provider range leases, provider-neutral playlist materialization, and recommendation policy. The durable
-  favorite/scrobble pipelines, materialization, and recommendation policy were delivered in later completion
-  records; legacy provider-account routing and provider range leases remain current gaps where the support matrix
-  says so.
+- A support-matrix gate that requires every claimed fixture to be a checked-in valid JSON file. Later completion
+  work moved synthesized Jellyfin and Subsonic metadata through `ProtocolProviderGateway`: typed providers are
+  planned by `ProviderRouter`, compatibility-only providers are filtered by exact durable account resolution, and
+  explicitly public accountless metadata remains available to verified unlinked backend users. Typed external
+  streams use protected server-side leases and forward ranges only when the lease advertises support. Providers
+  that still use download-backed compatibility streaming remain visibly partial in the provider matrix.
 
 At the Phase 3 checkpoint, 1,139 .NET tests passed with no skips. The focused protocol and adjacent compatibility
 gate passed 148 tests. The then-current Python sidecar suite and JavaScript syntax checks passed, standard and

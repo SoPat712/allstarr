@@ -132,6 +132,18 @@ public sealed class ProtocolSupportMatrixTests
         Assert.All(rows.Where(row => row.GetProperty("feature").GetString() is "playback-and-scrobbling" or "scrobble"),
             row => Assert.Contains("PlaybackSignalPipelineTests", row.GetProperty("testLocation").GetString(),
                 StringComparison.Ordinal));
+
+        var routedRows = rows.Where(row =>
+            row.GetProperty("feature").GetString() is "search-and-browse" or "search3" or
+                "item-metadata-and-images" or "item-metadata-and-cover-art" or "streaming-and-ranges");
+        Assert.All(routedRows, row => Assert.Contains(
+            "ProtocolProviderGatewayContractTests",
+            row.GetProperty("testLocation").GetString(),
+            StringComparison.Ordinal));
+        Assert.DoesNotContain(rows, row =>
+            row.GetProperty("authBoundary").GetString()!.Contains(
+                "does not yet select a provider account",
+                StringComparison.Ordinal));
     }
 
     [Fact]
