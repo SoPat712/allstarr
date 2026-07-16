@@ -576,6 +576,7 @@ class AllstarrApp extends LitElement {
         window.history.replaceState(null, "", `#${this.route}`);
       }
       this.navOpen = false;
+      this.loadFailures = {};
       this.loadForRoute();
     };
     window.addEventListener("hashchange", this.onHashChange);
@@ -744,6 +745,7 @@ class AllstarrApp extends LitElement {
     }
     this.routeLoadKey = routeKey;
     this.clearLoadFailure(`route:${routeKey}`);
+    const failureKeysBeforeLoad = new Set(Object.keys(this.loadFailures));
 
     const [zone, sub] = routeParts(this.route);
     try {
@@ -781,7 +783,11 @@ class AllstarrApp extends LitElement {
           return;
         }
       }
-      this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || "page")} data`, error);
+      const specificFailureRecorded = Object.keys(this.loadFailures)
+        .some((key) => !failureKeysBeforeLoad.has(key));
+      if (!specificFailureRecorded) {
+        this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || "page")} data`, error);
+      }
     }
   }
 
