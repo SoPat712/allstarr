@@ -101,6 +101,26 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OptionalAppleGateway_AllowsEmptyBootstrapAndDurableDisable()
+    {
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["AppleDownload:BaseUrl"] = string.Empty
+        });
+
+        var bootstrap = await service.GetAsync(_tenantId, "AppleDownload:BaseUrl");
+        Assert.Equal(RuntimeSettingOrigin.Bootstrap, bootstrap.Origin);
+        Assert.Equal(string.Empty, bootstrap.Value);
+
+        var applied = await service.ApplyBatchAsync(_tenantId,
+            [new("AppleDownload:BaseUrl", string.Empty)], "webui", _userId);
+        var durable = Assert.Single(applied.Settings);
+        Assert.Equal(RuntimeSettingOrigin.Durable, durable.Origin);
+        Assert.Equal(string.Empty, durable.Value);
+        Assert.Equal("", durable.NormalizedValue);
+    }
+
+    [Fact]
     public async Task StageBatch_LeavesCommitAndChangePublicationToOuterTransaction()
     {
         var service = CreateService([]);

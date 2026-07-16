@@ -80,7 +80,8 @@ public sealed class RuntimeSettingsChangeSignal : IRuntimeSettingsChangeSignal
 
 public sealed record RuntimeSettingDefinition(
     string Key, RuntimeSettingValueType ValueType, string BootstrapKey,
-    int? Minimum = null, int? Maximum = null, IReadOnlySet<string>? Choices = null);
+    int? Minimum = null, int? Maximum = null, IReadOnlySet<string>? Choices = null,
+    bool AllowEmpty = false);
 
 public static class RuntimeSettingCatalog
 {
@@ -112,7 +113,7 @@ public static class RuntimeSettingCatalog
         Text("Deezer:Quality", "FLAC", "MP3_320", "MP3_128"); Int("Deezer:MinRequestIntervalMs", 0, 60000);
         Text("Qobuz:Quality", "FLAC", "FLAC_24_HIGH", "FLAC_24_LOW", "FLAC_16", "MP3_320");
         Int("Qobuz:MinRequestIntervalMs", 0, 60000);
-        items.Add(new("AppleDownload:BaseUrl", RuntimeSettingValueType.String, "AppleDownload:BaseUrl"));
+        items.Add(new("AppleDownload:BaseUrl", RuntimeSettingValueType.String, "AppleDownload:BaseUrl", AllowEmpty: true));
         items.Add(new("AppleDownload:Quality", RuntimeSettingValueType.String, "AppleDownload:Quality"));
         items.Add(new("Providers:MetadataOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_METADATA_ORDER"));
         items.Add(new("Providers:DownloadOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_DOWNLOAD_ORDER"));
@@ -305,6 +306,8 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
     private static (object Value, string Display, string Json) NormalizeString(RuntimeSettingDefinition definition, string raw)
     {
         var value = raw.Trim();
+        if (value.Length == 0 && definition.AllowEmpty)
+            return (string.Empty, string.Empty, JsonSerializer.Serialize(string.Empty, JsonOptions));
         if (value.Length == 0 || value.Length > 500 || definition.Choices is { Count: > 0 } && !definition.Choices.Contains(value))
             throw new ArgumentException($"Runtime setting '{definition.Key}' has an invalid string value.");
         if (definition.Key == "Library:PlaylistsDirectory" &&
@@ -350,6 +353,7 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         RuntimeSettingValueType.Boolean => "false",
         RuntimeSettingValueType.Integer => definition.Minimum?.ToString(CultureInfo.InvariantCulture) ?? "0",
         RuntimeSettingValueType.StringList => string.Empty,
+        RuntimeSettingValueType.String when definition.AllowEmpty => string.Empty,
         RuntimeSettingValueType.String when definition.Choices?.Count > 0 => definition.Choices.First(),
         _ => "default"
     };
