@@ -112,6 +112,29 @@ public sealed class ProtocolSupportMatrixTests
     }
 
     [Fact]
+    public void SupportMatrix_CurrentDurableAndScopedProtocolClaimsNameTheirRegressionTests()
+    {
+        using var matrix = ReadFixture("protocol-support-matrix.json");
+        var rows = matrix.RootElement.EnumerateArray().ToList();
+
+        var playlistUpdate = Assert.Single(rows, row =>
+            row.GetProperty("protocol").GetString() == "subsonic" &&
+            row.GetProperty("feature").GetString() == "playlist-update");
+        Assert.Equal("explicit", playlistUpdate.GetProperty("currentStatus").GetString());
+        Assert.Contains("exact tenant, owner", playlistUpdate.GetProperty("authBoundary").GetString(),
+            StringComparison.Ordinal);
+        Assert.Contains("SubsonicPlaylistMutationTests", playlistUpdate.GetProperty("testLocation").GetString(),
+            StringComparison.Ordinal);
+
+        Assert.All(rows.Where(row => row.GetProperty("feature").GetString() is "favorites" or "star-and-unstar"),
+            row => Assert.Contains("FavoriteActionPipelineTests", row.GetProperty("testLocation").GetString(),
+                StringComparison.Ordinal));
+        Assert.All(rows.Where(row => row.GetProperty("feature").GetString() is "playback-and-scrobbling" or "scrobble"),
+            row => Assert.Contains("PlaybackSignalPipelineTests", row.GetProperty("testLocation").GetString(),
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void JellyfinSearchAndInstantMix_DoNotUseFireAndForgetOrRandomOrdering()
     {
         var root = FindRepositoryRoot();

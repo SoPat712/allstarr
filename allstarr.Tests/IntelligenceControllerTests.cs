@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
@@ -57,6 +58,39 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             LibraryScopeId = "music"
         }, default));
         Assert.Contains("unauthorized", JsonSerializer.Serialize(unauthorized.Value), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Get_IgnoresMalformedScheduleRowsInsteadOfBreakingTheIntelligenceScreen()
+    {
+        var policy = Policy();
+        _policy.Record = policy;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IntelligencePolicies.Add(policy);
+            db.JobSchedules.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.RecommendationJobType,
+                CronExpression = "0 8 * * *",
+                TimeZoneId = "UTC",
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = "{broken",
+                Enabled = false,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.IsType<OkObjectResult>(await Controller().Get(Scope(), default));
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains("configured", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"schedules\":[]", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -213,6 +247,166 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             IdempotencyKey = "request-1"
         }, default));
         Assert.Equal(_user, _runs.Scope!.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task ScheduleCrudIsExactScopeRevisionCheckedAndSoftDisables()
+    {
+        var policy = Policy(); _policy.Record = policy;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IntelligencePolicies.Add(policy);
+            await db.SaveChangesAsync();
+        }
+        var controller = Controller();
+        var created = Assert.IsType<CreatedResult>(await controller.CreateSchedule(new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            CronExpression = "0 3 * * *",
+            TimeZoneId = "UTC",
+            OverlapPolicy = "skip",
+            MisfirePolicy = "runOnce",
+            Enabled = true,
+            Limit = 40,
+            Name = "Morning discovery"
+        }, default));
+        var createdJson = JsonSerializer.SerializeToElement(created.Value);
+        var scheduleId = createdJson.GetProperty("id").GetGuid();
+        Assert.Equal(0, createdJson.GetProperty("Revision").GetInt64());
+
+        var conflict = await controller.UpdateSchedule(scheduleId, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            CronExpression = "0 4 * * *",
+            TimeZoneId = "UTC",
+            OverlapPolicy = "queue",
+            MisfirePolicy = "skip",
+            Enabled = true,
+            Limit = 25,
+            Name = "Updated discovery",
+            ExpectedRevision = 99
+        }, default);
+        Assert.IsType<ConflictObjectResult>(conflict);
+
+        var updated = Assert.IsType<OkObjectResult>(await controller.UpdateSchedule(scheduleId, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            CronExpression = "0 4 * * *",
+            TimeZoneId = "UTC",
+            OverlapPolicy = "queue",
+            MisfirePolicy = "skip",
+            Enabled = true,
+            Limit = 25,
+            Name = "Updated discovery",
+            ExpectedRevision = 0
+        }, default));
+        Assert.Contains("Updated discovery", JsonSerializer.Serialize(updated.Value), StringComparison.Ordinal);
+
+        Assert.IsType<NoContentResult>(await controller.DeleteSchedule(scheduleId, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            ExpectedRevision = 1
+        }, default));
+        await using var verify = await _factory.CreateDbContextAsync();
+        var stored = await verify.JobSchedules.SingleAsync();
+        Assert.False(stored.Enabled); Assert.Null(stored.NextRunAt); Assert.Equal(2, stored.Revision);
+        var template = JsonSerializer.Deserialize<RecommendationScheduleTemplate>(stored.PayloadTemplateJson)!;
+        Assert.Equal(policy.Id, template.IntelligencePolicyId);
+    }
+
+    [Fact]
+    public async Task DeleteScheduleRejectsUnownedBackendBeforeReadingSchedule()
+    {
+        var policy = Policy();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IntelligencePolicies.Add(policy);
+            db.JobSchedules.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.RecommendationJobType,
+                CronExpression = "0 3 * * *",
+                TimeZoneId = "UTC",
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = JsonSerializer.Serialize(new RecommendationScheduleTemplate(
+                    1, policy.Id, 25, "Discovery")),
+                Enabled = true,
+                NextRunAt = DateTimeOffset.UtcNow.AddDays(1),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        await using var read = await _factory.CreateDbContextAsync();
+        var id = await read.JobSchedules.Select(item => item.Id).SingleAsync();
+        var result = await Controller().DeleteSchedule(id, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "not-owned",
+            LibraryScopeId = "music",
+            ExpectedRevision = 0
+        }, default);
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateScheduleCannotTakeOverAnotherPolicySchedule()
+    {
+        var policy = Policy();
+        var scheduleId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.IntelligencePolicies.Add(policy);
+            db.JobSchedules.Add(new()
+            {
+                Id = scheduleId,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.RecommendationJobType,
+                CronExpression = "0 3 * * *",
+                TimeZoneId = "UTC",
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = JsonSerializer.Serialize(new RecommendationScheduleTemplate(
+                    1, Guid.CreateVersion7(), 25, "Another backend's discovery")),
+                Enabled = true,
+                NextRunAt = DateTimeOffset.UtcNow.AddDays(1),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await Controller().UpdateSchedule(scheduleId, new()
+        {
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            LibraryScopeId = "music",
+            CronExpression = "0 4 * * *",
+            TimeZoneId = "UTC",
+            OverlapPolicy = "skip",
+            MisfirePolicy = "runOnce",
+            Enabled = true,
+            Limit = 25,
+            Name = "Taken over",
+            ExpectedRevision = 0
+        }, default);
+
+        Assert.IsType<NotFoundResult>(result);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.DoesNotContain("Taken over", (await verify.JobSchedules.SingleAsync()).PayloadTemplateJson,
+            StringComparison.Ordinal);
     }
 
     private IntelligenceController Controller()

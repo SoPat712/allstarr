@@ -79,11 +79,28 @@ to the same tenant and remain active. It is snapshotted through the run and gene
 time by the existing encrypted playlist authentication resolver. The materializer never borrows a credential
 from another playlist link.
 
+## Scheduled Generation
+
+An enabled intelligence policy can own one or more durable recommendation schedules. Each schedule stores a
+versioned template with the generated playlist name and candidate limit. Tenant, owner, backend, library, enabled
+sources, and the optional Subsonic credential always come from the exact linked policy instead of editable JSON.
+
+At each occurrence, the scheduler creates one recommendation run, derives seeds from the user's current retained
+habits, and queues one generated-set materialization after the run succeeds. Retries repair the same occurrence
+instead of creating another recommendation run. Later occurrences reuse the schedule's backend playlist, update
+its order and membership, and keep prior runs as explainable history. The schedule overlap policy covers both the
+recommendation job and its child materialization job.
+
+Disabling a policy or clearing its intelligence data disables its linked schedules and stops future occurrences.
+Deleting a schedule in the UI is a soft disable so completed runs keep valid provenance. State transfer validates
+the versioned template, exact policy and backend identity, run occurrence, generated-set lineage, and job payload
+before importing any scheduled intelligence state.
+
 ## UI And Test Contract
 
 The intelligence screen is available to administrators and linked users. It includes privacy and retention
-controls, source readiness, explanation disclosure, generated playlist status, keyboard focus, live status text,
-and a single-column narrow-screen layout.
+controls, source readiness, explanation disclosure, generated playlist status, schedule creation and controls,
+keyboard focus, live status text, and a single-column narrow-screen layout.
 
 Coverage includes policy scope and purge, signal expiry, habit-derived seeds, source readiness and identities,
 provider failure classes, run idempotency, explanation persistence, controller-to-job candidate identity,

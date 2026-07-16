@@ -73,6 +73,8 @@ Listening intelligence is opt-in at an exact tenant, user, protocol, backend, an
 
 Generated sets include explanations and reconcile only local matches into a target playlist. They never turn a recommendation into an implicit download. Scrobble delivery to Last.fm and ListenBrainz uses per-target checkpoints so retries do not duplicate completed work.
 
+Recommendation schedules are versioned durable job templates linked to one exact intelligence policy. Each occurrence derives seeds from current retained habits, records its schedule lineage, and queues one generated-set materialization. Later occurrences reconcile the same backend playlist. Disabling or purging the policy disables its schedules without erasing completed-run provenance.
+
 ## Security And Operations
 
 Provider records hold secret references, not plaintext credentials. Secret versions are protected with AES-GCM using an external key ring. Values are resolved just in time and redacted from logs, job payloads, state-transfer archives, and diagnostics.

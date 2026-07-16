@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -85,20 +86,149 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ScheduledRunAutomaticallyCreatesOneRepairableGeneratedSetJob()
+    {
+        var policy = await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
+        var scheduleId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.Add(new()
+            {
+                Id = scheduleId,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.RecommendationJobType,
+                CronExpression = "* * * * *",
+                TimeZoneId = "UTC",
+                OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = JsonSerializer.Serialize(
+                    new RecommendationScheduleTemplate(1, policy.Id, 25, "Daily discovery")),
+                NextRunAt = _clock.UtcNow.AddMinutes(1),
+                Enabled = true,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        Assert.Equal(1, (await new DurableScheduleEngine(_factory, _jobs, _clock).TickAsync()).Enqueued);
+        var claim = await _jobs.ClaimNextAsync("scheduled-recommendation", ["recommendation.generate"]);
+        Assert.NotNull(claim);
+        var smart = new SmartPlaylistService(_factory, _clock, _jobs);
+        var handler = new RecommendationRunJobHandler(_factory, [new FixtureProvider()],
+            new ListeningProfileService(_factory, _clock), _clock, smart);
+
+        var completion = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        await _jobs.CompleteAsync(claim!, completion);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var run = await verify.RecommendationRuns.SingleAsync();
+        var set = await verify.GeneratedSets.SingleAsync();
+        Assert.Equal(scheduleId, run.ScheduleId);
+        Assert.Equal(scheduleId, set.ScheduleId);
+        Assert.Equal("Daily discovery", set.Name);
+        var child = await verify.Jobs.SingleAsync(item => item.Type == "smart-playlist.materialize");
+        Assert.StartsWith($"schedule:{scheduleId:N}:materialize:", child.IdempotencyKey, StringComparison.Ordinal);
+
+        var replay = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, replay.Kind);
+        Assert.Equal(1, await verify.GeneratedSets.CountAsync());
+        Assert.Equal(1, await verify.Jobs.CountAsync(item => item.Type == "smart-playlist.materialize"));
+    }
+
+    [Fact]
+    public async Task DisablingPolicyAlsoDisablesItsExactScopeSchedules()
+    {
+        var policy = await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
+        var otherPolicy = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.AddRange(Schedule(policy.Id, "music"), Schedule(otherPolicy, "music"),
+                Schedule(policy.Id, "other"));
+            await db.SaveChangesAsync();
+        }
+
+        await _policies.SetAsync(_scope, new(false, 30, ["play"], ["fixture"]));
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var schedules = await verify.JobSchedules.OrderBy(item => item.LibraryScopeId)
+            .ThenBy(item => item.PayloadTemplateJson).ToListAsync();
+        Assert.False(schedules.Single(item => item.LibraryScopeId == "music" &&
+            item.PayloadTemplateJson.Contains(policy.Id.ToString(), StringComparison.OrdinalIgnoreCase)).Enabled);
+        Assert.Null(schedules.Single(item => item.LibraryScopeId == "music" &&
+            item.PayloadTemplateJson.Contains(policy.Id.ToString(), StringComparison.OrdinalIgnoreCase)).NextRunAt);
+        Assert.True(schedules.Single(item => item.PayloadTemplateJson.Contains(otherPolicy.ToString(),
+            StringComparison.OrdinalIgnoreCase)).Enabled);
+        Assert.True(schedules.Single(item => item.LibraryScopeId == "other").Enabled);
+    }
+
+    [Fact]
     public async Task DisableAndPurgeRemovesOnlyExactScopeIntelligenceData()
     {
-        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
+        var policy = await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
         await new RecommendationSignalWriter(_factory, _clock).WriteAsync(_scope, "play", "track", 1, _clock.UtcNow);
         await new ListeningProfileService(_factory, _clock).BuildAsync(_scope);
         var pending = await new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "purged-run");
+        var schedule = Schedule(policy.Id, "music");
+        var childJobId = Guid.CreateVersion7();
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            setup.JobSchedules.Add(schedule);
+            setup.Jobs.Add(new()
+            {
+                Id = childJobId,
+                ScopeKey = $"{_tenant:N}:{_user:N}",
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                Type = "smart-playlist.materialize",
+                PayloadJson = "{}",
+                PolicySnapshotJson = "{}",
+                RequestFingerprint = new string('d', 64),
+                IdempotencyKey = $"schedule:{schedule.Id:N}:materialize:{Guid.CreateVersion7():N}",
+                CorrelationId = "purge-child",
+                State = DurableJobState.Pending,
+                MaxAttempts = 3,
+                AvailableAt = _clock.UtcNow,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await setup.SaveChangesAsync();
+        }
         await _policies.DisableAndPurgeAsync(_scope);
-        await using var db = await _factory.CreateDbContextAsync(); var policy = Assert.Single(await db.IntelligencePolicies.ToListAsync());
-        Assert.False(policy.Enabled); Assert.Empty(await db.ListeningSignals.ToListAsync()); Assert.Empty(await db.ListeningProfiles.ToListAsync());
+        await using var db = await _factory.CreateDbContextAsync(); var storedPolicy = Assert.Single(await db.IntelligencePolicies.ToListAsync());
+        Assert.False(storedPolicy.Enabled); Assert.Empty(await db.ListeningSignals.ToListAsync()); Assert.Empty(await db.ListeningProfiles.ToListAsync());
         Assert.Empty(await db.RecommendationRuns.ToListAsync());
         Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(x => x.Id == pending.JobId)).State);
+        Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(x => x.Id == childJobId)).State);
+        Assert.False((await db.JobSchedules.SingleAsync()).Enabled);
         Assert.Null(await _jobs.ClaimNextAsync("purge-restart", ["recommendation.generate"]));
         await Assert.ThrowsAsync<InvalidOperationException>(() => new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "disabled"));
     }
+
+    private JobScheduleRecord Schedule(Guid policyId, string libraryScopeId) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _tenant,
+        OwnerUserId = _user,
+        LibraryScopeId = libraryScopeId,
+        JobType = DurableScheduleEngine.RecommendationJobType,
+        CronExpression = "* * * * *",
+        TimeZoneId = "UTC",
+        OverlapPolicy = ScheduleOverlapPolicy.Skip,
+        MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+        RetryPolicyJson = "{}",
+        PayloadTemplateJson = JsonSerializer.Serialize(new RecommendationScheduleTemplate(
+            1, policyId, 25, "Daily discovery")),
+        Enabled = true,
+        NextRunAt = _clock.UtcNow.AddMinutes(1),
+        CreatedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow
+    };
 
     [Fact]
     public async Task ProviderCancellationIsTerminalCancellationNotRetry()

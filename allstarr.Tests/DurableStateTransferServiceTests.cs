@@ -9,6 +9,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
 using allstarr.Core.Playback;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
@@ -917,6 +918,63 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Empty(await target.Tenants.ToListAsync());
         Assert.Empty(await target.IntelligencePolicies.ToListAsync());
         Assert.Empty(await target.RecommendationRuns.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Import_RejectsRecommendationScheduleThatCrossesItsPolicyScope()
+    {
+        Guid scheduleId;
+        await using (var source = await _sourceFactory.CreateDbContextAsync())
+        {
+            var policy = await source.IntelligencePolicies.SingleAsync();
+            scheduleId = Guid.CreateVersion7();
+            var now = DateTimeOffset.UtcNow;
+            source.JobSchedules.Add(new JobScheduleRecord
+            {
+                Id = scheduleId,
+                TenantId = policy.TenantId,
+                OwnerUserId = policy.OwnerUserId,
+                LibraryScopeId = policy.LibraryScopeId,
+                JobType = DurableScheduleEngine.RecommendationJobType,
+                CronExpression = "0 8 * * *",
+                TimeZoneId = "UTC",
+                OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = JsonSerializer.Serialize(
+                    new RecommendationScheduleTemplate(1, policy.Id, 25, "Transfer recommendations")),
+                Enabled = true,
+                NextRunAt = now.AddDays(1),
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 0
+            });
+            await source.SaveChangesAsync();
+        }
+        var artifact = await _service.ExportAsync(Path.Combine(_root, "bad-recommendation-schedule"), true);
+        var validTargetFactory = Factory($"Data Source={Path.Combine(_root, "valid-recommendation-schedule-target.db")}");
+        await DurableStateTransferService.ImportAsync(artifact, validTargetFactory, true);
+        await using (var validTarget = await validTargetFactory.CreateDbContextAsync())
+        {
+            var restored = await validTarget.JobSchedules.SingleAsync(item => item.Id == scheduleId);
+            Assert.Equal(DurableScheduleEngine.RecommendationJobType, restored.JobType);
+            Assert.Contains("Transfer recommendations", restored.PayloadTemplateJson, StringComparison.Ordinal);
+        }
+        artifact = await RewriteJsonArrayEntryAsync(artifact, "job-schedules.json", values =>
+        {
+            var schedule = values.Select(item => item!.AsObject()).Single(item =>
+                Guid.Parse(item["id"]!.GetValue<string>()) == scheduleId);
+            schedule["libraryScopeId"] = "another-library";
+        });
+        var targetFactory = Factory($"Data Source={Path.Combine(_root, "bad-recommendation-schedule-target.db")}");
+
+        var error = await Assert.ThrowsAsync<BackupVerificationException>(() =>
+            DurableStateTransferService.ImportAsync(artifact, targetFactory, true));
+
+        Assert.Contains("intelligence", error.Message, StringComparison.OrdinalIgnoreCase);
+        await using var target = await targetFactory.CreateDbContextAsync();
+        Assert.Empty(await target.Tenants.ToListAsync());
+        Assert.Empty(await target.JobSchedules.ToListAsync());
     }
 
     [Fact]

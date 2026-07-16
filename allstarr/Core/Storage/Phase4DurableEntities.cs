@@ -113,6 +113,7 @@ public sealed class JobScheduleRecord
     public ScheduleOverlapPolicy OverlapPolicy { get; set; }
     public ScheduleMisfirePolicy MisfirePolicy { get; set; }
     public string RetryPolicyJson { get; set; } = "{}";
+    public string PayloadTemplateJson { get; set; } = "{}";
     public DateTimeOffset? NextRunAt { get; set; }
     public bool Enabled { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

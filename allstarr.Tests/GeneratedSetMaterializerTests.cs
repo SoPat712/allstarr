@@ -140,6 +140,96 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Jellyfin_ScheduledOccurrenceReusesPreviousBackendPlaylistById()
+    {
+        var track = await AddTrack("backend-1", null); await AddEntries("one");
+        var scheduleId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.Add(new()
+            {
+                Id = scheduleId,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                JobType = DurableScheduleEngine.RecommendationJobType,
+                CronExpression = "0 3 * * *",
+                TimeZoneId = "UTC",
+                RetryPolicyJson = "{}",
+                PayloadTemplateJson = "{}",
+                Enabled = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            (await db.GeneratedSets.SingleAsync()).ScheduleId = scheduleId;
+            var previousJobId = Guid.CreateVersion7(); var previousRunId = Guid.CreateVersion7();
+            db.Jobs.Add(new()
+            {
+                Id = previousJobId,
+                ScopeKey = $"{_tenant:N}:{_user:N}",
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                LibraryScopeId = "music",
+                Type = "recommendation.generate",
+                PayloadJson = "{}",
+                PolicySnapshotJson = "{}",
+                RequestFingerprint = new string('b', 64),
+                IdempotencyKey = "previous-run",
+                CorrelationId = "previous-run",
+                State = DurableJobState.Succeeded,
+                MaxAttempts = 1,
+                AvailableAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
+                UpdatedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            });
+            db.RecommendationRuns.Add(new()
+            {
+                Id = previousRunId,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                Protocol = "jellyfin",
+                BackendInstanceId = "main",
+                LibraryScopeId = "music",
+                JobId = previousJobId,
+                IdempotencyKey = "previous-run",
+                Limit = 10,
+                State = RecommendationRunState.Succeeded,
+                ScheduleId = scheduleId,
+                ScheduledFor = DateTimeOffset.UtcNow.AddDays(-1),
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
+                UpdatedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            });
+            db.GeneratedSets.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                RunId = previousRunId,
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                Protocol = "jellyfin",
+                BackendInstanceId = "main",
+                LibraryScopeId = "music",
+                Name = "Old display name",
+                ScheduleId = scheduleId,
+                MaterializationState = GeneratedSetMaterializationState.Succeeded,
+                BackendPlaylistId = "playlist-from-yesterday",
+                MaterializedAt = DateTimeOffset.UtcNow.AddDays(-1),
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            });
+            await db.SaveChangesAsync();
+        }
+        var target = new FakeTarget(BackendPlaylistFamily.Jellyfin);
+        var materializer = new JellyfinGeneratedSetMaterializer(_factory, new Resolver(target));
+
+        var result = await materializer.MaterializeAsync(Request("jellyfin",
+            Candidate("one", new(LibraryTrackId: track))), default);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(["playlist-from-yesterday"], target.ReadIds);
+        Assert.Empty(target.Names);
+        Assert.Equal("playlist-from-yesterday", target.Request!.BackendPlaylistId);
+    }
+
+    [Fact]
     public async Task Subsonic_RequiresExactScopedEncryptedCredentialBeforeTargetCall()
     {
         await ChangeProtocol("subsonic"); var track = await AddTrack("song-1", null, "subsonic"); await AddEntries("one");
@@ -293,9 +383,17 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
         public bool Existing { get; set; }
         public BackendPlaylistTargetContext? Context { get; private set; }
         public List<string> Names { get; } = [];
+        public List<string> ReadIds { get; } = [];
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(BackendPlaylistTargetContext context, string name, CancellationToken cancellationToken)
         { Context = context; Names.Add(name); BackendPlaylistSnapshot? value = Existing ? new("playlist-1", name, [], BackendPlaylistSnapshot.ComputeFingerprint("playlist-1", name, [])) : null; return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot?>(BackendPlaylistTargetStatus.Success, value)); }
-        public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot>> ReadAsync(BackendPlaylistTargetContext context, string backendPlaylistId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot>> ReadAsync(BackendPlaylistTargetContext context, string backendPlaylistId, CancellationToken cancellationToken)
+        {
+            Context = context; ReadIds.Add(backendPlaylistId);
+            var value = new BackendPlaylistSnapshot(backendPlaylistId, "Existing schedule playlist", [],
+                BackendPlaylistSnapshot.ComputeFingerprint(backendPlaylistId, "Existing schedule playlist", []));
+            return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(
+                BackendPlaylistTargetStatus.Success, value));
+        }
         public Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
         {
             Request = request; Writes++; var snapshot = new BackendPlaylistSnapshot(request.BackendPlaylistId ?? "playlist-1", request.Metadata.Name,

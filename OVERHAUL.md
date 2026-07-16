@@ -996,9 +996,12 @@ The Phase 3 completion record included:
   playback, all six pinned Jellyfin InstantMix route classes, star/unstar, playlist updates, scrobbling, and both
   generic relays. External Jellyfin playlist reads now intercept correctly and preserve source order. Valid
   backend `206` responses are no longer ranged a second time into false `416` failures.
-- A support-matrix gate that requires every claimed fixture to be a checked-in valid JSON file. Known later-phase
-  work remains explicit: provider-account routing for legacy synthesized paths, durable favorite/scrobble jobs,
-  provider range leases, provider-neutral playlist materialization, and recommendation policy.
+- A support-matrix gate that requires every claimed fixture to be a checked-in valid JSON file. At that checkpoint,
+  later-phase work included provider-account routing for legacy synthesized paths, durable favorite/scrobble jobs,
+  provider range leases, provider-neutral playlist materialization, and recommendation policy. The durable
+  favorite/scrobble pipelines, materialization, and recommendation policy were delivered in later completion
+  records; legacy provider-account routing and provider range leases remain current gaps where the support matrix
+  says so.
 
 At the Phase 3 checkpoint, 1,139 .NET tests passed with no skips. The focused protocol and adjacent compatibility
 gate passed 148 tests. The then-current Python sidecar suite and JavaScript syntax checks passed, standard and
@@ -1141,14 +1144,16 @@ Phase 7 adds opt-in, explainable listening intelligence and turns it into real b
   explicit download policy is enabled. Navidrome credentials are created or rotated through the encrypted secret
   flow and snapshotted by reference; no unrelated playlist credential is borrowed.
 - The intelligence UI exposes source readiness, opt-in, retention, purge, explained candidates, listening-profile
-  visualization, generated playlist state, and safe errors for administrator and linked-user sessions. Disabled,
-  empty, loading, configured, degraded, unauthorized, and error states are explicit.
+  visualization, generated playlist state, durable schedule controls, and safe errors for administrator and
+  linked-user sessions. Scheduled runs derive from current retained habits, keep exact policy and occurrence
+  lineage, and reconcile the same backend playlist on later occurrences. Disabled, empty, loading, configured,
+  degraded, unauthorized, and error states are explicit.
 - Provider-neutral state transfer includes all intelligence tables and playback delivery checkpoints, and rejects
   malformed policies, paths, JSON, candidate identity, run/job lineage, materialization lifecycle, credentials,
   signal keys, and cross-scope references before writing.
 
-The Phase 7 release gate passed 1,395 .NET tests with no skips and no Release warnings. The focused intelligence,
-source, materializer, playback, authorization, host, and UI gate passed 80 tests; state transfer passed 79/79.
+The current Phase 7 release gate passed 1,577 .NET tests with no skips. The scheduled intelligence, source,
+materializer, authorization, WebUI, and state-transfer gate passed 147/147.
 SQLite rollback/reapply and SQLite/PostgreSQL model parity pass. Native PostgreSQL 18 migration, durable queue,
 backup verification, and isolated restore passed against a fresh database. JavaScript syntax, standard Compose,
 `git diff --check`, and the provider contract tests pass.

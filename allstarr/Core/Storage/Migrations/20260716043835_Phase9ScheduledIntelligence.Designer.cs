@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using allstarr.Core.Storage;
 
@@ -10,66 +11,87 @@ using allstarr.Core.Storage;
 namespace allstarr.Core.Storage.Migrations
 {
     [DbContext(typeof(AllstarrDbContext))]
-    partial class AllstarrDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260716043835_Phase9ScheduledIntelligence")]
+    partial class Phase9ScheduledIntelligence
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
             modelBuilder.Entity("allstarr.Core.Downloads.ProviderDownloadArtifactEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ContentSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("DurableJobId");
+                    b.Property<Guid>("DurableJobId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("Length");
+                    b.Property<long>("Length")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ManagedFileId");
+                    b.Property<Guid?>("ManagedFileId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("PlacedAt");
+                    b.Property<long?>("PlacedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("ProviderAccountId");
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderArtifactId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("RelativePath")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("VerifiedAt");
+                    b.Property<long>("VerifiedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("WorkspaceId")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("WorkspaceRecordId");
+                    b.Property<Guid>("WorkspaceRecordId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -93,37 +115,49 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Downloads.ProviderDownloadWorkspaceEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("DurableJobId");
+                    b.Property<Guid>("DurableJobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ProviderAccountId");
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("WorkspaceId")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -145,49 +179,67 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionPolicyRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool?>("AddToVirtualLiked");
+                    b.Property<bool?>("AddToVirtualLiked")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool?>("AutoDownload");
+                    b.Property<bool?>("AutoDownload")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool?>("EnrichMetadata");
+                    b.Property<bool?>("EnrichMetadata")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool?>("MatchLocalLibrary");
+                    b.Property<bool?>("MatchLocalLibrary")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool?>("PlaceManagedFile");
+                    b.Property<bool?>("PlaceManagedFile")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool?>("RefreshBackendLibrary");
+                    b.Property<bool?>("RefreshBackendLibrary")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Scope")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TargetCredentialReferenceId");
+                    b.Property<Guid?>("TargetCredentialReferenceId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("UpdatedByUserId");
+                    b.Property<Guid>("UpdatedByUserId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -205,44 +257,59 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ActionType")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("AttemptCount");
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("EventId");
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorMessage")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("Reversible");
+                    b.Property<bool>("Reversible")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -261,72 +328,94 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteEventRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendPrincipalId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("EventKey")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ItemId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("JobId");
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorMessage")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Operation")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PolicySnapshotJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SourceRevision")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TargetCredentialReferenceId");
+                    b.Property<Guid?>("TargetCredentialReferenceId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -348,32 +437,42 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteStateRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("IsFavorite");
+                    b.Property<bool>("IsFavorite")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ItemId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("LastEventId");
+                    b.Property<Guid>("LastEventId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -389,31 +488,41 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.GeneratedSetEntryRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ExplanationJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("GeneratedSetId");
+                    b.Property<Guid>("GeneratedSetId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("IdentityJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("Position");
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<double>("Score");
+                    b.Property<double>("Score")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("Source")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TrackKey")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -427,55 +536,73 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.GeneratedSetRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendPlaylistId")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LastErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MaterializationState")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("MaterializedAt");
+                    b.Property<long?>("MaterializedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("RunId");
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ScheduleId");
+                    b.Property<Guid?>("ScheduleId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TargetCredentialReferenceId");
+                    b.Property<Guid?>("TargetCredentialReferenceId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetRevision")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -497,42 +624,56 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.IntelligencePolicyRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("AllowedSignalTypesJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool>("Enabled");
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("EnabledProvidersJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("RetentionDays");
+                    b.Property<int>("RetentionDays")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("TargetCredentialReferenceId");
+                    b.Property<Guid?>("TargetCredentialReferenceId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -548,32 +689,42 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningProfileRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProfileJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("WindowEnd");
+                    b.Property<long>("WindowEnd")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("WindowStart");
+                    b.Property<long>("WindowStart")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -584,46 +735,60 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningSignalRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("ExpiresAt");
+                    b.Property<long>("ExpiresAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("ObservedAt");
+                    b.Property<long>("ObservedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SignalKey")
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SignalType")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SourceJobId");
+                    b.Property<Guid?>("SourceJobId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TrackKeyHash")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TrackReference")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<double>("Value");
+                    b.Property<double>("Value")
+                        .HasColumnType("REAL");
 
                     b.HasKey("Id");
 
@@ -641,33 +806,44 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.RecommendationCandidateRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("IdentityJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("Position");
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("RunId");
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<double>("Score");
+                    b.Property<double>("Score")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("SignalsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Source")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TrackKey")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -681,59 +857,79 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Intelligence.RecommendationRunRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("JobId");
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("Limit");
+                    b.Property<int>("Limit")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PolicySnapshotJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("ScheduleId");
+                    b.Property<Guid?>("ScheduleId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("ScheduledFor");
+                    b.Property<long?>("ScheduledFor")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SeedTrackKeysJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TargetCredentialReferenceId");
+                    b.Property<Guid?>("TargetCredentialReferenceId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -762,59 +958,79 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CanonicalPath")
                         .IsRequired()
-                        .HasMaxLength(2000);
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ContentSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("FileSystemDeviceId")
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("FileSystemFileId")
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<uint?>("FileSystemLinkCount");
+                    b.Property<uint?>("FileSystemLinkCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsManaged");
+                    b.Property<bool>("IsManaged")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("Length");
+                    b.Property<long>("Length")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PlacementMethod")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("ReferenceCount");
+                    b.Property<int>("ReferenceCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("RemovedAt");
+                    b.Property<long?>("RemovedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("RootId");
+                    b.Property<Guid>("RootId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ScopeKey")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SourceJobId");
+                    b.Property<Guid?>("SourceJobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetRootPath")
                         .IsRequired()
-                        .HasMaxLength(2000);
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -847,28 +1063,37 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileReferenceEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ManagedFileId");
+                    b.Property<Guid>("ManagedFileId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ReferenceKey")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("ReleasedAt");
+                    b.Property<long?>("ReleasedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ScopeKey")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -886,21 +1111,27 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CompletedAt");
+                    b.Property<long>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SignalKey")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -913,42 +1144,55 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteDecisionEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ActorUserId");
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CandidateDecisionsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Capability")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("DurableJobId");
+                    b.Property<Guid?>("DurableJobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("OperationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("RouteKey")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SelectedProviderAccountId");
+                    b.Property<Guid?>("SelectedProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SelectedProviderId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -970,39 +1214,51 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Routing.ProviderRouteOutcomeEntity", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("NextProviderId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("OutcomeKey")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ProviderAccountId");
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ReasonCode")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("RouteDecisionId");
+                    b.Property<Guid>("RouteDecisionId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("Sequence");
+                    b.Property<int>("Sequence")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Stage")
                         .IsRequired()
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1022,34 +1278,44 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Settings.TenantRuntimeSettingRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Key")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Source")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("UpdatedByUserId");
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ValueJson")
                         .IsRequired()
-                        .HasMaxLength(4096);
+                        .HasMaxLength(4096)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ValueType")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1063,32 +1329,41 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.AuditEventRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Action")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ActorUserId");
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Category")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DetailsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Outcome")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1103,30 +1378,39 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.BackendIdentityRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendType")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayName")
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("LastSeenAt");
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("PrincipalId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("UserId");
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1142,40 +1426,51 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.BackupRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ApplicationVersion")
                         .IsRequired()
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ArtifactPath")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("RestoreStatus")
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("RestoreVerifiedAt");
+                    b.Property<long?>("RestoreVerifiedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SchemaVersion")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Sha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("StorageProvider")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("VerifiedAt");
+                    b.Property<long?>("VerifiedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1186,24 +1481,32 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("CreatedByUserId");
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Isrc")
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MusicBrainzRecordingId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1220,87 +1523,118 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.DurableJobRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("AttemptCount");
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("AvailableAt");
+                    b.Property<long>("AvailableAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("CancellationRequestedAt");
+                    b.Property<long?>("CancellationRequestedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("DeferralCount");
+                    b.Property<int>("DeferralCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("FailureCount");
+                    b.Property<int>("FailureCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorMessage")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("LeaseExpiresAt");
+                    b.Property<long?>("LeaseExpiresAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LeaseOwner")
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("MaxAttempts");
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("MaxDeferrals");
+                    b.Property<int>("MaxDeferrals")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PayloadJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PolicySnapshotJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("Priority");
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("ProviderAccountId");
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderCapability")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("RequestFingerprint")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ScopeKey")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("StartedAt");
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Type")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1326,31 +1660,39 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ExtensionLogRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("EventCode")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ExtensionId")
                         .IsRequired()
-                        .HasMaxLength(128);
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ExtensionPackageId");
+                    b.Property<Guid>("ExtensionPackageId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Level")
                         .IsRequired()
-                        .HasMaxLength(20);
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Message")
                         .IsRequired()
-                        .HasMaxLength(2000);
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1363,60 +1705,78 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ExtensionPackageRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("ActivatedAt");
+                    b.Property<long?>("ActivatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ContentSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("DisabledAt");
+                    b.Property<long?>("DisabledAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayName")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ExtensionId")
                         .IsRequired()
-                        .HasMaxLength(128);
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("FailureCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ManifestJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PackagePath")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("PreviousPackageId");
+                    b.Property<Guid?>("PreviousPackageId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("RegistryId");
+                    b.Property<Guid?>("RegistryId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("ReviewedAt");
+                    b.Property<long?>("ReviewedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SdkVersion")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Sha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("StagedAt");
+                    b.Property<long>("StagedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Version")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1438,32 +1798,42 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ExtensionPermissionReviewRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Decision")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ExtensionPackageId");
+                    b.Property<Guid>("ExtensionPackageId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PermissionKind")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PermissionValue")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("Required");
+                    b.Property<bool>("Required")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("ReviewedAt");
+                    b.Property<long?>("ReviewedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("ReviewedByUserId");
+                    b.Property<Guid?>("ReviewedByUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1478,24 +1848,31 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ExtensionRegistryRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool>("Enabled");
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("RegistryUrl")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1507,64 +1884,83 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ExternalMetadataSnapshotRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendPrincipalId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ExternalIdHash")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PayloadJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PayloadSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ProviderAccountId");
+                    b.Property<Guid>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderRevision")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ProviderTrackIdentityId");
+                    b.Property<Guid?>("ProviderTrackIdentityId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ResourceKind")
                         .IsRequired()
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("RetrievedAt");
+                    b.Property<long>("RetrievedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("SnapshotVersion");
+                    b.Property<int>("SnapshotVersion")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("SourceJobId");
+                    b.Property<Guid?>("SourceJobId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1592,28 +1988,37 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.JobAttemptRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("AttemptNumber");
+                    b.Property<int>("AttemptNumber")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ErrorMessage")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("JobId");
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Outcome")
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("StartedAt");
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("WorkerId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1625,54 +2030,70 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.JobScheduleRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("CronExpression")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("Enabled");
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("JobType")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MisfirePolicy")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("NextRunAt");
+                    b.Property<long?>("NextRunAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("OverlapPolicy")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PayloadTemplateJson")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
                         .HasDefaultValue("{}");
 
                     b.Property<string>("RetryPolicyJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1685,22 +2106,29 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.LegacyEnvImportRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ActorUserId");
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("AppliedAt");
+                    b.Property<long>("AppliedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("AuditEventId");
+                    b.Property<Guid>("AuditEventId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ResultJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SourceSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1717,80 +2145,106 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.LibraryTrackRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int?>("AcceptedDecisionVersion");
+                    b.Property<int?>("AcceptedDecisionVersion")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Album")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("AlbumArtist")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Artist")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("BackendIdentityId");
+                    b.Property<Guid>("BackendIdentityId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("BackendItemId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("CanonicalRecordingId");
+                    b.Property<Guid?>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CoverArtReference")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("DurationMilliseconds");
+                    b.Property<long>("DurationMilliseconds")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("FilePath")
                         .IsRequired()
-                        .HasMaxLength(2000);
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("IndexedAt");
+                    b.Property<long>("IndexedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Isrc")
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MusicBrainzArtistId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MusicBrainzRecordingId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MusicBrainzReleaseId")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderIdsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("SourceModifiedAt");
+                    b.Property<long>("SourceModifiedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Title")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1820,36 +2274,48 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ManualTrackOverrideRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Decision")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("DecisionVersion");
+                    b.Property<int>("DecisionVersion")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ExternalSnapshotId");
+                    b.Property<Guid>("ExternalSnapshotId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("LibraryTrackId");
+                    b.Property<Guid?>("LibraryTrackId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Reason")
                         .IsRequired()
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("RevokedAt");
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1872,38 +2338,51 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.MetadataEnrichmentApplicationRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ArtifactContentSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("LineageJobId");
+                    b.Property<Guid>("LineageJobId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ManagedArtifactId");
+                    b.Property<Guid>("ManagedArtifactId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlanId");
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SafeErrorMessage")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -1925,35 +2404,47 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.MetadataEnrichmentPlanRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DecisionsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Fingerprint")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("LineageJobId");
+                    b.Property<Guid>("LineageJobId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ManagedArtifactId");
+                    b.Property<Guid>("ManagedArtifactId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PathValuesJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("PlanVersion");
+                    b.Property<int>("PlanVersion")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SourceRevisionsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TagsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -1978,48 +2469,65 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.OutboxMessageRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("AttemptCount");
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("AvailableAt");
+                    b.Property<long>("AvailableAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("DeliveredAt");
+                    b.Property<long?>("DeliveredAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("FailedAt");
+                    b.Property<long?>("FailedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LastErrorCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorMessage")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("LeaseExpiresAt");
+                    b.Property<long?>("LeaseExpiresAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LeaseOwner")
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("MaxAttempts");
+                    b.Property<int>("MaxAttempts")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("PayloadJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Type")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2032,21 +2540,27 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlatformUserRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayName")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2055,77 +2569,102 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistLinkRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MaterializationMode")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("MirrorStaleEntries");
+                    b.Property<bool>("MirrorStaleEntries")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Mode")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PolicyVersion")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("PreserveManualEntries");
+                    b.Property<bool>("PreserveManualEntries")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ProviderAccountId");
+                    b.Property<Guid>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("RuleVersion")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ScheduleId");
+                    b.Property<Guid?>("ScheduleId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SourcePlaylistId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SourcePlaylistIdHash")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SourceProviderId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("SyncArtwork");
+                    b.Property<bool>("SyncArtwork")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool>("SyncDescription");
+                    b.Property<bool>("SyncDescription")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<bool>("SyncName");
+                    b.Property<bool>("SyncName")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("TargetBackendInstanceId")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TargetCredentialReferenceId");
+                    b.Property<Guid?>("TargetCredentialReferenceId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetPlaylistId")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetProtocol")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2145,19 +2684,25 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSourceEntryRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ExternalMetadataSnapshotId");
+                    b.Property<Guid>("ExternalMetadataSnapshotId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistSourceSnapshotId");
+                    b.Property<Guid>("PlaylistSourceSnapshotId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("SourceEntryIdHash")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("SourcePosition");
+                    b.Property<int>("SourcePosition")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -2177,46 +2722,61 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSourceSnapshotRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ArtworkReferenceKey")
-                        .HasMaxLength(1000);
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Description")
-                        .HasMaxLength(4000);
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ETag")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PayloadSha256")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistLinkId");
+                    b.Property<Guid>("PlaylistLinkId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ProviderAccountId");
+                    b.Property<Guid>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderRevision")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("RetrievedAt");
+                    b.Property<long>("RetrievedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("SnapshotVersion");
+                    b.Property<int>("SnapshotVersion")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("SourceJobId");
+                    b.Property<Guid?>("SourceJobId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -2242,31 +2802,42 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSyncEntryResultRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("DetailsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("LibraryTrackId");
+                    b.Property<Guid?>("LibraryTrackId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Outcome")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("OutcomeCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistSourceEntryId");
+                    b.Property<Guid>("PlaylistSourceEntryId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistSyncRunId");
+                    b.Property<Guid>("PlaylistSyncRunId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("SourcePosition");
+                    b.Property<int>("SourcePosition")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int?>("TargetPosition");
+                    b.Property<int?>("TargetPosition")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TrackMatchId");
+                    b.Property<Guid?>("TrackMatchId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -2288,53 +2859,71 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSyncRunRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("CompletedAt");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ConflictCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("Generation");
+                    b.Property<long>("Generation")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("JobId");
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("MaterializationMode")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistLinkId");
+                    b.Property<Guid>("PlaylistLinkId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistSourceSnapshotId");
+                    b.Property<Guid>("PlaylistSourceSnapshotId")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("RuleVersion")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ScheduleId");
+                    b.Property<Guid?>("ScheduleId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("StartedAt");
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetRevisionAfter")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("TargetRevisionBefore")
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -2357,30 +2946,41 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistTargetMembershipRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("Active");
+                    b.Property<bool>("Active")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("CreatedBySyncRunId");
+                    b.Property<Guid>("CreatedBySyncRunId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("LastKnownPosition");
+                    b.Property<int>("LastKnownPosition")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("LibraryTrackId");
+                    b.Property<Guid>("LibraryTrackId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("PlaylistLinkId");
+                    b.Property<Guid>("PlaylistLinkId")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("TargetEntryId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2403,37 +3003,49 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderAccountRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayName")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<bool>("Enabled");
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("OwnerUserId");
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Scope")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("SecretReferenceId");
+                    b.Property<Guid?>("SecretReferenceId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2451,28 +3063,37 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderCircuitRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Capability")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("ConsecutiveFailures");
+                    b.Property<int>("ConsecutiveFailures")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("OpenedAt");
+                    b.Property<long?>("OpenedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ProviderAccountId");
+                    b.Property<Guid>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("RetryAfter");
+                    b.Property<long?>("RetryAfter")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2484,43 +3105,59 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderHealthRollupRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Capability")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("FailureCount");
+                    b.Property<int>("FailureCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LastFailureCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastState")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("P50LatencyMilliseconds");
+                    b.Property<long?>("P50LatencyMilliseconds")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long?>("P95LatencyMilliseconds");
+                    b.Property<long?>("P95LatencyMilliseconds")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ProviderAccountId");
+                    b.Property<Guid>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("SampleCount");
+                    b.Property<int>("SampleCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("SuccessCount");
+                    b.Property<int>("SuccessCount")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<double>("SuccessRate");
+                    b.Property<double>("SuccessRate")
+                        .HasColumnType("REAL");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("WindowEnd");
+                    b.Property<long>("WindowEnd")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("WindowStart");
+                    b.Property<long>("WindowStart")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2536,28 +3173,37 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderHealthSampleRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Capability")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("ExpiresAt");
+                    b.Property<long>("ExpiresAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("FailureCode")
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("LatencyMilliseconds");
+                    b.Property<long?>("LatencyMilliseconds")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("ObservedAt");
+                    b.Property<long>("ObservedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ProviderAccountId");
+                    b.Property<Guid>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -2569,56 +3215,73 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderTrackIdentityRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("CanonicalRecordingId");
+                    b.Property<Guid>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CatalogNamespace")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("DecisionVersion");
+                    b.Property<int>("DecisionVersion")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ExternalId")
                         .IsRequired()
-                        .HasMaxLength(500);
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ExternalIdHash")
                         .IsRequired()
-                        .HasMaxLength(64);
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("ProviderAccountId");
+                    b.Property<Guid?>("ProviderAccountId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ResourceKind")
                         .IsRequired()
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Scope")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Verification")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("VerificationMethod")
                         .IsRequired()
-                        .HasMaxLength(50);
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("VerifiedAt");
+                    b.Property<long>("VerifiedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2652,21 +3315,28 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.SecretReferenceRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("ActiveVersion");
+                    b.Property<int>("ActiveVersion")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Purpose")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long?>("RevokedAt");
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("TenantId");
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("UpdatedAt");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2677,28 +3347,37 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.SecretVersionRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<byte[]>("AuthenticationTag")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("BLOB");
 
                     b.Property<byte[]>("Ciphertext")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("BLOB");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("KeyId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<byte[]>("Nonce")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("BLOB");
 
-                    b.Property<long?>("RetiredAt");
+                    b.Property<long?>("RetiredAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("SecretReferenceId");
+                    b.Property<Guid>("SecretReferenceId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("Version");
+                    b.Property<int>("Version")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -2710,17 +3389,21 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.TenantRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("CreatedAt");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(200);
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Slug")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -2732,53 +3415,71 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.TrackMatchRecord", b =>
                 {
-                    b.Property<Guid>("Id");
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("CandidateResultsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("CanonicalRecordingId");
+                    b.Property<Guid?>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<double>("Confidence");
+                    b.Property<double>("Confidence")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("CorrelationId")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
-                    b.Property<long>("DecidedAt");
+                    b.Property<long>("DecidedAt")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<int>("DecisionVersion");
+                    b.Property<int>("DecisionVersion")
+                        .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("ExternalSnapshotId");
+                    b.Property<Guid>("ExternalSnapshotId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
-                        .HasMaxLength(300);
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("LibraryTrackId");
+                    b.Property<Guid?>("LibraryTrackId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId");
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PolicyVersion")
                         .IsRequired()
-                        .HasMaxLength(100);
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ReasonsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
-                        .IsConcurrencyToken();
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("State")
                         .IsRequired()
-                        .HasMaxLength(32);
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId");
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("TEXT");
 
-                    b.Property<double>("Threshold");
+                    b.Property<double>("Threshold")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("WarningsJson")
-                        .IsRequired();
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 

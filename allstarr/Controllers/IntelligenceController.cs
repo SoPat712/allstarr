@@ -1,5 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
+using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
@@ -17,7 +19,8 @@ public sealed class IntelligenceController(
     IRecommendationRunService runs,
     ISmartPlaylistService smartPlaylists,
     IRecommendationProviderStatusService readiness,
-    IEnumerable<IRecommendationProvider> providers) : ControllerBase
+    IEnumerable<IRecommendationProvider> providers,
+    IPlatformClock? clock = null) : ControllerBase
 {
     private static readonly string[] SignalCatalog = ["play", "skip", "complete", "favorite", "playlist"];
     private readonly IReadOnlyDictionary<string, IRecommendationProvider> _providers = providers.ToDictionary(item => item.Id, StringComparer.Ordinal);
@@ -53,6 +56,12 @@ public sealed class IntelligenceController(
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
                 item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
                 .OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(cancellationToken);
+            var scheduleRecords = await db.JobSchedules.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
+                item.OwnerUserId == scope.OwnerUserId && item.LibraryScopeId == scope.LibraryScopeId &&
+                item.JobType == DurableScheduleEngine.RecommendationJobType).OrderBy(item => item.CreatedAt)
+                .ToListAsync(cancellationToken);
+            var schedules = scheduleRecords.Select(item => (Record: item, Template: TryParseScheduleTemplate(item.PayloadTemplateJson)))
+                .Where(item => item.Template is { Version: 1 } && item.Template.IntelligencePolicyId == policy?.Id).ToArray();
             var providerIds = _providers.Keys.Union(enabledProviders).Order().ToArray();
             var providerReadiness = await readiness.ListAsync(scope, cancellationToken);
             var readinessById = providerReadiness.ToDictionary(item => item.ProviderId, StringComparer.Ordinal);
@@ -112,6 +121,7 @@ public sealed class IntelligenceController(
                     errorCode = item.LastErrorCode,
                     materialized = item.MaterializationState == GeneratedSetMaterializationState.Succeeded
                 }),
+                schedules = schedules.Select(item => ToScheduleDto(item.Record, item.Template!)),
                 visualization = ProfileValues(profile?.ProfileJson)
             });
         }
@@ -191,6 +201,111 @@ public sealed class IntelligenceController(
         catch (UnauthorizedAccessException) { return NotFound(); }
     }
 
+    [HttpPost("schedules")]
+    public async Task<IActionResult> CreateSchedule([FromBody] IntelligenceScheduleRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        if (!TryScheduleRequest(request, out var template, out var overlap, out var misfire, out var scheduleError))
+            return BadRequest(new { error = scheduleError });
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        if (policy?.Enabled != true) return Conflict(new { error = "intelligence_not_ready" });
+        template = template with { IntelligencePolicyId = policy.Id };
+        var now = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        var schedule = new JobScheduleRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = scope.TenantId,
+            OwnerUserId = scope.OwnerUserId,
+            LibraryScopeId = scope.LibraryScopeId,
+            JobType = DurableScheduleEngine.RecommendationJobType,
+            CronExpression = request.CronExpression.Trim(),
+            TimeZoneId = request.TimeZoneId.Trim(),
+            OverlapPolicy = overlap,
+            MisfirePolicy = misfire,
+            RetryPolicyJson = "{}",
+            PayloadTemplateJson = JsonSerializer.Serialize(template),
+            Enabled = request.Enabled,
+            NextRunAt = request.Enabled ? DurableScheduleEngine.GetNextOccurrence(
+                request.CronExpression, request.TimeZoneId, now) : null,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        db.JobSchedules.Add(schedule);
+        await db.SaveChangesAsync(cancellationToken);
+        return Created($"/api/admin/intelligence/schedules/{schedule.Id}", ToScheduleDto(schedule, template));
+    }
+
+    [HttpPut("schedules/{scheduleId:guid}")]
+    public async Task<IActionResult> UpdateSchedule(Guid scheduleId, [FromBody] IntelligenceScheduleRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!request.ExpectedRevision.HasValue) return BadRequest(new { error = "ExpectedRevision is required" });
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        if (!TryScheduleRequest(request, out var template, out var overlap, out var misfire, out var scheduleError))
+            return BadRequest(new { error = scheduleError });
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        if (policy == null || request.Enabled && !policy.Enabled)
+            return Conflict(new { error = "intelligence_not_ready" });
+        template = template with { IntelligencePolicyId = policy.Id };
+        var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId &&
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.LibraryScopeId == scope.LibraryScopeId && item.JobType == DurableScheduleEngine.RecommendationJobType,
+            cancellationToken);
+        if (schedule == null) return NotFound();
+        RecommendationScheduleTemplate existingTemplate;
+        try { existingTemplate = ParseScheduleTemplate(schedule.PayloadTemplateJson); }
+        catch (JsonException) { return NotFound(); }
+        if (existingTemplate.Version != 1 || existingTemplate.IntelligencePolicyId != policy.Id)
+            return NotFound();
+        if (schedule.Revision != request.ExpectedRevision) return Conflict(new { error = "intelligence_schedule_revision_conflict" });
+        var now = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        schedule.CronExpression = request.CronExpression.Trim();
+        schedule.TimeZoneId = request.TimeZoneId.Trim();
+        schedule.OverlapPolicy = overlap;
+        schedule.MisfirePolicy = misfire;
+        schedule.PayloadTemplateJson = JsonSerializer.Serialize(template);
+        schedule.Enabled = request.Enabled;
+        schedule.NextRunAt = request.Enabled ? DurableScheduleEngine.GetNextOccurrence(
+            request.CronExpression, request.TimeZoneId, now) : null;
+        schedule.UpdatedAt = now;
+        schedule.Revision++;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(ToScheduleDto(schedule, template));
+    }
+
+    [HttpDelete("schedules/{scheduleId:guid}")]
+    public async Task<IActionResult> DeleteSchedule(Guid scheduleId,
+        [FromBody] IntelligenceScheduleDeleteRequest request, CancellationToken cancellationToken)
+    {
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
+        var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId &&
+            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.LibraryScopeId == scope.LibraryScopeId && item.JobType == DurableScheduleEngine.RecommendationJobType,
+            cancellationToken);
+        if (schedule == null) return NotFound();
+        var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        if (policy == null) return NotFound();
+        var template = TryParseScheduleTemplate(schedule.PayloadTemplateJson);
+        if (template == null) return NotFound();
+        if (template.Version != 1 || template.IntelligencePolicyId != policy.Id)
+            return NotFound();
+        if (schedule.Revision != request.ExpectedRevision)
+            return Conflict(new { error = "intelligence_schedule_revision_conflict" });
+        schedule.Enabled = false;
+        schedule.NextRunAt = null;
+        schedule.UpdatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        schedule.Revision++;
+        await db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     private bool TrySessionScope(IntelligenceScopeRequest request, out IntelligenceScope scope, out IActionResult? error)
     {
         scope = null!; error = null;
@@ -213,6 +328,45 @@ public sealed class IntelligenceController(
     private static IReadOnlyList<RecommendationSignal> ParseSignals(string json) => JsonSerializer.Deserialize<RecommendationSignal[]>(json) ?? [];
     private static RecommendationTrackIdentity? ParseIdentity(string json) =>
         JsonSerializer.Deserialize<RecommendationTrackIdentity>(json);
+    private static RecommendationScheduleTemplate ParseScheduleTemplate(string json) =>
+        JsonSerializer.Deserialize<RecommendationScheduleTemplate>(json) ?? throw new JsonException();
+    private static RecommendationScheduleTemplate? TryParseScheduleTemplate(string json)
+    {
+        try { return ParseScheduleTemplate(json); }
+        catch (JsonException) { return null; }
+    }
+    private static bool TryScheduleRequest(IntelligenceScheduleRequest request,
+        out RecommendationScheduleTemplate template, out ScheduleOverlapPolicy overlap,
+        out ScheduleMisfirePolicy misfire, out string? error)
+    {
+        template = null!;
+        error = null;
+        if (!Enum.TryParse(request.OverlapPolicy, true, out overlap) || !Enum.IsDefined(overlap))
+        { misfire = default; error = "OverlapPolicy must be skip or queue"; return false; }
+        if (!Enum.TryParse(request.MisfirePolicy, true, out misfire) || !Enum.IsDefined(misfire))
+        { error = "MisfirePolicy must be skip or runOnce"; return false; }
+        try { DurableScheduleEngine.Validate(request.CronExpression, request.TimeZoneId); }
+        catch (ArgumentException exception) { error = exception.Message; return false; }
+        if (request.Limit is < 1 or > 500) { error = "Limit must be between 1 and 500"; return false; }
+        var name = request.Name?.Trim() ?? "";
+        if (name.Length is < 1 or > 200 || name.Any(char.IsControl))
+        { error = "Name is required and must be at most 200 characters"; return false; }
+        template = new(1, Guid.Empty, request.Limit, name);
+        return true;
+    }
+    private static object ToScheduleDto(JobScheduleRecord schedule, RecommendationScheduleTemplate template) => new
+    {
+        id = schedule.Id,
+        schedule.CronExpression,
+        schedule.TimeZoneId,
+        overlapPolicy = schedule.OverlapPolicy.ToString().ToLowerInvariant(),
+        misfirePolicy = char.ToLowerInvariant(schedule.MisfirePolicy.ToString()[0]) + schedule.MisfirePolicy.ToString()[1..],
+        schedule.Enabled,
+        schedule.NextRunAt,
+        schedule.Revision,
+        name = template.GeneratedSetName,
+        template.Limit,
+    };
     private static object[] ProfileValues(string? json)
     {
         if (json == null) return [];
@@ -231,6 +385,7 @@ public sealed class IntelligenceController(
         providers = Array.Empty<object>(),
         candidates = Array.Empty<object>(),
         generatedSets = Array.Empty<object>(),
+        schedules = Array.Empty<object>(),
         visualization = Array.Empty<object>(),
         actions = new { canRun = false, canGenerate = false }
     };
@@ -261,3 +416,18 @@ public class IntelligenceScopeRequest { public string Protocol { get; set; } = "
 public sealed class IntelligencePolicyRequest : IntelligenceScopeRequest { public bool Enabled { get; set; } public int RetentionDays { get; set; } = 30; public List<string> AllowedSignalTypes { get; set; } = []; public List<string> EnabledProviders { get; set; } = []; public Guid? TargetCredentialReferenceId { get; set; } public long ExpectedRevision { get; set; } }
 public sealed class IntelligenceRunRequest : IntelligenceScopeRequest { public List<string> SeedTrackKeys { get; set; } = []; public int Limit { get; set; } = 25; public string IdempotencyKey { get; set; } = ""; }
 public sealed class IntelligenceGeneratedSetRequest : IntelligenceScopeRequest { public Guid RunId { get; set; } public string Name { get; set; } = ""; }
+public sealed class IntelligenceScheduleRequest : IntelligenceScopeRequest
+{
+    public string Name { get; set; } = "";
+    public int Limit { get; set; } = 25;
+    public string CronExpression { get; set; } = "0 8 * * *";
+    public string TimeZoneId { get; set; } = "UTC";
+    public string OverlapPolicy { get; set; } = "skip";
+    public string MisfirePolicy { get; set; } = "runOnce";
+    public bool Enabled { get; set; } = true;
+    public long? ExpectedRevision { get; set; }
+}
+public sealed class IntelligenceScheduleDeleteRequest : IntelligenceScopeRequest
+{
+    public long ExpectedRevision { get; set; }
+}

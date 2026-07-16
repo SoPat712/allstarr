@@ -51,6 +51,8 @@ public sealed class RecommendationRunRecord
     public string IdempotencyKey { get; set; } = ""; public string PolicySnapshotJson { get; set; } = "{}";
     public string SeedTrackKeysJson { get; set; } = "[]"; public int Limit { get; set; }
     public Guid? TargetCredentialReferenceId { get; set; }
+    public Guid? ScheduleId { get; set; }
+    public DateTimeOffset? ScheduledFor { get; set; }
     public RecommendationRunState State { get; set; }
     public string? ErrorCode { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -81,6 +83,7 @@ public sealed class GeneratedSetRecord
     public string BackendInstanceId { get; set; } = ""; public string LibraryScopeId { get; set; } = "";
     public string Name { get; set; } = ""; public DateTimeOffset CreatedAt { get; set; }
     public Guid? TargetCredentialReferenceId { get; set; }
+    public Guid? ScheduleId { get; set; }
     public GeneratedSetMaterializationState MaterializationState { get; set; }
     public string? BackendPlaylistId { get; set; }
     public string? TargetRevision { get; set; }

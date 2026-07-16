@@ -144,6 +144,9 @@ public sealed partial class AllstarrDbContext
             entity.Property(item => item.OverlapPolicy).HasConversion<string>().HasMaxLength(32);
             entity.Property(item => item.MisfirePolicy).HasConversion<string>().HasMaxLength(32);
             Required(entity.Property(item => item.RetryPolicyJson));
+            var payloadTemplate = entity.Property(item => item.PayloadTemplateJson);
+            Required(payloadTemplate);
+            payloadTemplate.HasDefaultValue("{}");
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.Enabled, item.NextRunAt });
             TenantUser(entity, item => new { item.TenantId, item.OwnerUserId });

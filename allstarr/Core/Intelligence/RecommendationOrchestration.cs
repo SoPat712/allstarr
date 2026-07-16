@@ -78,6 +78,7 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
             LibraryScopeId = scope.LibraryScopeId,
             Name = name,
             TargetCredentialReferenceId = completedRun.TargetCredentialReferenceId,
+            ScheduleId = completedRun.ScheduleId,
             MaterializationState = GeneratedSetMaterializationState.Pending,
             CreatedAt = clock.UtcNow,
             UpdatedAt = clock.UtcNow,
@@ -100,7 +101,9 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
     }
     private Task<DurableJobEnqueueResult> EnqueueMaterialization(GeneratedSetRecord set, CancellationToken token) =>
         jobs.EnqueueAsync(new DurableJobEnqueueRequest<GeneratedSetMaterializationPayload>(
-            "smart-playlist.materialize", $"generated-set:{set.Id:N}", new(set.Id), set.TenantId,
+            "smart-playlist.materialize", set.ScheduleId is { } scheduleId
+                ? $"schedule:{scheduleId:N}:materialize:{set.Id:N}"
+                : $"generated-set:{set.Id:N}", new(set.Id), set.TenantId,
             set.OwnerUserId, LibraryScopeId: set.LibraryScopeId));
 }
 public sealed record GeneratedSetMaterializationPayload(Guid GeneratedSetId);
@@ -148,20 +151,25 @@ public sealed class RecommendationRunService(IDbContextFactory<AllstarrDbContext
 }
 public sealed record RecommendationRunPayload(Guid RunId);
 public sealed record RecommendationPolicySnapshot(long Revision, IReadOnlyList<string> EnabledProviders, int RetentionDays,
-    Guid? TargetCredentialReferenceId = null);
+    Guid? TargetCredentialReferenceId = null, RecommendationAutomationSnapshot? Automation = null);
+public sealed record RecommendationAutomationSnapshot(Guid ScheduleId, DateTimeOffset ScheduledFor,
+    string GeneratedSetName);
 
 public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbContext> factory,
-    IEnumerable<IRecommendationProvider> providers, IListeningProfileService profiles, IPlatformClock clock) : IDurableJobHandler
+    IEnumerable<IRecommendationProvider> providers, IListeningProfileService profiles, IPlatformClock clock,
+    ISmartPlaylistService? smartPlaylists = null) : IDurableJobHandler
 {
     public string JobType => "recommendation.generate";
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
         var payload = execution.Claim.Payload.Deserialize<RecommendationRunPayload>(); if (payload == null) return DurableJobCompletion.Failure("recommendation_payload_invalid", "The recommendation request is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken); var run = await db.RecommendationRuns.SingleOrDefaultAsync(x => x.Id == payload.RunId && x.JobId == execution.Claim.JobId && x.TenantId == execution.Claim.TenantId && x.OwnerUserId == execution.Claim.OwnerUserId, cancellationToken);
-        if (run == null) return DurableJobCompletion.Failure("recommendation_run_missing", "The recommendation run is unavailable."); if (run.State == RecommendationRunState.Succeeded) return DurableJobCompletion.Success(); if (run.State == RecommendationRunState.Cancelled) return DurableJobCompletion.Cancelled();
+        if (run == null) return DurableJobCompletion.Failure("recommendation_run_missing", "The recommendation run is unavailable.");
+        if (run.State == RecommendationRunState.Cancelled) return DurableJobCompletion.Cancelled();
+        RecommendationPolicySnapshot snapshot; try { snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson) ?? throw new JsonException(); } catch (JsonException) { return DurableJobCompletion.Failure("recommendation_policy_snapshot_invalid", "The recommendation policy snapshot is invalid."); }
+        if (run.State == RecommendationRunState.Succeeded) return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
         var scope = new IntelligenceScope(run.TenantId, run.OwnerUserId, run.Protocol, run.BackendInstanceId, run.LibraryScopeId);
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); if (policy?.Enabled != true) { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Cancelled(); }
-        RecommendationPolicySnapshot snapshot; try { snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson) ?? throw new JsonException(); } catch (JsonException) { return DurableJobCompletion.Failure("recommendation_policy_snapshot_invalid", "The recommendation policy snapshot is invalid."); }
         var enabled = snapshot.EnabledProviders.ToHashSet(StringComparer.Ordinal); run.State = RecommendationRunState.Running; run.UpdatedAt = clock.UtcNow; run.Revision++; await db.SaveChangesAsync(cancellationToken);
         var profile = await profiles.BuildAsync(scope, cancellationToken); var seeds = JsonSerializer.Deserialize<string[]>(run.SeedTrackKeysJson) ?? [];
         if (seeds.Length == 0) seeds = profile.TopTrackKeys.ToArray();
@@ -182,7 +190,51 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         var ordered = results.Where(Valid).GroupBy(x => x.TrackKey, StringComparer.Ordinal).Select(g => g.OrderByDescending(x => x.Score).First()).OrderByDescending(x => x.Score).ThenBy(x => x.TrackKey, StringComparer.Ordinal).Take(run.Limit).ToArray();
         db.RecommendationCandidates.RemoveRange(db.RecommendationCandidates.Where(x => x.RunId == run.Id));
         for (var i = 0; i < ordered.Length; i++) db.RecommendationCandidates.Add(new() { Id = Guid.CreateVersion7(), RunId = run.Id, TenantId = run.TenantId, OwnerUserId = run.OwnerUserId, Position = i, TrackKey = ordered[i].TrackKey, Score = ordered[i].Score, Source = ordered[i].Source, SignalsJson = JsonSerializer.Serialize(ordered[i].Signals), IdentityJson = JsonSerializer.Serialize(ordered[i].Identity), CreatedAt = clock.UtcNow });
-        run.State = RecommendationRunState.Succeeded; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Success();
+        run.State = RecommendationRunState.Succeeded; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++;
+        await db.SaveChangesAsync(cancellationToken);
+        return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
+    }
+    private async Task<DurableJobCompletion> EnsureScheduledSetAsync(AllstarrDbContext db,
+        RecommendationRunRecord run, RecommendationAutomationSnapshot? automation, CancellationToken cancellationToken)
+    {
+        if (automation == null) return DurableJobCompletion.Success();
+        if (smartPlaylists == null || run.ScheduleId != automation.ScheduleId ||
+            run.ScheduledFor != automation.ScheduledFor)
+            return DurableJobCompletion.Failure("recommendation_schedule_invalid", "The scheduled generated playlist request is invalid.");
+        RecommendationCandidate[] candidates;
+        try
+        {
+            var records = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == run.Id &&
+                    item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId).OrderBy(item => item.Position)
+                .ToListAsync(cancellationToken);
+            candidates = records.Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
+                JsonSerializer.Deserialize<RecommendationSignal[]>(item.SignalsJson) ?? [],
+                JsonSerializer.Deserialize<RecommendationTrackIdentity>(item.IdentityJson))).ToArray();
+        }
+        catch (JsonException)
+        {
+            return DurableJobCompletion.Failure("recommendation_candidate_invalid", "The scheduled recommendation results are invalid.");
+        }
+        try
+        {
+            await smartPlaylists.CreateGeneratedSetAsync(new(run.TenantId, run.OwnerUserId, run.Protocol,
+                run.BackendInstanceId, run.LibraryScopeId), run.Id, automation.GeneratedSetName, candidates,
+                cancellationToken);
+            return DurableJobCompletion.Success();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return DurableJobCompletion.Cancelled();
+        }
+        catch (Exception exception) when (exception is ArgumentException or UnauthorizedAccessException)
+        {
+            return DurableJobCompletion.Failure("recommendation_schedule_invalid", "The scheduled generated playlist request is invalid.");
+        }
+        catch
+        {
+            return DurableJobCompletion.Retry("recommendation_materialization_enqueue_failed",
+                "The generated playlist could not be queued yet.");
+        }
     }
     private static bool Valid(RecommendationCandidate x) => !string.IsNullOrWhiteSpace(x.TrackKey) && x.TrackKey.Length <= 500 && double.IsFinite(x.Score) && x.Score is >= 0 and <= 1 && x.Signals.Count is > 0 and <= 32 &&
         x.Signals.All(s => !string.IsNullOrWhiteSpace(s.Code) && s.Code.Length <= 100 && !string.IsNullOrWhiteSpace(s.Explanation) && s.Explanation.Length <= 1000 && double.IsFinite(s.Weight)) && ValidIdentity(x.Identity);

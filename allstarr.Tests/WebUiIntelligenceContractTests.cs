@@ -11,7 +11,9 @@ public sealed class WebUiIntelligenceContractTests
         var controller = File.ReadAllText(Path.Combine(Root, "allstarr", "Controllers", "IntelligenceController.cs"));
         foreach (var token in new[] { "/api/admin/intelligence", "empty", "loading", "configured", "disabled",
                      "degraded", "unauthorized", "error", "retentionDays", "allowedSignalTypes", "enabledProviders",
-                     "Why this track", "Generated playlists", "Create preview" })
+                     "Why this track", "Generated playlists", "Create preview", "Recommendation automation",
+                     "/api/admin/intelligence/schedules", "createIntelligenceSchedule", "toggleIntelligenceSchedule",
+                     "Five-field cron expression", "After downtime" })
             Assert.Contains(token, script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("crypto.randomUUID", script, StringComparison.Ordinal);
         Assert.Contains("MusicBrainz-enriched genres, credits, and relationships", controller, StringComparison.OrdinalIgnoreCase);

@@ -65,7 +65,10 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         record.Enabled = input.Enabled; record.RetentionDays = input.RetentionDays;
         record.TargetCredentialReferenceId = input.TargetCredentialReferenceId;
         record.AllowedSignalTypesJson = JsonSerializer.Serialize(signals); record.EnabledProvidersJson = JsonSerializer.Serialize(providers);
-        record.UpdatedAt = now; record.Revision++; await db.SaveChangesAsync(cancellationToken); return record;
+        record.UpdatedAt = now; record.Revision++;
+        if (!input.Enabled)
+            await DisableSchedulesAsync(db, scope, record.Id, now, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken); return record;
     }
     public async Task DisableAndPurgeAsync(IntelligenceScope scope, CancellationToken cancellationToken = default)
     {
@@ -82,11 +85,54 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         }
         var runningJobIds = jobs.Where(x => x.State == DurableJobState.Running).Select(x => x.Id).ToHashSet();
         foreach (var run in runs.Where(x => runningJobIds.Contains(x.JobId))) { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++; }
+        var schedules = await db.JobSchedules.Where(x => x.TenantId == scope.TenantId &&
+            x.OwnerUserId == scope.OwnerUserId && x.LibraryScopeId == scope.LibraryScopeId &&
+            x.JobType == DurableScheduleEngine.RecommendationJobType).ToListAsync(cancellationToken);
+        foreach (var schedule in schedules)
+        {
+            RecommendationScheduleTemplate? template = null;
+            try { template = JsonSerializer.Deserialize<RecommendationScheduleTemplate>(schedule.PayloadTemplateJson); }
+            catch (JsonException) { }
+            if (policy == null || template?.Version != 1 || template.IntelligencePolicyId != policy.Id) continue;
+            schedule.Enabled = false; schedule.NextRunAt = null; schedule.UpdatedAt = clock.UtcNow; schedule.Revision++;
+        }
+        var scheduleIds = schedules.Where(schedule => !schedule.Enabled).Select(schedule => schedule.Id).ToHashSet();
+        if (scheduleIds.Count > 0)
+        {
+            var childJobs = await db.Jobs.Where(job => job.TenantId == scope.TenantId &&
+                job.OwnerUserId == scope.OwnerUserId && job.LibraryScopeId == scope.LibraryScopeId &&
+                job.Type == "smart-playlist.materialize" &&
+                (job.State == DurableJobState.Pending || job.State == DurableJobState.RetryScheduled ||
+                 job.State == DurableJobState.Running)).ToListAsync(cancellationToken);
+            foreach (var job in childJobs.Where(job => scheduleIds.Any(scheduleId =>
+                         job.IdempotencyKey.StartsWith($"schedule:{scheduleId:N}:materialize:", StringComparison.Ordinal))))
+            {
+                job.CancellationRequestedAt ??= clock.UtcNow; job.UpdatedAt = clock.UtcNow; job.Revision++;
+                if (job.State is DurableJobState.Pending or DurableJobState.RetryScheduled)
+                { job.State = DurableJobState.Cancelled; job.CompletedAt = clock.UtcNow; }
+            }
+        }
         var sets = await db.GeneratedSets.Where(x => runIds.Contains(x.RunId)).ToListAsync(cancellationToken); var setIds = sets.Select(x => x.Id).ToArray();
         db.GeneratedSetEntries.RemoveRange(db.GeneratedSetEntries.Where(x => setIds.Contains(x.GeneratedSetId)));
         db.GeneratedSets.RemoveRange(sets); db.RecommendationCandidates.RemoveRange(db.RecommendationCandidates.Where(x => runIds.Contains(x.RunId)));
         db.RecommendationRuns.RemoveRange(runs.Where(x => !runningJobIds.Contains(x.JobId))); db.ListeningProfiles.RemoveRange(ScopedProfiles(db, scope)); db.ListeningSignals.RemoveRange(ScopedSignals(db, scope));
         await db.SaveChangesAsync(cancellationToken); await tx.CommitAsync(cancellationToken);
+    }
+    private static async Task DisableSchedulesAsync(AllstarrDbContext db, IntelligenceScope scope,
+        Guid policyId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var schedules = await db.JobSchedules.Where(schedule => schedule.TenantId == scope.TenantId &&
+            schedule.OwnerUserId == scope.OwnerUserId && schedule.LibraryScopeId == scope.LibraryScopeId &&
+            schedule.JobType == DurableScheduleEngine.RecommendationJobType && schedule.Enabled)
+            .ToListAsync(cancellationToken);
+        foreach (var schedule in schedules)
+        {
+            RecommendationScheduleTemplate? template = null;
+            try { template = JsonSerializer.Deserialize<RecommendationScheduleTemplate>(schedule.PayloadTemplateJson); }
+            catch (JsonException) { }
+            if (template?.Version != 1 || template.IntelligencePolicyId != policyId) continue;
+            schedule.Enabled = false; schedule.NextRunAt = null; schedule.UpdatedAt = now; schedule.Revision++;
+        }
     }
     internal static void ValidateScope(IntelligenceScope s)
     {

@@ -211,6 +211,9 @@ retry and cancellation, native protocol-result preservation, and the absence of 
 Generated-set tests cover exact local matching, stable order, existing-member reuse, unmatched explanations,
 Jellyfin and Subsonic target behavior, explicit credential selection, safe metadata degradation, recreation,
 retry, cancellation, and the rule that playlist materialization does not download missing songs.
+Scheduled-intelligence tests cover versioned templates, exact policy scope, timezone and misfire handling,
+occurrence idempotency, recommendation-to-materialization overlap, stable backend playlist reuse, policy disable
+and purge behavior, WebUI controls, and state-transfer rejection of broken schedule lineage.
 
 Phase 8 adds deterministic first-party package builds, content and archive hash verification, strict source locks,
 permission-pending bootstrap, ordinary built-in collision rejection, checksum-approved replacement, built-in

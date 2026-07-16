@@ -354,6 +354,12 @@ const API = {
     requestJson("/api/admin/intelligence/runs", jsonBody(payload), "Failed to start recommendation run"),
   generateIntelligencePlaylist: (payload) =>
     requestJson("/api/admin/intelligence/generated-sets", jsonBody(payload), "Failed to create generated playlist preview"),
+  createIntelligenceSchedule: (payload) =>
+    requestJson("/api/admin/intelligence/schedules", jsonBody(payload), "Failed to schedule recommendations"),
+  updateIntelligenceSchedule: (scheduleId, payload) =>
+    requestJson(`/api/admin/intelligence/schedules/${encodeURIComponent(scheduleId)}`, jsonBody(payload, "PUT"), "Failed to update recommendation schedule"),
+  disableIntelligenceSchedule: (scheduleId, payload) =>
+    requestJson(`/api/admin/intelligence/schedules/${encodeURIComponent(scheduleId)}`, jsonBody(payload, "DELETE"), "Failed to disable recommendation schedule"),
   purgeIntelligence: (payload) =>
     requestJson("/api/admin/intelligence/data", jsonBody(payload, "DELETE"), "Failed to clear intelligence data"),
   providerHealth: () =>
@@ -1016,6 +1022,33 @@ class AllstarrApp extends LitElement {
     this.toast("Generated playlist preview created");
   };
 
+  createIntelligenceSchedule = async (event) => {
+    event.preventDefault(); const data = new FormData(event.currentTarget);
+    const payload = { ...(this.intelligence?.scope || {}), name: data.get("name"),
+      limit: Number(data.get("limit")), cronExpression: data.get("cronExpression"),
+      timeZoneId: data.get("timeZoneId"), overlapPolicy: data.get("overlapPolicy"),
+      misfirePolicy: data.get("misfirePolicy"), enabled: true };
+    await API.createIntelligenceSchedule(payload);
+    this.intelligence = await API.intelligence(payload); this.toast("Recommendation schedule created");
+  };
+
+  toggleIntelligenceSchedule = async (schedule) => {
+    const payload = { ...(this.intelligence?.scope || {}), name: schedule.name, limit: schedule.limit,
+      cronExpression: schedule.cronExpression, timeZoneId: schedule.timeZoneId,
+      overlapPolicy: schedule.overlapPolicy, misfirePolicy: schedule.misfirePolicy,
+      enabled: !schedule.enabled, expectedRevision: schedule.revision };
+    await API.updateIntelligenceSchedule(schedule.id, payload);
+    this.intelligence = await API.intelligence(payload);
+    this.toast(schedule.enabled ? "Recommendation schedule paused" : "Recommendation schedule resumed");
+  };
+
+  disableIntelligenceSchedule = async (schedule) => {
+    if (!window.confirm(`Disable the recommendation schedule “${schedule.name}”?`)) return;
+    const payload = { ...(this.intelligence?.scope || {}), expectedRevision: schedule.revision };
+    await API.disableIntelligenceSchedule(schedule.id, payload);
+    this.intelligence = await API.intelligence(payload); this.toast("Recommendation schedule disabled");
+  };
+
   purgeIntelligence = async () => {
     if (!window.confirm("Turn off intelligence and remove the retained signals, profiles, recommendations, and generated sets for this scope?")) return;
     await API.purgeIntelligence(this.intelligence?.scope || {});
@@ -1639,6 +1672,7 @@ class AllstarrApp extends LitElement {
     const actions = data?.actions || {};
     const candidates = asArray(data?.candidates);
     const generated = asArray(data?.generatedSets);
+    const schedules = asArray(data?.schedules);
     const visualization = asArray(data?.visualization);
     const stateMessage = {
       empty: "Choose your backend and library to see intelligence data.",
@@ -1676,12 +1710,12 @@ class AllstarrApp extends LitElement {
           <input type="hidden" name="expectedRevision" value=${policy.revision || 0}>
           <div class="actions"><button class="primary">Save privacy settings</button>${actions.canRun ? html`<button type="button" @click=${this.runIntelligence}>Run recommendations</button>` : nothing}<button class="danger" type="button" @click=${this.purgeIntelligence}>Turn off and clear my data</button></div>
         </form>
-        ${this.renderIntelligenceResults(candidates, generated, visualization, actions)}
+        ${this.renderIntelligenceResults(candidates, generated, schedules, visualization, actions, policy)}
       ` : nothing}
     </section>`;
   }
 
-  renderIntelligenceResults(candidates, generated, visualization, actions) {
+  renderIntelligenceResults(candidates, generated, schedules, visualization, actions, policy) {
     return html`<div class="wide-grid intelligence-results">
       <div class="panel"><h3>Recommendations</h3>${candidates.length ? html`<ol class="activity-list">
         ${candidates.map((item) => html`<li class="activity-item" tabindex="0"><div><strong>${display(item.title || item.trackKey)}</strong><div class="muted">${display(item.artist, item.source)}</div>
@@ -1691,6 +1725,21 @@ class AllstarrApp extends LitElement {
         ${actions?.canGenerate ? html`<form class="actions" @submit=${this.generateIntelligencePlaylist}><label>Preview name <input name="name" maxlength="200" required value="Your recommendations"></label><button class="primary">Create preview</button></form>` : nothing}
         ${generated.length ? html`<div class="activity-list">${generated.map((item) => html`<div class="activity-item" tabindex="0"><div><strong>${display(item.name)}</strong><div class="muted">${display(item.trackCount, 0)} tracks · ${formatDate(item.createdAt)}</div>${item.errorCode ? html`<div class="error-text">${display(item.errorCode)}</div>` : nothing}</div><span class="status-chip ${item.materialized ? "configured" : "unknown"}">${titleCase(item.state || "pending")}</span></div>`)}</div>` : html`<div class="empty">No generated playlists yet.</div>`}</div>
       <div class="panel"><h3>Listening profile</h3>${visualization.length ? html`<div class="intelligence-bars" role="img" aria-label="Listening profile values">${visualization.map((item) => html`<div class="stat-row"><span>${display(item.label || item.key)}</span><meter min="0" max="1" value=${Number(item.value || 0)}>${Number(item.value || 0)}</meter></div>`)}</div>` : html`<div class="empty">No retained profile data.</div>`}</div>
+      <div class="panel full-span"><div class="section-heading"><div><h3>Recommendation automation</h3><p>Build a fresh playlist from your current listening habits on a durable schedule. Scheduled runs use the sources and privacy settings saved above.</p></div></div>
+        ${policy?.enabled ? html`<form class="config-grid" @submit=${this.createIntelligenceSchedule} aria-label="Create recommendation schedule">
+          <div class="form-row"><label>Playlist name</label><input name="name" maxlength="200" required value="Your recommendations"></div>
+          <div class="form-row"><label>Tracks</label><input name="limit" type="number" min="1" max="500" required value="25"></div>
+          <div class="form-row"><label>Schedule (cron)</label><input name="cronExpression" required value="0 8 * * *" inputmode="text"><small>Five-field cron expression.</small></div>
+          <div class="form-row"><label>Time zone</label><input name="timeZoneId" required value=${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}></div>
+          <div class="form-row"><label>When a run is still active</label><select name="overlapPolicy"><option value="skip">Skip this occurrence</option><option value="queue">Queue another run</option></select></div>
+          <div class="form-row"><label>After downtime</label><select name="misfirePolicy"><option value="runOnce">Run once</option><option value="skip">Wait for the next occurrence</option></select></div>
+          <div class="actions full-span"><button class="primary">Add schedule</button></div>
+        </form>` : html`<div class="empty">Enable and save intelligence before adding an automation.</div>`}
+        ${schedules.length ? html`<div class="activity-list" aria-label="Recommendation schedules">${schedules.map((schedule) => html`
+          <div class="activity-item" tabindex="0"><div><strong>${display(schedule.name)}</strong><div class="muted">${display(schedule.limit)} tracks · ${display(schedule.cronExpression)} · ${display(schedule.timeZoneId)}</div><small>${schedule.enabled ? `Next run ${formatDate(schedule.nextRunAt)}` : "Paused"}</small></div>
+            <div class="actions"><span class="status-chip ${schedule.enabled ? "configured" : "unknown"}">${schedule.enabled ? "Active" : "Paused"}</span><button type="button" @click=${() => this.toggleIntelligenceSchedule(schedule)}>${schedule.enabled ? "Pause" : "Resume"}</button><button class="danger" type="button" ?disabled=${!schedule.enabled} @click=${() => this.disableIntelligenceSchedule(schedule)}>Disable</button></div>
+          </div>`)} </div>` : html`<div class="empty">No recommendation schedules yet.</div>`}
+      </div>
     </div>`;
   }
 

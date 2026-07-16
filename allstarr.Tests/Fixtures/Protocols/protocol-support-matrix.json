@@ -46,7 +46,7 @@
     "target": "Backend mutation first, then durable idempotent optional actions; unstar never deletes implicitly.",
     "authBoundary": "Users/Me verifies the backend caller and ProtocolExecutionContext requires a resolved canonical actor before optional external favorite work; route/query userId values shape the backend request only.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-favorite-playback.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; FavoriteFileSafetyTests",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; FavoriteActionPipelineTests; FavoriteActionPolicyTests; FavoriteFileSafetyTests",
     "notes": "Backend status/body and the external UserItemDataDto shape are fixture-covered. Accepted mutations enter the durable favorite pipeline after resolving an exact indexed library scope; ambiguous scope is rejected instead of guessed. Unfavorite preserves managed files."
   },
   {
@@ -76,7 +76,7 @@
     "target": "Verified identity, durable playback/scrobble events, and preserved protocol responses.",
     "authBoundary": "Verified playback requests remain transparent, while scrobbling and synthetic played signals require a resolved canonical actor and cannot trust payload or route user IDs.",
     "fixture": "jellyfin-favorite-playback.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinSessionManagerTests; PlaybackSessionTests; ScrobblingOrchestratorTests",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinItemLyricsImageProtocolAdapterTests; JellyfinSessionManagerTests; PlaybackSessionTests; PlaybackSignalPipelineTests; ScrobblingOrchestratorTests",
     "notes": "Capabilities status mapping and progress best-effort 204 behavior are route-fixture covered. Accepted playback reports enter the durable exact-scope pipeline, retries are occurrence-idempotent, short stops become skip signals, and provider IDs resolve for scoped scrobble delivery."
   },
   {
@@ -146,7 +146,7 @@
     "target": "Repeated id/albumId/artistId values, backend-first mutation, durable optional work, no implicit deletion.",
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede star/unstar; external optional work is skipped unless BackendIdentityResolver produced a linked canonical actor.",
     "fixture": "subsonic-auth-boundary.json; subsonic-relay-fidelity.json",
-    "testLocation": "ProtocolRouteFixtureTests; FavoriteFileSafetyTests",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicProtocolAdapterTests; FavoriteActionPipelineTests; FavoriteActionPolicyTests; FavoriteFileSafetyTests",
     "notes": "Backend star/unstar preserves .view routes, GET/form POST, repeated IDs, status, body, and headers. Each accepted repeated track ID enters the durable favorite pipeline for a linked actor; album and artist optional actions are not synthesized as track downloads."
   },
   {
@@ -162,12 +162,12 @@
   {
     "protocol": "subsonic",
     "feature": "playlist-update",
-    "currentStatus": "explicit-partial",
-    "target": "Repeated ordered adds/removes and provider-neutral tenant-scoped links.",
-    "authBoundary": "Backend verification precedes relay; repeated ordered parameters retain query/form source, but canonical account scope is not resolved.",
+    "currentStatus": "explicit",
+    "target": "Exact-scoped materialized or hybrid target updates with ordered adds/removes; virtual and unmaterialized links remain immutable.",
+    "authBoundary": "Backend verification and ProtocolExecutionContext identity resolution precede mutation. Allstarr link lookup requires the exact tenant, owner, Subsonic-compatible backend, and requested library scope before the backend target ID is substituted.",
     "fixture": "subsonic-relay-fidelity.json",
-    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests",
-    "notes": "Repeated adds/removes and GET/form POST fidelity are covered; provider-neutral tenant-scoped links remain target work."
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests; SubsonicPlaylistMutationTests",
+    "notes": "Native playlist IDs relay unchanged. Exact-scoped materialized and hybrid Allstarr links with a target preserve repeated add/remove order and query/form source while rewriting only playlistId. Pure virtual or unmaterialized links return a protocol read-only error without a backend mutation."
   },
   {
     "protocol": "subsonic",
@@ -182,11 +182,11 @@
   {
     "protocol": "subsonic",
     "feature": "scrobble",
-    "currentStatus": "relay-partial",
+    "currentStatus": "explicit-partial",
     "target": "Repeated id/time/submission events with durable provider-scoped idempotency.",
     "authBoundary": "Backend verification and the shared ProtocolExecutionContext precede transparent scrobble relay; accepted events require a linked actor before exact-scope durable provider work is recorded.",
     "fixture": "subsonic-relay-fidelity.json",
-    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests",
+    "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests; SubsonicProtocolAdapterTests; PlaybackSignalPipelineTests; ScrobblingOrchestratorTests",
     "notes": "Repeated id/time/submission form pairs retain order and source and backend status/body/headers are preserved. After an accepted relay, paired events enter the exact-scope durable pipeline; explicit time is the stable occurrence identity and provider IDs resolve against indexed track identities."
   },
   {

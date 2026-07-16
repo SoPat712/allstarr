@@ -176,6 +176,7 @@ public sealed class PlaylistLinksController(
                 OverlapPolicy = overlap,
                 MisfirePolicy = misfire,
                 RetryPolicyJson = "{}",
+                PayloadTemplateJson = "{}",
                 Enabled = request.Enabled,
                 NextRunAt = request.Enabled ? DurableScheduleEngine.GetNextOccurrence(request.CronExpression, request.TimeZoneId, now) : null,
                 CreatedAt = now,

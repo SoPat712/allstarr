@@ -200,7 +200,10 @@ Durable playback/scrobble work and scoped recommendation policy now build on tho
   AudioMuse-AI. Readiness is scoped and visible before selection.
 - Generated sets reconcile exact local matches into Jellyfin or Subsonic/Navidrome through the shared playlist targets.
   Unmatched entries stay explained and are not downloaded. Subsonic credentials are explicitly saved on policy,
-  snapshotted through run/set lineage, and resolved just in time.
+  snapshotted through run/set lineage, resolved just in time, and never borrowed from another user or playlist link.
+- Durable recommendation schedules link to the exact intelligence policy and derive each occurrence from current
+  retained habits. The generated-set job keeps schedule lineage and reconciles the same backend playlist on later
+  occurrences. Policy disable or purge disables future occurrences while completed runs keep valid provenance.
 
 ## First-Party Package Boundaries
 

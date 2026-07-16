@@ -9,6 +9,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Downloads;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Jobs;
 using allstarr.Core.Playback;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
@@ -363,6 +364,7 @@ public sealed class DurableStateTransferService
         var providerRouteDecisions = await ReadEntryAsync<ProviderRouteDecisionEntity>(archive, "provider-route-decisions.json", cancellationToken);
         var providerRouteOutcomes = await ReadEntryAsync<ProviderRouteOutcomeEntity>(archive, "provider-route-outcomes.json", cancellationToken);
         var jobs = await ReadEntryAsync<DurableJobRecord>(archive, "jobs.json", cancellationToken);
+        var jobSchedules = await ReadEntryAsync<JobScheduleRecord>(archive, "job-schedules.json", cancellationToken);
         var backendIdentities = await ReadEntryAsync<BackendIdentityRecord>(archive, "backend-identities.json", cancellationToken);
         var favoriteEvents = await ReadEntryAsync<FavoriteEventRecord>(archive, "favorite-events.json", cancellationToken);
         var favoriteActions = await ReadEntryAsync<FavoriteActionRecord>(archive, "favorite-actions.json", cancellationToken);
@@ -403,7 +405,7 @@ public sealed class DurableStateTransferService
         ValidatePhase6Archive(tenants, users, backendIdentities, jobs, secretReferences, favoriteEvents, favoriteActions, favoriteStates,
             favoritePolicies, managedFiles, managedFileReferences, enrichmentPlans, enrichmentApplications);
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
-        ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, secretReferences, libraryTracks, intelligencePolicies, listeningSignals,
+        ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences, libraryTracks, intelligencePolicies, listeningSignals,
             playbackDeliveryCheckpoints,
             listeningProfiles, recommendationRuns, recommendationCandidates, generatedSets, generatedSetEntries);
 
@@ -454,7 +456,7 @@ public sealed class DurableStateTransferService
         context.ExternalMetadataSnapshots.AddRange(await ReadEntryAsync<ExternalMetadataSnapshotRecord>(archive, "external-metadata-snapshots.json", cancellationToken));
         context.TrackMatches.AddRange(await ReadEntryAsync<TrackMatchRecord>(archive, "track-matches.json", cancellationToken));
         context.ManualTrackOverrides.AddRange(await ReadEntryAsync<ManualTrackOverrideRecord>(archive, "manual-track-overrides.json", cancellationToken));
-        context.JobSchedules.AddRange(await ReadEntryAsync<JobScheduleRecord>(archive, "job-schedules.json", cancellationToken));
+        context.JobSchedules.AddRange(jobSchedules);
         context.PlaylistLinks.AddRange(await ReadEntryAsync<PlaylistLinkRecord>(archive, "playlist-links.json", cancellationToken));
         context.PlaylistSourceSnapshots.AddRange(await ReadEntryAsync<PlaylistSourceSnapshotRecord>(archive, "playlist-source-snapshots.json", cancellationToken));
         context.PlaylistSourceEntries.AddRange(await ReadEntryAsync<PlaylistSourceEntryRecord>(archive, "playlist-source-entries.json", cancellationToken));
@@ -1014,6 +1016,7 @@ public sealed class DurableStateTransferService
     private static void ValidateIntelligenceArchive(
         IReadOnlyCollection<TenantRecord> tenants, IReadOnlyCollection<PlatformUserRecord> users,
         IReadOnlyCollection<BackendIdentityRecord> backendIdentities, IReadOnlyCollection<DurableJobRecord> jobs,
+        IReadOnlyCollection<JobScheduleRecord> schedules,
         IReadOnlyCollection<SecretReferenceRecord> secretReferences, IReadOnlyCollection<LibraryTrackRecord> libraryTracks, IReadOnlyCollection<IntelligencePolicyRecord> policies,
         IReadOnlyCollection<ListeningSignalRecord> signals, IReadOnlyCollection<PlaybackDeliveryCheckpointEntity> playbackCheckpoints,
         IReadOnlyCollection<ListeningProfileRecord> profiles,
@@ -1023,7 +1026,9 @@ public sealed class DurableStateTransferService
         var tenantIds = IndexUnique(tenants, x => x.Id, "tenant"); var userById = IndexUnique(users, x => x.Id, "user");
         var jobById = IndexUnique(jobs, x => x.Id, "durable job"); var runById = IndexUnique(runs, x => x.Id, "recommendation run");
         var secretById = IndexUnique(secretReferences, x => x.Id, "secret reference");
-        var setById = IndexUnique(sets, x => x.Id, "generated set"); IndexUnique(policies, x => x.Id, "intelligence policy");
+        var setById = IndexUnique(sets, x => x.Id, "generated set");
+        var policyById = IndexUnique(policies, x => x.Id, "intelligence policy");
+        var scheduleById = IndexUnique(schedules, x => x.Id, "job schedule");
         IndexUnique(signals, x => x.Id, "listening signal"); IndexUnique(profiles, x => x.Id, "listening profile");
         IndexUnique(playbackCheckpoints, x => x.Id, "playback delivery checkpoint");
         IndexUnique(candidates, x => x.Id, "recommendation candidate"); IndexUnique(entries, x => x.Id, "generated set entry");
@@ -1035,6 +1040,7 @@ public sealed class DurableStateTransferService
         bool Credential(Guid tenant, Guid? id) => id is { } value && secretById.TryGetValue(value, out var secret) &&
             secret.TenantId == tenant && secret.RevokedAt == null;
         var policyByScope = new Dictionary<(Guid, Guid, string, string, string), IntelligencePolicyRecord>();
+        var recommendationSchedulePolicies = new Dictionary<Guid, IntelligencePolicyRecord>();
         foreach (var policy in policies)
         {
             if (!Owner(policy.TenantId, policy.OwnerUserId) || policy.Protocol is not ("jellyfin" or "subsonic") ||
@@ -1049,6 +1055,29 @@ public sealed class DurableStateTransferService
                 policy.TargetCredentialReferenceId.HasValue && !Credential(policy.TenantId, policy.TargetCredentialReferenceId) ||
                 !policyByScope.TryAdd(Scope(policy.TenantId, policy.OwnerUserId, policy.Protocol, policy.BackendInstanceId, policy.LibraryScopeId), policy))
                 RejectIntelligenceArchive("an intelligence policy is malformed, duplicated, or crosses its exact scope");
+        }
+        foreach (var schedule in schedules.Where(item => item.JobType == DurableScheduleEngine.RecommendationJobType))
+        {
+            RecommendationScheduleTemplate? template = null;
+            try { template = JsonSerializer.Deserialize<RecommendationScheduleTemplate>(schedule.PayloadTemplateJson); }
+            catch (JsonException) { }
+            IntelligencePolicyRecord? schedulePolicy = null;
+            if (template != null)
+                policyById.TryGetValue(template.IntelligencePolicyId, out schedulePolicy);
+            var scheduleValid = true;
+            try { DurableScheduleEngine.Validate(schedule.CronExpression, schedule.TimeZoneId); }
+            catch (ArgumentException) { scheduleValid = false; }
+            if (!scheduleValid || !Owner(schedule.TenantId, schedule.OwnerUserId) ||
+                !IsRequiredText(schedule.LibraryScopeId, 300) || !Enum.IsDefined(schedule.OverlapPolicy) ||
+                !Enum.IsDefined(schedule.MisfirePolicy) || !IsJsonObject(schedule.RetryPolicyJson, 1024 * 1024) ||
+                template == null || template.Version != 1 || template.Limit is < 1 or > 500 ||
+                !IsRequiredText(template.GeneratedSetName, 200) || schedulePolicy == null ||
+                schedulePolicy.TenantId != schedule.TenantId || schedulePolicy.OwnerUserId != schedule.OwnerUserId ||
+                schedulePolicy.LibraryScopeId != schedule.LibraryScopeId || schedule.CreatedAt == default ||
+                schedule.UpdatedAt < schedule.CreatedAt || schedule.Revision < 0 ||
+                schedule.Enabled != schedule.NextRunAt.HasValue || schedule.Enabled && !schedulePolicy.Enabled)
+                RejectIntelligenceArchive("a recommendation schedule is malformed or crosses its exact policy, owner, or library scope");
+            recommendationSchedulePolicies.Add(schedule.Id, schedulePolicy!);
         }
         var trackByReference = libraryTracks.Where(x => Owner(x.TenantId, x.OwnerUserId)).ToDictionary(x => $"library:{x.Id:N}", StringComparer.Ordinal);
         foreach (var signal in signals)
@@ -1093,16 +1122,26 @@ public sealed class DurableStateTransferService
                 RejectIntelligenceArchive("a listening profile is malformed or crosses its policy and track scope");
         }
         var runKeys = new HashSet<(Guid, Guid, string)>();
+        var scheduledOccurrences = new HashSet<(Guid, DateTimeOffset)>();
         foreach (var run in runs)
         {
             var key = Scope(run.TenantId, run.OwnerUserId, run.Protocol, run.BackendInstanceId, run.LibraryScopeId);
             RecommendationPolicySnapshot? snapshot = null; try { snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson); } catch (JsonException) { }
+            var scheduled = run.ScheduleId.HasValue || run.ScheduledFor.HasValue || snapshot?.Automation != null;
+            var validScheduleLineage = !scheduled || run.ScheduleId is { } scheduleId && run.ScheduledFor is { } scheduledFor &&
+                scheduleById.TryGetValue(scheduleId, out var schedule) && schedule.JobType == DurableScheduleEngine.RecommendationJobType &&
+                schedule.TenantId == run.TenantId && schedule.OwnerUserId == run.OwnerUserId && schedule.LibraryScopeId == run.LibraryScopeId &&
+                recommendationSchedulePolicies.TryGetValue(scheduleId, out var schedulePolicy) &&
+                schedulePolicy.Protocol == run.Protocol && schedulePolicy.BackendInstanceId == run.BackendInstanceId &&
+                snapshot?.Automation is { } automation && automation.ScheduleId == scheduleId && automation.ScheduledFor == scheduledFor &&
+                IsRequiredText(automation.GeneratedSetName, 200) && run.IdempotencyKey == $"schedule:{scheduleId:N}:{scheduledFor.UtcTicks}";
             if (!policyByScope.ContainsKey(key) || !jobById.TryGetValue(run.JobId, out var job) || job.TenantId != run.TenantId ||
                 job.OwnerUserId != run.OwnerUserId || job.Type != "recommendation.generate" || job.LibraryScopeId != run.LibraryScopeId ||
-                job.IdempotencyKey != run.IdempotencyKey ||
+                job.IdempotencyKey != run.IdempotencyKey || !ValidRecommendationPayload(job.PayloadJson, run.Id) ||
                 !IsRequiredText(run.IdempotencyKey, 300) || !runKeys.Add((run.TenantId, run.OwnerUserId, run.IdempotencyKey)) ||
                 snapshot == null || snapshot.Revision <= 0 || snapshot.RetentionDays is < 1 or > 3650 || snapshot.EnabledProviders.Count is < 1 or > 100 ||
                 snapshot.TargetCredentialReferenceId != run.TargetCredentialReferenceId ||
+                !validScheduleLineage || scheduled && !scheduledOccurrences.Add((run.ScheduleId!.Value, run.ScheduledFor!.Value)) ||
                 run.Protocol == "jellyfin" && run.TargetCredentialReferenceId.HasValue ||
                 run.Protocol == "subsonic" && !Credential(run.TenantId, run.TargetCredentialReferenceId) ||
                 snapshot.EnabledProviders.Any(x => !IsIntelligenceCatalog(x, 100)) || !TryBoundedStrings(run.SeedTrackKeysJson, 100, 500) ||
@@ -1133,6 +1172,7 @@ public sealed class DurableStateTransferService
                 set.TenantId != run.TenantId || set.OwnerUserId != run.OwnerUserId || set.Protocol != run.Protocol ||
                 set.BackendInstanceId != run.BackendInstanceId || set.LibraryScopeId != run.LibraryScopeId || !IsRequiredText(set.Name, 200) ||
                 set.TargetCredentialReferenceId != run.TargetCredentialReferenceId || !Enum.IsDefined(set.MaterializationState) ||
+                set.ScheduleId != run.ScheduleId ||
                 set.CreatedAt == default || set.UpdatedAt < set.CreatedAt || set.Revision <= 0 ||
                 !IsOptionalText(set.BackendPlaylistId, 500) || !IsOptionalText(set.TargetRevision, 300) || !IsOptionalText(set.LastErrorCode, 100) ||
                 !ValidMaterializationLifecycle(set))
@@ -1165,6 +1205,8 @@ public sealed class DurableStateTransferService
     private static bool Contiguous(IEnumerable<int> positions) { var values = positions.Order().ToArray(); return values.SequenceEqual(Enumerable.Range(0, values.Length)); }
     private static bool ValidSignals(string json) { try { var values = JsonSerializer.Deserialize<RecommendationSignal[]>(json); return values is { Length: > 0 and <= 32 } && values.All(x => IsRequiredText(x.Code, 100) && IsRequiredText(x.Explanation, 1000) && double.IsFinite(x.Weight)); } catch (JsonException) { return false; } }
     private static bool ValidIdentity(string json) { try { if (json == "null") return true; var x = JsonSerializer.Deserialize<RecommendationTrackIdentity>(json); return x != null && IsOptionalText(x.ProviderId, 100) && IsOptionalText(x.ProviderTrackId, 500) && IsOptionalText(x.Title, 500) && IsOptionalText(x.Artist, 500) && IsOptionalText(x.Album, 500) && IsOptionalText(x.Isrc, 20) && (x.MusicBrainzRecordingId == null || Guid.TryParse(x.MusicBrainzRecordingId, out _)); } catch (JsonException) { return false; } }
+    private static bool ValidRecommendationPayload(string json, Guid runId)
+    { try { return JsonSerializer.Deserialize<RecommendationRunPayload>(json)?.RunId == runId; } catch (JsonException) { return false; } }
     private static void RejectIntelligenceArchive(string reason) => throw new BackupVerificationException($"State transfer intelligence data is invalid because {reason}.");
 
     private static void ValidateDownloadArtifactArchive(

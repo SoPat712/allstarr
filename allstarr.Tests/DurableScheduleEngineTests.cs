@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
@@ -206,6 +207,69 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         Assert.Equal(_schedule, orchestration.Request.ScheduleId);
     }
 
+    [Fact]
+    public async Task RecommendationOccurrence_CreatesScopedRunJobAndOutboxAtomically()
+    {
+        var policyId = await ConfigureRecommendationSchedule();
+        var scheduledFor = _clock.UtcNow.AddMinutes(1);
+        _clock.UtcNow = scheduledFor;
+
+        var result = await _engine.TickAsync();
+
+        Assert.Equal(1, result.Enqueued);
+        await using var db = await _factory.CreateDbContextAsync();
+        var job = await db.Jobs.SingleAsync();
+        var run = await db.RecommendationRuns.SingleAsync();
+        Assert.Equal(DurableScheduleEngine.RecommendationJobType, job.Type);
+        Assert.Equal(_schedule, run.ScheduleId);
+        Assert.Equal(scheduledFor, run.ScheduledFor);
+        Assert.Equal(job.Id, run.JobId);
+        Assert.Equal("[]", run.SeedTrackKeysJson);
+        Assert.Single(await db.OutboxMessages.ToListAsync());
+        var snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson)!;
+        Assert.Equal(policyId, JsonSerializer.Deserialize<RecommendationScheduleTemplate>(
+            (await db.JobSchedules.SingleAsync()).PayloadTemplateJson)!.IntelligencePolicyId);
+        Assert.Equal(_schedule, snapshot.Automation!.ScheduleId);
+        Assert.Equal(scheduledFor, snapshot.Automation.ScheduledFor);
+        Assert.Equal("Daily discovery", snapshot.Automation.GeneratedSetName);
+        Assert.DoesNotContain("credential", job.PayloadJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RecommendationSkipOverlap_AlsoSeesActiveMaterializationChild()
+    {
+        await ConfigureRecommendationSchedule();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Jobs.Add(new DurableJobRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ScopeKey = $"{_tenant:N}:{_user:N}",
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                Type = "smart-playlist.materialize",
+                PayloadJson = "{}",
+                PolicySnapshotJson = "{}",
+                RequestFingerprint = new string('f', 64),
+                IdempotencyKey = $"schedule:{_schedule:N}:materialize:{Guid.CreateVersion7():N}",
+                CorrelationId = "active-materialization",
+                State = DurableJobState.Running,
+                MaxAttempts = 3,
+                AvailableAt = _clock.UtcNow,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+
+        var result = await _engine.TickAsync();
+
+        Assert.Equal(1, result.SkippedOverlap);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Empty(await verify.RecommendationRuns.ToListAsync());
+    }
+
     private JobScheduleRecord NewSchedule(DateTimeOffset now) => new()
     {
         Id = _schedule,
@@ -228,6 +292,46 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
     {
         var options = new DurableJobOptions();
         return new DurableScheduleEngine(_factory, new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock), _clock);
+    }
+
+    private async Task<Guid> ConfigureRecommendationSchedule()
+    {
+        var policyId = Guid.CreateVersion7();
+        await using var db = await _factory.CreateDbContextAsync();
+        db.BackendIdentities.Add(new BackendIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = _tenant,
+            UserId = _user,
+            BackendType = "jellyfin",
+            BackendInstanceId = "jellyfin-main",
+            PrincipalId = "scheduled-owner",
+            CreatedAt = _clock.UtcNow,
+            LastSeenAt = _clock.UtcNow
+        });
+        db.IntelligencePolicies.Add(new IntelligencePolicyRecord
+        {
+            Id = policyId,
+            TenantId = _tenant,
+            OwnerUserId = _user,
+            Protocol = "jellyfin",
+            BackendInstanceId = "jellyfin-main",
+            LibraryScopeId = "music",
+            Enabled = true,
+            RetentionDays = 30,
+            AllowedSignalTypesJson = "[\"play\"]",
+            EnabledProvidersJson = "[\"fixture\"]",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow,
+            Revision = 1
+        });
+        var schedule = await db.JobSchedules.SingleAsync();
+        schedule.JobType = DurableScheduleEngine.RecommendationJobType;
+        schedule.PayloadTemplateJson = JsonSerializer.Serialize(
+            new RecommendationScheduleTemplate(1, policyId, 25, "Daily discovery"));
+        db.PlaylistLinks.Remove(await db.PlaylistLinks.SingleAsync());
+        await db.SaveChangesAsync();
+        return policyId;
     }
 
     private async Task SetSchedule(Action<JobScheduleRecord> mutate)
