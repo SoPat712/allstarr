@@ -25,7 +25,7 @@ public sealed class ProtocolProviderGatewayContractTests
     public void SubsonicExternalRoutesUseProviderGatewayWhileNativeAudioRemainsRelay()
     {
         var source = File.ReadAllText(Path.Combine(
-            RepositoryRoot(), "allstarr", "Controllers", "SubsonicController.cs"));
+            RepositoryRoot(), "allstarr", "Controllers", "SubSonicController.cs"));
 
         Assert.Contains("_providerGateway.SearchAsync", source, StringComparison.Ordinal);
         Assert.Contains("_providerGateway.GetSongAsync", source, StringComparison.Ordinal);

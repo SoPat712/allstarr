@@ -939,16 +939,16 @@ public sealed class ProtocolRouteFixtureTests
                 .ReturnsAsync(new SearchResult
                 {
                     Songs = [
-                        new() { Id = "song-1", Title = "one" },
-                        new() { Id = "song-2", Title = "two" }
+                        new() { Id = "song-1", Title = "one", ExternalProvider = "deezer" },
+                        new() { Id = "song-2", Title = "two", ExternalProvider = "deezer" }
                     ],
                     Albums = [
-                        new() { Id = "album-1", Title = "one" },
-                        new() { Id = "album-2", Title = "two" }
+                        new() { Id = "album-1", Title = "one", ExternalProvider = "deezer" },
+                        new() { Id = "album-2", Title = "two", ExternalProvider = "deezer" }
                     ],
                     Artists = [
-                        new() { Id = "artist-1", Name = "one" },
-                        new() { Id = "artist-2", Name = "two" }
+                        new() { Id = "artist-1", Name = "one", ExternalProvider = "deezer" },
+                        new() { Id = "artist-2", Name = "two", ExternalProvider = "deezer" }
                     ]
                 });
             metadata.Setup(service => service.SearchPlaylistsAsync(
