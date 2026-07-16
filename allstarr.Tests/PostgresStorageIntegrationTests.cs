@@ -404,7 +404,8 @@ public sealed class PostgresStorageIntegrationTests
                     setting.Key == "Scrobbling:LocalTracksEnabled" && setting.ValueJson == "true");
                 Assert.Contains(storedSettings, setting =>
                     setting.Key == "SpotifyImport:Playlists" &&
-                    setting.ValueJson == "[[\"Browser Mix\",\"spotify-source-id\",\"last\"]]");
+                    setting.ValueJson == JsonSerializer.Serialize(
+                        "[[\"Browser Mix\",\"spotify-source-id\",\"last\"]]"));
                 var account = Assert.Single(await db.ProviderAccounts.AsNoTracking().ToListAsync());
                 Assert.Equal("deezer", account.ProviderId);
                 Assert.False(account.Enabled);
