@@ -47,6 +47,7 @@ public class AdminStaticFilesMiddleware
                 var indexPath = Path.Combine(_webRootPath, "index.html");
                 if (File.Exists(indexPath))
                 {
+                    SetRevalidationHeaders(context.Response, isEntryPoint: true);
                     context.Response.ContentType = "text/html";
                     await context.Response.SendFileAsync(indexPath);
                     return;
@@ -63,6 +64,7 @@ public class AdminStaticFilesMiddleware
 
             if (File.Exists(candidatePath))
             {
+                SetRevalidationHeaders(context.Response, isEntryPoint: false);
                 var contentType = GetContentType(candidatePath);
                 context.Response.ContentType = contentType;
                 await context.Response.SendFileAsync(candidatePath);
@@ -72,6 +74,13 @@ public class AdminStaticFilesMiddleware
 
         // Not admin port or file not found - continue pipeline
         await _next(context);
+    }
+
+    private static void SetRevalidationHeaders(HttpResponse response, bool isEntryPoint)
+    {
+        response.Headers.CacheControl = isEntryPoint
+            ? "no-store"
+            : "no-cache, must-revalidate";
     }
 
     private string? ResolveStaticFilePath(string requestPath)

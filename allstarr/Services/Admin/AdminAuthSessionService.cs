@@ -29,7 +29,8 @@ public sealed class AdminAuthSession
 /// </summary>
 public class AdminAuthSessionService
 {
-    public const string SessionCookieName = "allstarr_admin_session";
+    public const string SessionCookieName = "allstarr_admin_session_v3";
+    public const string LegacySessionCookieName = "allstarr_admin_session";
     public const string HttpContextSessionItemKey = "__allstarr_admin_auth_session";
 
     public static readonly TimeSpan DefaultSessionLifetime = TimeSpan.FromHours(12);
@@ -153,6 +154,44 @@ public class AdminAuthSessionService
         existing.LastSeenUtc = DateTime.UtcNow;
         session = existing;
         return true;
+    }
+
+    public bool TryGetValidSession(HttpRequest request, out AdminAuthSession session)
+    {
+        foreach (var sessionId in ReadSessionIds(request))
+        {
+            if (TryGetValidSession(sessionId, out session))
+            {
+                return true;
+            }
+        }
+
+        session = null!;
+        return false;
+    }
+
+    public IReadOnlyList<string> ReadSessionIds(HttpRequest request)
+    {
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var header in request.Headers.Cookie)
+        {
+            if (string.IsNullOrWhiteSpace(header)) continue;
+            foreach (var part in header.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var pair = part.Split('=', 2);
+                if (pair.Length != 2 ||
+                    (!pair[0].Trim().Equals(SessionCookieName, StringComparison.Ordinal) &&
+                     !pair[0].Trim().Equals(LegacySessionCookieName, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                var value = pair[1].Trim();
+                if (!string.IsNullOrWhiteSpace(value)) values.Add(value);
+            }
+        }
+
+        return values.ToArray();
     }
 
     public void RemoveSession(string? sessionId)

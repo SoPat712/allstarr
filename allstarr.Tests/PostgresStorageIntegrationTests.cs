@@ -392,16 +392,19 @@ public sealed class PostgresStorageIntegrationTests
                 actor);
 
             Assert.True(result.Success);
-            Assert.Equal(2, result.SettingsImported);
+            Assert.Equal(3, result.SettingsImported);
             Assert.Equal(1, result.ProviderAccountsCreated);
             await using (var db = await factory.CreateDbContextAsync())
             {
                 var storedSettings = await db.TenantRuntimeSettings.AsNoTracking().ToListAsync();
-                Assert.Equal(2, storedSettings.Count);
+                Assert.Equal(3, storedSettings.Count);
                 Assert.Contains(storedSettings, setting =>
                     setting.Key == "Cache:LyricsDays" && setting.ValueJson == "45");
                 Assert.Contains(storedSettings, setting =>
                     setting.Key == "Scrobbling:LocalTracksEnabled" && setting.ValueJson == "true");
+                Assert.Contains(storedSettings, setting =>
+                    setting.Key == "SpotifyImport:Playlists" &&
+                    setting.ValueJson == "[[\"Browser Mix\",\"spotify-source-id\",\"last\"]]");
                 var account = Assert.Single(await db.ProviderAccounts.AsNoTracking().ToListAsync());
                 Assert.Equal("deezer", account.ProviderId);
                 Assert.False(account.Enabled);

@@ -186,10 +186,9 @@ public class AdminAuthController : ControllerBase
     [HttpGet("me")]
     public IActionResult GetCurrentSession()
     {
-        if (!Request.Cookies.TryGetValue(AdminAuthSessionService.SessionCookieName, out var sessionId) ||
-            !_sessionService.TryGetValidSession(sessionId, out var session))
+        if (!_sessionService.TryGetValidSession(Request, out var session))
         {
-            Response.Cookies.Delete(AdminAuthSessionService.SessionCookieName);
+            DeleteSessionCookies();
             return Ok(new
             {
                 authenticated = false,
@@ -224,13 +223,20 @@ public class AdminAuthController : ControllerBase
     [HttpPost("logout")]
     public IActionResult Logout()
     {
-        if (Request.Cookies.TryGetValue(AdminAuthSessionService.SessionCookieName, out var sessionId))
+        foreach (var sessionId in _sessionService.ReadSessionIds(Request))
         {
             _sessionService.RemoveSession(sessionId);
         }
 
-        Response.Cookies.Delete(AdminAuthSessionService.SessionCookieName);
+        DeleteSessionCookies();
         return Ok(new { success = true });
+    }
+
+    private void DeleteSessionCookies()
+    {
+        Response.Cookies.Delete(AdminAuthSessionService.SessionCookieName, new CookieOptions { Path = "/" });
+        Response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/" });
+        Response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/api/admin/auth" });
     }
 
     private void SetSessionCookie(string sessionId, DateTime expiresAtUtc)

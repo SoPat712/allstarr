@@ -22,6 +22,7 @@ public class AdminStaticFilesMiddlewareTests
             Assert.False(nextInvoked());
             Assert.Equal("text/html", context.Response.ContentType);
             Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+            Assert.Equal("no-store", context.Response.Headers.CacheControl);
         }
         finally
         {
@@ -70,6 +71,7 @@ public class AdminStaticFilesMiddlewareTests
             Assert.False(nextInvoked());
             Assert.Equal("application/javascript", context.Response.ContentType);
             Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+            Assert.Equal("no-cache, must-revalidate", context.Response.Headers.CacheControl);
         }
         finally
         {

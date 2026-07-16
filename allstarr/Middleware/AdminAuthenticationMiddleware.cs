@@ -50,10 +50,9 @@ public class AdminAuthenticationMiddleware
             return;
         }
 
-        if (!context.Request.Cookies.TryGetValue(AdminAuthSessionService.SessionCookieName, out var sessionId) ||
-            !_sessionService.TryGetValidSession(sessionId, out var session))
+        if (!_sessionService.TryGetValidSession(context.Request, out var session))
         {
-            context.Response.Cookies.Delete(AdminAuthSessionService.SessionCookieName);
+            DeleteSessionCookies(context.Response);
             await WriteUnauthorizedResponse(context);
             return;
         }
@@ -155,8 +154,12 @@ public class AdminAuthenticationMiddleware
 
     private async Task WriteUnauthorizedResponse(HttpContext context)
     {
-        _logger.LogDebug("AdminAuthenticationMiddleware rejected unauthenticated request to {Path}",
-            context.Request.Path);
+        _logger.LogInformation(
+            "AdminAuthenticationMiddleware rejected unauthenticated request to {Path}; sessionCookiePresent={SessionCookiePresent}",
+            context.Request.Path,
+            context.Request.Headers.Cookie.Any(value =>
+                value?.Contains(AdminAuthSessionService.SessionCookieName, StringComparison.Ordinal) == true ||
+                value?.Contains(AdminAuthSessionService.LegacySessionCookieName, StringComparison.Ordinal) == true));
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.ContentType = "application/json";
@@ -165,6 +168,13 @@ public class AdminAuthenticationMiddleware
             error = "Authentication required",
             message = "Please sign in with your configured media-server account."
         }));
+    }
+
+    private static void DeleteSessionCookies(HttpResponse response)
+    {
+        response.Cookies.Delete(AdminAuthSessionService.SessionCookieName, new CookieOptions { Path = "/" });
+        response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/" });
+        response.Cookies.Delete(AdminAuthSessionService.LegacySessionCookieName, new CookieOptions { Path = "/api/admin/auth" });
     }
 
     private async Task WriteForbiddenResponse(HttpContext context)

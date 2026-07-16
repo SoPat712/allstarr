@@ -204,10 +204,9 @@ public class AdminAuthControllerTests
 
         Assert.False(payload.RootElement.GetProperty("authenticated").GetBoolean());
         var setCookies = httpContext.Response.Headers.SetCookie;
-        Assert.Single(setCookies);
-        var setCookieHeader = setCookies[0] ?? string.Empty;
-        Assert.Contains($"{AdminAuthSessionService.SessionCookieName}=", setCookieHeader);
-        Assert.Contains("expires=", setCookieHeader.ToLowerInvariant());
+        Assert.Equal(3, setCookies.Count);
+        Assert.Contains(setCookies, value => value!.Contains($"{AdminAuthSessionService.SessionCookieName}=") &&
+                                             value.Contains("expires=", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]
@@ -271,6 +270,31 @@ public class AdminAuthControllerTests
         var refreshedCookie = Assert.Single(httpContext.Response.Headers.SetCookie);
         Assert.Contains($"{AdminAuthSessionService.SessionCookieName}={session.SessionId}", refreshedCookie);
         Assert.Contains("path=/", refreshedCookie, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GetCurrentSession_WithLegacyCookie_MigratesToV3Cookie()
+    {
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        var sessionService = new AdminAuthSessionService();
+        var session = sessionService.CreateSession(
+            userId: "legacy-user",
+            userName: "legacy",
+            isAdministrator: true,
+            jellyfinAccessToken: "token",
+            jellyfinServerId: "server");
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Cookie = $"{AdminAuthSessionService.LegacySessionCookieName}={session.SessionId}";
+
+        var result = Assert.IsType<OkObjectResult>(
+            CreateController(handler, sessionService, httpContext).GetCurrentSession());
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+
+        Assert.True(payload.RootElement.GetProperty("authenticated").GetBoolean());
+        var migratedCookie = Assert.Single(httpContext.Response.Headers.SetCookie);
+        Assert.Contains($"{AdminAuthSessionService.SessionCookieName}={session.SessionId}", migratedCookie);
+        Assert.Contains("path=/", migratedCookie, StringComparison.OrdinalIgnoreCase);
     }
 
     private static AdminAuthController CreateController(
