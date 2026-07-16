@@ -2,6 +2,7 @@ using allstarr.Core.ManagedFiles;
 using allstarr.Core.Enrichment;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace allstarr.Tests;
 
@@ -189,6 +190,52 @@ public sealed class FilePlacementServiceTests : IDisposable
         Assert.Equal("original-library-audio", await File.ReadAllTextAsync(source));
         Assert.NotNull(result.File.FileSystemDeviceId);
         Assert.NotNull(result.File.FileSystemFileId);
+    }
+
+    [Fact]
+    public async Task PlaceAsync_AdoptsExactFinalizedFileAfterProcessCrash()
+    {
+        var source = CreateSource("source/recover.flac", "recoverable-audio");
+        var root = Path.Combine(testRoot, "managed");
+        var request = Request(source, root, false) with { ReferenceKey = "favorite:recover" };
+        var target = Path.Combine(root, "Artist", "Album", "03 - A_B.flac");
+        var stagingDirectory = Path.Combine(root, ".allstarr-staging");
+        var staging = Path.Combine(stagingDirectory, "interrupted.partial");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        Directory.CreateDirectory(stagingDirectory);
+        File.Copy(source, target);
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("recoverable-audio")))
+            .ToLowerInvariant();
+        var material = $"{request.Root.TenantId:N}|{request.Root.OwnerUserId:N}|{request.Root.Id:N}|{request.ScopeKey}|{request.ReferenceKey}";
+        var journalName = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant();
+        var journal = Path.Combine(stagingDirectory, $"{journalName}.placement.json");
+        await File.WriteAllTextAsync(journal, JsonSerializer.Serialize(new
+        {
+            Version = 1,
+            RootId = request.Root.Id,
+            TenantId = request.Root.TenantId!.Value,
+            request.Root.OwnerUserId,
+            request.Root.LibraryScopeId,
+            request.ScopeKey,
+            ReferenceKey = request.ReferenceKey!,
+            RootPath = Path.GetFullPath(root),
+            TargetPath = target,
+            StagingPath = staging,
+            ContentSha256 = fingerprint,
+            Length = new FileInfo(source).Length,
+            request.SourceJobId,
+            PlacementMethod = ManagedFilePlacementMethod.Copy,
+            CreatedAt = DateTimeOffset.UtcNow
+        }));
+        var operations = new RecordingOperations(false, false);
+
+        var result = await new FilePlacementService(new MemoryOwnershipStore(), operations).PlaceAsync(request);
+
+        Assert.True(result.Reused);
+        Assert.Equal(target, result.File.CanonicalPath);
+        Assert.Equal("recoverable-audio", await File.ReadAllTextAsync(target));
+        Assert.Equal(0, operations.CopyCalls);
+        Assert.False(File.Exists(journal));
     }
 
     [Fact]

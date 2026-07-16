@@ -20,7 +20,7 @@ MusicBrainz requires responsible API use, including a meaningful user agent and 
 
 ## Scope, Ownership, And Snapshot Context
 
-The following is a target-overhaul data contract. Current matching and playlist code is still provider-specific, so do not assume these records already exist.
+The following is the implemented durable data contract. Provider-specific compatibility readers may remain, but new matching and playlist work uses these records.
 
 Every library record, external snapshot, match, manual override, favorite event, and placement must carry enough scope to answer all of these questions without reading request headers again:
 
@@ -34,7 +34,7 @@ Use stable IDs for these fields; never persist a raw backend token, provider coo
 
 ## Library Index
 
-Add `LibraryIndexService` backed by the explicitly selected durable database.
+`LibraryIndexService` is backed by the explicitly selected durable database.
 
 Indexed data:
 
@@ -59,7 +59,7 @@ The index should make local lookup fast enough that playback and playlist rewrit
 
 ## Track Identity
 
-Replace provider-specific matching with `TrackIdentityService`.
+`TrackIdentityService` owns provider-neutral matching.
 
 Use a provider-neutral identity graph rather than expanding the current Spotify mapping table:
 
@@ -112,7 +112,7 @@ Output:
 
 ### Match Lifecycle
 
-`TrackIdentityService` is a decision service, not a downloader or playlist writer. Target behavior is:
+`TrackIdentityService` is a decision service, not a downloader or playlist writer. Its lifecycle is:
 
 1. Capture an immutable external-track snapshot and its provider/account context.
 2. Limit local candidates to the caller's visible library scope.
@@ -141,7 +141,7 @@ Example explanation:
 
 ## Metadata Merge
 
-Add `MetadataMergeService`.
+`MetadataMergeService` owns explainable merge planning.
 
 Default merge order:
 
@@ -160,7 +160,7 @@ Rules:
 
 ## Favorites And Downloads
 
-Add `FavoriteActionPipeline`.
+`FavoriteActionPipeline` owns durable favorite side effects.
 
 Supported actions:
 
@@ -182,7 +182,7 @@ Defaults:
 - Managed file removal only after explicit user action.
 - Extra actions require opt-in per user, backend, or admin policy.
 
-### Target Favorite Lifecycle
+### Favorite Lifecycle
 
 The favorite/star mutation and the optional Allstarr workflow are separate operations:
 
@@ -195,7 +195,7 @@ The favorite/star mutation and the optional Allstarr workflow are separate opera
 
 An unfavorite/unstar removes the favorite or virtual-liked state and may cancel work that has not started. It does **not** remove a file. “Remove managed copy” is a separately confirmed managed-file action with ownership, reference-count, and audit checks.
 
-The current Jellyfin and Subsonic adapters still contain direct background favorite/playlist paths. Migrate those paths behind this lifecycle before broadening side effects; do not claim this pipeline is current behavior until the durable records and tests exist.
+Jellyfin and Subsonic favorite mutations preserve the backend result first, then enqueue this durable, scoped lifecycle. Compatibility playlist reads do not bypass the favorite pipeline or broaden its side effects.
 
 ## Playlist Virtualization Lifecycle
 
@@ -231,7 +231,7 @@ Conflict and idempotency rules:
 
 ## File Placement
 
-Add `FilePlacementService`.
+`FilePlacementService` owns managed placement.
 
 Behavior:
 
@@ -251,7 +251,7 @@ Behavior:
 - Record every managed output with root ID, canonical path, content fingerprint, filesystem device/file identity where supported, placement method, source/download job, owner/scope, managed-state flag, and durable references before it can be deleted or reused.
 - Build and validate the target path against the configured root before writing, then validate resolved parents/final path again without allowing symlink escapes. Do not trust a string-prefix check or raw provider metadata as containment proof.
 - Download or transform into a uniquely named staging file under controlled storage, validate it, then atomically finalize within the target filesystem. A crash, cancellation, or retry may clean only its own staging file and must leave a completed managed file untouched.
-- The filesystem rename and database ownership commit are not yet one transaction. If a process stops in that narrow gap, the finalized path remains unowned: current recovery will not adopt it, overwrite it, or delete it. A future placement journal/reconciler must prove the operation identity before claiming or cleaning that orphan.
+- Placement writes a durable, root-local operation journal before finalization. If the process stops between the atomic filesystem rename and the database ownership commit, a retry with the same durable reference verifies the tenant, root, scope, target, length, and SHA-256 before adopting the exact finalized file. A mismatch is left untouched and reported for operator review. Completed ownership removes the journal.
 - Resolve collisions by content fingerprint and managed-record compatibility. Reuse/increment a compatible managed record, otherwise choose a deterministic safe suffix; never overwrite an unrelated file.
 - The target design may hardlink only an immutable, eligible managed file on the same filesystem. Current production placement deliberately does not hardlink because immutability is not yet a durable lease. It uses reflink or copy instead. A hardlink shares an inode, so any output that may be tagged, transcoded, or rewritten must remain independent.
 - Give each consumer a stable durable reference key. Retrying that consumer is idempotent. A different consumer adds a reference, and explicit release marks only that reference released and decrements the protected count once.
@@ -302,7 +302,7 @@ Not allowed by default:
 - infer deletion from playlist removal
 - tag or transcode an existing source-library inode through a hardlink
 
-For the target lifecycle, an unfavorite changes the logical favorite state only. A user must explicitly request managed-file removal, and that request must prove the file is Allstarr-managed and no remaining placement/reference protects it.
+An unfavorite changes the logical favorite state only. A user must explicitly request managed-file removal, and that request must prove the file is Allstarr-managed and no remaining placement/reference protects it.
 
 ## Tests
 

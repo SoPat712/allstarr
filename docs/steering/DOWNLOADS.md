@@ -67,9 +67,9 @@ before atomic finalization, resolves collisions by managed-record/content identi
 durable references. Production hardlinks are currently disabled until immutability has a durable lease instead of a
 caller assertion. Placement tries native copy-on-write on Linux/macOS and falls back to a verified copy. See
 [references/metadata-matching-and-placement.md](references/metadata-matching-and-placement.md) for the complete add-only and tagging contract.
-The final filesystem rename currently precedes the database ownership commit. An interruption in that narrow gap
-leaves an unowned output that Allstarr will not automatically adopt, overwrite, or delete without a future verified
-placement journal/reconciler.
+A root-local placement-operation journal closes the filesystem/database crash window. Recovery adopts only the
+exact tenant-scoped target whose path, length, and SHA-256 match the interrupted durable reference. A mismatch is
+never overwritten or deleted automatically.
 
 ## Stream Behavior
 

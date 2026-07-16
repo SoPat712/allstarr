@@ -58,7 +58,7 @@ public partial class JellyfinController
 
         if (isExternal)
         {
-            song = await _metadataService.GetSongAsync(provider!, externalId!);
+            song = await GetProviderSongAsync(provider!, externalId!);
 
             // Use Spotify ID from song metadata if available (populated during GetSongAsync)
             if (song != null && !string.IsNullOrEmpty(song.SpotifyId))
@@ -240,7 +240,7 @@ public partial class JellyfinController
             if (isExternal && !string.IsNullOrEmpty(provider) && !string.IsNullOrEmpty(externalId))
             {
                 // Get external track metadata
-                song = await _metadataService.GetSongAsync(provider, externalId);
+                song = await GetProviderSongAsync(provider, externalId);
 
                 // Try to find Spotify ID from matched tracks cache
                 if (song != null)

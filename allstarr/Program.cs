@@ -515,6 +515,7 @@ builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<IMusicMetadataService, MultiProviderMetadataService>();
 builder.Services.AddSingleton<IDownloadService, MultiProviderDownloadService>();
+builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 
 // 4. Playlist Sync Service
 builder.Services.AddSingleton<PlaylistSyncService>();

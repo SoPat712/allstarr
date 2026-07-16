@@ -120,6 +120,34 @@ public sealed class AppleDownloadEndpointDiscoveryTests
         });
     }
 
+    [Fact]
+    public async Task AdvertisedButUnimplementedFeatures_RemainUnsupported()
+    {
+        const string manifest = """
+            {"sidecarApiVersion":"1.0.0","capabilities":[
+              {"id":"metadata-search-song","state":"supported"},
+              {"id":"metadata-song","state":"supported"},
+              {"id":"stream-audio-song","state":"supported"},
+              {"id":"download-audio-song","state":"supported"},
+              {"id":"download-album","state":"supported"},
+              {"id":"stream-music-video","state":"supported"},
+              {"id":"synced-lyrics-artifact","state":"supported"}
+            ]}
+            """;
+
+        var snapshot = await Create("http://apple-provider.lan", HealthyHandler(manifest)).DiscoverAsync();
+
+        Assert.Equal(AppleDownloadEndpointState.Available, snapshot.State);
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability("download-audio-song").State);
+        foreach (var feature in new[] { "download-album", "stream-music-video", "synced-lyrics-artifact" })
+        {
+            var capability = snapshot.Capability(feature);
+            Assert.Equal(AppleDownloadCapabilityState.Unsupported, capability.State);
+            Assert.Equal("adapter_not_implemented", capability.ReasonCode);
+        }
+    }
+
     [Theory]
     [InlineData("http://user:password@apple-provider.lan")]
     [InlineData("http://apple-provider.lan?token=secret")]

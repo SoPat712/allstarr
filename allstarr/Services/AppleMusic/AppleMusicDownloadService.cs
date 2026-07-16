@@ -13,6 +13,7 @@ public class AppleMusicDownloadService : BaseDownloadService
 {
     private readonly HttpClient _httpClient;
     private readonly AppleDownloadSettings _appleMusicSettings;
+    private readonly IAppleDownloadEndpointDiscovery _endpointDiscovery;
 
     protected override string ProviderName => "apple-download";
 
@@ -23,12 +24,14 @@ public class AppleMusicDownloadService : BaseDownloadService
         IMusicMetadataService metadataService,
         IOptions<SubsonicSettings> subsonicSettings,
         IOptions<AppleDownloadSettings> appleMusicSettings,
+        IAppleDownloadEndpointDiscovery endpointDiscovery,
         IServiceProvider serviceProvider,
         ILogger<AppleMusicDownloadService> logger)
         : base(configuration, localLibraryService, metadataService, subsonicSettings.Value, serviceProvider, logger)
     {
         _httpClient = httpClientFactory.CreateClient("AppleMusic");
         _appleMusicSettings = appleMusicSettings.Value;
+        _endpointDiscovery = endpointDiscovery;
 
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
         _minRequestIntervalMs = 200;
@@ -36,21 +39,10 @@ public class AppleMusicDownloadService : BaseDownloadService
 
     public override async Task<bool> IsAvailableAsync()
     {
-        if (!Uri.TryCreate(_appleMusicSettings.BaseUrl, UriKind.Absolute, out var baseUri) ||
-            baseUri.Scheme is not ("http" or "https"))
-        {
-            return false;
-        }
-
-        try
-        {
-            var res = await _httpClient.GetAsync(new Uri(baseUri, "api/health"));
-            return res.IsSuccessStatusCode;
-        }
-        catch
-        {
-            return false;
-        }
+        var snapshot = await _endpointDiscovery.DiscoverAsync();
+        return snapshot.State == AppleDownloadEndpointState.Available &&
+               snapshot.Capability(ProviderCapabilities.Download).State ==
+               AppleDownloadCapabilityState.Available;
     }
 
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)

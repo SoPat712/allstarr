@@ -526,7 +526,7 @@ Allstarr must never delete original library files. Allowed actions:
 Add `FilePlacementService`:
 
 - Writes and tags a temporary managed file, verifies it, then atomically places it.
-- Treats an interruption between final rename and the database ownership commit conservatively: the unowned output is not adopted, overwritten, or deleted until a future placement journal/reconciler can prove its operation identity.
+- Journals each durable placement before final rename. A retry adopts an interrupted finalized output only after its tenant, root, scope, target, length, and SHA-256 match the journal exactly; mismatches remain untouched for operator review.
 - Never tags, renames, or rewrites a source-library inode. A hardlink to a source file is not a safe tagging shortcut.
 - Keeps hardlinks disabled until managed immutability is represented by a durable lease; meanwhile uses reflink/copy-on-write where supported, then copy.
 - Records placement type, filesystem identity where supported, checksum, ownership, target root, durable reference keys/count, and job lineage in DB.

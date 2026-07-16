@@ -69,6 +69,10 @@ public sealed class AppleDownloadEndpointDiscovery(
         "library-read", "stream-music-video", "synced-lyrics-artifact",
         "tagging-artwork", "codec-alac", "codec-aac"
     ];
+    private static readonly HashSet<string> ImplementedFeatureIds = new(
+    [
+        "metadata-search-song", "metadata-song", "stream-audio-song", "download-audio-song"
+    ], StringComparer.OrdinalIgnoreCase);
 
     public async Task<AppleDownloadEndpointSnapshot> DiscoverAsync(
         CancellationToken cancellationToken = default)
@@ -121,12 +125,21 @@ public sealed class AppleDownloadEndpointDiscovery(
                         ? AppleDownloadCapabilityState.Available
                         : AppleDownloadCapabilityState.Unsupported,
                     missing.Length == 0 ? null : "required_routes_not_advertised");
-            }).Concat(GranularFeatureIds.Select(id => new AppleDownloadCapabilityStatus(
-                id,
-                advertised.Contains(id)
-                    ? AppleDownloadCapabilityState.Available
-                    : AppleDownloadCapabilityState.Unsupported,
-                advertised.Contains(id) ? null : "not_advertised"))).ToList();
+            }).Concat(GranularFeatureIds.Select(id =>
+            {
+                var isAdvertised = advertised.Contains(id);
+                var isImplemented = ImplementedFeatureIds.Contains(id);
+                return new AppleDownloadCapabilityStatus(
+                    id,
+                    isAdvertised && isImplemented
+                        ? AppleDownloadCapabilityState.Available
+                        : AppleDownloadCapabilityState.Unsupported,
+                    !isAdvertised
+                        ? "not_advertised"
+                        : isImplemented
+                            ? null
+                            : "adapter_not_implemented");
+            })).ToList();
 
             var health = await GetObjectAsync(client, new Uri(endpointBase, "api/health"), cancellationToken);
             if (health.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)

@@ -190,7 +190,7 @@ public partial class JellyfinController
                     }
 
                     // Fetch metadata early so we can log the correct track name
-                    var song = await _metadataService.GetSongAsync(provider!, externalId!);
+                    var song = await GetProviderSongAsync(provider!, externalId!);
                     var trackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
 
                     _logger.LogInformation("▶️ External track playback started: {TrackName} ({Provider}/{ExternalId})",
@@ -501,7 +501,7 @@ public partial class JellyfinController
                         if (inferredStart &&
                             !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
                         {
-                            var song = await _metadataService.GetSongAsync(provider!, externalId!);
+                            var song = await GetProviderSongAsync(provider!, externalId!);
                             var externalTrackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
                             _logger.LogInformation(
                                 "▶️ External track playback started (inferred from progress): {TrackName} ({Provider}/{ExternalId})",
@@ -773,7 +773,7 @@ public partial class JellyfinController
 
         if (isExternal)
         {
-            var song = await _metadataService.GetSongAsync(provider!, externalId!);
+            var song = await GetProviderSongAsync(provider!, externalId!);
             var externalTrackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
             _logger.LogInformation(
                 "🎵 External track playback stopped (inferred from progress): {TrackName} ({Provider}/{ExternalId})",
@@ -1095,7 +1095,7 @@ public partial class JellyfinController
                     {
                         try
                         {
-                            var song = await _metadataService.GetSongAsync(provider!, externalId!);
+                            var song = await GetProviderSongAsync(provider!, externalId!);
                             if (song != null)
                             {
                                 itemName = $"{song.Artist} - {song.Title}";

@@ -17,6 +17,7 @@ using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Protocols;
 using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
+using allstarr.Core.Capabilities;
 
 namespace allstarr.Controllers;
 
@@ -44,6 +45,8 @@ public class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
+    private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly ProtocolStreamingResponseAdapter? _streamingResponseAdapter;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -63,7 +66,9 @@ public class SubsonicController : ControllerBase
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null,
         IFavoriteActionPipeline? favoriteActions = null,
-        IPlaybackSignalPipeline? playbackSignals = null)
+        IPlaybackSignalPipeline? playbackSignals = null,
+        IProtocolProviderGateway? providerGateway = null,
+        ProtocolStreamingResponseAdapter? streamingResponseAdapter = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _metadataService = metadataService;
@@ -83,6 +88,8 @@ public class SubsonicController : ControllerBase
         _logger = logger;
         _favoriteActions = favoriteActions;
         _playbackSignals = playbackSignals;
+        _providerGateway = providerGateway;
+        _streamingResponseAdapter = streamingResponseAdapter;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
         {
@@ -119,6 +126,18 @@ public class SubsonicController : ControllerBase
             ? context
             : throw new InvalidOperationException("Authenticated Subsonic action has no protocol context.");
 
+    private Task<Song?> GetProviderSongAsync(string provider, string externalId) => _providerGateway != null
+        ? _providerGateway.GetSongAsync(CurrentProtocolContext, provider, externalId)
+        : _metadataService.GetSongAsync(provider, externalId, HttpContext.RequestAborted);
+
+    private Task<Album?> GetProviderAlbumAsync(string provider, string externalId) => _providerGateway != null
+        ? _providerGateway.GetAlbumAsync(CurrentProtocolContext, provider, externalId)
+        : _metadataService.GetAlbumAsync(provider, externalId, HttpContext.RequestAborted);
+
+    private Task<Artist?> GetProviderArtistAsync(string provider, string externalId) => _providerGateway != null
+        ? _providerGateway.GetArtistAsync(CurrentProtocolContext, provider, externalId)
+        : _metadataService.GetArtistAsync(provider, externalId, HttpContext.RequestAborted);
+
     /// <summary>
     /// Merges local and external search results.
     /// </summary>
@@ -152,13 +171,19 @@ public class SubsonicController : ControllerBase
         }
 
         var subsonicTask = _proxyService.RelaySafeAsync("rest/search3", parameters);
-        var externalTask = _metadataService.SearchAllAsync(
-            cleanQuery,
-            window.SongFetchCount,
-            window.AlbumFetchCount,
-            window.ArtistFetchCount,
-            HttpContext.RequestAborted
-        );
+        var externalTask = _providerGateway != null
+            ? _providerGateway.SearchAsync(
+                CurrentProtocolContext,
+                cleanQuery,
+                window.SongFetchCount,
+                window.AlbumFetchCount,
+                window.ArtistFetchCount)
+            : _metadataService.SearchAllAsync(
+                cleanQuery,
+                window.SongFetchCount,
+                window.AlbumFetchCount,
+                window.ArtistFetchCount,
+                HttpContext.RequestAborted);
 
         // Search playlists if enabled
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
@@ -216,6 +241,38 @@ public class SubsonicController : ControllerBase
 
             var stream = System.IO.File.OpenRead(localPath);
             return File(stream, GetContentType(localPath), enableRangeProcessing: true);
+        }
+
+        if (_providerGateway != null && _streamingResponseAdapter != null)
+        {
+            try
+            {
+                var routed = await _providerGateway.OpenStreamAsync(
+                    CurrentProtocolContext,
+                    provider!,
+                    externalId!,
+                    ProviderAudioQuality.Any,
+                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
+                if (routed != null)
+                {
+                    if (!routed.Response.IsSuccessStatusCode)
+                    {
+                        var status = (int)routed.Response.StatusCode;
+                        routed.Response.Dispose();
+                        return StatusCode(status);
+                    }
+                    return await _streamingResponseAdapter.CreateAsync(
+                        HttpContext,
+                        routed.Response,
+                        HttpContext.RequestAborted,
+                        enableRangeProcessing: false);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Typed provider stream route failed for {Provider}", provider);
+                return StatusCode(StatusCodes.Status502BadGateway, new { error = "External stream failed" });
+            }
         }
 
         try
@@ -294,7 +351,7 @@ public class SubsonicController : ControllerBase
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
 
-        var song = await _metadataService.GetSongAsync(provider!, externalId!);
+        var song = await GetProviderSongAsync(provider!, externalId!);
 
         if (song == null)
         {
@@ -325,7 +382,7 @@ public class SubsonicController : ControllerBase
 
         if (isExternal)
         {
-            var artist = await _metadataService.GetArtistAsync(provider!, externalId!);
+            var artist = await GetProviderArtistAsync(provider!, externalId!);
             if (artist == null)
             {
                 return _responseBuilder.CreateError(format, 70, "Artist not found");
@@ -514,7 +571,7 @@ public class SubsonicController : ControllerBase
 
         if (isExternal)
         {
-            var album = await _metadataService.GetAlbumAsync(albumProvider!, albumExternalId!);
+            var album = await GetProviderAlbumAsync(albumProvider!, albumExternalId!);
 
             if (album == null)
             {
@@ -573,7 +630,7 @@ public class SubsonicController : ControllerBase
                 candidate.Artist.Equals(artistName, StringComparison.OrdinalIgnoreCase) &&
                 candidate.Title.Equals(albumName, StringComparison.OrdinalIgnoreCase))
             {
-                deezerAlbum = await _metadataService.GetAlbumAsync("deezer", candidate.ExternalId!);
+                deezerAlbum = await GetProviderAlbumAsync("deezer", candidate.ExternalId!);
                 break;
             }
         }
@@ -588,7 +645,7 @@ public class SubsonicController : ControllerBase
                     (candidate.Title.Contains(albumName, StringComparison.OrdinalIgnoreCase) ||
                      albumName.Contains(candidate.Title, StringComparison.OrdinalIgnoreCase)))
                 {
-                    deezerAlbum = await _metadataService.GetAlbumAsync("deezer", candidate.ExternalId!);
+                    deezerAlbum = await GetProviderAlbumAsync("deezer", candidate.ExternalId!);
                     break;
                 }
             }
@@ -759,7 +816,7 @@ public class SubsonicController : ControllerBase
         switch (type)
         {
             case "artist":
-                var artist = await _metadataService.GetArtistAsync(coverProvider!, coverExternalId!);
+                var artist = await GetProviderArtistAsync(coverProvider!, coverExternalId!);
                 if (artist?.ImageUrl != null)
                 {
                     coverUrl = artist.ImageUrl;
@@ -767,7 +824,7 @@ public class SubsonicController : ControllerBase
                 break;
 
             case "album":
-                var album = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
+                var album = await GetProviderAlbumAsync(coverProvider!, coverExternalId!);
                 if (album?.CoverArtUrl != null)
                 {
                     coverUrl = album.CoverArtUrl;
@@ -777,7 +834,7 @@ public class SubsonicController : ControllerBase
             case "song":
             default:
                 // For songs, try to get from song first, then album
-                var song = await _metadataService.GetSongAsync(coverProvider!, coverExternalId!);
+                var song = await GetProviderSongAsync(coverProvider!, coverExternalId!);
                 if (song?.CoverArtUrl != null)
                 {
                     coverUrl = song.CoverArtUrl;
@@ -785,7 +842,7 @@ public class SubsonicController : ControllerBase
                 else
                 {
                     // Fallback: try album with same ID (legacy behavior)
-                    var albumFallback = await _metadataService.GetAlbumAsync(coverProvider!, coverExternalId!);
+                    var albumFallback = await GetProviderAlbumAsync(coverProvider!, coverExternalId!);
                     if (albumFallback?.CoverArtUrl != null)
                     {
                         coverUrl = albumFallback.CoverArtUrl;

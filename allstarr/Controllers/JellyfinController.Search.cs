@@ -5,6 +5,7 @@ using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
+using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -92,7 +93,7 @@ public partial class JellyfinController
                 _logger.LogDebug("Fetching songs for external album: {Provider}/{ExternalId}", provider,
                     externalId);
 
-                var album = await _metadataService.GetAlbumAsync(provider!, externalId!, HttpContext.RequestAborted);
+                var album = await GetProviderAlbumAsync(provider!, externalId!, HttpContext.RequestAborted);
                 if (album == null)
                 {
                     return new JsonResult(new
@@ -308,19 +309,26 @@ public partial class JellyfinController
         // Use parallel metadata service if available (races providers), otherwise use primary
         var externalTask = favoritesOnlyRequest
             ? Task.FromResult(new SearchResult())
-            : _parallelMetadataService != null
-                ? _parallelMetadataService.SearchAllAsync(
+            : _providerGateway != null
+                ? _providerGateway.SearchAsync(
+                    HttpContext.RequireProtocolExecutionContext(),
                     cleanQuery,
                     externalSearchLimits.SongLimit,
                     externalSearchLimits.AlbumLimit,
-                    externalSearchLimits.ArtistLimit,
-                    HttpContext.RequestAborted)
-                : _metadataService.SearchAllAsync(
-                    cleanQuery,
-                    externalSearchLimits.SongLimit,
-                    externalSearchLimits.AlbumLimit,
-                    externalSearchLimits.ArtistLimit,
-                    HttpContext.RequestAborted);
+                    externalSearchLimits.ArtistLimit)
+                : _parallelMetadataService != null
+                    ? _parallelMetadataService.SearchAllAsync(
+                        cleanQuery,
+                        externalSearchLimits.SongLimit,
+                        externalSearchLimits.AlbumLimit,
+                        externalSearchLimits.ArtistLimit,
+                        HttpContext.RequestAborted)
+                    : _metadataService.SearchAllAsync(
+                        cleanQuery,
+                        externalSearchLimits.SongLimit,
+                        externalSearchLimits.AlbumLimit,
+                        externalSearchLimits.ArtistLimit,
+                        HttpContext.RequestAborted);
 
         var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
             ? Task.FromResult(new List<ExternalPlaylist>())
@@ -644,19 +652,26 @@ public partial class JellyfinController
             externalSearchLimits.ArtistLimit);
 
         // Use parallel metadata service if available (races providers), otherwise use primary
-        var externalTask = _parallelMetadataService != null
-            ? _parallelMetadataService.SearchAllAsync(
+        var externalTask = _providerGateway != null
+            ? _providerGateway.SearchAsync(
+                HttpContext.RequireProtocolExecutionContext(),
                 cleanQuery,
                 externalSearchLimits.SongLimit,
                 externalSearchLimits.AlbumLimit,
-                externalSearchLimits.ArtistLimit,
-                HttpContext.RequestAborted)
-            : _metadataService.SearchAllAsync(
-                cleanQuery,
-                externalSearchLimits.SongLimit,
-                externalSearchLimits.AlbumLimit,
-                externalSearchLimits.ArtistLimit,
-                HttpContext.RequestAborted);
+                externalSearchLimits.ArtistLimit)
+            : _parallelMetadataService != null
+                ? _parallelMetadataService.SearchAllAsync(
+                    cleanQuery,
+                    externalSearchLimits.SongLimit,
+                    externalSearchLimits.AlbumLimit,
+                    externalSearchLimits.ArtistLimit,
+                    HttpContext.RequestAborted)
+                : _metadataService.SearchAllAsync(
+                    cleanQuery,
+                    externalSearchLimits.SongLimit,
+                    externalSearchLimits.AlbumLimit,
+                    externalSearchLimits.ArtistLimit,
+                    HttpContext.RequestAborted);
 
         // Run searches in parallel (local Jellyfin hints + external providers)
         var jellyfinTask = GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId);

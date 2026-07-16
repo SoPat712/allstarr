@@ -2,6 +2,7 @@ using allstarr.Services.Common;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
+using allstarr.Core.Capabilities;
 
 namespace allstarr.Controllers;
 
@@ -149,6 +150,39 @@ public partial class JellyfinController
 
             var stream = System.IO.File.OpenRead(localPath);
             return File(stream, GetContentType(localPath), enableRangeProcessing: true);
+        }
+
+        if (_providerGateway != null)
+        {
+            try
+            {
+                var routed = await _providerGateway.OpenStreamAsync(
+                    HttpContext.RequireProtocolExecutionContext(),
+                    provider,
+                    externalId,
+                    quality is StreamQuality.High or StreamQuality.Low
+                        ? ProviderAudioQuality.Lossy
+                        : ProviderAudioQuality.Any,
+                    Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null);
+                if (routed != null)
+                {
+                    if (!routed.Response.IsSuccessStatusCode)
+                    {
+                        var status = (int)routed.Response.StatusCode;
+                        routed.Response.Dispose();
+                        return StatusCode(status);
+                    }
+                    return await _streamingResponseAdapter.CreateAsync(
+                        HttpContext,
+                        routed.Response,
+                        HttpContext.RequestAborted,
+                        enableRangeProcessing: false);
+                }
+            }
+            catch (Exception ex)
+            {
+                return HandleExternalStreamFailure(provider, externalId, ex);
+            }
         }
 
         // Download and stream on-demand

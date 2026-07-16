@@ -70,6 +70,7 @@ public partial class JellyfinController : ControllerBase
     private readonly ILogger<JellyfinController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
+    private readonly IProtocolProviderGateway? _providerGateway;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -104,7 +105,8 @@ public partial class JellyfinController : ControllerBase
         ScrobblingOrchestrator? scrobblingOrchestrator = null,
         ScrobblingHelper? scrobblingHelper = null,
         IFavoriteActionPipeline? favoriteActions = null,
-        IPlaybackSignalPipeline? playbackSignals = null)
+        IPlaybackSignalPipeline? playbackSignals = null,
+        IProtocolProviderGateway? providerGateway = null)
     {
         _settings = settings.Value;
         _spotifySettings = spotifySettings.Value;
@@ -139,12 +141,34 @@ public partial class JellyfinController : ControllerBase
         _logger = logger;
         _favoriteActions = favoriteActions;
         _playbackSignals = playbackSignals;
+        _providerGateway = providerGateway;
 
         if (string.IsNullOrWhiteSpace(_settings.Url))
         {
             throw new InvalidOperationException("JELLYFIN_URL environment variable is not set");
         }
     }
+
+    private Task<Song?> GetProviderSongAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default) => _providerGateway != null
+        ? _providerGateway.GetSongAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+        : _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+
+    private Task<Album?> GetProviderAlbumAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default) => _providerGateway != null
+        ? _providerGateway.GetAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+        : _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+
+    private Task<Artist?> GetProviderArtistAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default) => _providerGateway != null
+        ? _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+        : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
 
     #region Items
 
@@ -203,17 +227,17 @@ public partial class JellyfinController : ControllerBase
         switch (type)
         {
             case "song":
-                var song = await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+                var song = await GetProviderSongAsync(provider, externalId, cancellationToken);
                 if (song == null) return _itemProtocolAdapter.ShapeNotFound("Song");
                 return _itemProtocolAdapter.ShapeSong(song);
 
             case "album":
-                var album = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+                var album = await GetProviderAlbumAsync(provider, externalId, cancellationToken);
                 if (album == null) return _itemProtocolAdapter.ShapeNotFound("Album");
                 return _itemProtocolAdapter.ShapeAlbum(album);
 
             case "artist":
-                var artist = await _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
+                var artist = await GetProviderArtistAsync(provider, externalId, cancellationToken);
                 if (artist == null) return _itemProtocolAdapter.ShapeNotFound("Artist");
                 var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
 
@@ -228,10 +252,10 @@ public partial class JellyfinController : ControllerBase
 
             default:
                 // Try song first, then album
-                var s = await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+                var s = await GetProviderSongAsync(provider, externalId, cancellationToken);
                 if (s != null) return _itemProtocolAdapter.ShapeSong(s);
 
-                var alb = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+                var alb = await GetProviderAlbumAsync(provider, externalId, cancellationToken);
                 if (alb != null) return _itemProtocolAdapter.ShapeAlbum(alb);
 
                 return _itemProtocolAdapter.ShapeNotFound("Item");
@@ -264,7 +288,7 @@ public partial class JellyfinController : ControllerBase
         if (type == "album" && (itemTypesUnspecified || itemTypes!.Contains("Audio", StringComparer.OrdinalIgnoreCase)))
         {
             _logger.LogDebug("Fetching album tracks for {Provider}/{ExternalId}", provider, externalId);
-            var album = await _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+            var album = await GetProviderAlbumAsync(provider, externalId, cancellationToken);
             if (album == null)
             {
                 return _responseBuilder.CreateError(404, "Album not found");
@@ -308,7 +332,7 @@ public partial class JellyfinController : ControllerBase
             {
                 _logger.LogDebug("Fetching artist albums for {Provider}/{ExternalId}", provider, externalId);
                 var albums = await _metadataService.GetArtistAlbumsAsync(provider, externalId, cancellationToken);
-                var artist = await _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
+                var artist = await GetProviderArtistAsync(provider, externalId, cancellationToken);
 
                 _logger.LogDebug("Found {Count} albums for artist {ArtistName}", albums.Count, artist?.Name ?? "unknown");
 
@@ -568,7 +592,7 @@ public partial class JellyfinController : ControllerBase
 
         if (isExternal)
         {
-            var artist = await _metadataService.GetArtistAsync(provider!, externalId!);
+            var artist = await GetProviderArtistAsync(provider!, externalId!);
             if (artist == null)
             {
                 return _responseBuilder.CreateError(404, "Artist not found");
@@ -744,9 +768,9 @@ public partial class JellyfinController : ControllerBase
         // Get external cover art URL
         string? coverUrl = type switch
         {
-            "artist" => (await _metadataService.GetArtistAsync(provider!, externalId!))?.ImageUrl,
-            "album" => (await _metadataService.GetAlbumAsync(provider!, externalId!))?.CoverArtUrl,
-            "song" => (await _metadataService.GetSongAsync(provider!, externalId!))?.CoverArtUrl,
+            "artist" => (await GetProviderArtistAsync(provider!, externalId!))?.ImageUrl,
+            "album" => (await GetProviderAlbumAsync(provider!, externalId!))?.CoverArtUrl,
+            "song" => (await GetProviderSongAsync(provider!, externalId!))?.CoverArtUrl,
             _ => null
         };
 
@@ -1108,7 +1132,7 @@ public partial class JellyfinController : ControllerBase
                 }
 
                 // Get the original song to find similar content
-                var song = await _metadataService.GetSongAsync(provider!, externalId!);
+                var song = await GetProviderSongAsync(provider!, externalId!);
                 if (song == null)
                 {
                     return _responseBuilder.CreateJsonResponse(new
@@ -1191,7 +1215,7 @@ public partial class JellyfinController : ControllerBase
             try
             {
                 // Get the original song
-                var song = await _metadataService.GetSongAsync(provider!, externalId!);
+                var song = await GetProviderSongAsync(provider!, externalId!);
                 if (song == null)
                 {
                     return _responseBuilder.CreateJsonResponse(new
@@ -1213,7 +1237,7 @@ public partial class JellyfinController : ControllerBase
                     // Get songs from a few albums
                     foreach (var album in albums.Take(3))
                     {
-                        var fullAlbum = await _metadataService.GetAlbumAsync(song.ExternalProvider, album.ExternalId!);
+                        var fullAlbum = await GetProviderAlbumAsync(song.ExternalProvider, album.ExternalId!);
                         if (fullAlbum != null)
                         {
                             mixSongs.AddRange(fullAlbum.Songs);
