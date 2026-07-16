@@ -729,7 +729,7 @@ class AllstarrApp extends LitElement {
     return this.authenticated && !this.isAdministrator() && route !== "/intelligence" ? "/sources" : route;
   }
 
-  async loadForRoute(force = false) {
+  async loadForRoute(force = false, authenticationRetry = false) {
     if (!this.authenticated) {
       return;
     }
@@ -780,6 +780,11 @@ class AllstarrApp extends LitElement {
         const sessionState = await this.confirmDashboardSession();
         if (sessionState === false) {
           this.handleExpiredSession();
+          return;
+        }
+        if (sessionState === true && !authenticationRetry) {
+          this.routeLoadKey = "";
+          await this.loadForRoute(true, true);
           return;
         }
       }

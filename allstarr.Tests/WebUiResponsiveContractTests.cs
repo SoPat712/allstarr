@@ -132,6 +132,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("const sessionState = await this.confirmDashboardSession()", script, StringComparison.Ordinal);
         Assert.Contains("if (sessionState === false)", script, StringComparison.Ordinal);
         Assert.Contains("this.handleExpiredSession()", script, StringComparison.Ordinal);
+        Assert.Contains("sessionState === true && !authenticationRetry", script, StringComparison.Ordinal);
+        Assert.Contains("await this.loadForRoute(true, true)", script, StringComparison.Ordinal);
         Assert.Contains("A failed confirmation request is not proof that the cookie expired.", script, StringComparison.Ordinal);
         Assert.Contains("this.loadFailures = {};", script, StringComparison.Ordinal);
         Assert.Contains("specificFailureRecorded", script, StringComparison.Ordinal);

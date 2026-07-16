@@ -267,6 +267,10 @@ public class AdminAuthControllerTests
         Assert.Equal(
             "Hybrid",
             payload.RootElement.GetProperty("providerAccountManagementMode").GetString());
+
+        var refreshedCookie = Assert.Single(httpContext.Response.Headers.SetCookie);
+        Assert.Contains($"{AdminAuthSessionService.SessionCookieName}={session.SessionId}", refreshedCookie);
+        Assert.Contains("path=/", refreshedCookie, StringComparison.OrdinalIgnoreCase);
     }
 
     private static AdminAuthController CreateController(

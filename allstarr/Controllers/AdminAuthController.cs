@@ -198,6 +198,11 @@ public class AdminAuthController : ControllerBase
             });
         }
 
+        // Re-issue the canonical root-scoped cookie while validating the session.
+        // Older Allstarr builds could leave a more narrowly scoped cookie behind,
+        // causing /auth/me to succeed while sibling admin APIs received a stale ID.
+        SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
+
         return Ok(new
         {
             authenticated = true,
