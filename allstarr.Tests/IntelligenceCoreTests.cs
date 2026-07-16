@@ -67,13 +67,17 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         await db.DisposeAsync();
         var smart = new SmartPlaylistService(_factory, _clock, _jobs);
         var setId = await smart.CreateGeneratedSetAsync(_scope, first.RunId, "Daily mix",
-            [new("track-1", .9, "fixture", [new("genre", .8, "shared-genre")])]);
+            [new("track-1", .9, "fixture", [new("genre", .8, "shared-genre")],
+                new(LibraryTrackId: Guid.Parse("11111111-1111-1111-1111-111111111111"), BackendItemId: "track-secret"))]);
         var materialization = await _jobs.ClaimNextAsync("smart-playlist", ["smart-playlist.materialize"]);
         Assert.NotNull(materialization); var target = new RecordingMaterializer();
         var materialized = await new GeneratedSetMaterializationJobHandler(_factory, [target])
             .ExecuteAsync(new(materialization!, EmptyServices.Instance), default);
         Assert.Equal(DurableJobCompletionKind.Succeeded, materialized.Kind);
         Assert.Equal(setId, target.Request!.GeneratedSetId); Assert.Equal(["track-1"], target.Request.OrderedCandidates.Select(x => x.TrackKey));
+        Assert.Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            target.Request.OrderedCandidates.Single().Identity!.LibraryTrackId);
+        Assert.Equal("track-secret", target.Request.OrderedCandidates.Single().Identity!.BackendItemId);
         await using var verified = await _factory.CreateDbContextAsync(); var savedSet = await verified.GeneratedSets.SingleAsync(x => x.Id == setId);
         Assert.Equal(GeneratedSetMaterializationState.Succeeded, savedSet.MaterializationState);
         Assert.Equal("backend-playlist-1", savedSet.BackendPlaylistId);

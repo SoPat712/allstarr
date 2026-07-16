@@ -179,11 +179,12 @@ public sealed class IntelligenceController(
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var candidates = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == request.RunId &&
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId).OrderBy(item => item.Position)
-            .Select(item => new { item.TrackKey, item.Score, item.Source, item.SignalsJson }).ToListAsync(cancellationToken);
+            .Select(item => new { item.TrackKey, item.Score, item.Source, item.SignalsJson, item.IdentityJson }).ToListAsync(cancellationToken);
         try
         {
             var id = await smartPlaylists.CreateGeneratedSetAsync(scope, request.RunId, request.Name,
-                candidates.Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source, ParseSignals(item.SignalsJson))).ToArray(), cancellationToken);
+                candidates.Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
+                    ParseSignals(item.SignalsJson), ParseIdentity(item.IdentityJson))).ToArray(), cancellationToken);
             return Ok(new { id, state = "preview" });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = "generated_playlist_invalid", message = exception.Message }); }
@@ -210,6 +211,8 @@ public sealed class IntelligenceController(
             item.BackendType == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId, token);
     private static HashSet<string> ParseArray(string? json) => (JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []).ToHashSet(StringComparer.Ordinal);
     private static IReadOnlyList<RecommendationSignal> ParseSignals(string json) => JsonSerializer.Deserialize<RecommendationSignal[]>(json) ?? [];
+    private static RecommendationTrackIdentity? ParseIdentity(string json) =>
+        JsonSerializer.Deserialize<RecommendationTrackIdentity>(json);
     private static object[] ProfileValues(string? json)
     {
         if (json == null) return [];

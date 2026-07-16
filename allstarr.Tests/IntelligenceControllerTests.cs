@@ -149,6 +149,10 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
                 Score = .9,
                 Source = "lastfm",
                 SignalsJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("similar", .9, "Shared listening context") }),
+                IdentityJson = JsonSerializer.Serialize(new RecommendationTrackIdentity(
+                    MusicBrainzRecordingId: "11111111-1111-1111-1111-111111111111",
+                    LibraryTrackId: Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                    BackendItemId: "backend-track-42")),
                 CreatedAt = DateTimeOffset.UtcNow
             });
             var set = Guid.CreateVersion7(); db.GeneratedSets.Add(new()
@@ -191,6 +195,9 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
             RunId = run,
             Name = "Generated mix"
         }, default));
+        var generatedCandidate = Assert.Single(_smart.Candidates!);
+        Assert.Equal(Guid.Parse("22222222-2222-2222-2222-222222222222"), generatedCandidate.Identity!.LibraryTrackId);
+        Assert.Equal("backend-track-42", generatedCandidate.Identity.BackendItemId);
     }
 
     [Fact]
@@ -255,7 +262,16 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         public Task DisableAndPurgeAsync(IntelligenceScope scope, CancellationToken cancellationToken = default) { LastScope = scope; return Task.CompletedTask; }
     }
     private sealed class FakeRuns : IRecommendationRunService { public IntelligenceScope? Scope { get; private set; } public Task<RecommendationRunReceipt> EnqueueAsync(IntelligenceScope scope, IReadOnlyList<string> seeds, int limit, string idempotencyKey, CancellationToken cancellationToken = default) { Scope = scope; return Task.FromResult(new RecommendationRunReceipt(Guid.CreateVersion7(), Guid.CreateVersion7(), true, RecommendationRunState.Pending)); } }
-    private sealed class FakeSmart : ISmartPlaylistService { public Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name, IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default) => Task.FromResult(Guid.CreateVersion7()); }
+    private sealed class FakeSmart : ISmartPlaylistService
+    {
+        public IReadOnlyList<RecommendationCandidate>? Candidates { get; private set; }
+        public Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name,
+            IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default)
+        {
+            Candidates = candidates;
+            return Task.FromResult(Guid.CreateVersion7());
+        }
+    }
     private sealed class FakeProvider(string id) : IRecommendationProvider { public string Id => id; public Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request) => Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded, [])); }
     private sealed class FakeReadiness : IRecommendationProviderStatusService { public RecommendationProviderReadinessState LastFmState { get; set; } = RecommendationProviderReadinessState.Ready; public Task<IReadOnlyList<RecommendationProviderReadiness>> ListAsync(IntelligenceScope scope, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<RecommendationProviderReadiness>>([new("lastfm", LastFmState, LastFmState == RecommendationProviderReadinessState.Ready ? "fixture_ready" : "account_unauthorized"), new("musicbrainz-local", RecommendationProviderReadinessState.Ready, "fixture_ready"), new("audiomuse-ai", RecommendationProviderReadinessState.Ready, "fixture_ready")]); }
 }

@@ -69,6 +69,10 @@ Subsonic/Navidrome materializers reuse the shared backend playlist targets:
 - Persist pending, running, succeeded, failed, unsupported, or cancelled state plus backend playlist ID, target
   revision, and a safe error code.
 
+Creating a generated set from the API carries each persisted candidate identity into the generated-set entry.
+The durable materialization job reads that same identity. Do not rebuild a candidate from only its display key,
+score, source, and explanations because the backend matcher cannot safely infer a local item from those fields.
+
 Jellyfin uses its configured backend authentication and rejects an unnecessary generated-playlist credential.
 Subsonic/Navidrome requires the credential reference saved on the intelligence policy. The reference must belong
 to the same tenant and remain active. It is snapshotted through the run and generated set, then opened just in
@@ -82,7 +86,8 @@ controls, source readiness, explanation disclosure, generated playlist status, k
 and a single-column narrow-screen layout.
 
 Coverage includes policy scope and purge, signal expiry, habit-derived seeds, source readiness and identities,
-provider failure classes, run idempotency, explanation persistence, generated-set state transfer, exact local
+provider failure classes, run idempotency, explanation persistence, controller-to-job candidate identity,
+generated-set state transfer, exact local
 matching, ordered Jellyfin/Subsonic writes, explicit Subsonic credentials, retry-to-success, cancellation,
 tenant isolation, admin middleware, controller DTOs, and WebUI contracts. Tests use fake accounts, fake backend
 targets, fake HTTP, deterministic clocks, and temporary databases. They do not require live provider traffic.
