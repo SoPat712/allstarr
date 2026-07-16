@@ -11,25 +11,30 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            var isPostgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
             migrationBuilder.AddColumn<Guid>(
                 name: "ScheduleId",
                 table: "recommendation_runs",
+                type: isPostgres ? "uuid" : "TEXT",
                 nullable: true);
 
             migrationBuilder.AddColumn<long>(
                 name: "ScheduledFor",
                 table: "recommendation_runs",
+                type: isPostgres ? "bigint" : "INTEGER",
                 nullable: true);
 
             migrationBuilder.AddColumn<string>(
                 name: "PayloadTemplateJson",
                 table: "job_schedules",
+                type: isPostgres ? "text" : "TEXT",
                 nullable: false,
                 defaultValue: "{}");
 
             migrationBuilder.AddColumn<Guid>(
                 name: "ScheduleId",
                 table: "generated_sets",
+                type: isPostgres ? "uuid" : "TEXT",
                 nullable: true);
 
             migrationBuilder.CreateIndex(

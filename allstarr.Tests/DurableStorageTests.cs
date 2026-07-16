@@ -356,6 +356,9 @@ public sealed class DurableStorageTests : IDisposable
         Assert.Contains("CREATE TABLE provider_track_identities", script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("uuid", script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("bytea", script, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ALTER TABLE recommendation_runs ADD \"ScheduleId\" uuid", script, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ALTER TABLE recommendation_runs ADD \"ScheduledFor\" bigint", script, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ALTER TABLE job_schedules ADD \"PayloadTemplateJson\" text", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(" BLOB", script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("AUTOINCREMENT", script, StringComparison.OrdinalIgnoreCase);
     }
