@@ -116,6 +116,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "SpotifyApi:PreferIsrcMatching": _spotifyApi.PreferIsrcMatching = (bool)value; break;
             case "SpotifyImport:Enabled": _spotifyImport.Enabled = (bool)value; break;
             case "SpotifyImport:MatchingIntervalHours": _spotifyImport.MatchingIntervalHours = (int)value; break;
+            case "SpotifyImport:Playlists": _spotifyImport.Playlists = SpotifyPlaylistConfigParser.Parse((string)value); break;
             case "Scrobbling:Enabled": _scrobbling.Enabled = (bool)value; break;
             case "Scrobbling:LocalTracksEnabled": _scrobbling.LocalTracksEnabled = (bool)value; break;
             case "Scrobbling:SyntheticLocalPlayedSignalEnabled": _scrobbling.SyntheticLocalPlayedSignalEnabled = (bool)value; break;

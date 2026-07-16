@@ -270,10 +270,10 @@ public static class LegacyEnvParser
     {
         if (key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase))
         {
-            return new(key, value, line, LegacyEnvDisposition.PlaylistHandoff,
-                "requires_target_selection",
-                "Choose the owner, backend, library, provider account, and target mode before creating durable playlist links.",
-                true);
+            return new(key, value, line, LegacyEnvDisposition.DurableSetting,
+                "import_if_absent",
+                "Restore the legacy injected playlists and also preserve them for conversion into durable playlist links.",
+                true, "SpotifyImport:Playlists");
         }
 
         if (IgnoredKeys.Contains(key) || key.StartsWith("SPOTIFY_IMPORT_PLAYLIST_", StringComparison.OrdinalIgnoreCase))

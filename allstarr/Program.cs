@@ -152,81 +152,6 @@ static List<string> ParseCsv(string? raw)
         .ToList();
 }
 
-static List<SpotifyPlaylistConfig> ParseSpotifyPlaylists(string json)
-{
-    string[][] entries;
-    try
-    {
-        entries = System.Text.Json.JsonSerializer.Deserialize<string[][]>(json) ?? [];
-    }
-    catch (System.Text.Json.JsonException)
-    {
-        throw new InvalidOperationException(
-            "SpotifyImport:Playlists must be a JSON array of playlist arrays.");
-    }
-
-    var playlists = new List<SpotifyPlaylistConfig>(entries.Length);
-    foreach (var entry in entries)
-    {
-        if (entry.Length < 2 ||
-            string.IsNullOrWhiteSpace(entry[0]) ||
-            string.IsNullOrWhiteSpace(entry[1]))
-        {
-            throw new InvalidOperationException(
-                "Each SpotifyImport:Playlists entry requires a name and provider playlist ID.");
-        }
-
-        var jellyfinId = string.Empty;
-        var position = LocalTracksPosition.First;
-        var schedule = "0 8 * * *";
-        string? userId = null;
-        if (entry.Length >= 3)
-        {
-            var third = entry[2].Trim();
-            var thirdIsPosition = third.Equals("first", StringComparison.OrdinalIgnoreCase) ||
-                                  third.Equals("last", StringComparison.OrdinalIgnoreCase);
-            if (thirdIsPosition)
-            {
-                position = third.Equals("last", StringComparison.OrdinalIgnoreCase)
-                    ? LocalTracksPosition.Last
-                    : LocalTracksPosition.First;
-                schedule = entry.Length >= 4 && !string.IsNullOrWhiteSpace(entry[3])
-                    ? entry[3].Trim()
-                    : schedule;
-                userId = entry.Length >= 5 && !string.IsNullOrWhiteSpace(entry[4])
-                    ? entry[4].Trim()
-                    : null;
-            }
-            else
-            {
-                jellyfinId = third;
-                position = entry.Length >= 4 &&
-                           entry[3].Trim().Equals("last", StringComparison.OrdinalIgnoreCase)
-                    ? LocalTracksPosition.Last
-                    : LocalTracksPosition.First;
-                schedule = entry.Length >= 5 && !string.IsNullOrWhiteSpace(entry[4])
-                    ? entry[4].Trim()
-                    : schedule;
-                userId = entry.Length >= 6 && !string.IsNullOrWhiteSpace(entry[5])
-                    ? entry[5].Trim()
-                    : null;
-            }
-        }
-
-        playlists.Add(new SpotifyPlaylistConfig
-        {
-            Name = entry[0].Trim(),
-            Id = entry[1].Trim(),
-            JellyfinId = jellyfinId,
-            LocalTracksPosition = position,
-            SyncSchedule = schedule,
-            UserId = userId
-        });
-    }
-
-    return playlists;
-}
-
 static string? GetConfiguredValue(IConfiguration configuration, params string[] keys)
 {
     foreach (var key in keys)
@@ -412,7 +337,7 @@ builder.Services.Configure<SpotifyImportSettings>(options =>
     var playlistJson = builder.Configuration.GetValue<string>("SpotifyImport:Playlists");
     if (!string.IsNullOrWhiteSpace(playlistJson) && playlistJson.TrimStart().StartsWith("[", StringComparison.Ordinal))
     {
-        options.Playlists = ParseSpotifyPlaylists(playlistJson);
+        options.Playlists = SpotifyPlaylistConfigParser.Parse(playlistJson);
     }
 });
 

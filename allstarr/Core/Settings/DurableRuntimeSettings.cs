@@ -81,7 +81,7 @@ public sealed class RuntimeSettingsChangeSignal : IRuntimeSettingsChangeSignal
 public sealed record RuntimeSettingDefinition(
     string Key, RuntimeSettingValueType ValueType, string BootstrapKey,
     int? Minimum = null, int? Maximum = null, IReadOnlySet<string>? Choices = null,
-    bool AllowEmpty = false);
+    bool AllowEmpty = false, int MaximumLength = 500);
 
 public static class RuntimeSettingCatalog
 {
@@ -135,6 +135,8 @@ public static class RuntimeSettingCatalog
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);
         Bool("SpotifyApi:PreferIsrcMatching"); Bool("SpotifyImport:Enabled");
         Int("SpotifyImport:MatchingIntervalHours", 0, 8760);
+        items.Add(new("SpotifyImport:Playlists", RuntimeSettingValueType.String,
+            "SpotifyImport:Playlists", MaximumLength: 65536));
         Bool("Scrobbling:Enabled"); Bool("Scrobbling:LocalTracksEnabled");
         Bool("Scrobbling:SyntheticLocalPlayedSignalEnabled"); Bool("Scrobbling:LastFm:Enabled");
         Bool("Scrobbling:ListenBrainz:Enabled");
@@ -310,7 +312,8 @@ public sealed class DurableRuntimeSettingsService : IDurableRuntimeSettings
         var value = raw.Trim();
         if (value.Length == 0 && definition.AllowEmpty)
             return (string.Empty, string.Empty, JsonSerializer.Serialize(string.Empty, JsonOptions));
-        if (value.Length == 0 || value.Length > 500 || definition.Choices is { Count: > 0 } && !definition.Choices.Contains(value))
+        if (value.Length == 0 || value.Length > definition.MaximumLength ||
+            definition.Choices is { Count: > 0 } && !definition.Choices.Contains(value))
             throw new ArgumentException($"Runtime setting '{definition.Key}' has an invalid string value.");
         if (definition.Key == "Library:PlaylistsDirectory" &&
             (value is "." or ".." || value.Contains('/') || value.Contains('\\') || value.Contains('\0')))

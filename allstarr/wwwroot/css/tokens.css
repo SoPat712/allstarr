@@ -4,6 +4,8 @@
     --surface-rail: #15121b;
     --surface-card: #1b1821;
     --surface-elevated: #25212c;
+    --surface-control: #211e27;
+    --surface-control-hover: #2a2530;
     --surface-subtle: #211722;
     --surface-glass: rgba(27, 24, 33, 0.82);
     --text-primary: #fff9fb;
@@ -25,6 +27,7 @@
     --border-strong: #4c4452;
     --shadow: 0 20px 60px rgba(3, 1, 8, 0.38);
     --shadow-soft: 0 8px 28px rgba(3, 1, 8, 0.2);
+    --shadow-modal: 0 28px 90px rgba(3, 1, 8, 0.58);
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
@@ -36,6 +39,7 @@
     --radius-sm: 8px;
     --radius: 12px;
     --radius-lg: 18px;
+    --control-height: 36px;
     --rail-width: 264px;
     --now-playing-height: 76px;
 }
@@ -46,6 +50,8 @@
     --surface-rail: #f0eaf1;
     --surface-card: #fffaff;
     --surface-elevated: #f3edf4;
+    --surface-control: #f7f1f7;
+    --surface-control-hover: #eee5ef;
     --surface-subtle: #fff0f4;
     --surface-glass: rgba(255, 250, 255, 0.86);
     --text-primary: #241d27;
@@ -67,6 +73,7 @@
     --border-strong: #c9becb;
     --shadow: 0 20px 56px rgba(66, 33, 65, 0.14);
     --shadow-soft: 0 8px 24px rgba(66, 33, 65, 0.09);
+    --shadow-modal: 0 28px 80px rgba(66, 33, 65, 0.22);
 }
 
 :root[data-theme="dark"] {
@@ -80,6 +87,8 @@
         --surface-rail: #f0eaf1;
         --surface-card: #fffaff;
         --surface-elevated: #f3edf4;
+        --surface-control: #f7f1f7;
+        --surface-control-hover: #eee5ef;
         --surface-subtle: #fff0f4;
         --surface-glass: rgba(255, 250, 255, 0.86);
         --text-primary: #241d27;
@@ -101,5 +110,6 @@
         --border-strong: #c9becb;
         --shadow: 0 20px 56px rgba(66, 33, 65, 0.14);
         --shadow-soft: 0 8px 24px rgba(66, 33, 65, 0.09);
+        --shadow-modal: 0 28px 80px rgba(66, 33, 65, 0.22);
     }
 }

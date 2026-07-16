@@ -63,9 +63,9 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
             """), Actor());
 
         Assert.True(preview.CanApply);
-        Assert.Equal(2, preview.ImportedSettingCount);
+        Assert.Equal(3, preview.ImportedSettingCount);
         Assert.Equal(1, preview.ProviderAccountCount);
-        Assert.Equal(3, preview.ManualCount);
+        Assert.Equal(2, preview.ManualCount);
         Assert.Equal(64, preview.SourceSha256.Length);
         Assert.Equal(LegacyEnvParser.ParserVersion, preview.ParserVersion);
         Assert.Equal(64, preview.Revision.Length);
@@ -80,6 +80,9 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         var playlist = Assert.Single(preview.PlaylistHandoffs);
         Assert.Equal("source-id", playlist.SourcePlaylistId);
         Assert.Equal("target-id", playlist.JellyfinTargetPlaylistId);
+        var playlistSetting = Assert.Single(preview.Items, item => item.Key == "SPOTIFY_IMPORT_PLAYLISTS");
+        Assert.Equal("SpotifyImport:Playlists", playlistSetting.DurableKey);
+        Assert.Equal("import_if_absent", playlistSetting.Action);
 
         var json = JsonSerializer.Serialize(preview);
         Assert.DoesNotContain("never-return-this", json, StringComparison.Ordinal);
@@ -88,6 +91,25 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
         Assert.Empty(await db.SecretReferences.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Apply_RestoresLegacyInjectedPlaylistsAndKeepsDurableHandoffs()
+    {
+        var service = CreateService();
+        var preview = await service.PreviewAsync(Source("""
+            SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","source-id","target-id","last","0 8 * * *"]]
+            """), Actor());
+
+        var result = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+
+        Assert.Equal(1, result.SettingsImported);
+        Assert.Equal(1, result.PlaylistHandoffsPending);
+        await using var db = await _factory.CreateDbContextAsync();
+        var setting = Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Equal("SpotifyImport:Playlists", setting.Key);
+        Assert.Equal("legacy-env-import", setting.Source);
+        Assert.Contains("Discover Weekly", setting.ValueJson, StringComparison.Ordinal);
     }
 
     [Fact]

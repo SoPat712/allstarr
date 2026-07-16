@@ -34,11 +34,11 @@ textarea {
 button {
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--surface-elevated);
+    background: var(--surface-control);
     color: var(--text-primary);
     cursor: pointer;
-    min-height: 34px;
-    padding: 6px 11px;
+    min-height: var(--control-height);
+    padding: 7px 13px;
     font-size: 0.875rem;
     font-weight: 650;
     transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
@@ -46,7 +46,7 @@ button {
 
 button:hover:not(:disabled) {
     border-color: var(--border-strong);
-    background: color-mix(in srgb, var(--surface-elevated), var(--text-primary) 4%);
+    background: var(--surface-control-hover);
 }
 
 button:active:not(:disabled) {
@@ -84,10 +84,10 @@ input,
 select,
 textarea {
     width: 100%;
-    min-height: 36px;
+    min-height: var(--control-height);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--surface-elevated);
+    background: var(--surface-control);
     color: var(--text-primary);
     padding: 8px 10px;
 }
@@ -176,7 +176,7 @@ a {
 
 .form-stack {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-3);
 }
 
 .form-row {
@@ -268,7 +268,56 @@ a {
 .nav-list {
     flex-direction: column;
     align-items: stretch;
+    gap: var(--space-3);
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.nav-section {
+    display: grid;
     gap: var(--space-1);
+}
+
+.nav-heading,
+.nav-group > summary {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 750;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+.nav-heading {
+    padding: 0 12px var(--space-1);
+}
+
+.nav-group > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    list-style: none;
+    padding: 8px 12px;
+}
+
+.nav-group > summary::-webkit-details-marker {
+    display: none;
+}
+
+.nav-group > summary::after {
+    content: "+";
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.nav-group[open] > summary::after {
+    content: "−";
+}
+
+.nav-group > summary:hover {
+    background: var(--surface-elevated);
+    color: var(--text-secondary);
 }
 
 .nav-link {
@@ -339,11 +388,11 @@ a {
 
 .content {
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-6);
     width: min(1480px, 100%);
     min-width: 0;
     max-width: 100%;
-    padding: var(--space-7) clamp(var(--space-5), 4vw, 52px);
+    padding: var(--space-6) clamp(var(--space-5), 3.2vw, 44px);
 }
 
 #env-migration-title {
@@ -352,7 +401,7 @@ a {
 
 .view-stack {
     display: grid;
-    gap: var(--space-7);
+    gap: var(--space-6);
     min-width: 0;
     max-width: 100%;
 }
@@ -399,11 +448,14 @@ a {
 
 .card,
 .panel {
-    padding: clamp(var(--space-5), 2.4vw, var(--space-7));
+    padding: clamp(var(--space-4), 2vw, var(--space-6));
 }
 
 .card {
     box-shadow: var(--shadow-soft);
+    background:
+        linear-gradient(145deg, color-mix(in srgb, var(--accent), transparent 98%), transparent 46%),
+        var(--surface-card);
 }
 
 .card h3,
@@ -633,6 +685,7 @@ tr:last-child td {
 .row-actions {
     align-items: center;
     flex-wrap: wrap;
+    gap: 6px;
 }
 
 .actions button,
@@ -644,7 +697,7 @@ tr:last-child td {
     display: flex;
     flex-wrap: wrap;
     align-items: end;
-    gap: var(--space-3);
+    gap: var(--space-2);
 }
 
 .toolbar .form-row {
@@ -654,7 +707,7 @@ tr:last-child td {
 .provider-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: var(--space-5);
+    gap: var(--space-4);
     min-width: 0;
     max-width: 100%;
 }
@@ -773,7 +826,7 @@ tr:last-child td {
 .config-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: var(--space-5);
+    gap: var(--space-4);
     min-width: 0;
 }
 
@@ -788,7 +841,7 @@ tr:last-child td {
     justify-content: space-between;
     align-items: flex-start;
     gap: var(--space-4);
-    margin-bottom: var(--space-5);
+    margin-bottom: var(--space-4);
 }
 
 .section-heading h3,
@@ -800,6 +853,86 @@ tr:last-child td {
     margin-bottom: 0;
 }
 
+.content-disclosure {
+    min-width: 0;
+    max-width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--surface-card), transparent 3%);
+    overflow: clip;
+}
+
+.content-disclosure > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    min-height: 62px;
+    cursor: pointer;
+    list-style: none;
+    padding: var(--space-4) var(--space-5);
+}
+
+.content-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.content-disclosure > summary::after {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    content: "+";
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.content-disclosure[open] > summary::after {
+    content: "−";
+}
+
+.content-disclosure > summary:hover {
+    background: color-mix(in srgb, var(--surface-elevated), transparent 38%);
+}
+
+.content-disclosure > summary span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.content-disclosure > summary strong {
+    color: var(--text-primary);
+    font-size: 0.98rem;
+}
+
+.content-disclosure > summary small {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.content-disclosure.panel {
+    padding: 0;
+}
+
+.disclosure-body {
+    display: grid;
+    gap: var(--space-5);
+    border-top: 1px solid var(--border);
+    padding: var(--space-5);
+}
+
+.content-disclosure > .config-grid.disclosure-body {
+    display: grid;
+}
+
+.content-disclosure > .actions.disclosure-body {
+    display: flex;
+}
+
+.danger-disclosure > summary strong {
+    color: var(--error);
+}
+
 .full-span {
     grid-column: 1 / -1;
 }
@@ -807,7 +940,7 @@ tr:last-child td {
 .toggle-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-2) var(--space-4);
+    gap: var(--space-2);
 }
 
 .toggle-row,
@@ -821,7 +954,7 @@ fieldset.form-row > label {
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     line-height: 1.4;
-    padding: 9px 10px;
+    padding: 8px 10px;
 }
 
 .toggle-row:hover,
@@ -1581,8 +1714,9 @@ fieldset.form-row > label small {
     display: grid;
     place-items: center;
     overflow: auto;
-    background: color-mix(in srgb, #000, transparent 35%);
+    background: color-mix(in srgb, #050208, transparent 24%);
     padding: var(--space-5);
+    backdrop-filter: blur(10px) saturate(0.86);
 }
 
 .setup-guide-backdrop {
@@ -1595,12 +1729,12 @@ fieldset.form-row > label small {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     width: min(780px, 100%);
-    max-height: min(760px, calc(100dvh - 40px));
+    max-height: min(720px, calc(100dvh - 40px));
     overflow: hidden;
     border-color: color-mix(in srgb, var(--accent), var(--border) 64%);
     border-radius: 22px;
     background: var(--surface-card);
-    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.48);
+    box-shadow: var(--shadow-modal);
     padding: 0;
 }
 
@@ -1608,7 +1742,7 @@ fieldset.form-row > label small {
     display: grid;
     gap: var(--space-4);
     border-bottom: 1px solid var(--border);
-    padding: var(--space-6) var(--space-7) var(--space-5);
+    padding: var(--space-5) var(--space-6) var(--space-4);
 }
 
 .setup-guide-brand {
@@ -1665,7 +1799,7 @@ fieldset.form-row > label small {
 .setup-guide-body {
     min-height: 280px;
     overflow: auto;
-    padding: var(--space-7);
+    padding: var(--space-6);
 }
 
 .setup-guide-body h2 {
@@ -1676,7 +1810,7 @@ fieldset.form-row > label small {
 
 .setup-guide-body > p {
     max-width: 64ch;
-    margin: 0 0 var(--space-6);
+    margin: 0 0 var(--space-5);
     color: var(--text-secondary);
 }
 
@@ -1697,6 +1831,12 @@ fieldset.form-row > label small {
     padding: var(--space-4);
 }
 
+button.setup-choice {
+    min-height: 0;
+    color: var(--text-primary);
+    text-align: left;
+}
+
 .setup-choice.active {
     border-color: var(--accent);
     background: var(--accent-soft);
@@ -1710,7 +1850,7 @@ fieldset.form-row > label small {
 .setup-field-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-5);
+    gap: var(--space-4);
 }
 
 .setup-summary {
@@ -1736,7 +1876,11 @@ fieldset.form-row > label small {
     gap: var(--space-4);
     border-top: 1px solid var(--border);
     background: color-mix(in srgb, var(--surface-elevated), transparent 44%);
-    padding: var(--space-4) var(--space-7);
+    padding: var(--space-3) var(--space-6);
+}
+
+.setup-guide-footer button {
+    min-width: 84px;
 }
 
 .setup-guide-footer .actions {
@@ -1754,6 +1898,10 @@ fieldset.form-row > label small {
         linear-gradient(120deg, var(--accent-soft), transparent 58%),
         var(--surface-card);
     padding: var(--space-5);
+}
+
+.modal-backdrop button {
+    padding-inline: 14px;
 }
 
 .setup-launcher h3,
@@ -1941,13 +2089,27 @@ fieldset.form-row > label small {
     .actions > button,
     .actions > select,
     .row-actions > button {
-        flex: 1 1 auto;
+        flex: 0 1 auto;
     }
 
     .card,
     .panel {
         border-radius: var(--radius);
         padding: var(--space-4);
+    }
+
+    .content-disclosure > summary {
+        min-height: 58px;
+        padding: var(--space-3) var(--space-4);
+    }
+
+    .disclosure-body {
+        gap: var(--space-4);
+        padding: var(--space-4);
+    }
+
+    .topbar > .actions {
+        display: none;
     }
 
     .grid {
@@ -2002,6 +2164,11 @@ fieldset.form-row > label small {
 
     .setup-guide-footer {
         padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    }
+
+    .setup-guide-footer .actions,
+    .setup-guide-footer button {
+        width: 100%;
     }
 
     .setup-progress li span {

@@ -691,7 +691,7 @@ public sealed class LegacyEnvMigrationService
             RuntimeSettingValueType.Boolean => bool.TryParse(value, out _),
             RuntimeSettingValueType.Integer => int.TryParse(value, out var parsed) &&
                                                parsed >= definition.Minimum && parsed <= definition.Maximum,
-            RuntimeSettingValueType.String => value.Length is > 0 and <= 500 &&
+            RuntimeSettingValueType.String => value.Length > 0 && value.Length <= definition.MaximumLength &&
                                               (definition.Choices == null || definition.Choices.Contains(value)),
             RuntimeSettingValueType.StringList => ValidateProviderList(value),
             _ => false

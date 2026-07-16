@@ -58,6 +58,20 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void SharedControlsAndSetupModal_UseCompactConsistentSpacing()
+    {
+        var tokens = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "tokens.css"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("--control-height: 36px;", tokens, StringComparison.Ordinal);
+        Assert.Contains("--surface-control:", tokens, StringComparison.Ordinal);
+        Assert.Contains("padding: 7px 13px;", css, StringComparison.Ordinal);
+        Assert.Contains("backdrop-filter: blur(10px)", css, StringComparison.Ordinal);
+        Assert.Contains("button.setup-choice", css, StringComparison.Ordinal);
+        Assert.Contains(".setup-guide-footer button", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OptionRows_KeepCheckboxesAndLabelsAlignedInsteadOfRunningTogether()
     {
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
@@ -115,7 +129,10 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("${fallback} (HTTP ${response.status})", script, StringComparison.Ordinal);
         Assert.Contains("error.status = response.status", script, StringComparison.Ordinal);
         Assert.Contains("if (error?.status === 401)", script, StringComparison.Ordinal);
+        Assert.Contains("const sessionState = await this.confirmDashboardSession()", script, StringComparison.Ordinal);
+        Assert.Contains("if (sessionState === false)", script, StringComparison.Ordinal);
         Assert.Contains("this.handleExpiredSession()", script, StringComparison.Ordinal);
+        Assert.Contains("A failed confirmation request is not proof that the cookie expired.", script, StringComparison.Ordinal);
         Assert.Contains("Your dashboard session expired. Sign in again to continue.", script, StringComparison.Ordinal);
         Assert.DoesNotContain("this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || \"page\")} data`, error);\n      this.toast(error.message", script, StringComparison.Ordinal);
     }

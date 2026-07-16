@@ -763,7 +763,6 @@ class AllstarrApp extends LitElement {
         if (this.isAdministrator()) {
           await Promise.all([
             this.loadProviderAccounts(),
-            this.loadExtensionControlPlane(),
             this.loadAppleMusicStatus().catch((error) => {
               this.appleMusicStatus = { error: error.message, logged_in: false };
             }),
@@ -776,10 +775,25 @@ class AllstarrApp extends LitElement {
       }
     } catch (error) {
       if (error?.status === 401) {
-        this.handleExpiredSession();
-        return;
+        const sessionState = await this.confirmDashboardSession();
+        if (sessionState === false) {
+          this.handleExpiredSession();
+          return;
+        }
       }
       this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || "page")} data`, error);
+    }
+  }
+
+  async confirmDashboardSession() {
+    try {
+      const authState = await API.me();
+      if (!(authState.authenticated || authState.Authenticated)) return false;
+      this.session = authState.user || authState.User || this.session;
+      return true;
+    } catch {
+      // A failed confirmation request is not proof that the cookie expired.
+      return null;
     }
   }
 
@@ -1433,6 +1447,20 @@ class AllstarrApp extends LitElement {
   renderSidebar() {
     const routes = asArray(this.schema?.routes);
     const administrator = this.isAdministrator();
+    const routeById = new Map(routes.map((route) => [String(route.id || route.zone || "").toLowerCase(), route]));
+    const primaryRoutes = ["home", "library", "sources", "intelligence"]
+      .map((id) => routeById.get(id))
+      .filter(Boolean);
+    const systemRoutes = ["activity", "settings", "architecture"]
+      .map((id) => routeById.get(id))
+      .filter(Boolean);
+    const groupedRoutes = new Set([...primaryRoutes, ...systemRoutes]);
+    const otherRoutes = routes.filter((route) => !groupedRoutes.has(route));
+    const systemActive = systemRoutes.some((route) => this.isRouteActive(route.path));
+    const renderNavLink = (route) => html`
+      <a class="nav-link ${this.isRouteActive(route.path) ? "active" : ""}" href=${route.path}>
+        <span>${route.label}</span>
+      </a>`;
     return html`
       <aside id="primary-sidebar" class="sidebar ${this.navOpen ? "open" : ""}">
         <div class="brand">
@@ -1453,11 +1481,16 @@ class AllstarrApp extends LitElement {
           <span class="status-chip configured">${display(this.schema?.activeBackend || this.config?.backendType)}</span>
         </div>
         <nav class="nav-list" aria-label="Primary">
-          ${routes.map((route) => html`
-            <a class="nav-link ${this.isRouteActive(route.path) ? "active" : ""}" href=${route.path}>
-              <span>${route.label}</span>
-            </a>
-          `)}
+          <div class="nav-section">
+            <span class="nav-heading">Music</span>
+            ${primaryRoutes.map(renderNavLink)}
+            ${otherRoutes.map(renderNavLink)}
+          </div>
+          ${systemRoutes.length ? html`
+            <details class="nav-group" ?open=${systemActive}>
+              <summary>System</summary>
+              <div class="nav-section">${systemRoutes.map(renderNavLink)}</div>
+            </details>` : nothing}
         </nav>
         <div class="sidebar-footer">
           <div>Signed in as <strong>${display(this.session?.name || this.session?.Name)}</strong></div>
@@ -2344,15 +2377,25 @@ class AllstarrApp extends LitElement {
         <div class="view-header">
           <div>
             <h2>Services and sources</h2>
-            <p>Provider configuration, source priority, and extension management.</p>
+            <p>Connect providers and choose where Allstarr finds your music.</p>
           </div>
         </div>
-        ${this.renderFavoritePolicy()}
         ${this.renderProviderAccounts()}
         ${providerGroups.map(([id, label, items]) => this.renderProviderSection(id, label, items))}
-        ${this.renderProviderSupportMatrix()}
-        ${this.renderPriorityGroups()}
-        ${this.renderExtensions()}
+        <details class="content-disclosure" @toggle=${(event) => {
+          if (event.currentTarget.open) void this.loadExtensionControlPlane();
+        }}>
+          <summary><span><strong>Routing and favorite behavior</strong><small>Source priority, capability details, and actions after favoriting a song</small></span></summary>
+          <div class="disclosure-body">
+            ${this.renderFavoritePolicy()}
+            ${this.renderPriorityGroups()}
+            ${this.renderProviderSupportMatrix()}
+          </div>
+        </details>
+        <details class="content-disclosure">
+          <summary><span><strong>Extension marketplace</strong><small>Add registries and manage optional provider extensions</small></span></summary>
+          <div class="disclosure-body">${this.renderExtensions()}</div>
+        </details>
       </section>
     `;
   }
@@ -3110,37 +3153,39 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
         ${asArray(this.schema?.configSections).map((section) => html`
-          <div class="panel">
-            <h3>${section.label}</h3>
-            <div class="config-grid">
+          <details class="content-disclosure panel">
+            <summary><span><strong>${section.label}</strong><small>Show configuration</small></span></summary>
+            <div class="config-grid disclosure-body">
               ${asArray(section.fields).map((field) => this.renderConfigField(field))}
             </div>
-          </div>
+          </details>
         `)}
-        <div class="panel">
-          <h3>Backup and restore</h3>
-          <div class="stat-list compact">
-            <div class="stat-row"><span>Durable database</span><span>${display(this.status?.durableStorage?.provider || this.status?.DurableStorage?.Provider)}</span></div>
-            <div class="stat-row"><span>Readiness</span><span class="status-chip ${(this.status?.durableStorage?.readiness || this.status?.DurableStorage?.Readiness) === "Ready" ? "configured" : "degraded"}">${display(this.status?.durableStorage?.readiness || this.status?.DurableStorage?.Readiness, "Unknown")}</span></div>
+        <details class="content-disclosure panel">
+          <summary><span><strong>Backup and restore</strong><small>Database backups and bootstrap export</small></span></summary>
+          <div class="disclosure-body">
+            <div class="stat-list compact">
+              <div class="stat-row"><span>Durable database</span><span>${display(this.status?.durableStorage?.provider || this.status?.DurableStorage?.Provider)}</span></div>
+              <div class="stat-row"><span>Readiness</span><span class="status-chip ${(this.status?.durableStorage?.readiness || this.status?.DurableStorage?.Readiness) === "Ready" ? "configured" : "degraded"}">${display(this.status?.durableStorage?.readiness || this.status?.DurableStorage?.Readiness, "Unknown")}</span></div>
+            </div>
+            <div class="actions">
+              <button class="primary" @click=${async () => { await API.createDatabaseBackup(); this.toast("Verified database backup created"); }}>Create database backup</button>
+              <button @click=${() => this.exportEnv()}>Export bootstrap .env</button>
+            </div>
+            <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
           </div>
-          <div class="actions">
-            <button class="primary" @click=${async () => { await API.createDatabaseBackup(); this.toast("Verified database backup created"); }}>Create database backup</button>
-            <button @click=${() => this.exportEnv()}>Export bootstrap .env</button>
-          </div>
-          <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
-        </div>
+        </details>
         <div class="setup-launcher">
           <div><h3>Setup guide</h3><p>Revisit the media server, sources, and first playlist steps whenever you need them.</p></div>
           <button @click=${() => this.openSetupGuide()}>Open setup guide</button>
         </div>
         ${this.renderEnvMigrationWizard()}
-        <div class="panel">
-          <h3>Danger zone</h3>
-          <div class="actions">
+        <details class="content-disclosure panel danger-disclosure">
+          <summary><span><strong>Maintenance actions</strong><small>Cache and restart controls</small></span></summary>
+          <div class="actions disclosure-body">
             <button class="danger" @click=${async () => { if (confirm("Clear cache?")) { await API.clearCache(); this.toast("Cache clear requested"); } }}>Clear cache</button>
             <button class="danger" @click=${async () => { if (confirm("Restart Allstarr?")) { await API.restart(); this.toast("Restart requested"); } }}>Restart</button>
           </div>
-        </div>
+        </details>
       </section>
     `;
   }
