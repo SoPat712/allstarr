@@ -73,7 +73,16 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
                 var device = OperatingSystem.IsMacOS()
                     ? unchecked((uint)Marshal.ReadInt32(buffer, 0)).ToString("x")
                     : unchecked((ulong)Marshal.ReadInt64(buffer, 0)).ToString("x");
-                var file = unchecked((ulong)Marshal.ReadInt64(buffer, 8)).ToString("x");
+                var inode = unchecked((ulong)Marshal.ReadInt64(buffer, 8)).ToString("x");
+                // Device + inode alone is not a durable identity. Unix filesystems may
+                // immediately reuse an inode after unlinking a file, which could make a
+                // replacement look like the managed output we originally recorded. The
+                // status-change timestamp acts as the inode generation available through
+                // portable stat(2) layouts on our supported Unix platforms.
+                var changeTimeOffset = OperatingSystem.IsMacOS() ? 64 : 104;
+                var changeSeconds = unchecked((ulong)Marshal.ReadInt64(buffer, changeTimeOffset)).ToString("x");
+                var changeNanoseconds = unchecked((ulong)Marshal.ReadInt64(buffer, changeTimeOffset + 8)).ToString("x");
+                var file = $"{inode}:{changeSeconds}:{changeNanoseconds}";
                 var links = OperatingSystem.IsMacOS()
                     ? unchecked((ushort)Marshal.ReadInt16(buffer, 6))
                     : (uint)Math.Min(uint.MaxValue, unchecked((ulong)Marshal.ReadInt64(buffer, 16)));
@@ -128,7 +137,8 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
         if (!GetFileInformationByHandle(handle, out var info)) return false;
         identity = new ManagedFileSystemIdentity(
             info.VolumeSerialNumber.ToString("x"),
-            $"{info.FileIndexHigh:x8}{info.FileIndexLow:x8}",
+            $"{info.FileIndexHigh:x8}{info.FileIndexLow:x8}:" +
+            $"{info.CreationTime.dwHighDateTime:x8}{info.CreationTime.dwLowDateTime:x8}",
             info.NumberOfLinks);
         return true;
     }
