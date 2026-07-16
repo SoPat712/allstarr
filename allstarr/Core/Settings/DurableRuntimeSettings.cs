@@ -102,19 +102,21 @@ public static class RuntimeSettingCatalog
         var items = new List<RuntimeSettingDefinition>();
         void Bool(string key, string? bootstrap = null) => items.Add(new(key, RuntimeSettingValueType.Boolean, bootstrap ?? key));
         void Int(string key, int min, int max, string? bootstrap = null) => items.Add(new(key, RuntimeSettingValueType.Integer, bootstrap ?? key, min, max));
-        void Text(string key, params string[] choices) => items.Add(new(key, RuntimeSettingValueType.String, key, Choices: choices.ToHashSet(Comparer)));
+        void Text(string key, string[] choices, bool allowEmpty = false) =>
+            items.Add(new(key, RuntimeSettingValueType.String, key,
+                Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
         Int("Cache:SearchResultsMinutes", 1, 1440); Int("Cache:PlaylistImagesHours", 1, 8760);
         Int("Cache:SpotifyPlaylistItemsHours", 1, 8760); Int("Cache:SpotifyMatchedTracksDays", 1, 3650);
         Int("Cache:LyricsDays", 1, 3650); Int("Cache:GenreDays", 1, 3650); Int("Cache:MetadataDays", 1, 3650);
         Int("Cache:OdesliLookupDays", 1, 3650); Int("Cache:ProxyImagesDays", 1, 3650);
         Int("Cache:TranscodeCacheMinutes", 1, 10080);
-        Text("SquidWTF:Quality", "LOW", "HIGH", "LOSSLESS", "FLAC", "HI_RES", "HI_RES_LOSSLESS");
+        Text("SquidWTF:Quality", ["LOW", "HIGH", "LOSSLESS", "FLAC", "HI_RES", "HI_RES_LOSSLESS"], allowEmpty: true);
         Int("SquidWTF:MinRequestIntervalMs", 0, 60000);
-        Text("Deezer:Quality", "FLAC", "MP3_320", "MP3_128"); Int("Deezer:MinRequestIntervalMs", 0, 60000);
-        Text("Qobuz:Quality", "FLAC", "FLAC_24_HIGH", "FLAC_24_LOW", "FLAC_16", "MP3_320");
+        Text("Deezer:Quality", ["FLAC", "MP3_320", "MP3_128"], allowEmpty: true); Int("Deezer:MinRequestIntervalMs", 0, 60000);
+        Text("Qobuz:Quality", ["FLAC", "FLAC_24_HIGH", "FLAC_24_LOW", "FLAC_16", "MP3_320"], allowEmpty: true);
         Int("Qobuz:MinRequestIntervalMs", 0, 60000);
         items.Add(new("AppleDownload:BaseUrl", RuntimeSettingValueType.String, "AppleDownload:BaseUrl", AllowEmpty: true));
-        items.Add(new("AppleDownload:Quality", RuntimeSettingValueType.String, "AppleDownload:Quality"));
+        items.Add(new("AppleDownload:Quality", RuntimeSettingValueType.String, "AppleDownload:Quality", AllowEmpty: true));
         items.Add(new("Providers:MetadataOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_METADATA_ORDER"));
         items.Add(new("Providers:DownloadOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_DOWNLOAD_ORDER"));
         items.Add(new("Providers:StreamingOrder", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_STREAMING_ORDER"));

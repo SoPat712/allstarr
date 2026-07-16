@@ -101,23 +101,35 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OptionalAppleGateway_AllowsEmptyBootstrapAndDurableDisable()
+    public async Task OptionalProviderSettings_AllowShippedEmptyDefaultsAndDurableDisable()
     {
         var service = CreateService(new Dictionary<string, string?>
         {
-            ["AppleDownload:BaseUrl"] = string.Empty
+            ["AppleDownload:BaseUrl"] = string.Empty,
+            ["AppleDownload:Quality"] = string.Empty,
+            ["Deezer:Quality"] = string.Empty,
+            ["Qobuz:Quality"] = string.Empty
         });
 
-        var bootstrap = await service.GetAsync(_tenantId, "AppleDownload:BaseUrl");
+        var settings = await service.GetManyAsync(_tenantId, RuntimeSettingCatalog.Definitions.Keys);
+        var bootstrap = settings["AppleDownload:BaseUrl"];
         Assert.Equal(RuntimeSettingOrigin.Bootstrap, bootstrap.Origin);
         Assert.Equal(string.Empty, bootstrap.Value);
+        Assert.Equal(string.Empty, settings["Deezer:Quality"].Value);
+        Assert.Equal(string.Empty, settings["Qobuz:Quality"].Value);
 
         var applied = await service.ApplyBatchAsync(_tenantId,
-            [new("AppleDownload:BaseUrl", string.Empty)], "webui", _userId);
-        var durable = Assert.Single(applied.Settings);
-        Assert.Equal(RuntimeSettingOrigin.Durable, durable.Origin);
-        Assert.Equal(string.Empty, durable.Value);
-        Assert.Equal("", durable.NormalizedValue);
+        [
+            new("AppleDownload:BaseUrl", string.Empty),
+            new("Deezer:Quality", string.Empty),
+            new("Qobuz:Quality", string.Empty)
+        ], "webui", _userId);
+        Assert.All(applied.Settings, durable =>
+        {
+            Assert.Equal(RuntimeSettingOrigin.Durable, durable.Origin);
+            Assert.Equal(string.Empty, durable.Value);
+            Assert.Equal("", durable.NormalizedValue);
+        });
     }
 
     [Fact]
