@@ -346,6 +346,10 @@ a {
     padding: var(--space-7) clamp(var(--space-5), 4vw, 52px);
 }
 
+#env-migration-title {
+    scroll-margin-top: calc(56px + var(--space-4));
+}
+
 .view-stack {
     display: grid;
     gap: var(--space-7);

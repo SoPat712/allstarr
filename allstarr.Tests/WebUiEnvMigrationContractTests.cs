@@ -74,6 +74,18 @@ public sealed class WebUiEnvMigrationContractTests
     }
 
     [Fact]
+    public void FirstRunGuide_RevealsAndFocusesTheMigrationSectionAfterRouting()
+    {
+        Assert.Contains("revealRouteTarget(path, selector)", _script, StringComparison.Ordinal);
+        Assert.Contains("await new Promise((resolve) => window.requestAnimationFrame(resolve))", _script, StringComparison.Ordinal);
+        Assert.Contains("target.scrollIntoView({ behavior: reducedMotion ? \"auto\" : \"smooth\", block: \"start\" })", _script, StringComparison.Ordinal);
+        Assert.Contains("target.focus({ preventScroll: true })", _script, StringComparison.Ordinal);
+        Assert.Contains("void this.revealRouteTarget(\"/settings\", \"#env-migration-title\")", _script, StringComparison.Ordinal);
+        Assert.Contains("#env-migration-title", _css, StringComparison.Ordinal);
+        Assert.Contains("scroll-margin-top:", _css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OutcomeCategories_DoNotOverclaimPlaylistOrAccountMigration()
     {
         foreach (var label in new[]
@@ -104,6 +116,10 @@ public sealed class WebUiEnvMigrationContractTests
         Assert.Contains("Migration completed", _script, StringComparison.Ordinal);
         Assert.Contains("Migration could not continue", _script, StringComparison.Ordinal);
         Assert.Contains("1 MB or smaller", _script, StringComparison.Ordinal);
+        Assert.Contains("Imported durable settings are active immediately", _script, StringComparison.Ordinal);
+        Assert.Contains("Deployment-owned values were not copied to the server", _script, StringComparison.Ordinal);
+        Assert.Contains("then recreate the Allstarr container", _script, StringComparison.Ordinal);
+        Assert.Contains("No container restart is required for this migration", _script, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -209,7 +209,9 @@ async function requestJson(url, options = {}, fallback = "Request failed") {
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, fallback));
+    const error = new Error(await readErrorMessage(response, fallback));
+    error.status = response.status;
+    throw error;
   }
 
   return response.json();
@@ -222,7 +224,9 @@ async function requestBlob(url, options = {}, fallback = "Request failed") {
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response, fallback));
+    const error = new Error(await readErrorMessage(response, fallback));
+    error.status = response.status;
+    throw error;
   }
 
   return response.blob();
@@ -765,9 +769,20 @@ class AllstarrApp extends LitElement {
         await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]);
       }
     } catch (error) {
+      if (error?.status === 401) {
+        this.handleExpiredSession();
+        return;
+      }
       this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || "page")} data`, error);
-      this.toast(error.message, "error");
     }
+  }
+
+  handleExpiredSession() {
+    this.authenticated = false;
+    this.session = null;
+    this.routeLoadKey = "";
+    this.stopActivityStream();
+    this.loginError = "Your dashboard session expired. Sign in again to continue.";
   }
 
   startActivityStream() {
@@ -3145,10 +3160,25 @@ class AllstarrApp extends LitElement {
     }
   }
 
+  async revealRouteTarget(path, selector) {
+    this.navigate(path);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      await this.updateComplete;
+      const target = this.querySelector(selector);
+      if (!target) continue;
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+      target.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+      target.focus({ preventScroll: true });
+      return true;
+    }
+    return false;
+  }
+
   openEnvMigrationSettings() {
-    this.closeSetupGuide();
-    this.navigate("/settings");
-    this.updateComplete.then(() => this.querySelector("#env-migration-title")?.focus());
+    localStorage.setItem(SETUP_GUIDE_STEP_KEY, String(this.setupStep));
+    this.setupGuideOpen = false;
+    void this.revealRouteTarget("/settings", "#env-migration-title");
   }
 
   handleSetupGuideKeydown(event) {
@@ -3393,7 +3423,7 @@ class AllstarrApp extends LitElement {
       this.envMigration = { ...this.envMigration, state: "success", result, error: "" };
       await this.loadConfig();
       await this.loadEnvMigrationStatus();
-      this.toast("Legacy settings migrated");
+      this.toast("Legacy settings migrated. Imported settings are active now.");
     } catch (error) {
       this.envMigration = { ...this.envMigration, state: "error", error: error.message };
     }
@@ -3541,6 +3571,11 @@ class AllstarrApp extends LitElement {
     }).filter((section) => section.items.length);
   }
 
+  migrationHasDeploymentChecklist() {
+    return this.migrationResultSections().some((section) =>
+      ["deployment", "deployment_only", "deployment_checklist"].includes(section.id));
+  }
+
   migrationEntryIsSensitive(entry) {
     if (entry.sensitive ?? entry.Sensitive ?? entry.isSecret ?? entry.IsSecret) return true;
     const key = String(entry.key || entry.Key || entry.sourceKey || entry.SourceKey || "");
@@ -3579,6 +3614,7 @@ class AllstarrApp extends LitElement {
     const result = migration.result || {};
     const resultWarnings = asArray(result.warnings || result.Warnings);
     const resultSections = this.migrationResultSections();
+    const hasDeploymentChecklist = this.migrationHasDeploymentChecklist();
     const canApply = preview.canApply ?? preview.CanApply ?? categories.length > 0;
     const summary = preview.summary || preview.Summary;
     const importedSettingCount = preview.importedSettingCount ?? preview.ImportedSettingCount ?? 0;
@@ -3662,6 +3698,11 @@ class AllstarrApp extends LitElement {
           <div class="callout success env-migration-result" role="status" aria-live="polite">
             <h4>Migration completed</h4>
             <p>${display(result.message || result.Message, "The confirmed durable values were imported. Review every checklist below before considering the upgrade finished.")}</p>
+            <div class="callout">
+              <strong>Restart status</strong>
+              <p>Imported durable settings are active immediately. They do not require an Allstarr restart.</p>
+              ${hasDeploymentChecklist ? html`<p>Deployment-owned values were not copied to the server. Review the deployment checklist, update Compose or the host <code>.env</code>, then recreate the Allstarr container to apply those separate changes.</p>` : html`<p>No container restart is required for this migration.</p>`}
+            </div>
             <dl><div><dt>Durable settings</dt><dd>${this.migrationResultCount(result.settingsImported ?? result.SettingsImported ?? result.importedSettings ?? result.ImportedSettings)}</dd></div><div><dt>Disabled accounts created</dt><dd>${this.migrationResultCount(result.providerAccountsCreated ?? result.ProviderAccountsCreated)}</dd></div><div><dt>Skipped</dt><dd>${this.migrationResultCount(result.settingsSkipped ?? result.SettingsSkipped) + this.migrationResultCount(result.providerAccountsSkipped ?? result.ProviderAccountsSkipped)}</dd></div><div><dt>Manual checklist</dt><dd>${this.migrationResultCount(result.manualChecklistItems ?? result.ManualChecklistItems)}</dd></div><div><dt>Playlist handoffs</dt><dd>${this.migrationResultCount(result.playlistHandoffsPending ?? result.PlaylistHandoffsPending)}</dd></div></dl>
             ${resultSections.map((section) => html`<section class="env-migration-result-section" aria-labelledby=${`migration-result-${section.id}`}>
               <h5 id=${`migration-result-${section.id}`}>${section.label}</h5>

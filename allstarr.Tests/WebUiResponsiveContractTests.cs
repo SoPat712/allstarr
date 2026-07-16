@@ -113,6 +113,11 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("recordLoadFailure(\"extensionRegistries\"", script, StringComparison.Ordinal);
         Assert.Contains("data?.[\"subsonic-response\"]?.error?.message", script, StringComparison.Ordinal);
         Assert.Contains("${fallback} (HTTP ${response.status})", script, StringComparison.Ordinal);
+        Assert.Contains("error.status = response.status", script, StringComparison.Ordinal);
+        Assert.Contains("if (error?.status === 401)", script, StringComparison.Ordinal);
+        Assert.Contains("this.handleExpiredSession()", script, StringComparison.Ordinal);
+        Assert.Contains("Your dashboard session expired. Sign in again to continue.", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("this.recordLoadFailure(`route:${routeKey}`, `${titleCase(routeParts(routeKey)[0] || \"page\")} data`, error);\n      this.toast(error.message", script, StringComparison.Ordinal);
     }
 
     [Fact]
