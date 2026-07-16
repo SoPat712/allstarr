@@ -76,6 +76,12 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public void Controller_HasSingleDependencyInjectionConstructor()
+    {
+        Assert.Single(typeof(ExtensionController).GetConstructors());
+    }
+
+    [Fact]
     public async Task ReviewEndpoint_RequiresPlatformUserLinkedAdministratorSession()
     {
         var administrator = Controller(Session(administrator: true, allstarrUserId: null));
@@ -130,7 +136,7 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         var context = new DefaultHttpContext();
         if (session != null)
             context.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
-        return new ExtensionController(_manager, _service, NullLogger<ExtensionController>.Instance)
+        return new ExtensionController(_manager, _service, null, NullLogger<ExtensionController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

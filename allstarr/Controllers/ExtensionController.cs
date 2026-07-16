@@ -22,12 +22,6 @@ public class ExtensionController : ControllerBase
     public ExtensionController(
         ExtensionManager extensionManager,
         ExtensionControlPlaneService controlPlane,
-        ILogger<ExtensionController> logger)
-        : this(extensionManager, controlPlane, null, logger) { }
-
-    public ExtensionController(
-        ExtensionManager extensionManager,
-        ExtensionControlPlaneService controlPlane,
         ExtensionRuntimeCoordinator? runtime,
         ILogger<ExtensionController> logger)
     {
