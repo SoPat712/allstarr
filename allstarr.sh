@@ -132,6 +132,7 @@ shift || true
 cd "$ROOT"
 case "$command" in
   init) init ;;
+  prepare-apple) prepare_apple "$@" ;;
   up) up ;;
   update) update ;;
   status) compose_args; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;

@@ -123,6 +123,10 @@ public sealed class ComposeContractTests
         Assert.Contains("python:3.12.11-slim-bookworm@sha256:", gatewayDockerfile, StringComparison.Ordinal);
         Assert.Contains("gamdl==3.8.2", gatewayProject, StringComparison.Ordinal);
         Assert.Contains("0bc16acb55f557b5c98d49f21d7af685410f7f8b", sourceLock, StringComparison.Ordinal);
+
+        var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
+        Assert.Contains("prepare-apple) prepare_apple \"$@\" ;;", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
     }
 
     [Fact]
