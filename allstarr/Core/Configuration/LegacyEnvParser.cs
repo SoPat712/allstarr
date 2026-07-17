@@ -66,6 +66,7 @@ public static class LegacyEnvParser
             ["SPOTIFY_API_CACHE_DURATION_MINUTES"] = "SpotifyApi:CacheDurationMinutes",
             ["SPOTIFY_API_RATE_LIMIT_DELAY_MS"] = "SpotifyApi:RateLimitDelayMs",
             ["SPOTIFY_API_PREFER_ISRC_MATCHING"] = "SpotifyApi:PreferIsrcMatching",
+            ["SPOTIFY_LYRICS_API_URL"] = "SpotifyApi:LyricsApiUrl",
             ["SCROBBLING_ENABLED"] = "Scrobbling:Enabled",
             ["SCROBBLING_LOCAL_TRACKS_ENABLED"] = "Scrobbling:LocalTracksEnabled",
             ["SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED"] = "Scrobbling:SyntheticLocalPlayedSignalEnabled",
@@ -150,7 +151,6 @@ public static class LegacyEnvParser
         "ALLSTARR_ALLOW_GLOBAL_ACCOUNTS", "ALLSTARR_ALLOW_GLOBAL_PERSONAL_ACCOUNTS",
         "ALLSTARR_SHARED_DOWNLOADER_ACCOUNT_ID", "LIBRARY_DOWNLOAD_PATH", "LIBRARY_KEPT_PATH",
         "DOWNLOAD_PATH", "KEPT_PATH", "CACHE_PATH", "REDIS_ENABLED", "REDIS_CONNECTION_STRING",
-        "APPLE_DOWNLOAD_URL", "APPLE_MUSIC_AIO_URL", "SPOTIFY_LYRICS_API_URL",
         "DEBUG_LOG_ALL_REQUESTS", "DEBUG_REDACT_SENSITIVE_REQUEST_VALUES", "MUSICBRAINZ_USERNAME",
         "MUSICBRAINZ_PASSWORD"
     };

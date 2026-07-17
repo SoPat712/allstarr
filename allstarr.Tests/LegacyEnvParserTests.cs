@@ -34,6 +34,24 @@ public sealed class LegacyEnvParserTests
     }
 
     [Fact]
+    public void Parse_ImportsOptionalProviderEndpointsAsDurableSettings()
+    {
+        var document = Parse("""
+            SPOTIFY_LYRICS_API_URL=http://spotify-lyrics:8080
+            APPLE_DOWNLOAD_URL=http://apple-gateway:8000
+            """);
+
+        AssertEntry(document, "SPOTIFY_LYRICS_API_URL", LegacyEnvDisposition.DurableSetting,
+            "import_if_absent", false);
+        AssertEntry(document, "APPLE_DOWNLOAD_URL", LegacyEnvDisposition.DurableSetting,
+            "import_if_absent", false);
+        Assert.Equal("SpotifyApi:LyricsApiUrl",
+            document.Entries.Single(item => item.Key == "SPOTIFY_LYRICS_API_URL").DurableKey);
+        Assert.Equal("AppleDownload:BaseUrl",
+            document.Entries.Single(item => item.Key == "APPLE_DOWNLOAD_URL").DurableKey);
+    }
+
+    [Fact]
     public void Parse_RejectsIncompleteProviderBundlesAndIgnoresEmptyValues()
     {
         var document = Parse("""

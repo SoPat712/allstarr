@@ -62,6 +62,11 @@ dashboard or as `APPLE_DOWNLOAD_URL`. The URL must be the gateway's Allstarr-com
 wrapper-v2 address. Adding or removing it does not replace the database, Valkey, application state, or media
 volumes. Follow [the Apple download provider procedure](docs/operations/apple-download-provider.md).
 
+The optional Spotify lyrics service is likewise absent from Standard and AIO. Add the pinned
+`docker-compose.spotify-lyrics.yml` overlay only when needed, following
+[docs/operations/spotify-lyrics-sidecar.md](docs/operations/spotify-lyrics-sidecar.md). Its cookie stays in the host
+`.env`; the dashboard migration imports endpoint configuration but never manages Docker or exports provider secrets.
+
 Custom manual deployments may select SQLite explicitly. SQLite bootstrap has an intentional one-shot confirmation requirement, and no automatic Postgres-to-SQLite fallback exists. Follow [docs/operations/storage.md](docs/operations/storage.md) instead of guessing these settings.
 
 ### Identity and provider-account ownership

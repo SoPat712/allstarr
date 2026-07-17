@@ -89,6 +89,20 @@ public sealed class ComposeContractTests
     }
 
     [Fact]
+    public void SpotifyLyricsOverlay_IsOptionalPinnedAndPrivate()
+    {
+        RenderCompose("docker-compose.yml", "docker-compose.spotify-lyrics.yml");
+        var overlay = File.ReadAllText(Path.Combine(_repositoryRoot, "docker-compose.spotify-lyrics.yml"));
+
+        Assert.Contains("akashrchandran/spotify-lyrics-api@sha256:", overlay, StringComparison.Ordinal);
+        Assert.Contains("SP_DC: ${SPOTIFY_API_SESSION_COOKIE:-}", overlay, StringComparison.Ordinal);
+        Assert.Contains("SpotifyApi__LyricsApiUrl:", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("ports:", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain(":latest", overlay, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/var/run/docker.sock", overlay, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RuntimeImage_ContainsBackupToolsAndPinnedDotnetBases()
     {
         var dockerfile = File.ReadAllText(Path.Combine(_repositoryRoot, "Dockerfile"));
@@ -124,6 +138,10 @@ public sealed class ComposeContractTests
             StringComparison.Ordinal);
         Assert.Contains(
             "docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet",
+            workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet",
             workflow,
             StringComparison.Ordinal);
         Assert.DoesNotContain("continue-on-error: true", workflow, StringComparison.Ordinal);

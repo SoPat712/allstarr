@@ -54,6 +54,11 @@ separately, then give Allstarr its URL through the dashboard or `APPLE_DOWNLOAD_
 gateway API, not directly to wrapper-v2. Removing that URL disables Apple download routes without changing Postgres
 or media volumes. See [Apple download provider setup](docs/operations/apple-download-provider.md).
 
+Spotify lyrics are optional too. To run the pinned private-network sidecar, add
+`docker-compose.spotify-lyrics.yml` to the Compose command and follow the
+[Spotify lyrics sidecar guide](docs/operations/spotify-lyrics-sidecar.md). Importing an old `.env` can restore the
+endpoint URL, but it cannot start the sidecar or pass a cookie to it.
+
 Client traffic uses `http://localhost:5274`. The separate dashboard is on `http://localhost:5275`. Standard Compose publishes the dashboard on host loopback and only trusts the container gateway needed to cross that mapping. LAN or reverse-proxy access requires `ADMIN_BIND_ADDRESS=0.0.0.0`, `ADMIN_BIND_ANY_IP=true`, and an explicit `ADMIN_TRUSTED_SUBNETS` CIDR. Please keep it behind a private network, VPN, or authenticated access proxy. This software has meaningful access to your media server and provider accounts.
 
 The complete install, backup, restore, and rollback instructions live in [the storage runbook](docs/operations/storage.md). Configuration keys are explained in [CONFIGURATION.md](CONFIGURATION.md).

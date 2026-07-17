@@ -123,6 +123,23 @@ public sealed class WebUiEnvMigrationContractTests
     }
 
     [Fact]
+    public void OptionalRuntimeRows_ShowRedactedPostImportDeploymentGuidance()
+    {
+        Assert.Contains("migrationOptionalRuntimeServices()", _script, StringComparison.Ordinal);
+        Assert.Contains("SPOTIFY_LYRICS_API_URL", _script, StringComparison.Ordinal);
+        Assert.Contains("APPLE_DOWNLOAD_URL", _script, StringComparison.Ordinal);
+        Assert.Contains("APPLE_MUSIC_AIO_URL", _script, StringComparison.Ordinal);
+        Assert.Contains("Optional services still need setup", _script, StringComparison.Ordinal);
+        Assert.Contains("No URL, login, token, or session value is shown here.", _script, StringComparison.Ordinal);
+        Assert.Contains("docs/operations/spotify-lyrics-sidecar.md", _script, StringComparison.Ordinal);
+        Assert.Contains("docs/operations/apple-download-provider.md", _script, StringComparison.Ordinal);
+        Assert.Contains("docker compose -f docker-compose.yml", _script, StringComparison.Ordinal);
+        Assert.Contains("docker-compose.spotify-lyrics.yml up -d", _script, StringComparison.Ordinal);
+        Assert.Contains("target=\"_blank\" rel=\"noopener noreferrer\"", _script, StringComparison.Ordinal);
+        Assert.Contains("this.renderMigrationOptionalRuntimeGuidance()", _script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Preview_RedactsSecretsAndGroupsChangesWithWarnings()
     {
         Assert.Contains("migrationEntryIsSensitive", _script, StringComparison.Ordinal);

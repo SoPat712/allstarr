@@ -84,7 +84,10 @@ jobs:
         run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: Validate Compose contracts
+        env:
+          SPOTIFY_API_SESSION_COOKIE: ci-placeholder
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet

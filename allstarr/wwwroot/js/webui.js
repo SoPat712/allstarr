@@ -3681,6 +3681,48 @@ class AllstarrApp extends LitElement {
       ["deployment", "deployment_only", "deployment_checklist"].includes(section.id));
   }
 
+  migrationOptionalRuntimeServices() {
+    const preview = this.envMigration.preview || {};
+    const keys = new Set(asArray(preview.items || preview.Items)
+      .map((item) => String(item.key || item.Key || "").toUpperCase()));
+    const services = [];
+    if (keys.has("SPOTIFY_LYRICS_API_URL")) {
+      services.push({
+        id: "spotify-lyrics",
+        title: "Spotify lyrics sidecar",
+        text: "The endpoint URL is imported as a runtime setting, but the WebUI does not start containers or give the sidecar your Spotify cookie. Add the optional Compose overlay on the host.",
+        guide: "https://github.com/SoPat712/allstarr/blob/dev/docs/operations/spotify-lyrics-sidecar.md",
+        command: "docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet\ndocker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml up -d\ndocker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml ps",
+      });
+    }
+    if (["APPLE_DOWNLOAD_URL", "APPLE_MUSIC_AIO_URL", "APPLE_DOWNLOAD_QUALITY", "APPLE_MUSIC_QUALITY"]
+      .some((key) => keys.has(key))) {
+      services.push({
+        id: "apple-download",
+        title: "Apple download gateway",
+        text: "The endpoint URL is imported as a runtime setting. Deploy a compatible gateway separately and verify it under Sources > Apple download. Do not point Allstarr directly at wrapper-v2.",
+        guide: "https://github.com/SoPat712/allstarr/blob/dev/docs/operations/apple-download-provider.md",
+        command: "docker compose ps\n# Then open Sources > Apple download and verify the gateway",
+      });
+    }
+    return services;
+  }
+
+  renderMigrationOptionalRuntimeGuidance() {
+    const services = this.migrationOptionalRuntimeServices();
+    if (!services.length) return nothing;
+    return html`<aside class="callout warning" aria-label="Optional service setup required">
+      <h4>Optional services still need setup</h4>
+      <p>These endpoints stay outside Allstarr. No URL, login, token, or session value is shown here.</p>
+      ${services.map((service) => html`<section>
+        <strong>${service.title}</strong>
+        <p>${service.text}</p>
+        <p><a href=${service.guide} target="_blank" rel="noopener noreferrer">Open the setup guide</a></p>
+        <pre><code>${service.command}</code></pre>
+      </section>`)}
+    </aside>`;
+  }
+
   migrationEntryIsSensitive(entry) {
     if (entry.sensitive ?? entry.Sensitive ?? entry.isSecret ?? entry.IsSecret) return true;
     const key = String(entry.key || entry.Key || entry.sourceKey || entry.SourceKey || "");
@@ -3788,6 +3830,7 @@ class AllstarrApp extends LitElement {
               </section>`;
             }) : html`<div class="empty">No supported legacy settings were found. Nothing will be changed.</div>`}
             <div class="callout"><strong>What confirmation means</strong><p>Only rows marked for durable import are applied automatically. Disabled shared accounts remain disabled, users reconnect personal accounts themselves, deployment-only values stay on the host checklist, and playlists requiring a target or owner remain handoffs.</p></div>
+            ${this.renderMigrationOptionalRuntimeGuidance()}
             <form class="env-migration-confirm" @submit=${(event) => this.applyEnvMigration(event)}>
               <label class="inline-check">
                 <input name="confirmMigration" type="checkbox" required ?disabled=${migration.state === "applying"}>
@@ -3808,6 +3851,7 @@ class AllstarrApp extends LitElement {
               <p>Imported durable settings are active immediately. They do not require an Allstarr restart.</p>
               ${hasDeploymentChecklist ? html`<p>Deployment-owned values were not copied to the server. Review the deployment checklist, update Compose or the host <code>.env</code>, then recreate the Allstarr container to apply those separate changes.</p>` : html`<p>No container restart is required for this migration.</p>`}
             </div>
+            ${this.renderMigrationOptionalRuntimeGuidance()}
             <dl><div><dt>Durable settings</dt><dd>${this.migrationResultCount(result.settingsImported ?? result.SettingsImported ?? result.importedSettings ?? result.ImportedSettings)}</dd></div><div><dt>Disabled accounts created</dt><dd>${this.migrationResultCount(result.providerAccountsCreated ?? result.ProviderAccountsCreated)}</dd></div><div><dt>Skipped</dt><dd>${this.migrationResultCount(result.settingsSkipped ?? result.SettingsSkipped) + this.migrationResultCount(result.providerAccountsSkipped ?? result.ProviderAccountsSkipped)}</dd></div><div><dt>Manual checklist</dt><dd>${this.migrationResultCount(result.manualChecklistItems ?? result.ManualChecklistItems)}</dd></div><div><dt>Playlist handoffs</dt><dd>${this.migrationResultCount(result.playlistHandoffsPending ?? result.PlaylistHandoffsPending)}</dd></div></dl>
             ${resultSections.map((section) => html`<section class="env-migration-result-section" aria-labelledby=${`migration-result-${section.id}`}>
               <h5 id=${`migration-result-${section.id}`}>${section.label}</h5>
