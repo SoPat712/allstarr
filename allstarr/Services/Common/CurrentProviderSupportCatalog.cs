@@ -41,7 +41,7 @@ public static class CurrentProviderSupportCatalog
             "user",
             "Developer token plus a per-user Music User Token stored in the selected encrypted account secret.",
             Capability("playlist", Supported, "Account-bound MusicKit library playlist paging, snapshots, artwork, matching, virtual reads, and backend materialization.", "AppleMusicKitPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),
-            Capability("metadata", Unavailable, "No per-user MusicKit library adapter is registered.", "none (unsupported)")),
+            Capability("metadata", Supported, "Account-bound personal-library song, album, and artist search and lookups with deterministic paging. Catalog and ISRC lookup remain outside this capability.", "AppleMusicKitMetadataCapabilityAdapterTests")),
         Provider(
             "deezer",
             "deezer",
@@ -134,7 +134,7 @@ public static class CurrentProviderSupportCatalog
             "Verified SDK v1 package, explicit permission review, declared account scopes, and staged activation.",
             Capability("metadata", Supported, "Typed search and direct-get hooks run through the permissioned SDK adapter and the shared Jellyfin/Subsonic protocol provider gateway.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests; ProtocolProviderGatewayContractTests"),
             Capability("streaming", Supported, "Typed stream leases route through the shared Jellyfin/Subsonic provider gateway with network and secret permissions; signed source URLs stay server-side and ranges are forwarded only when advertised.", "ExtensionCapabilityAdapterTests; ProviderRouterTests; ProtocolProviderGatewayContractTests"),
-            Capability("download", Partial, "Typed download results are supported, but external providers do not yet receive the managed-workspace artifact writer required for first-party download extraction.", "ExtensionCapabilityAdapterTests; FirstPartyExtensionPackageTests"),
+            Capability("download", Supported, "Typed download hooks stream approved HTTPS responses through the host-owned artifact broker into the exact durable job workspace; host-derived IDs, checksums, size limits, cancellation, and lineage are enforced.", "ExtensionCapabilityAdapterTests; ProviderDownloadArtifactResolverTests; FirstPartyExtensionPackageTests"),
             Capability("playlist", Supported, "Typed playlist discovery, item paging, and write hooks are available; SDK v1 does not yet expose the built-in artwork resolver hook.", "ExtensionCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),
             Capability("lyrics", Partial, "Typed lyrics lookup is available through the permissioned capability adapter; legacy protocol lyrics orchestration still has built-in-only paths.", "ExtensionCapabilityAdapterTests; ExtensionSdkV1Tests; protocol exposure gap"),
             Capability("health", Supported, "Account-aware health hooks feed the same provider health path.", "ExtensionCapabilityAdapterTests; ProviderStatusManagerTests"))

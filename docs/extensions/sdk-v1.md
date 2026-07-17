@@ -83,7 +83,14 @@ registerExtension({
 });
 ```
 
-Available bridge objects are `http`, `storage`, `secrets`, `log`, and a small `utils` helper. There is no ambient filesystem or process API. Execution has recursion, statement, memory, response-size, time, and log limits. Treat failures as normal provider failures and return a bounded structured result.
+Available bridge objects are `http`, `storage`, `secrets`, `log`, `artifacts`, and a small `utils` helper. There is no ambient filesystem or process API. Execution has recursion, statement, memory, response-size, time, and log limits. Treat failures as normal provider failures and return a bounded structured result.
+
+A `download` hook cannot write a host path or claim an artifact it created elsewhere. It calls
+`artifacts.download(approvedHttpsUrl, artifactId, headers)` during its download invocation. The host applies secret
+markers only to that approved request, streams the response into the exact job workspace, enforces the configured
+size and path limits, and returns the host-derived `artifactId`, `sha256`, `sizeBytes`, and `verified` facts. Return
+those exact facts with the typed media description. A second write, a foreign workspace, a traversal ID, an
+oversized response, or a claim that differs from the broker result fails the operation.
 
 The canonical hook names and result responsibilities are maintained in [providers-and-extensions.md](../steering/references/providers-and-extensions.md).
 
@@ -106,6 +113,7 @@ Test at least these cases before publishing:
 - denied optional and required permissions;
 - unapproved origins and redirect attempts;
 - provider timeouts, rate limits, malformed JSON, and oversized responses;
+- successful brokered download, idempotent retry, artifact traversal, foreign workspace, and false artifact claims;
 - cancellation and repeated concurrent calls;
 - package traversal, unexpected files, checksum mismatch, and post-stage modification;
 - update, disable, restart restore, and rollback behavior.

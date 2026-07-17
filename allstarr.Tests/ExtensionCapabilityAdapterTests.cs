@@ -1,8 +1,12 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
+using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace allstarr.Tests;
 
@@ -129,6 +133,84 @@ public sealed class ExtensionCapabilityAdapterTests
             new ProviderDownloadAvailabilityRequest(new ProviderExternalResourceId("other-provider", ProviderResourceKind.Track, "track-1"))));
     }
 
+    [Fact]
+    public async Task Download_BrokerStreamsIntoExactWorkspaceAndRetryReusesVerifiedArtifact()
+    {
+        var bytes = Encoding.UTF8.GetBytes("extension audio");
+        using var fixture = DownloadFixture(bytes, 1024, "track.flac");
+
+        var first = await fixture.Adapter.DownloadAsync(fixture.Context,
+            new(fixture.Track, fixture.JobId, fixture.Workspace.Reference, ProviderAudioQuality.Lossless));
+        var second = await fixture.Adapter.DownloadAsync(fixture.Context,
+            new(fixture.Track, fixture.JobId, fixture.Workspace.Reference, ProviderAudioQuality.Lossless));
+
+        var output = first.RequireValue();
+        Assert.Equal("track.flac", output.ArtifactId);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), output.Sha256);
+        Assert.Equal(output, second.RequireValue());
+        var resolved = await fixture.Resolver.ResolveAsync(fixture.Workspace.Reference, output);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(resolved.SourcePath));
+        Assert.Single(fixture.Store.Artifacts);
+    }
+
+    [Fact]
+    public async Task Download_BrokerRejectsOversizeInvalidPathAndForeignWorkspaceLineage()
+    {
+        using var oversized = DownloadFixture(new byte[128], 16, "track.flac");
+        Assert.Equal(ProviderErrorKind.TransientFailure,
+            (await oversized.Adapter.DownloadAsync(oversized.Context,
+                new(oversized.Track, oversized.JobId, oversized.Workspace.Reference, ProviderAudioQuality.Any))).Error!.Kind);
+
+        using var traversal = DownloadFixture(Encoding.UTF8.GetBytes("audio"), 1024, "../track.flac");
+        Assert.Equal(ProviderErrorKind.TransientFailure,
+            (await traversal.Adapter.DownloadAsync(traversal.Context,
+                new(traversal.Track, traversal.JobId, traversal.Workspace.Reference, ProviderAudioQuality.Any))).Error!.Kind);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(traversal.Root, traversal.Workspace.Reference.WorkspaceId)));
+
+        using var foreign = DownloadFixture(Encoding.UTF8.GetBytes("audio"), 1024, "track.flac");
+        var otherJob = Guid.CreateVersion7();
+        var foreignWorkspace = await foreign.Resolver.CreateWorkspaceAsync(new(
+            foreign.Context.Actor.TenantId, foreign.Context.Actor.EffectiveUserId, otherJob,
+            "fixture-extension", null, "foreign"));
+        Assert.Equal(ProviderErrorKind.TransientFailure,
+            (await foreign.Adapter.DownloadAsync(foreign.Context,
+                new(foreign.Track, foreign.JobId, foreignWorkspace.Reference, ProviderAudioQuality.Any))).Error!.Kind);
+    }
+
+    [Fact]
+    public async Task Download_RejectsClaimThatWasNotWrittenThroughBroker()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-extension-claim", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new MemoryArtifactStore();
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(store, options);
+            var manifest = DownloadManifest();
+            var sandbox = Sandbox(manifest, """
+                registerExtension({ download: function() { return {
+                  artifactId: 'claimed.flac', sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  sizeBytes: 10, verified: true, media: { mimeType: 'audio/flac', container: 'flac', codec: 'flac' }
+                }; }});
+                """);
+            var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
+            var context = Context();
+            var job = Guid.CreateVersion7();
+            var workspace = await resolver.CreateWorkspaceAsync(new(
+                context.Actor.TenantId, context.Actor.EffectiveUserId, job, "fixture-extension", null, "claim"));
+
+            var outcome = await adapter.DownloadAsync(context,
+                new(Id(ProviderResourceKind.Track, "track-1"), job, workspace.Reference, ProviderAudioQuality.Any));
+
+            Assert.Equal(ProviderErrorKind.TransientFailure, outcome.Error!.Kind);
+            Assert.Empty(store.Artifacts);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     private static ExtensionSdkManifest Manifest(ProviderCapabilityKind kind, params string[] hooks) => new(
         "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
         [new ExtensionSdkCapability(kind, hooks, [ProviderAccountScope.User])], []);
@@ -136,6 +218,43 @@ public sealed class ExtensionCapabilityAdapterTests
     private static ExtensionSandbox Sandbox(ExtensionSdkManifest manifest, string script) => new(
         Path.GetTempPath(), """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""", script,
         new HttpClientFactory(), NullLogger.Instance);
+
+    private static ExtensionSdkManifest DownloadManifest() => new(
+        "fixture-extension", "Fixture", "1.0.0", "1", "index.js",
+        [new ExtensionSdkCapability(ProviderCapabilityKind.Download, ["download"],
+            [ProviderAccountScope.User], AccountRequired: false)],
+        [new ExtensionPermissionRequest(ExtensionPermissionKind.Network, "https://media.example.test/", true)]);
+
+    private static DownloadFixtureState DownloadFixture(byte[] bytes, long maximumBytes, string artifactId)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-extension-download", Guid.NewGuid().ToString("N"));
+        var store = new MemoryArtifactStore();
+        var options = new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = maximumBytes };
+        var resolver = new ProviderDownloadArtifactResolver(store, options);
+        var manifest = DownloadManifest();
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://media.example.test/"], StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal));
+        var sandbox = new ExtensionSandbox(root,
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            $$$"""
+            registerExtension({ download: function() {
+              const written = artifacts.download('https://media.example.test/audio', '{{{artifactId}}}');
+              return { artifactId: written.artifactId, sha256: written.sha256, sizeBytes: written.sizeBytes,
+                verified: written.verified, media: { mimeType: 'audio/flac', container: 'flac', codec: 'flac' } };
+            }});
+            """,
+            new HttpClientFactory(new BytesHandler(bytes)), NullLogger.Instance, permissions,
+            Path.Combine(root, "runtime"));
+        var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
+        var context = Context();
+        var job = Guid.CreateVersion7();
+        var workspace = resolver.CreateWorkspaceAsync(new(
+            context.Actor.TenantId, context.Actor.EffectiveUserId, job, "fixture-extension", null, "download"))
+            .GetAwaiter().GetResult();
+        return new(root, store, resolver, adapter, context, job, workspace,
+            Id(ProviderResourceKind.Track, "track-1"));
+    }
 
     private static ProviderExternalResourceId Id(ProviderResourceKind kind, string value) =>
         new("fixture-extension", kind, value);
@@ -151,8 +270,56 @@ public sealed class ExtensionCapabilityAdapterTests
             "extension-test-idempotency");
     }
 
-    private sealed class HttpClientFactory : IHttpClientFactory
+    private sealed class HttpClientFactory(HttpMessageHandler? handler = null) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new();
+        public HttpClient CreateClient(string name) => handler == null
+            ? new HttpClient()
+            : new HttpClient(handler, disposeHandler: false);
+    }
+
+    private sealed class BytesHandler(byte[] bytes) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed record DownloadFixtureState(string Root, MemoryArtifactStore Store,
+        ProviderDownloadArtifactResolver Resolver, ExtensionDownloadCapabilityAdapter Adapter,
+        ProviderExecutionContext Context, Guid JobId, ProviderDownloadWorkspace Workspace,
+        ProviderExternalResourceId Track) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (Directory.Exists(Root)) Directory.Delete(Root, true);
+        }
+    }
+
+    private sealed class MemoryArtifactStore : IProviderDownloadArtifactStore
+    {
+        public List<ProviderDownloadWorkspaceEntity> Workspaces { get; } = [];
+        public List<ProviderDownloadArtifactEntity> Artifacts { get; } = [];
+        public Task<ProviderDownloadWorkspaceEntity> CreateWorkspaceAsync(ProviderDownloadWorkspaceEntity value, CancellationToken token)
+        {
+            var existing = Workspaces.SingleOrDefault(item => item.WorkspaceId == value.WorkspaceId);
+            if (existing != null) return Task.FromResult(existing);
+            Workspaces.Add(value); return Task.FromResult(value);
+        }
+        public Task<ProviderDownloadWorkspaceEntity?> GetWorkspaceAsync(string id, CancellationToken token) =>
+            Task.FromResult(Workspaces.SingleOrDefault(item => item.WorkspaceId == id));
+        public Task<ProviderDownloadArtifactEntity> AddVerifiedAsync(ProviderDownloadArtifactEntity value, CancellationToken token)
+        {
+            var existing = Artifacts.SingleOrDefault(item => item.WorkspaceRecordId == value.WorkspaceRecordId &&
+                                                              item.ProviderArtifactId == value.ProviderArtifactId);
+            if (existing != null) return Task.FromResult(existing);
+            Artifacts.Add(value); return Task.FromResult(value);
+        }
+        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid tenantId, Guid jobId, string providerId, CancellationToken token) =>
+            Task.FromResult(Artifacts.SingleOrDefault(item => item.TenantId == tenantId &&
+                item.DurableJobId == jobId && item.ProviderId == providerId));
+        public Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken token) => Task.CompletedTask;
     }
 }

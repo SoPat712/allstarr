@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
+using allstarr.Core.Downloads;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +17,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly ILogger<ExtensionRuntimeCoordinator> _logger;
     private readonly FirstPartyExtensionPolicy _firstPartyPolicy;
+    private readonly ProviderDownloadArtifactResolver _downloadArtifacts;
+    private readonly ProviderDownloadWorkspaceOptions _downloadOptions;
     private readonly string _runtimeRoot;
     private readonly string _packageRoot;
 
@@ -27,6 +30,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
         FirstPartyExtensionPolicy firstPartyPolicy,
+        ProviderDownloadArtifactResolver downloadArtifacts,
+        ProviderDownloadWorkspaceOptions downloadOptions,
         IConfiguration configuration,
         ILogger<ExtensionRuntimeCoordinator> logger)
     {
@@ -37,6 +42,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         _clients = clients;
         _secrets = secrets;
         _firstPartyPolicy = firstPartyPolicy;
+        _downloadArtifacts = downloadArtifacts;
+        _downloadOptions = downloadOptions;
         _logger = logger;
         _packageRoot = Path.GetFullPath(configuration["Extensions:Directory"] ??
                                         Path.Combine(Directory.GetCurrentDirectory(), "extensions"));
@@ -173,7 +180,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         {
             ProviderCapabilityKind.Metadata => new ExtensionMetadataCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             ProviderCapabilityKind.Streaming => new ExtensionStreamingCapabilityAdapter(sandbox, runtimeManifest, _secrets),
-            ProviderCapabilityKind.Download => new ExtensionDownloadCapabilityAdapter(sandbox, runtimeManifest, _secrets),
+            ProviderCapabilityKind.Download => new ExtensionDownloadCapabilityAdapter(
+                sandbox, runtimeManifest, _secrets, _downloadArtifacts, _downloadOptions),
             ProviderCapabilityKind.Playlist => new ExtensionPlaylistCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             ProviderCapabilityKind.Lyrics => new ExtensionLyricsCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             ProviderCapabilityKind.Health => new ExtensionHealthCapabilityAdapter(sandbox, runtimeManifest, _secrets),

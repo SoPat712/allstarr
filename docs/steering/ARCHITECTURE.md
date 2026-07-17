@@ -42,9 +42,10 @@ The compatibility layer preserves older routes while current durable and typed s
 - `IPlaybackActivitySource` and `IPlaybackMetadataResolver` decouple the admin download-activity screen
   from Jellyfin-only session and metadata services. Jellyfin supplies the current adapters; Subsonic mode
   starts without those adapters.
-- `CurrentProviderSupportCatalog` is the visible current capability/account/coverage inventory. It is
-  separate from `ProviderStatusManager`, whose compatibility observations are in-memory and scoped by
-  provider, capability, and account key.
+- `CurrentProviderSupportCatalog` is the visible compatibility and coverage overlay. Typed built-ins and packages
+  meet at `ProviderRegistry`; lanes still marked `ConfiguredOnly`, partial, or unavailable remain compatibility
+  paths until a typed adapter and focused contract tests exist. `ProviderStatusManager` observations are in-memory
+  compatibility projections scoped by provider, capability, and account key.
 - Provider configuration and health are distinct. Untested capabilities are `Unknown`, explicit tests pass
   through `Testing`, and only a successful observation is `Healthy`/ready. The compatibility router may
   still attempt eligible `Unknown` capabilities on legacy protocol paths. `ProviderRouter` is the policy

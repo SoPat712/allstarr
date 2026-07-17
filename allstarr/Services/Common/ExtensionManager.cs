@@ -6,13 +6,13 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jint;
 using Jint.Native;
+using allstarr.Core.Extensions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using allstarr.Services.Admin;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
-using allstarr.Core.Extensions;
 using allstarr.Core.Storage;
 
 namespace allstarr.Services.Common;
@@ -939,6 +939,7 @@ public class ExtensionSandbox
         _engine.Execute("const storage = { get: function(key) { return host.StorageGet(key); }, set: function(key, val) { host.StorageSet(key, val); } };");
         _engine.Execute("const secrets = { get: function(key) { return host.SecretGet(key); } };");
         _engine.Execute("const http = { get: function(url, headers) { return host.HttpGet(url, headers); }, post: function(url, body, headers) { return host.HttpPost(url, body, headers); } };");
+        _engine.Execute("const artifacts = { download: function(url, artifactId, headers) { return host.ArtifactDownload(url, artifactId, headers); } };");
         _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
 
         _engine.Execute(indexJs);
@@ -1329,6 +1330,36 @@ public class ExtensionHostBridge
 
     public object HttpPost(string url, string? body, object? headers) => HttpCall("POST", url, body, headers);
 
+    public object ArtifactDownload(string url, string artifactId, object? headersObj)
+    {
+        var scope = ExtensionArtifactInvocationScope.Current ??
+                    throw new UnauthorizedAccessException("The artifact broker is available only during a download invocation.");
+        if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var safeUri, out _) ||
+            safeUri!.Scheme != Uri.UriSchemeHttps ||
+            !_permissions.NetworkOrigins.Contains(safeUri.GetLeftPart(UriPartial.Authority) + "/"))
+            throw new UnauthorizedAccessException("Extension artifact origin is not approved.");
+
+        using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
+        using var request = new HttpRequestMessage(HttpMethod.Get, safeUri);
+        AddHeaders(request, headersObj);
+        using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken)
+            .GetAwaiter().GetResult();
+        if (response.RequestMessage?.RequestUri is not { } finalUri ||
+            !_permissions.NetworkOrigins.Contains(finalUri.GetLeftPart(UriPartial.Authority) + "/"))
+            throw new UnauthorizedAccessException("Extension artifact redirect left its approved origin.");
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("Extension artifact request failed.", null, response.StatusCode);
+        using var content = response.Content.ReadAsStream();
+        var written = scope.Write(artifactId, content, response.Content.Headers.ContentLength);
+        return new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["artifactId"] = written.ArtifactId,
+            ["sha256"] = written.Sha256,
+            ["sizeBytes"] = written.SizeBytes,
+            ["verified"] = true
+        };
+    }
+
     public string RandomUserAgent() => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
     public byte[] HmacSHA1(JsValue keyVal, JsValue dataVal)
@@ -1388,30 +1419,7 @@ public class ExtensionHostBridge
                 request.Content = new StringContent(ResolveSecretMarkers(body), Encoding.UTF8, "application/json");
             }
 
-            if (headersObj is Jint.Native.Object.ObjectInstance obj)
-            {
-                foreach (var prop in obj.GetOwnProperties())
-                {
-                    var headerKey = prop.Key.ToString();
-                    var headerVal = ResolveSecretMarkers(obj.Get(prop.Key).ToString());
-
-                    if (!string.IsNullOrEmpty(headerVal))
-                    {
-                        if (headerKey.Contains('\r') || headerKey.Contains('\n') || headerVal.Contains('\r') || headerVal.Contains('\n') ||
-                            headerKey.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
-                            headerKey.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        if (headerKey.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) && request.Content != null)
-                        {
-                            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(headerVal);
-                        }
-                        else
-                        {
-                            request.Headers.TryAddWithoutValidation(headerKey, headerVal);
-                        }
-                    }
-                }
-            }
+            AddHeaders(request, headersObj);
 
             using var response = client.SendAsync(request).GetAwaiter().GetResult();
             if (response.RequestMessage?.RequestUri is { } finalUri &&
@@ -1448,6 +1456,25 @@ public class ExtensionHostBridge
                 body = "",
                 error = ex is UnauthorizedAccessException ? "permission_denied" : "extension_request_failed"
             };
+        }
+    }
+
+    private void AddHeaders(HttpRequestMessage request, object? headersObj)
+    {
+        if (headersObj is not Jint.Native.Object.ObjectInstance obj) return;
+        foreach (var prop in obj.GetOwnProperties())
+        {
+            var headerKey = prop.Key.ToString();
+            var headerVal = ResolveSecretMarkers(obj.Get(prop.Key).ToString());
+            if (string.IsNullOrEmpty(headerVal) || headerKey.Contains('\r') || headerKey.Contains('\n') ||
+                headerVal.Contains('\r') || headerVal.Contains('\n') ||
+                headerKey.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                headerKey.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (headerKey.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) && request.Content != null)
+                request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(headerVal);
+            else
+                request.Headers.TryAddWithoutValidation(headerKey, headerVal);
         }
     }
 

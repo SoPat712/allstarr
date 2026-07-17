@@ -51,7 +51,7 @@ changing Postgres, media, or the persistent wrapper login session. See
 [Apple download provider setup](docs/operations/apple-download-provider.md).
 
 Spotify lyrics are optional too. To run the pinned private-network sidecar, add
-it with `./allstarr.sh enable spotify`, then run `./allstarr.sh up`. Follow the
+it with `./allstarr.sh enable spotify-lyrics`, then run `./allstarr.sh up`. Follow the
 [Spotify lyrics sidecar guide](docs/operations/spotify-lyrics-sidecar.md). Importing an old `.env` can restore the
 endpoint URL, but it cannot start the sidecar or pass a cookie to it.
 

@@ -8,7 +8,7 @@ The overhaul kept ASP.NET Core as the control plane, added Postgres for durable 
 
 ## Plan Status And Ownership
 
-The version 3 beta implementation and all eight overhaul phases are complete. This file preserves the locked decisions, implemented design, completion evidence, and original phase roadmap. Current-state sections are authoritative. The roadmap near the end is historical and is not an unfinished task list.
+The version 3 beta foundation and the eight phase slices are implemented, but the final overhaul completion audit is still active. This file preserves the locked decisions, implemented design, checkpoint evidence, and original phase roadmap. Current-state sections and the provider support matrix are authoritative; a historical phase checkpoint is not proof that every broader release requirement is complete.
 
 This root file owns:
 
@@ -172,7 +172,7 @@ Likely credentials for manual/live validation:
 | Secrets | [allstarr/Core/Secrets](allstarr/Core/Secrets) | Provider-account records hold secret references. Versioned secret values are protected with AES-GCM using an external key ring, with replace, rotate, revoke, and tenant access rules. |
 | Durable work | [allstarr/Core/Jobs](allstarr/Core/Jobs), [allstarr/Controllers/JobsController.cs](allstarr/Controllers/JobsController.cs) | Jobs, attempts, leases, idempotency keys, cancellation, retry state, sidecar deferrals, and transactional outbox messages live in the selected database. Users can inspect and cancel only their own jobs; admins can inspect all jobs. |
 | Operations | [allstarr/Core/Operations](allstarr/Core/Operations), [allstarr/Controllers/DiagnosticsController.cs](allstarr/Controllers/DiagnosticsController.cs) | Liveness, readiness, sidecar capability state, redacted structured logs, correlated diagnostics, and Prometheus-style metrics expose the durable foundation without leaking credentials, media URLs, or account names. |
-| Apple download gateway | [AppleMusicController.cs](allstarr/Controllers/AppleMusicController.cs), [Apple Music services](allstarr/Services/AppleMusic), [gateway](sidecars/apple-gateway) | The optional profile calls the repository gateway, which runs pinned GAMDL against a locked official wrapper-v2 build. The gateway contract, health probe, and runtime manifest decide which capabilities can be advertised. |
+| Apple providers | [AppleMusicController.cs](allstarr/Controllers/AppleMusicController.cs), [Apple MusicKit adapters](allstarr/Core/Providers/AppleMusicKit), [Apple download services](allstarr/Services/AppleMusic), [gateway](sidecars/apple-gateway) | The user-scoped MusicKit lane reads personal-library songs, albums, artists, and playlists with the selected encrypted account. The optional download profile calls the repository gateway, which runs pinned GAMDL against a locked official wrapper-v2 build. Gateway discovery decides which download capabilities can be advertised. |
 | Jellyfin protocol | [allstarr/Controllers/JellyfinController.Audio.cs](allstarr/Controllers/JellyfinController.Audio.cs), [allstarr/Controllers/JellyfinController.Search.cs](allstarr/Controllers/JellyfinController.Search.cs), [allstarr/Controllers/JellyfinController.PlaylistHandler.cs](allstarr/Controllers/JellyfinController.PlaylistHandler.cs) | Jellyfin compatibility stays the first protocol adapter. |
 | Spotify playlists | [allstarr/Controllers/JellyfinController.Spotify.cs](allstarr/Controllers/JellyfinController.Spotify.cs), [docs/steering/SPOTIFY.md](docs/steering/SPOTIFY.md) | Durable provider-neutral playlist links are the current path. Spotify injection remains a compatibility path. |
 | MusicBrainz | [allstarr/Services/MusicBrainz/MusicBrainzService.cs](allstarr/Services/MusicBrainz/MusicBrainzService.cs) | MusicBrainz contributes enrichment, canonical identity, matching, tagging, and local recommendation relationships. |
@@ -861,9 +861,10 @@ The phases were delivered additively. Each phase required a vertical slice, beha
 
 ### Current Implementation Status
 
-Phases 0 through 8 and the final release reconciliation are complete for the version 3 beta baseline. The
-completion records below describe what was implemented. Historical checkpoint counts are evidence from those points in
-time, not the expected total for every later branch or release.
+Phases 0 through 8 have implementation checkpoints for the version 3 beta baseline. The final requirement-by-requirement
+release audit is still closing the explicitly partial protocol, provider, extension-download, Apple artifact, and
+sidecar-lifecycle gaps recorded by the current support matrix. The records below describe what existed at each checkpoint;
+historical counts are evidence from those points in time, not proof of current full-scope completion.
 
 The Phase 0 completion record included:
 
@@ -875,10 +876,10 @@ The Phase 0 completion record included:
   controller is activated for each deployment mode.
 - Non-public Jellyfin controller actions verify the client against backend `Users/Me`; upstream JSON
   status codes are preserved, and request/proxy failure logs redact credentials and upstream bodies.
-- The WebUI exposes a tested current provider support matrix, configuration separately from observed
-  health, responsive provider/table layout, distinct support-state chips, and keyboard-operable mobile
-  navigation. Functional browser, focus, narrow-viewport, overflow, and keyboard checks passed for the
-  characterized Phase 0 surface; later data-backed screens require their own accessibility checks.
+- The WebUI exposes a statically tested current provider support matrix, configuration separately from observed
+  health, responsive provider/table layout, distinct support-state chips, and keyboard-operable mobile navigation.
+  Static contracts guard the markup and CSS; functional browser, focus, screen-reader, narrow-viewport, overflow,
+  and keyboard checks remain release gates for every data-backed screen.
 - Phase 0 provider status reads no longer invented health or test time. Explicit probes were separated by
   capability/account key, disabled providers leave every lane, public metadata is not blocked by download
   credentials, SquidWTF is metadata-only, and optional provider startup probes default off. That compatibility

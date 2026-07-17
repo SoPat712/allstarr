@@ -17,13 +17,18 @@ public partial class JellyfinController
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
 
-            var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
+            var protocol = HttpContext.RequireProtocolExecutionContext();
+            var playlist = _providerGateway != null
+                ? await _providerGateway.GetPlaylistAsync(protocol, provider, externalId)
+                : await _metadataService.GetPlaylistAsync(provider, externalId);
             if (playlist == null)
             {
                 return _responseBuilder.CreateError(404, "Playlist not found");
             }
 
-            var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+            var tracks = _providerGateway != null
+                ? await _providerGateway.GetPlaylistTracksAsync(protocol, provider, externalId)
+                : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
             // Cache tracks for playlist sync
             if (_playlistSyncService != null)
@@ -69,7 +74,10 @@ public partial class JellyfinController
             if (PlaylistIdHelper.IsExternalPlaylist(playlistId))
             {
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-                var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+                var tracks = _providerGateway != null
+                    ? await _providerGateway.GetPlaylistTracksAsync(
+                        HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+                    : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
                 // Convert tracks to Jellyfin items and override ParentId/AlbumId to be the playlist
                 var items = tracks.Select(track =>
@@ -155,7 +163,10 @@ public partial class JellyfinController
             }
 
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
-            var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
+            var playlist = _providerGateway != null
+                ? await _providerGateway.GetPlaylistAsync(
+                    HttpContext.RequireProtocolExecutionContext(), provider, externalId)
+                : await _metadataService.GetPlaylistAsync(provider, externalId);
 
             if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
             {

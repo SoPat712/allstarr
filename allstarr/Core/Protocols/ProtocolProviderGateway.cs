@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Routing;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
+using allstarr.Models.Subsonic;
 using allstarr.Services;
 
 namespace allstarr.Core.Protocols;
@@ -25,6 +26,21 @@ public interface IProtocolProviderGateway
     Task<Album?> GetAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
     Task<Artist?> GetArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
+
+    Task<List<ExternalPlaylist>> SearchPlaylistsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit);
+
+    Task<ExternalPlaylist?> GetPlaylistAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId);
+
+    Task<List<Song>> GetPlaylistTracksAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId);
 
     Task<ProtocolProviderStream?> OpenStreamAsync(
         ProtocolExecutionContext protocol,
@@ -192,6 +208,112 @@ public sealed class ProtocolProviderGateway(
         return await legacyMetadata.GetArtistAsync(providerId, externalId, protocol.CancellationToken);
     }
 
+    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        limit = Math.Clamp(limit, 1, 200);
+        if (protocol.Actor is null) return [];
+
+        var actor = protocol.RequireActor();
+        var plan = await router.PlanAsync<IProviderPlaylistCapability>(Request(
+            protocol,
+            actor,
+            ProviderCapabilityKind.Playlist,
+            "protocol-playlist-search",
+            providerIds: [],
+            sourceTrackId: null));
+        var routed = new List<ExternalPlaylist>();
+        foreach (var candidate in plan.Candidates)
+        {
+            var outcome = await candidate.Implementation.SearchPlaylistsAsync(
+                candidate.Context,
+                new ProviderPlaylistSearchRequest(query, new ProviderPageRequest(limit)));
+            if (outcome.IsSuccess)
+            {
+                routed.AddRange(outcome.RequireValue().Items.Select(Map));
+            }
+        }
+
+        var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(
+            protocol, actor, ProviderCapabilityKind.Playlist);
+        if (allowedCompatibilityProviders.Count == 0)
+        {
+            return routed.Take(limit).ToList();
+        }
+        var legacy = await legacyMetadata.SearchPlaylistsAsync(query, limit, protocol.CancellationToken);
+        return Merge(
+            routed,
+            legacy.Where(item => Allowed(item.Provider, allowedCompatibilityProviders)),
+            limit,
+            item => Key(item.Provider, item.ExternalId, item.Id));
+    }
+
+    public async Task<ExternalPlaylist?> GetPlaylistAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (protocol.Actor is null)
+            throw new UnauthorizedAccessException("A resolved user is required for provider playlists.");
+
+        var routed = await PlanExactAsync<IProviderPlaylistCapability>(
+            protocol, providerId, ProviderCapabilityKind.Playlist, "protocol-playlist-get");
+        if (routed.Candidate != null)
+        {
+            var playlistId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Playlist, externalId);
+            var outcome = await routed.Candidate.Implementation.GetPlaylistTracksAsync(
+                routed.Candidate.Context,
+                new ProviderPlaylistTracksRequest(playlistId, new ProviderPageRequest(1)));
+            if (outcome.IsSuccess) return Map(outcome.RequireValue().Playlist);
+            if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+            ThrowRouteFailure(outcome.Error);
+        }
+
+        await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
+        return await legacyMetadata.GetPlaylistAsync(providerId, externalId, protocol.CancellationToken);
+    }
+
+    public async Task<List<Song>> GetPlaylistTracksAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (protocol.Actor is null)
+            throw new UnauthorizedAccessException("A resolved user is required for provider playlists.");
+
+        var routed = await PlanExactAsync<IProviderPlaylistCapability>(
+            protocol, providerId, ProviderCapabilityKind.Playlist, "protocol-playlist-get-tracks");
+        if (routed.Candidate != null)
+        {
+            var playlistId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Playlist, externalId);
+            var tracks = new List<Song>();
+            string? cursor = null;
+            do
+            {
+                var outcome = await routed.Candidate.Implementation.GetPlaylistTracksAsync(
+                    routed.Candidate.Context,
+                    new ProviderPlaylistTracksRequest(playlistId, new ProviderPageRequest(200, cursor)));
+                if (!outcome.IsSuccess)
+                {
+                    if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
+                    ThrowRouteFailure(outcome.Error);
+                }
+                var page = outcome.RequireValue().Tracks;
+                tracks.AddRange(page.Items.Where(item => item.Metadata != null).Select(item => Map(item.Metadata!)));
+                cursor = page.NextCursor;
+            } while (cursor != null);
+            return tracks;
+        }
+
+        await RequireCompatibilityProviderAsync(protocol, providerId, ProviderCapabilityKind.Playlist);
+        return await legacyMetadata.GetPlaylistTracksAsync(providerId, externalId, protocol.CancellationToken);
+    }
+
     public async Task<ProtocolProviderStream?> OpenStreamAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -261,15 +383,16 @@ public sealed class ProtocolProviderGateway(
 
     private async Task<HashSet<string>> ResolveAllowedCompatibilityProvidersAsync(
         ProtocolExecutionContext protocol,
-        ProviderActorContext actor)
+        ProviderActorContext actor,
+        ProviderCapabilityKind capabilityKind = ProviderCapabilityKind.Metadata)
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal);
         foreach (var descriptor in registry.FindByCapability(
-                     ProviderCapabilityKind.Metadata,
+                     capabilityKind,
                      includeNonOperational: true))
         {
             var capability = descriptor.Capabilities.Single(item =>
-                item.Capability == ProviderCapabilityKind.Metadata);
+                item.Capability == capabilityKind);
             if (capability.HasUsableImplementation) continue;
             if (capability.AccountRequirement == ProviderAccountRequirement.None)
             {
@@ -284,7 +407,7 @@ public sealed class ProtocolProviderGateway(
                     new ProviderRouteAccountRequest(
                         actor,
                         descriptor.Id,
-                        ProviderCapabilityKind.Metadata,
+                        capabilityKind,
                         RequestedAccountId: null,
                         protocol.LibraryScopeId),
                     protocol.CancellationToken);
@@ -309,9 +432,11 @@ public sealed class ProtocolProviderGateway(
 
     private async Task RequireCompatibilityProviderAsync(
         ProtocolExecutionContext protocol,
-        string providerId)
+        string providerId,
+        ProviderCapabilityKind capabilityKind = ProviderCapabilityKind.Metadata)
     {
-        var allowed = await ResolveAllowedCompatibilityProvidersAsync(protocol, protocol.RequireActor());
+        var allowed = await ResolveAllowedCompatibilityProvidersAsync(
+            protocol, protocol.RequireActor(), capabilityKind);
         if (!allowed.Contains(providerId))
         {
             throw new UnauthorizedAccessException("The provider route is not available to this user.");
@@ -439,6 +564,18 @@ public sealed class ProtocolProviderGateway(
         Name = item.Name,
         ImageUrl = item.Artwork?.PublicUri?.ToString(),
         IsLocal = false
+    };
+
+    private static ExternalPlaylist Map(ProviderPlaylistSummary item) => new()
+    {
+        Id = $"ext-{item.Id.ProviderId}-playlist-{item.Id.Value}",
+        Provider = item.Id.ProviderId,
+        ExternalId = item.Id.Value,
+        Name = item.Name,
+        Description = item.Description,
+        CuratorName = item.Owner.DisplayName,
+        TrackCount = item.TrackCount ?? 0,
+        CoverUrl = item.Artwork?.PublicUri?.ToString()
     };
 
     private static List<T> Merge<T>(

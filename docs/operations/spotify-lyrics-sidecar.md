@@ -23,6 +23,9 @@ docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml ps
 ```
 
+The `spotify-lyrics` service includes a lightweight local HTTP health check. An unhealthy sidecar removes only
+that lyrics source; it does not prevent Allstarr, Postgres, Valkey, or other providers from starting.
+
 This does not replace Postgres, Valkey, application state, downloads, or kept media. Compose may recreate the
 Allstarr container to attach the endpoint setting, but it reuses the same volumes.
 
@@ -48,4 +51,3 @@ docker compose -f docker-compose.yml up -d
 
 Remove or clear the Spotify lyrics URL in Sources if you do not want Allstarr to probe the absent endpoint. Removing
 the sidecar never removes music or durable Allstarr data.
-

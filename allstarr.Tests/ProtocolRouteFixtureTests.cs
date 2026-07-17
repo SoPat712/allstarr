@@ -516,7 +516,7 @@ public sealed class ProtocolRouteFixtureTests
     public async Task JellyfinExternalPlaylist_PreservesSourceOrderAndPlaylistParentIdentity()
     {
         using var fixture = ReadFixture("jellyfin-playlist-order.json");
-        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var tracks = fixture.RootElement.GetProperty("sourceTrackIds")
             .EnumerateArray()
             .Select((id, index) => new allstarr.Models.Domain.Song
@@ -529,10 +529,10 @@ public sealed class ProtocolRouteFixtureTests
                 Album = "Fixture Album"
             })
             .ToList();
-        metadata.Setup(service => service.GetPlaylistTracksAsync(
+        gateway.Setup(service => service.GetPlaylistTracksAsync(
+                It.IsAny<ProtocolExecutionContext>(),
                 fixture.RootElement.GetProperty("provider").GetString()!,
-                fixture.RootElement.GetProperty("externalPlaylistId").GetString()!,
-                It.IsAny<CancellationToken>()))
+                fixture.RootElement.GetProperty("externalPlaylistId").GetString()!))
             .ReturnsAsync(tracks);
         using var factory = new ProtocolFactory(
             "Jellyfin",
@@ -541,9 +541,8 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
-                services.RemoveAll<IMusicMetadataService>();
-                services.AddSingleton(metadata.Object);
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
             });
         using var client = factory.CreateClient();
 
@@ -563,7 +562,7 @@ public sealed class ProtocolRouteFixtureTests
             fixture.RootElement.GetProperty("expectedParentId").GetString(),
             item.GetProperty("ParentId").GetString()));
         Assert.Equal(items.Count, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
-        metadata.VerifyAll();
+        gateway.VerifyAll();
     }
 
     [Fact]
@@ -929,13 +928,13 @@ public sealed class ProtocolRouteFixtureTests
         foreach (var fixture in fixtures.RootElement.EnumerateArray())
         {
             var observedRequests = new List<ObservedRequest>();
-            var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
-            metadata.Setup(service => service.SearchAllAsync(
+            var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+            gateway.Setup(service => service.SearchAsync(
+                    It.IsAny<ProtocolExecutionContext>(),
                     "window",
                     2,
                     2,
-                    2,
-                    It.IsAny<CancellationToken>()))
+                    2))
                 .ReturnsAsync(new SearchResult
                 {
                     Songs = [
@@ -951,10 +950,10 @@ public sealed class ProtocolRouteFixtureTests
                         new() { Id = "artist-2", Name = "two", ExternalProvider = "deezer" }
                     ]
                 });
-            metadata.Setup(service => service.SearchPlaylistsAsync(
+            gateway.Setup(service => service.SearchPlaylistsAsync(
+                    It.IsAny<ProtocolExecutionContext>(),
                     "window",
-                    2,
-                    It.IsAny<CancellationToken>()))
+                    2))
                 .ReturnsAsync([]);
 
             using var factory = new ProtocolFactory(
@@ -982,8 +981,8 @@ public sealed class ProtocolRouteFixtureTests
                 },
                 services =>
                 {
-                    services.RemoveAll<IMusicMetadataService>();
-                    services.AddSingleton(metadata.Object);
+                    services.RemoveAll<IProtocolProviderGateway>();
+                    services.AddSingleton(gateway.Object);
                 });
             using var client = factory.CreateClient();
             using var request = CreateFixtureRequest(fixture.GetProperty("request"));
@@ -1013,7 +1012,7 @@ public sealed class ProtocolRouteFixtureTests
                 Assert.Equal(fixture.GetProperty("expectedArtist").GetString(), search.Elements().Single(element => element.Name.LocalName == "artist").Attribute("id")?.Value);
             }
 
-            metadata.VerifyAll();
+            gateway.VerifyAll();
         }
     }
 

@@ -11,17 +11,20 @@ profiles() {
   local values=(standard)
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r value; do
-      case "$value" in spotify|apple|aio) values+=("$value") ;; esac
+      case "$value" in
+        spotify|spotify-lyrics) values+=(spotify-lyrics) ;;
+        apple|aio) values+=("$value") ;;
+      esac
     done < "$PROFILE_FILE"
   fi
-  printf '%s\n' "${values[@]}"
+  printf '%s\n' "${values[@]}" | awk '!seen[$0]++'
 }
 
 compose_args() {
   COMPOSE=(-f "$ROOT/docker-compose.yml")
   while IFS= read -r profile; do
     case "$profile" in
-      spotify) COMPOSE+=(-f "$ROOT/docker-compose.spotify-lyrics.yml") ;;
+      spotify-lyrics) COMPOSE+=(-f "$ROOT/docker-compose.spotify-lyrics.yml") ;;
       apple) COMPOSE+=(-f "$ROOT/docker-compose.apple.yml") ;;
       aio) COMPOSE+=(-f "$ROOT/docker-compose.aio.yml") ;;
     esac
@@ -29,16 +32,25 @@ compose_args() {
 }
 
 remember_profile() {
-  local wanted="$1"
+  local wanted="$1" temporary
+  [[ "$wanted" == spotify ]] && wanted=spotify-lyrics
   touch "$PROFILE_FILE"
+  temporary="$(mktemp)"
+  awk '{ if ($0 == "spotify") $0 = "spotify-lyrics"; if (!seen[$0]++) print }' "$PROFILE_FILE" > "$temporary"
+  mv "$temporary" "$PROFILE_FILE"
   grep -qxF "$wanted" "$PROFILE_FILE" 2>/dev/null || printf '%s\n' "$wanted" >> "$PROFILE_FILE"
 }
 
 forget_profile() {
   local unwanted="$1" temporary
+  [[ "$unwanted" == spotify ]] && unwanted=spotify-lyrics
   temporary="$(mktemp)"
   if [[ -f "$PROFILE_FILE" ]]; then
-    grep -vxF "$unwanted" "$PROFILE_FILE" > "$temporary" || true
+    if [[ "$unwanted" == spotify-lyrics ]]; then
+      grep -Ev '^(spotify|spotify-lyrics)$' "$PROFILE_FILE" > "$temporary" || true
+    else
+      grep -vxF "$unwanted" "$PROFILE_FILE" > "$temporary" || true
+    fi
   fi
   mv "$temporary" "$PROFILE_FILE"
 }
@@ -121,8 +133,8 @@ Usage: ./allstarr.sh COMMAND
   update                            Pull reviewed images and safely recreate
   status                            Show containers and the saved profile
   logs [service]                    Follow redacted container logs
-  enable spotify|aio                Add an optional saved profile
-  disable spotify|apple|aio         Remove an optional profile on next up
+  enable spotify-lyrics|aio         Add an optional saved profile
+  disable spotify-lyrics|apple|aio  Remove an optional profile on next up
   prepare-apple INPUT [ARCH]        Verify an APK/APKM or staged libs; enable Apple
   down                              Stop containers without deleting data
 
@@ -143,14 +155,14 @@ case "$command" in
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
     case "${1:-}" in
-      spotify|aio) remember_profile "$1" ;;
+      spotify|spotify-lyrics|aio) remember_profile "$1" ;;
       apple) die "use prepare-apple for Apple so its libraries are verified first" ;;
-      *) die "choose spotify or aio" ;;
+      *) die "choose spotify-lyrics or aio" ;;
     esac
     echo "Profile enabled. Run: ./allstarr.sh up"
     ;;
   disable)
-    case "${1:-}" in spotify|apple|aio) forget_profile "$1" ;; *) die "choose spotify, apple, or aio" ;; esac
+    case "${1:-}" in spotify|spotify-lyrics|apple|aio) forget_profile "$1" ;; *) die "choose spotify-lyrics, apple, or aio" ;; esac
     echo "Profile disabled. Run ./allstarr.sh up to apply; stored data is preserved."
     ;;
   down) compose_args; docker compose "${COMPOSE[@]}" down ;;

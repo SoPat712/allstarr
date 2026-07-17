@@ -332,7 +332,11 @@ public partial class JellyfinController
 
         var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
             ? Task.FromResult(new List<ExternalPlaylist>())
-            : _metadataService.SearchPlaylistsAsync(cleanQuery, integratedFetchLimit, HttpContext.RequestAborted);
+            : _providerGateway != null
+                ? _providerGateway.SearchPlaylistsAsync(
+                    HttpContext.RequireProtocolExecutionContext(), cleanQuery, integratedFetchLimit)
+                : _metadataService.SearchPlaylistsAsync(
+                    cleanQuery, integratedFetchLimit, HttpContext.RequestAborted);
 
         _logger.LogDebug("Playlist search enabled: {Enabled}, searching for: '{Query}'",
             _settings.EnableExternalPlaylists, cleanQuery);

@@ -17,7 +17,7 @@
     "authBoundary": "Users/Me verifies a backend principal and the shared protocol filter creates a ProtocolExecutionContext before the action can read cache or call local/external search; unresolved users remain transparent but cannot authorize user-owned work.",
     "fixture": "jellyfin-auth-boundary.json; jellyfin-search-shaping.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinSearchResponseSerializationTests; JellyfinSearchInterleaveTests; JellyfinControllerSearchLimitTests; ProtocolProviderGatewayContractTests",
-    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and paging are fixture-covered behind the Jellyfin search protocol adapter. Typed providers are planned through ProviderRouter; compatibility-only providers are filtered by exact durable account resolution. Public accountless metadata remains available to verified but unlinked backend users. Integrated search applies the requested page once."
+    "notes": "Auth failures preserve status/body and make zero provider calls. Merged-result status, body, content type, ordering, and paging are fixture-covered behind the Jellyfin search protocol adapter. Typed metadata providers route through ProtocolProviderGateway and ProviderRouter; compatibility-only providers remain explicit until migrated. Public accountless metadata remains available to verified but unlinked backend users. Integrated search applies the requested page once."
   },
   {
     "protocol": "jellyfin",

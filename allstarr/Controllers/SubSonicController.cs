@@ -187,10 +187,15 @@ public class SubsonicController : ControllerBase
 
         // Search playlists if enabled
         Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
-            ? _metadataService.SearchPlaylistsAsync(
-                cleanQuery,
-                window.AlbumFetchCount,
-                HttpContext.RequestAborted)
+            ? _providerGateway != null
+                ? _providerGateway.SearchPlaylistsAsync(
+                    CurrentProtocolContext,
+                    cleanQuery,
+                    window.AlbumFetchCount)
+                : _metadataService.SearchPlaylistsAsync(
+                    cleanQuery,
+                    window.AlbumFetchCount,
+                    HttpContext.RequestAborted)
             : Task.FromResult(new List<ExternalPlaylist>());
 
         await Task.WhenAll(subsonicTask, externalTask, playlistTask);
@@ -533,14 +538,18 @@ public class SubsonicController : ControllerBase
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
 
                 // Get playlist metadata
-                var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
+                var playlist = _providerGateway != null
+                    ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
+                    : await _metadataService.GetPlaylistAsync(provider, externalId);
                 if (playlist == null)
                 {
                     return _responseBuilder.CreateError(format, 70, "Playlist not found");
                 }
 
                 // Get playlist tracks
-                var tracks = await _metadataService.GetPlaylistTracksAsync(provider, externalId);
+                var tracks = _providerGateway != null
+                    ? await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId)
+                    : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
                 // Add all tracks to playlist cache so when they're played, we know they belong to this playlist
                 if (_playlistSyncService != null)
@@ -760,7 +769,9 @@ public class SubsonicController : ControllerBase
                 }
 
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
-                var playlist = await _metadataService.GetPlaylistAsync(provider, externalId);
+                var playlist = _providerGateway != null
+                    ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
+                    : await _metadataService.GetPlaylistAsync(provider, externalId);
 
                 if (playlist == null || string.IsNullOrEmpty(playlist.CoverUrl))
                 {

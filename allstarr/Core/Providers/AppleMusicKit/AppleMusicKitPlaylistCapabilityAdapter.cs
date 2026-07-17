@@ -136,6 +136,26 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
                 ProviderSettingScope.ProviderAccount, "MusicKit developer token and Music User Token", true)]),
         [adapter]);
 
+    public static ProviderRegistration CreateRegistration(
+        AppleMusicKitPlaylistCapabilityAdapter playlist,
+        AppleMusicKitMetadataCapabilityAdapter metadata) => new(
+        new ProviderDescriptor(StableProviderId, "Apple MusicKit",
+            "Account-bound Apple Music personal-library metadata and playlists through a selected per-user Music User Token.",
+            ProviderOrigin.BuiltIn, "1", "apple-musickit-library-v2",
+            [
+                new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required, "1",
+                    ["searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"],
+                    [ProviderAccountScope.User]),
+                new ProviderCapabilityDescriptor(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.Required, "1", ["getUserPlaylists", "getPlaylistTracks", "resolveArtwork"],
+                    [ProviderAccountScope.User])
+            ],
+            new ProviderPermissionDescriptor([ApiOrigin], false, ["musickitcredentials"]),
+            [new ProviderSettingDescriptor("musickitcredentials", ProviderSettingValueKind.Secret,
+                ProviderSettingScope.ProviderAccount, "MusicKit developer token and Music User Token", true)]),
+        [metadata, playlist]);
+
     private async Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context,
         Func<Credential, CancellationToken, Task<ProviderOutcome<T>>> operation)
     {

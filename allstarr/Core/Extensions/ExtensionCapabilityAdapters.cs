@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Downloads;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Services.Common;
 
@@ -28,7 +29,8 @@ public abstract class ExtensionCapabilityAdapterBase
     protected IReadOnlySet<string> Hooks { get; }
 
     protected async Task<ProviderOutcome<T>> InvokeAsync<T>(ProviderExecutionContext context, string hook,
-        object request, Func<JsonElement, T> map, bool requireAccount = false)
+        object request, Func<JsonElement, T> map, bool requireAccount = false,
+        Func<IDisposable>? openInvocationScope = null)
     {
         if (!Hooks.Contains(hook)) return Failure<T>(ProviderErrorKind.NotSupported);
         if (!context.ProviderId.Equals(ProviderId, StringComparison.Ordinal) || !context.Policy.AllowsProvider(ProviderId))
@@ -41,6 +43,7 @@ public abstract class ExtensionCapabilityAdapterBase
         {
             ProviderOutcome<T> Run()
             {
+                using var invocationScope = openInvocationScope?.Invoke();
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);
                 var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions));
@@ -120,26 +123,48 @@ public sealed class ExtensionStreamingCapabilityAdapter : ExtensionCapabilityAda
 
 public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderDownloadCapability
 {
+    private readonly ProviderDownloadArtifactResolver? artifacts;
+    private readonly long maximumArtifactBytes;
+    private readonly bool accountRequired;
+
     public ExtensionDownloadCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
-        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Download, secrets) { }
+        IProviderAccountSecretAccessor? secrets = null,
+        ProviderDownloadArtifactResolver? artifacts = null,
+        ProviderDownloadWorkspaceOptions? options = null) : base(sandbox, manifest, ProviderCapabilityKind.Download, secrets)
+    {
+        this.artifacts = artifacts;
+        maximumArtifactBytes = options?.MaximumArtifactBytes ?? 0;
+        accountRequired = manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Download).AccountRequired;
+    }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Download;
     public Task<ProviderOutcome<ProviderDownloadAvailability>> CheckAvailabilityAsync(ProviderExecutionContext context, ProviderDownloadAvailabilityRequest request)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         return InvokeAsync(context, "checkAvailability", new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString() }, value =>
             new ProviderDownloadAvailability(EnumValue<ProviderDownloadAvailabilityState>(value, "state"),
-                value.TryGetProperty("availableQualities", out var qualities) ? qualities.EnumerateArray().Select(item => Enum.Parse<ProviderAudioQuality>(item.GetString()!, true)) : [], Long(value, "estimatedBytes")));
+                value.TryGetProperty("availableQualities", out var qualities) ? qualities.EnumerateArray().Select(item => Enum.Parse<ProviderAudioQuality>(item.GetString()!, true)) : [], Long(value, "estimatedBytes")),
+            requireAccount: accountRequired);
     }
     public Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(ProviderExecutionContext context, ProviderDownloadRequest request, IProgress<ProviderDownloadProgress>? progress = null)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         context.RequireIdempotencyKey();
+        if (artifacts == null || maximumArtifactBytes < 1)
+            return Task.FromResult(Failure<ProviderDownloadedArtifact>(ProviderErrorKind.CapabilityUnavailable));
+        ExtensionArtifactInvocationScope? artifactScope = null;
         return InvokeAsync(context, "download", new { trackId = request.TrackId.Value, request.DurableJobId, workspaceId = request.Workspace.WorkspaceId, requestedQuality = request.RequestedQuality.ToString(), context.IdempotencyKey }, value =>
         {
             var artifact = new ProviderDownloadedArtifact(Text(value, "artifactId"), Text(value, "sha256"), value.GetProperty("sizeBytes").GetInt64(), Media(value), Bool(value, "verified"));
+            var written = artifactScope?.Result ?? throw new JsonException("The extension did not write an artifact through the host broker.");
+            if (!artifact.ArtifactId.Equals(written.ArtifactId, StringComparison.Ordinal) ||
+                !artifact.Sha256.Equals(written.Sha256, StringComparison.Ordinal) ||
+                artifact.SizeBytes != written.SizeBytes)
+                throw new JsonException("The extension artifact claim does not match the host-written artifact.");
             progress?.Report(new ProviderDownloadProgress(ProviderDownloadProgressStage.Completed, artifact.SizeBytes, artifact.SizeBytes));
             return artifact;
-        });
+        }, requireAccount: accountRequired, openInvocationScope: () => artifactScope = ExtensionArtifactInvocationScope.Open(
+            artifacts, request.Workspace, request.DurableJobId, ProviderId, maximumArtifactBytes,
+            context.CancellationToken));
     }
 }
 

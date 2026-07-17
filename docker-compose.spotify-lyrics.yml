@@ -12,6 +12,12 @@ services:
       - allstarr
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "--max-time", "3", "--silent", "--show-error", "--output", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   allstarr:
     environment:

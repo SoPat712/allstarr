@@ -95,11 +95,17 @@ public sealed class ComposeContractTests
         var overlay = File.ReadAllText(Path.Combine(_repositoryRoot, "docker-compose.spotify-lyrics.yml"));
 
         Assert.Contains("akashrchandran/spotify-lyrics-api@sha256:", overlay, StringComparison.Ordinal);
+        Assert.Contains("  spotify-lyrics:", overlay, StringComparison.Ordinal);
         Assert.Contains("SP_DC: ${SPOTIFY_API_SESSION_COOKIE:-}", overlay, StringComparison.Ordinal);
         Assert.Contains("SpotifyApi__LyricsApiUrl:", overlay, StringComparison.Ordinal);
+        Assert.Contains("healthcheck:", overlay, StringComparison.Ordinal);
         Assert.DoesNotContain("ports:", overlay, StringComparison.Ordinal);
         Assert.DoesNotContain(":latest", overlay, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/var/run/docker.sock", overlay, StringComparison.Ordinal);
+
+        var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
+        Assert.Contains("enable spotify-lyrics|aio", controller, StringComparison.Ordinal);
+        Assert.Contains("spotify|spotify-lyrics", controller, StringComparison.Ordinal);
     }
 
     [Fact]

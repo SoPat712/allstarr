@@ -21,7 +21,7 @@ Allstarr encryption key ring with owner-only permissions. Edit `.env`, then star
 Spotify lyrics needs only its cookie in the protected `.env`:
 
 ```bash
-./allstarr.sh enable spotify
+./allstarr.sh enable spotify-lyrics
 ./allstarr.sh up
 ```
 
@@ -67,13 +67,13 @@ window followed by new events.
 ## Removing and re-adding a service
 
 ```bash
-./allstarr.sh disable spotify
+./allstarr.sh disable spotify-lyrics
 ./allstarr.sh disable apple
 ./allstarr.sh up
 ```
 
 Disabling a profile removes its containers on the next `up` but keeps its volumes and durable Allstarr settings.
-Re-enable Spotify with `enable spotify`; re-enable Apple by running `prepare-apple` again or adding `apple` to the
+Re-enable Spotify lyrics with `enable spotify-lyrics`; re-enable Apple by running `prepare-apple` again or adding `apple` to the
 local `.allstarr-profiles` file after the locked wrapper context is present.
 
 ## Adding another sidecar

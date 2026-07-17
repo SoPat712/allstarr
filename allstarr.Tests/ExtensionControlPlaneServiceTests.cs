@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
+using allstarr.Core.Downloads;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -127,7 +128,11 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new FirstPartyExtensionPolicy(_configuration), _configuration,
+            new FirstPartyExtensionPolicy(_configuration),
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
+            new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
+            _configuration,
             NullLogger<ExtensionRuntimeCoordinator>.Instance);
 
         package = await coordinator.ActivateAsync(package.Id, package.Revision);
@@ -225,7 +230,11 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new FirstPartyExtensionPolicy(configuration), configuration,
+            new FirstPartyExtensionPolicy(configuration),
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
+            new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
+            configuration,
             NullLogger<ExtensionRuntimeCoordinator>.Instance);
 
         await coordinator.StartAsync(default);
