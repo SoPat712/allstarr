@@ -24,7 +24,7 @@ Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
 An old installation's archived libraries can be reused only when they pass the official hash lock:
 
 ```bash
-tools/apple-provider/prepare.sh --staged-libs /backup/rootfs/system/lib64 --arch x86_64
+./allstarr.sh prepare-apple /backup/rootfs/system/lib64 x86_64
 ```
 
 The controller clones official wrapper-v2 tag `0.0.2`, verifies its full locked commit, stages the official

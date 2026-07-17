@@ -66,15 +66,19 @@ init() {
 }
 
 prepare_apple() {
-  local bundle="${1:-}" arch="${2:-x86_64}" runtime="linux/amd64"
+  local input="${1:-}" arch="${2:-x86_64}" runtime="linux/amd64"
   [[ -f "$ROOT/.env" ]] || die "run ./allstarr.sh init before enabling providers"
-  [[ -n "$bundle" && -f "$bundle" ]] || die "usage: ./allstarr.sh prepare-apple /path/to/apple-music.apk[m] [x86_64|arm64-v8a]"
+  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "usage: ./allstarr.sh prepare-apple APK_OR_STAGED_LIBS [x86_64|arm64-v8a]"
   case "$arch" in
     x86_64) ;;
     arm64-v8a) runtime=linux/arm64 ;;
     *) die "Apple architecture must be x86_64 or arm64-v8a" ;;
   esac
-  bash "$ROOT/tools/apple-provider/prepare.sh" --apkm "$bundle" --arch "$arch"
+  if [[ -d "$input" ]]; then
+    bash "$ROOT/tools/apple-provider/prepare.sh" --staged-libs "$input" --arch "$arch"
+  else
+    bash "$ROOT/tools/apple-provider/prepare.sh" --apkm "$input" --arch "$arch"
+  fi
   if grep -q '^APPLE_WRAPPER_TARGET_ARCH=' "$ROOT/.env"; then
     sed -i.bak "s|^APPLE_WRAPPER_TARGET_ARCH=.*|APPLE_WRAPPER_TARGET_ARCH=$arch|" "$ROOT/.env"
     sed -i.bak "s|^APPLE_WRAPPER_RUNTIME_PLATFORM=.*|APPLE_WRAPPER_RUNTIME_PLATFORM=$runtime|" "$ROOT/.env"
@@ -119,7 +123,7 @@ Usage: ./allstarr.sh COMMAND
   logs [service]                    Follow redacted container logs
   enable spotify|aio                Add an optional saved profile
   disable spotify|apple|aio         Remove an optional profile on next up
-  prepare-apple FILE [ARCH]         Verify/stage a legal APK/APKM and enable Apple
+  prepare-apple INPUT [ARCH]        Verify an APK/APKM or staged libs; enable Apple
   down                              Stop containers without deleting data
 
 Optional profiles are saved in .allstarr-profiles. No command deletes volumes,

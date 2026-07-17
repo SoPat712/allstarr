@@ -36,6 +36,13 @@ library against the official wrapper-v2 lock before it will build:
 Use `arm64-v8a` instead of `x86_64` on an ARM64 Docker host. Finish Apple login and 2FA in the WebUI. The Apple
 download login is separate from every user's Apple MusicKit account.
 
+An existing installation can pass its staged library directory instead of the APK/APKM. The same upstream hashes
+must pass before the profile is enabled:
+
+```bash
+./allstarr.sh prepare-apple /backup/apple_libs x86_64
+```
+
 The AIO override remains an offline first-party extension bundle. It is not an everything-in-one image and does not
 quietly enable provider accounts or sidecars.
 
