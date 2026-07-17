@@ -42,7 +42,7 @@ class BoundedProcessRunner:
             stderr_task = asyncio.create_task(self._read_limited(process.stderr))
             try:
                 await asyncio.wait_for(process.wait(), timeout=self._settings.subprocess_timeout_seconds)
-            except TimeoutError as exc:
+            except (TimeoutError, asyncio.TimeoutError) as exc:
                 os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
                 await asyncio.gather(stdout_task, stderr_task)
