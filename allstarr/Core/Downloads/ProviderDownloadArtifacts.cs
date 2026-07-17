@@ -52,6 +52,23 @@ public sealed record ProviderDownloadWorkspaceRequest(Guid TenantId, Guid? Owner
 
 public sealed record ProviderDownloadWorkspace(Guid RecordId, ProviderManagedWorkspaceReference Reference);
 
+public sealed record ProviderDownloadArtifactWriteRequest(
+    ProviderManagedWorkspaceReference Workspace,
+    Guid DurableJobId,
+    string ProviderId,
+    string ArtifactId,
+    Stream Content,
+    long MaximumBytes)
+{
+    public long? ExpectedBytes { get; init; }
+    public Action<long, long?>? Progress { get; init; }
+}
+
+public sealed record ProviderDownloadArtifactWriteResult(
+    string ArtifactId,
+    string Sha256,
+    long SizeBytes);
+
 public sealed record VerifiedProviderDownloadArtifact(Guid Id, Guid WorkspaceRecordId, [property: JsonIgnore] string SourcePath,
     string ContentSha256, long Length, Guid TenantId, Guid? OwnerUserId, Guid DurableJobId,
     string ProviderId, Guid? ProviderAccountId, ProviderDownloadArtifactState State, Guid? ManagedFileId)
@@ -63,6 +80,7 @@ public sealed class ProviderDownloadWorkspaceOptions
 {
     public const string SectionName = "Downloads:Workspace";
     public string RootPath { get; set; } = "./downloads/workspaces";
+    public long MaximumArtifactBytes { get; set; } = 2L * 1024 * 1024 * 1024;
 }
 
 public interface IProviderDownloadArtifactStore

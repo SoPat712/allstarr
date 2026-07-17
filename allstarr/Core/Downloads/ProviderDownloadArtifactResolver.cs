@@ -32,6 +32,76 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         return new(entity.Id, new ProviderManagedWorkspaceReference(entity.WorkspaceId));
     }
 
+    /// <summary>
+    /// Copies provider bytes into a registered private workspace. Providers never receive
+    /// a host filesystem path, and the returned contract is derived from bytes the host wrote.
+    /// </summary>
+    public async Task<ProviderDownloadArtifactWriteResult> WriteAsync(
+        ProviderDownloadArtifactWriteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) ||
+            request.MaximumBytes < 1 || request.ExpectedBytes is < 0)
+            throw new ArgumentException("Download artifact write constraints are invalid.", nameof(request));
+        if (request.ExpectedBytes > request.MaximumBytes)
+            throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
+
+        var persistedWorkspace = await store.GetWorkspaceAsync(request.Workspace.WorkspaceId, cancellationToken)
+            ?? throw new InvalidOperationException("The provider download workspace is not registered.");
+        var providerId = request.ProviderId.Trim().ToLowerInvariant();
+        if (persistedWorkspace.DurableJobId != request.DurableJobId ||
+            !persistedWorkspace.ProviderId.Equals(providerId, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("The provider download does not belong to this workspace.");
+
+        var relative = NormalizeArtifactReference(request.ArtifactId);
+        var workspaceRoot = Contained(WorkspaceRoot(), persistedWorkspace.WorkspaceId);
+        RejectSymlink(workspaceRoot);
+        var destination = Contained(workspaceRoot, relative);
+        var parent = Path.GetDirectoryName(destination)!;
+        Directory.CreateDirectory(parent);
+        RejectPathSymlinks(workspaceRoot, parent);
+
+        if (File.Exists(destination))
+            return await DescribeExistingAsync(relative, destination, request.MaximumBytes, cancellationToken);
+
+        var partial = destination + ".partial-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await using (var output = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            using (var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+            {
+                var buffer = new byte[128 * 1024];
+                long written = 0;
+                while (true)
+                {
+                    var read = await request.Content.ReadAsync(buffer, cancellationToken);
+                    if (read == 0) break;
+                    written = checked(written + read);
+                    if (written > request.MaximumBytes)
+                        throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
+                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    hasher.AppendData(buffer, 0, read);
+                    request.Progress?.Invoke(written, request.ExpectedBytes);
+                }
+                if (written < 1)
+                    throw new InvalidDataException("The provider returned an empty download artifact.");
+                if (request.ExpectedBytes.HasValue && written != request.ExpectedBytes.Value)
+                    throw new InvalidDataException("The provider download length does not match its response contract.");
+                await output.FlushAsync(cancellationToken);
+                output.Close();
+                File.Move(partial, destination, overwrite: false);
+                return new(relative, Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant(), written);
+            }
+        }
+        catch
+        {
+            if (File.Exists(partial)) File.Delete(partial);
+            throw;
+        }
+    }
+
     public async Task<VerifiedProviderDownloadArtifact> ResolveAsync(ProviderManagedWorkspaceReference workspace,
         ProviderDownloadedArtifact output, CancellationToken cancellationToken = default)
     {
@@ -152,6 +222,22 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             current = Path.Combine(current, part);
             if (File.Exists(current) || Directory.Exists(current)) RejectSymlink(current);
         }
+    }
+
+    private static async Task<ProviderDownloadArtifactWriteResult> DescribeExistingAsync(
+        string relative,
+        string path,
+        long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        RejectSymlink(path);
+        var info = new FileInfo(path);
+        if (info.Length < 1 || info.Length > maximumBytes)
+            throw new InvalidDataException("The existing managed artifact has an invalid size.");
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        return new(relative, Convert.ToHexString(hash).ToLowerInvariant(), info.Length);
     }
 
     private static VerifiedProviderDownloadArtifact Result(ProviderDownloadArtifactEntity item, string path) => new(

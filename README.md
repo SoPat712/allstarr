@@ -19,25 +19,19 @@ Standard Compose runs Allstarr, Postgres, and Valkey. It exposes one client prot
 ```bash
 git clone https://github.com/SoPat712/allstarr.git
 cd allstarr
-cp .env.example .env
-mkdir -p secrets downloads kept
-umask 077
-openssl rand -base64 32 > secrets/postgres-password.txt
-key="$(openssl rand -base64 32)"
-printf '{"activeKeyId":"key-1","keys":{"key-1":"%s"}}\n' "$key" > secrets/allstarr-keyring.json
-unset key
-chmod 600 .env secrets/postgres-password.txt secrets/allstarr-keyring.json
+./allstarr.sh init
 ```
 
 Edit `.env`. At minimum, select `BACKEND_TYPE`, set the matching backend URL, and review the image tag and mounted paths. Jellyfin server-side library operations also need its API key and user ID.
 
 ```bash
-docker compose config --quiet
-docker compose pull
-docker compose up -d
-docker compose ps
+./allstarr.sh up
 curl --fail http://127.0.0.1:5274/health/ready
 ```
+
+`allstarr.sh` remembers optional profiles, validates the merged Compose model, creates secrets with private file
+permissions, and never deletes volumes. Normal upgrades are `./allstarr.sh update`; they pull reviewed images and
+recreate the saved profile without requiring users to remember a growing list of `-f` arguments.
 
 The standard stack is the smaller, recommended default. The AIO override mounts the checksum-locked offline
 first-party package bundle, but it does not force optional provider sidecars on anyone:
@@ -49,13 +43,15 @@ docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 The bundle lock is still authoritative. A bundled package marked blocked is not staged or activated merely because
 the AIO files are mounted.
 
-Apple downloads are optional and are not bundled with Standard or AIO. Run a compatible Apple provider gateway
-separately, then give Allstarr its URL through the dashboard or `APPLE_DOWNLOAD_URL`. The URL must point to the
-gateway API, not directly to wrapper-v2. Removing that URL disables Apple download routes without changing Postgres
-or media volumes. See [Apple download provider setup](docs/operations/apple-download-provider.md).
+Apple downloads are optional and are not bundled with Standard or AIO. The Apple profile builds the repository's
+small gateway with GAMDL 3.8.2 and the official wrapper-v2 0.0.2 source. Allstarr never supplies Apple binaries, so
+the operator provides one legally obtained compatible APK/APKM and runs
+`./allstarr.sh prepare-apple /path/to/file.apkm`. Removing the profile disables Apple download routes without
+changing Postgres, media, or the persistent wrapper login session. See
+[Apple download provider setup](docs/operations/apple-download-provider.md).
 
 Spotify lyrics are optional too. To run the pinned private-network sidecar, add
-`docker-compose.spotify-lyrics.yml` to the Compose command and follow the
+it with `./allstarr.sh enable spotify`, then run `./allstarr.sh up`. Follow the
 [Spotify lyrics sidecar guide](docs/operations/spotify-lyrics-sidecar.md). Importing an old `.env` can restore the
 endpoint URL, but it cannot start the sidecar or pass a cookie to it.
 
@@ -100,6 +96,7 @@ Allstarr supports Jellyfin clients and Subsonic/OpenSubsonic clients through the
 - [Configuration](CONFIGURATION.md)
 - [Client compatibility](CLIENTS.md)
 - [Storage operations](docs/operations/storage.md)
+- [Deployment profiles and optional services](docs/operations/deployment-profiles.md)
 - [Extension SDK](docs/extensions/sdk-v1.md)
 - [Contributing](CONTRIBUTING.md)
 - [Implementation charter and phase history](OVERHAUL.md)

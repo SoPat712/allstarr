@@ -103,6 +103,29 @@ public sealed class ComposeContractTests
     }
 
     [Fact]
+    public void AppleOverlay_IsOptionalSourceLockedAndPrivate()
+    {
+        RenderCompose("docker-compose.yml", "docker-compose.apple.yml");
+        var overlay = File.ReadAllText(Path.Combine(_repositoryRoot, "docker-compose.apple.yml"));
+        var gatewayDockerfile = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "sidecars", "apple-gateway", "Dockerfile"));
+        var gatewayProject = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "sidecars", "apple-gateway", "pyproject.toml"));
+        var sourceLock = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "tools", "apple-provider", "source-lock.json"));
+
+        Assert.Contains("AppleDownload__BaseUrl: http://apple-gateway:8000", overlay, StringComparison.Ordinal);
+        Assert.Contains("APPLE_GATEWAY_WRAPPER_DECRYPT_PORT: 10020", overlay, StringComparison.Ordinal);
+        Assert.Contains("./.apple-provider/wrapper-v2", overlay, StringComparison.Ordinal);
+        Assert.Contains("apple-wrapper-session:", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("ports:", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("/var/run/docker.sock", overlay, StringComparison.Ordinal);
+        Assert.Contains("python:3.12.11-slim-bookworm@sha256:", gatewayDockerfile, StringComparison.Ordinal);
+        Assert.Contains("gamdl==3.8.2", gatewayProject, StringComparison.Ordinal);
+        Assert.Contains("0bc16acb55f557b5c98d49f21d7af685410f7f8b", sourceLock, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RuntimeImage_ContainsBackupToolsAndPinnedDotnetBases()
     {
         var dockerfile = File.ReadAllText(Path.Combine(_repositoryRoot, "Dockerfile"));
@@ -144,6 +167,11 @@ public sealed class ComposeContractTests
             "docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet",
             workflow,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "docker compose -f docker-compose.yml -f docker-compose.apple.yml config --quiet",
+            workflow,
+            StringComparison.Ordinal);
+        Assert.Contains("uv sync --frozen --extra test", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("continue-on-error: true", workflow, StringComparison.Ordinal);
     }
 
@@ -181,6 +209,10 @@ public sealed class ComposeContractTests
             StringComparison.Ordinal);
         Assert.Contains(
             "docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet",
+            workflow,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "docker compose -f docker-compose.yml -f docker-compose.apple.yml config --quiet",
             workflow,
             StringComparison.Ordinal);
         Assert.Contains("needs: build-and-test", workflow, StringComparison.Ordinal);

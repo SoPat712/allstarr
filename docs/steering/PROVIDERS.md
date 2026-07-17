@@ -59,8 +59,9 @@ Typed routes must register an accurate descriptor and matching capability implem
 
 ### Apple
 
-- `apple-download` is an optional, separately deployed compatible gateway configured by URL. Standard and AIO do
-  not bundle GAMDL, wrapper-v2, or the gateway stack.
+- `apple-download` is an optional repository gateway and typed managed-download adapter. Its separate Compose
+  profile uses GAMDL 3.8.2 and locked wrapper-v2 0.0.2 source after legal Apple libraries pass upstream hashes.
+  Standard and AIO do not start that stack.
 - `apple-musickit` is a separate per-user MusicKit account for personal playlists and library operations.
 - Never pass a Music User Token to the download gateway or treat gateway login state as MusicKit authorization.
 

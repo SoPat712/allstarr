@@ -117,9 +117,9 @@ These defaults are confirmed product decisions:
 - The SDK design must leave room for later automation, enrichment, recommendations, and UI extensions.
 - Standard Docker Compose is the recommended default: core app, Postgres, and Valkey.
 - AIO Compose remains available for the verified first-party package bundle; provider sidecars stay separate opt-ins.
-- Allstarr does not bundle or manage GAMDL, wrapper-v2, or an Apple gateway in Standard or AIO. An operator may
-  connect a separately deployed compatible gateway by URL. This repository does not ship or maintain an Apple
-  gateway Compose overlay.
+- Standard and AIO do not start Apple services. The separate Apple overlay builds the repository gateway with
+  GAMDL 3.8.2 and the source-locked official wrapper-v2 0.0.2 checkout after the operator supplies verified legal
+  Apple libraries. Removing the overlay degrades only Apple capabilities and preserves its session volume.
 - Low-resource alternatives must be supported. Removing optional services should reduce capability, not break the app.
 - Apple is split into `apple-download` and `apple-musickit`.
 - Extension registry trust starts with checksum verification. Add signatures later.
@@ -172,7 +172,7 @@ Likely credentials for manual/live validation:
 | Secrets | [allstarr/Core/Secrets](allstarr/Core/Secrets) | Provider-account records hold secret references. Versioned secret values are protected with AES-GCM using an external key ring, with replace, rotate, revoke, and tenant access rules. |
 | Durable work | [allstarr/Core/Jobs](allstarr/Core/Jobs), [allstarr/Controllers/JobsController.cs](allstarr/Controllers/JobsController.cs) | Jobs, attempts, leases, idempotency keys, cancellation, retry state, sidecar deferrals, and transactional outbox messages live in the selected database. Users can inspect and cancel only their own jobs; admins can inspect all jobs. |
 | Operations | [allstarr/Core/Operations](allstarr/Core/Operations), [allstarr/Controllers/DiagnosticsController.cs](allstarr/Controllers/DiagnosticsController.cs) | Liveness, readiness, sidecar capability state, redacted structured logs, correlated diagnostics, and Prometheus-style metrics expose the durable foundation without leaking credentials, media URLs, or account names. |
-| Apple download gateway | [AppleMusicController.cs](allstarr/Controllers/AppleMusicController.cs), [Apple Music services](allstarr/Services/AppleMusic) | Allstarr calls one separately deployed compatible gateway by URL. The repository does not vendor GAMDL or wrapper-v2. The gateway contract, health probe, and runtime manifest decide which capabilities can be advertised. |
+| Apple download gateway | [AppleMusicController.cs](allstarr/Controllers/AppleMusicController.cs), [Apple Music services](allstarr/Services/AppleMusic), [gateway](sidecars/apple-gateway) | The optional profile calls the repository gateway, which runs pinned GAMDL against a locked official wrapper-v2 build. The gateway contract, health probe, and runtime manifest decide which capabilities can be advertised. |
 | Jellyfin protocol | [allstarr/Controllers/JellyfinController.Audio.cs](allstarr/Controllers/JellyfinController.Audio.cs), [allstarr/Controllers/JellyfinController.Search.cs](allstarr/Controllers/JellyfinController.Search.cs), [allstarr/Controllers/JellyfinController.PlaylistHandler.cs](allstarr/Controllers/JellyfinController.PlaylistHandler.cs) | Jellyfin compatibility stays the first protocol adapter. |
 | Spotify playlists | [allstarr/Controllers/JellyfinController.Spotify.cs](allstarr/Controllers/JellyfinController.Spotify.cs), [docs/steering/SPOTIFY.md](docs/steering/SPOTIFY.md) | Durable provider-neutral playlist links are the current path. Spotify injection remains a compatibility path. |
 | MusicBrainz | [allstarr/Services/MusicBrainz/MusicBrainzService.cs](allstarr/Services/MusicBrainz/MusicBrainzService.cs) | MusicBrainz contributes enrichment, canonical identity, matching, tagging, and local recommendation relationships. |
@@ -236,7 +236,8 @@ Prioritize structural improvements that make behavior easier to reason about: se
 - Postgres: durable state for users, providers, health, libraries, matches, playlists, jobs, events, and job/outbox records in Docker deployments.
 - SQLite: an explicit manual/small-install storage mode, not an automatic failover database.
 - Valkey or Redis: cache, short-lived probe state, locks, and queue acceleration. It must not be the only durable record of a job or side effect.
-- External services: optional lyrics tools, AudioMuse-AI, and provider-specific runtimes. Apple downloads use an operator-owned compatible gateway; GAMDL and wrapper-v2 are not repository services.
+- External services: optional lyrics tools, AudioMuse-AI, and provider-specific runtimes. Apple downloads use the
+  separate source-locked Apple profile; GAMDL and wrapper-v2 are never part of Standard or AIO.
 - Extensions: installed packages with manifests, capability declarations, permissions, settings, health checks, logs, and optional UI panels.
 
 ## Capability Contracts
@@ -319,7 +320,7 @@ Provider identifiers are lowercase, stable, and never inferred from display name
 
 Provider split:
 
-- `apple-download`: an operator-owned compatible gateway for download and optional streaming. A GAMDL-backed
+- `apple-download`: the optional compatible gateway for download and download-backed streaming. Its GAMDL-backed
   gateway can produce managed song, music-video, synced-lyrics, cover-art, and rich-tagging artifacts where its
   advertised contract, account, source, and codec support them.
 - `apple-musickit`: per-user MusicKit API access for personal-library playlists and playlist items, library songs/albums/artists, and documented library or favorite-state actions. It uses the Apple developer token plus that user's Music User Token.
@@ -813,8 +814,8 @@ Files:
 - `docker-compose.yml`: core app, Postgres, Valkey.
 - `docker-compose.aio.yml`: verified offline first-party package bundle, with no provider sidecars.
 - `docker-compose.dev.yml`: local build override.
-- The operator deploys any Apple/GAMDL provider gateway separately. It is not an Allstarr Compose file or part of
-  the Standard or AIO product contract. Allstarr receives only its URL and provider configuration.
+- `docker-compose.apple.yml`: optional repository gateway plus the source-locked wrapper-v2 build. It remains
+  outside Standard and AIO and requires operator-supplied, hash-verified legal Apple libraries.
 
 Lyrics and low-RAM overrides are ideas for later releases. They are not checked in, tested, or part of the current
 version 3 beta deployment contract. Optional lyrics services run separately and connect by URL today.
@@ -832,8 +833,8 @@ docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
-An optional compatible Apple provider gateway is deployed and upgraded separately. After it is healthy, an admin adds its URL
-as an `apple-download` provider in the WebUI. Allstarr probes the endpoint before activation and registers only
+The optional Apple profile is prepared with `allstarr.sh prepare-apple` and started with the saved deployment
+profile. Allstarr probes the endpoint before activation and registers only
 the capabilities the compatible endpoint actually advertises and passes contract checks for. Provider cards,
 source selectors, routing priority controls, jobs, and diagnostics show each capability as available, degraded,
 unsupported, disabled, or needing configuration. Removing the endpoint disables only those routes. Re-adding a
@@ -1066,9 +1067,9 @@ Phase 5 replaces trusted extension folders with a reviewed SDK v1 provider runti
 - The admin UI manages registries, checksum staging, per-permission approval or denial, activation, disable,
   rollback, retained-account uninstall, logs, revisions, and failure state without exposing package paths,
   manifests, content hashes, or credentials. The author guide is [Extension SDK v1](docs/extensions/sdk-v1.md).
-- The Apple download provider uses a URL-configured external gateway. Allstarr validates its API, health,
-  authentication state, and capability manifest but does not build, publish, update, or roll back the gateway.
-  Standard and AIO do not include GAMDL or wrapper-v2.
+- The Apple download provider uses the optional repository gateway and typed managed-artifact adapter. Allstarr
+  validates its API, health, authentication state, capability manifest, MIME, size, checksum, and workspace
+  ownership. Standard and AIO still do not include GAMDL or wrapper-v2.
 
 The Phase 5 exit gate passed 1,249 .NET tests with no skips. The focused extension, registry, router, host,
 storage, and WebUI gate passed 133 tests; the final capability-adapter gate passed 31 tests. The release build has
@@ -1206,7 +1207,7 @@ The final pass reconciles the repository with the implemented version 3 beta bas
   provenance or an explicit `not-declared` status.
   Production-derived captures and private clone material are explicitly prohibited.
 - Standard, development, and AIO Compose files render. Standard stays small and AIO adds only the checksum-locked
-  offline first-party bundle. Apple downloads are an independent external gateway configured by URL.
+  offline first-party bundle. Apple downloads are an independent optional, source-locked Compose profile.
 - The user-visible provider support matrix now reflects durable Last.fm and ListenBrainz scrobbling, Last.fm and
   ListenBrainz recommendations, MusicBrainz-informed local similarity, managed enrichment, and the real SDK v1
   capability boundary.
@@ -1280,12 +1281,11 @@ Exit: a user can review a match and playlist preview, run duplicate-safe materia
 - Expand `ExtensionManager` into the documented constrained provider runtime.
 - Add registry management without default third-party registries, mandatory registry checksum verification, permission review, logs, staged updates, rollback, and route integration.
 - Add version-pinned external-service compatibility checks, contract tests, capability diffs, and rollback guidance. Do not use `docker compose up` as a source-code updater.
-- Make the operator-owned compatible gateway an optional external `apple-download` provider configured by URL in the WebUI. Discover and
+- Make the compatible gateway an optional `apple-download` provider. Discover and
   verify its API version, authentication state, health, and per-feature capability manifest before registration.
   Display those capabilities and their recovery actions consistently in provider cards, source and priority
   controls, jobs, diagnostics, and routing decisions. Standard and AIO must work without it. Document how to add,
-  replace, disable, and re-add the endpoint later without database or media loss. Do not ship or maintain its
-  Compose stack in this repository.
+  replace, disable, and re-add the profile later without database, session, or media loss.
 - Add fake and malicious-package coverage plus extension-authoring documentation.
 
 Exit: an enabled test provider participates in routing only after its package, permissions, health, and account scope pass validation.

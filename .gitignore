@@ -70,6 +70,8 @@ obj/
 
 /.env
 /.env.before-*
+/.allstarr-profiles
+/.apple-provider/
 /secrets/
 /allstarr-backups/
 /state-transfers/
@@ -95,6 +97,8 @@ __pycache__/
 
 # Docker volumes
 /valkey-data/
+/.apple-provider/
+/apple-downloads/
 
 # Keep only the exact versioned OpenAPI artifact. Local feature notes, raw captures, cloned repositories,
 # ad-hoc scripts, and credentials under apis/ are intentionally ignored.

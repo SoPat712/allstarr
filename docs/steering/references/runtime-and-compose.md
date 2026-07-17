@@ -115,8 +115,9 @@ Possible later repository profiles remain separate work:
 - `docker-compose.lyrics.yml`: lyrics sidecars only.
 - `docker-compose.lowram.yml`: lower memory settings and fewer services.
 
-Allstarr does not ship or maintain a GAMDL Compose overlay. An operator may run a compatible Apple provider
-gateway in another stack and configure its URL. Standard and AIO remain complete without it.
+`docker-compose.apple.yml` is an explicit optional profile. It builds the repository gateway and the locked
+wrapper-v2 source only after the operator supplies hash-verified legal Apple libraries. Standard and AIO remain
+complete without it, and removing the profile preserves Postgres, media, gateway state, and wrapper login state.
 
 Compose-file selection and any Compose profiles are explicit operator inputs. Deployment documentation should show the selected files/profile, database choice, persistent volume locations, and the rendered `docker compose config` output before an upgrade. Do not infer AIO or low-RAM mode from available memory, and do not hide a storage-provider change inside an override file.
 

@@ -19,14 +19,6 @@ public static class BuiltInProviderDescriptorCatalog
     public static IReadOnlyList<ProviderRegistration> LegacyRegistrations { get; } =
     [
         Registration(
-            "apple-download",
-            "Apple download",
-            "The existing gamdl-backed Apple catalog and managed download lane.",
-            Optional(ProviderCapabilityKind.Metadata),
-            Required(ProviderCapabilityKind.Streaming),
-            Required(ProviderCapabilityKind.Download),
-            Required(ProviderCapabilityKind.Health)),
-        Registration(
             "qobuz",
             "Qobuz",
             "The existing Qobuz catalog, playlist-read, stream, and managed download lanes.",

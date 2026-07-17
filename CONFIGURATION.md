@@ -2,6 +2,9 @@
 
 Start with [.env.example](.env.example). It is the checked-in list of deployment-facing settings for standard Compose. The dashboard can manage supported runtime settings, but secrets should still enter through protected bootstrap files or the encrypted provider-account flow, not source control.
 
+For the turnkey install, optional-service, update, and custom-overlay commands, use the
+[deployment profile guide](docs/operations/deployment-profiles.md).
+
 `v3.0.0-beta.1` is a fresh-install baseline. Recreate the deployment instead of copying an old `.env` wholesale.
 After the new database is ready, the administrator WebUI can preview and import the safe allowlisted subset without
 replacing existing settings. Old Redis, mapping, extension, and job state is not imported automatically. Follow the
@@ -56,11 +59,11 @@ docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 
 Mounting that bundle does not bypass package state or permission review. Entries marked blocked remain inactive.
 
-Apple downloads use a separately deployed compatible provider gateway. They are not part of Standard or AIO and
-this repository does not build or update GAMDL or wrapper-v2 for the operator. Configure the gateway URL in the
-dashboard or as `APPLE_DOWNLOAD_URL`. The URL must be the gateway's Allstarr-compatible HTTP API, not the raw
-wrapper-v2 address. Adding or removing it does not replace the database, Valkey, application state, or media
-volumes. Follow [the Apple download provider procedure](docs/operations/apple-download-provider.md).
+Apple downloads are not part of Standard or AIO. The optional `docker-compose.apple.yml` profile builds Allstarr's
+gateway with GAMDL 3.8.2 and the source-locked official wrapper-v2 0.0.2 checkout. It does not contain or download
+Apple code. Prepare it with `./allstarr.sh prepare-apple FILE [ARCH]`, using a legally obtained compatible APK/APKM.
+Adding or removing the profile does not replace the database, Valkey, application state, media volumes, or the
+wrapper session volume. Follow [the Apple download provider procedure](docs/operations/apple-download-provider.md).
 
 The optional Spotify lyrics service is likewise absent from Standard and AIO. Add the pinned
 `docker-compose.spotify-lyrics.yml` overlay only when needed, following

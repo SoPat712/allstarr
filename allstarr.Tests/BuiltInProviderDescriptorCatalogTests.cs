@@ -2,6 +2,10 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Providers;
 using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Providers.AppleDownload;
+using allstarr.Core.Downloads;
+using allstarr.Models.Settings;
+using allstarr.Services.AppleMusic;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Services;
 using Moq;
@@ -21,11 +25,20 @@ public sealed class BuiltInProviderDescriptorCatalogTests
         var spotify = new SpotifyPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);
+        var appleDownload = new AppleDownloadCapabilityAdapter(
+            new HttpClient(new Mock<HttpMessageHandler>().Object),
+            new AppleDownloadSettings(),
+            new Mock<IAppleDownloadEndpointDiscovery>(MockBehavior.Strict).Object,
+            new ProviderDownloadArtifactResolver(
+                new Mock<IProviderDownloadArtifactStore>(MockBehavior.Strict).Object,
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.GetTempPath() }),
+            1024);
         var registry = new ProviderRegistry(
         [
             DeezerMetadataCapabilityAdapter.CreateRegistration(deezer),
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(apple),
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(spotify),
+            AppleDownloadCapabilityAdapter.CreateRegistration(appleDownload),
             .. BuiltInProviderDescriptorCatalog.LegacyRegistrations
         ]);
 

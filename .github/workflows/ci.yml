@@ -83,6 +83,13 @@ jobs:
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
 
+      - name: Test Apple gateway contracts
+        working-directory: sidecars/apple-gateway
+        run: |
+          python -m pip install uv==0.11.29
+          UV_CACHE_DIR=/tmp/allstarr-uv-cache uv sync --frozen --extra test
+          UV_CACHE_DIR=/tmp/allstarr-uv-cache uv run --frozen --extra test pytest
+
       - name: Validate Compose contracts
         env:
           SPOTIFY_API_SESSION_COOKIE: ci-placeholder
@@ -91,3 +98,4 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.apple.yml config --quiet

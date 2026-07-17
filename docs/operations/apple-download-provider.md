@@ -1,24 +1,47 @@
-# External Apple download provider
+# Apple download provider
 
-Apple downloads are optional. Standard Compose and AIO do not include GAMDL, wrapper-v2, or an Apple provider
-gateway. Allstarr connects to a separately deployed compatible gateway by URL.
+Apple downloads are optional. Standard Compose and AIO do not start them. The optional
+`docker-compose.apple.yml` profile adds Allstarr's Apple gateway, GAMDL 3.8.2, and a locally built, source-locked
+wrapper-v2 0.0.2 service. It does not contain or download Apple code.
 
 The URL must point to a gateway that wraps GAMDL and wrapper-v2 and implements the API contract Allstarr expects.
 Do not enter the raw wrapper-v2 URL. wrapper-v2 supplies account, playback, and decryption services, but it is not a
 GAMDL search and download HTTP gateway by itself.
 
-## Prepare the external gateway
+## Prepare wrapper-v2
 
-Deploy the gateway in its own stack by following its maintainer's instructions. Keep its session state, downloaded
-artifacts, backups, upgrades, and rollback outside the Allstarr stack. The upstream projects are
+Obtain Apple Music for Android legally from a source you are permitted to use. Allstarr does not download,
+redistribute, or retain that package. Then run:
+
+```bash
+./allstarr.sh prepare-apple /private/path/apple-music.apkm x86_64
+./allstarr.sh up
+```
+
+Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
+`APPLE_WRAPPER_TARGET_ARCH=arm64-v8a` and `APPLE_WRAPPER_RUNTIME_PLATFORM=linux/arm64`.
+
+An old installation's archived libraries can be reused only when they pass the official hash lock:
+
+```bash
+tools/apple-provider/prepare.sh --staged-libs /backup/rootfs/system/lib64 --arch x86_64
+```
+
+The controller clones official wrapper-v2 tag `0.0.2`, verifies its full locked commit, stages the official
+AOSP runtime, and rejects Apple or AOSP libraries that do not match wrapper-v2's `LIBS_VERSION.json`. The generated
+`.apple-provider/wrapper-v2` directory is local deployment input and must not be committed.
+
+## What the profile runs
+
+The repository gateway is a narrow HTTP adapter around the official upstream projects
 [GAMDL](https://github.com/glomatico/gamdl) and
-[wrapper-v2](https://github.com/glomatico/wrapper-v2). Neither project by itself implements the gateway contract
-below. The gateway is the HTTP adapter between those tools and Allstarr.
+[wrapper-v2](https://github.com/glomatico/wrapper-v2). It exposes catalog song lookup, download-backed streaming,
+managed song downloads, health, login, and 2FA. It runs on the private Compose network and publishes no host port.
 
-For a GAMDL-backed gateway, use GAMDL 3.8.2 or newer with wrapper-v2 0.0.2 or the exact compatible pair required by
-the gateway. GAMDL 3.8.2 introduced compatibility with wrapper-v2 0.0.2. Do not update one half of the pair without
-the other. The gateway's runtime capability and version manifest is authoritative; an upstream feature does not
-become an Allstarr capability until the gateway advertises it and Allstarr's probe accepts it.
+The gateway advertises only routes that Allstarr has implemented and tested. GAMDL can do more upstream, but album,
+playlist, artist, library, video, lyrics-artifact, and artwork lanes stay unavailable in Allstarr until their
+managed-artifact contracts exist. That keeps the UI honest and prevents an upstream feature name from becoming a
+false promise.
 
 Before connecting it, confirm that:
 
@@ -44,10 +67,8 @@ Allstarr first requests `GET /api/capabilities`. A compatible version 1 response
 }
 ```
 
-The gateway may additionally advertise `metadata-album`, `metadata-artist`, `download-album`,
-`download-playlist`, `library-read`, `stream-music-video`, `synced-lyrics-artifact`, `tagging-artwork`,
-`codec-alac`, and `codec-aac`. Allstarr displays absent features as unsupported. It never turns an upstream GAMDL
-feature into an Allstarr route merely because GAMDL supports it.
+The included gateway also advertises its verified ALAC and AAC input support. Allstarr displays absent features as
+unsupported.
 
 The current typed lanes use these routes:
 
@@ -66,12 +87,8 @@ an unexpected host.
 
 ## Connect Allstarr
 
-Open the dashboard, find the Apple download provider, and set its gateway URL. This durable WebUI setting takes
-effect without recreating Allstarr. A Compose deployment may instead supply the initial bootstrap value:
-
-```dotenv
-APPLE_DOWNLOAD_URL=https://apple-gateway.example.internal
-```
+Open the dashboard and find the Apple download provider. The Compose profile configures its private gateway URL.
+Finish Apple login or 2FA there; credentials are forwarded only to wrapper-v2 and are not stored in Postgres.
 
 The legacy `APPLE_MUSIC_AIO_URL` name is recognized only by the migration review so an operator can identify the
 old endpoint. New deployments use `APPLE_DOWNLOAD_URL`.
@@ -94,10 +111,9 @@ access. It is not a GAMDL or wrapper account and must not be copied into the dow
 
 ## Disable or replace the gateway
 
-Clear the configured URL in the dashboard. This disables only the Apple download provider and takes effect without
-restarting Allstarr. It does not delete Postgres records, Allstarr-managed media, the external gateway's session
-state, or a user's Apple MusicKit account. If the URL came from `APPLE_DOWNLOAD_URL`, remove that bootstrap value
-and recreate only the Allstarr container.
+Run `./allstarr.sh disable apple` followed by `./allstarr.sh up`. This removes the optional containers from the
+active profile. It does not delete Postgres records, Allstarr-managed media, the wrapper session volume, gateway
+state, or a user's Apple MusicKit account.
 
 To replace the gateway, validate the replacement independently, change the URL in the dashboard, and repeat the
 provider health and capability checks. Do not combine that change with a database restore or media move. Keeping

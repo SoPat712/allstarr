@@ -25,6 +25,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Providers.AppleDownload;
 using allstarr.Core.Providers;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
@@ -257,7 +258,7 @@ builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 {
     options.HttpMessageHandlerBuilderActions.Add(builder =>
     {
-        if (builder.Name is "AppleDownloadDiscovery" or "AppleMusic")
+        if (builder.Name is "AppleDownloadDiscovery" or "AppleDownloadCapability" or "AppleMusic")
         {
             return;
         }
@@ -416,6 +417,7 @@ builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
 builder.Services.AddDeezerMetadataCapability();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
+builder.Services.AddAppleDownloadCapability();
 builder.Services.AddLegacyBuiltInProviderDescriptors();
 
 // 2. Concrete Download Services

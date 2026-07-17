@@ -1,0 +1,12 @@
+{
+  "wrapper": {
+    "repository": "https://github.com/glomatico/wrapper-v2.git",
+    "tag": "0.0.2",
+    "commit": "0bc16acb55f557b5c98d49f21d7af685410f7f8b"
+  },
+  "appleMusic": {
+    "package": "com.apple.android.music",
+    "version": "3.6.0-beta",
+    "build": "1109"
+  }
+}

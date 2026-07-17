@@ -1,0 +1,203 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Downloads;
+using allstarr.Core.Providers.AppleDownload;
+using allstarr.Models.Settings;
+using allstarr.Services.AppleMusic;
+using Microsoft.Extensions.Options;
+
+namespace allstarr.Tests;
+
+public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
+{
+    private readonly string root = Path.Combine(Path.GetTempPath(), "allstarr-apple-capability", Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task Download_UsesDiscoveredGatewayAndResolvesHostOwnedArtifact()
+    {
+        var audio = Encoding.UTF8.GetBytes("fake flac audio bytes");
+        var gateway = new GatewayHandler(audio, "audio/flac");
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/", Quality = "alac-16-44" };
+        var client = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(
+            new StaticClientFactory(client), Options.Create(settings));
+        var store = new MemoryStore();
+        var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
+        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024 * 1024);
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var job = Guid.CreateVersion7();
+        var workspace = await resolver.CreateWorkspaceAsync(new(
+            tenant, user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:apple-track"));
+        var context = Context(tenant, user);
+        var track = new ProviderExternalResourceId(
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "apple/track 1");
+
+        var availability = await adapter.CheckAvailabilityAsync(context, new(track));
+        var outcome = await adapter.DownloadAsync(context, new(
+            track, job, workspace.Reference, ProviderAudioQuality.Lossless));
+
+        Assert.True(availability.IsSuccess);
+        Assert.Equal(ProviderDownloadAvailabilityState.Available, availability.RequireValue().State);
+        var output = outcome.RequireValue();
+        Assert.EndsWith(".flac", output.ArtifactId, StringComparison.Ordinal);
+        Assert.DoesNotContain("apple/track", output.ArtifactId, StringComparison.Ordinal);
+        Assert.Equal(audio.Length, output.SizeBytes);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(audio)).ToLowerInvariant(), output.Sha256);
+        Assert.Equal("flac", output.Media.Codec);
+
+        var verified = await resolver.ResolveAsync(workspace.Reference, output);
+        Assert.Equal(audio, await File.ReadAllBytesAsync(verified.SourcePath));
+        Assert.Equal(ProviderDownloadArtifactState.Verified, verified.State);
+        Assert.Single(store.Artifacts);
+        Assert.Contains(gateway.Requests, uri =>
+            uri.PathAndQuery == "/api/download/apple%2Ftrack%201?quality=alac-16-44");
+    }
+
+    [Fact]
+    public async Task Download_RejectsUnrecognizedMediaBeforeWritingArtifact()
+    {
+        var gateway = new GatewayHandler(Encoding.UTF8.GetBytes("not audio"), "text/html");
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        var client = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(
+            new StaticClientFactory(client), Options.Create(settings));
+        var store = new MemoryStore();
+        var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
+        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var job = Guid.CreateVersion7();
+        var workspace = await resolver.CreateWorkspaceAsync(new(
+            tenant, user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:bad-media"));
+        var track = new ProviderExternalResourceId(
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "bad-media");
+
+        var outcome = await adapter.DownloadAsync(Context(tenant, user), new(
+            track, job, workspace.Reference, ProviderAudioQuality.Any));
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal(ProviderErrorKind.IncompatibleMedia, outcome.Error!.Kind);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(root, workspace.Reference.WorkspaceId)));
+        Assert.Empty(store.Artifacts);
+    }
+
+    [Fact]
+    public async Task Availability_DoesNotAdvertiseDownloadWhenManifestOmitsRoute()
+    {
+        var gateway = new GatewayHandler([], "audio/flac") { AdvertiseDownload = false };
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        var client = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(
+            new StaticClientFactory(client), Options.Create(settings));
+        var resolver = new ProviderDownloadArtifactResolver(new MemoryStore(), new() { RootPath = root });
+        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var track = new ProviderExternalResourceId(
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "missing-route");
+
+        var outcome = await adapter.CheckAvailabilityAsync(Context(tenant, user), new(track));
+
+        Assert.Equal(ProviderDownloadAvailabilityState.Unavailable, outcome.RequireValue().State);
+    }
+
+    private static ProviderExecutionContext Context(Guid tenant, Guid user) => new(
+        new ProviderActorContext(tenant, ProviderActorKind.User, user,
+            new ProviderBackendPrincipal("jellyfin", "primary", "user")),
+        AppleDownloadCapabilityAdapter.StableProviderId,
+        account: null,
+        library: null,
+        new ProviderExecutionPolicy(
+            new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+            ProviderExplicitContentPolicy.Allow,
+            allowFallback: true,
+            allowSharedAccount: false,
+            allowManagedDownloads: true,
+            [AppleDownloadCapabilityAdapter.StableProviderId]),
+        "download-test",
+        "correlation-test",
+        DateTimeOffset.UtcNow.AddMinutes(1),
+        CancellationToken.None,
+        "favorite:test");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    private sealed class StaticClientFactory(HttpClient client) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => client;
+    }
+
+    private sealed class GatewayHandler(byte[] audio, string contentType) : HttpMessageHandler
+    {
+        public bool AdvertiseDownload { get; init; } = true;
+        public List<Uri> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!);
+            var path = request.RequestUri!.AbsolutePath;
+            HttpResponseMessage response = path switch
+            {
+                "/api/capabilities" => Json($$"""
+                    {"sidecarApiVersion":"1.0","capabilities":[
+                      {"id":"metadata-search-song","state":"supported"},
+                      {"id":"metadata-song","state":"supported"},
+                      {"id":"stream-audio-song","state":"supported"}
+                      {{(AdvertiseDownload ? ",{\"id\":\"download-audio-song\",\"state\":\"supported\"}" : string.Empty)}}
+                    ]}
+                    """),
+                "/api/health" => Json("{\"staged\":true,\"daemon_running\":true,\"wrapper_healthy\":true,\"logged_in\":true}"),
+                "/api/me" => Json("{\"authenticated\":true}"),
+                _ when path.StartsWith("/api/download/", StringComparison.Ordinal) => Audio(),
+                _ => new(HttpStatusCode.NotFound)
+            };
+            response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
+
+        private HttpResponseMessage Audio()
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(audio) };
+            response.Content.Headers.ContentType = new(contentType);
+            return response;
+        }
+
+        private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private sealed class MemoryStore : IProviderDownloadArtifactStore
+    {
+        public List<ProviderDownloadWorkspaceEntity> Workspaces { get; } = [];
+        public List<ProviderDownloadArtifactEntity> Artifacts { get; } = [];
+        public Task<ProviderDownloadWorkspaceEntity> CreateWorkspaceAsync(ProviderDownloadWorkspaceEntity value, CancellationToken token)
+        {
+            var existing = Workspaces.SingleOrDefault(item => item.WorkspaceId == value.WorkspaceId);
+            if (existing != null) return Task.FromResult(existing);
+            Workspaces.Add(value);
+            return Task.FromResult(value);
+        }
+        public Task<ProviderDownloadWorkspaceEntity?> GetWorkspaceAsync(string id, CancellationToken token) =>
+            Task.FromResult(Workspaces.SingleOrDefault(item => item.WorkspaceId == id));
+        public Task<ProviderDownloadArtifactEntity> AddVerifiedAsync(ProviderDownloadArtifactEntity value, CancellationToken token)
+        {
+            var existing = Artifacts.SingleOrDefault(item =>
+                item.WorkspaceRecordId == value.WorkspaceRecordId && item.ProviderArtifactId == value.ProviderArtifactId);
+            if (existing != null) return Task.FromResult(existing);
+            Artifacts.Add(value);
+            return Task.FromResult(value);
+        }
+        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid tenantId, Guid jobId, string provider, CancellationToken token) =>
+            Task.FromResult(Artifacts.SingleOrDefault(item =>
+                item.TenantId == tenantId && item.DurableJobId == jobId && item.ProviderId == provider));
+        public Task MarkPlacedAsync(Guid id, Guid managedId, CancellationToken token) => Task.CompletedTask;
+    }
+}

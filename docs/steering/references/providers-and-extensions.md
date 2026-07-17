@@ -247,9 +247,9 @@ Uninstall requires explicit confirmation. It disables the extension first, remov
 
 Apple is represented by two separate provider instances:
 
-- `apple-download`: download and optional stream behavior exposed by a separately deployed compatible provider
-  gateway. A GAMDL-backed gateway can create managed song, music-video, synced-lyrics, cover-art, and rich-tagging
-  artifacts where its account, source, codec, and advertised contract allow it.
+- `apple-download`: download and download-backed stream behavior exposed by the optional repository gateway. The
+  typed lane currently accepts verified song audio only; broader GAMDL outputs remain unavailable until their
+  managed-artifact contracts and tests exist.
 - `apple-musickit`: per-user MusicKit API access to personal-library playlists and playlist items, library songs/albums/artists, and documented library or favorite-state actions.
 
 References:
@@ -270,9 +270,9 @@ Implementation notes:
 - `apple-musickit` is normally per-user because playlists, library songs, and liked/library state belong to the signed-in Apple Music user.
 - gamdl supports catalog and library song, album, playlist, artist, and music-video URLs. Its download provider should preserve the media kind, chosen codec/quality, source URL identity, and output artifact metadata in the managed-download record.
 - gamdl can output synced lyrics and rich tags with a managed download. Ingest that output after validation; expose it through the lyrics lane only when format, ownership, and routing policy permit. This is not a claim of generic on-demand lyric availability for every Apple track.
-- Allstarr does not ship the gateway. The configured URL must point to an Allstarr-compatible HTTP gateway, not
-  directly to wrapper-v2. wrapper-v2 has account, playback, and decryption endpoints but is not a GAMDL search and
-  download gateway by itself.
+- The optional profile ships the HTTP gateway but not Apple libraries. Its configured URL points to that gateway,
+  never directly to wrapper-v2. wrapper-v2 has account, playback, and decryption endpoints but is not a GAMDL
+  search and download gateway by itself.
 - The gateway login UI must call its status endpoint before showing configured and must surface pending 2FA.
 - If the gateway has session files but no usable token, show Needs Config.
 - Apple lyric availability exists in public APIs, but full lyric retrieval should be optional sidecar or extension behavior.
@@ -288,26 +288,26 @@ upstream GAMDL support from a gateway route that Allstarr has actually implement
 | Rich tags, artwork, and downloaded-file metadata | `apple-download` artifact metadata plus enrichment | Upstream capability; preserve only verified output fields. | Artifact parser/validation and metadata-merge tests. |
 | Synced LRC/SRT/TTML lyrics | Download artifact, then optional `ILyricsProvider` source | Not advertised without a compatible artifact route. | Explicit gateway output, format/ownership validation, and lyrics response tests. |
 | Music videos up to available upstream quality | Download media of kind `music-video`; protocol exposure only where the selected backend/client supports it | No verified gateway video contract yet. | Media-kind contract, video route/job, codec/container validation, and protocol fixtures. |
-| Wrapper-backed playback/decryption and high-quality codecs | `apple-download` stream/download policy | External gateway contract required. | Account-scoped health, codec fallback, and restart/recovery tests. |
+| Wrapper-backed playback/decryption and high-quality codecs | `apple-download` stream/download policy | Included gateway uses the raw TCP wrapper protocol and advertises verified codecs. | Live account checks remain manual, opt-in, and redacted. |
 
 Every provider descriptor must maintain the same kind of feature-coverage record: upstream capability, Allstarr capability mapping, current implementation state, configuration/account prerequisites, protocol limitations, and contract-test location. A feature may be marked deferred or unsupported only with a visible reason; it must never be silently omitted or advertised before it works.
 
-GAMDL 3.8.2 introduced compatibility with wrapper-v2 0.0.2 and its raw TCP decrypt protocol. A compatible
-external gateway should use GAMDL 3.8.2 or newer with wrapper-v2 0.0.2, or the exact pair required by its runtime
-manifest. Treat them as one compatibility pair. Allstarr's repository does not vendor, build, publish, or update
-that pair.
+GAMDL 3.8.2 introduced compatibility with wrapper-v2 0.0.2 and its raw TCP decrypt protocol. The optional profile
+locks that exact pair and passes wrapper HTTP and TCP endpoints separately. Treat them as one compatibility pair.
+The repository never contains or downloads Apple's native libraries.
 
-### External Gateway Update Policy
+### Apple Profile Update Policy
 
-The gateway operator owns upstream selection, image provenance, session compatibility, upgrade testing, and
-rollback. Allstarr owns only its endpoint contract and capability probe.
+The source lock owns upstream selection. An update changes GAMDL and wrapper-v2 together, then passes gateway,
+Compose, architecture, and fake-account contract tests before release. The persistent wrapper session volume is
+not replaced during a normal update.
 
-- Configure only an explicit gateway URL. Never discover or pull provider code during Allstarr startup.
+- Never discover or pull provider code during Allstarr startup. Preparation is an explicit operator command.
 - Probe the API version, authentication state, health, and capability manifest before activation and after a URL
   change.
 - Use fake-gateway contract tests in CI. Automated tests must not require a live Apple account.
 - Replace or remove a gateway without deleting provider records, Allstarr-managed media, or MusicKit accounts.
-- Follow [the external Apple download runbook](../../operations/apple-download-provider.md) for setup and cutover.
+- Follow [the Apple download runbook](../../operations/apple-download-provider.md) for setup and cutover.
 
 ## Other Built-In Providers
 
