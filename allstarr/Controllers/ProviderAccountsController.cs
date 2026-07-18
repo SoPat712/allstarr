@@ -302,6 +302,38 @@ public sealed partial class ProviderAccountsController : ControllerBase
         return NoContent();
     }
 
+    [HttpPatch("{accountId:guid}")]
+    public async Task<IActionResult> SetEnabled(
+        Guid accountId,
+        [FromBody] SetProviderAccountEnabledRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error)) return error!;
+        if (GetManagementAccessError(session) is { } accessError) return accessError;
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await ApplyManagementScope(context.ProviderAccounts, session).SingleOrDefaultAsync(
+            item => item.Id == accountId, cancellationToken);
+        if (account == null) return NotFound();
+        if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != account.Revision)
+            return Conflict(new { error = "The provider account changed. Reload and try again." });
+        if (request.Enabled)
+        {
+            if (!account.SecretReferenceId.HasValue) return BadRequest(new { error = "Configure the credential before enabling this account." });
+            var revoked = await context.SecretReferences.AsNoTracking().AnyAsync(
+                item => item.Id == account.SecretReferenceId.Value && item.RevokedAt != null, cancellationToken);
+            if (revoked) return BadRequest(new { error = "This credential was revoked. Replace it before enabling the account." });
+        }
+
+        account.Enabled = request.Enabled;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        account.Revision++;
+        AddAudit(context, session, request.Enabled ? "provider-account.enabled" : "provider-account.disabled",
+            "succeeded", new { accountId = account.Id, account.ProviderId });
+        await context.SaveChangesAsync(cancellationToken);
+        return Ok(AccountResponse(account, null));
+    }
+
     private bool TryGetSession(
         out AdminAuthSession session,
         out IActionResult? error)
@@ -524,6 +556,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.OwnerUserId,
             account.LibraryScopeId,
             account.Enabled,
+            account.Revision,
             secret = new
             {
                 configured = account.SecretReferenceId.HasValue,
@@ -548,6 +581,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
         public string? LibraryScopeId { get; set; }
         public bool Enabled { get; set; } = true;
         public JsonElement? Secret { get; set; }
+    }
+
+    public sealed class SetProviderAccountEnabledRequest
+    {
+        public bool Enabled { get; set; }
+        public long? ExpectedRevision { get; set; }
     }
 
     public sealed class ReplaceProviderSecretRequest

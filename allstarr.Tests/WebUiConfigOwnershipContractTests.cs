@@ -74,6 +74,18 @@ public sealed class WebUiConfigOwnershipContractTests
         Assert.Contains("field.requiresRestart", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ProviderSecrets_UseEncryptedAccountRotationInsteadOfRuntimeSettings()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        Assert.DoesNotContain("Field(\"SPOTIFY_API_SESSION_COOKIE\"", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("Field(\"DEEZER_ARL\"", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("Field(\"QOBUZ_USER_AUTH_TOKEN\"", controller, StringComparison.Ordinal);
+        Assert.Contains("replaceProviderAccountSecret", script, StringComparison.Ordinal);
+        Assert.Contains("setProviderAccountEnabled", script, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

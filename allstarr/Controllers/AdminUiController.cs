@@ -189,7 +189,6 @@ public class AdminUiController : ControllerBase
             ConfigSchema =
             [
                 Field("SPOTIFY_API_ENABLED", "Enabled", "toggle", "spotifyApi.enabled"),
-                Field("SPOTIFY_API_SESSION_COOKIE", "sp_dc session cookie", "password", "spotifyApi.sessionCookie", sensitive: true),
                 Field("SPOTIFY_API_CACHE_DURATION_MINUTES", "Cache minutes", "number", "spotifyApi.cacheDurationMinutes", min: 1),
                 Field("SPOTIFY_API_PREFER_ISRC_MATCHING", "Prefer ISRC matching", "toggle", "spotifyApi.preferIsrcMatching")
             ]
@@ -216,8 +215,6 @@ public class AdminUiController : ControllerBase
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
-                Field("DEEZER_ARL", "ARL cookie", "password", "deezer.arl", sensitive: true),
-                Field("DEEZER_ARL_FALLBACK", "Fallback ARL cookie", "password", "deezer.arlFallback", sensitive: true),
                 Field("DEEZER_QUALITY", "Quality", "select", "deezer.quality", ["MP3_128", "MP3_320", "FLAC"]),
                 Field("DEEZER_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "deezer.minRequestIntervalMs", min: 0)
             ]
@@ -231,8 +228,6 @@ public class AdminUiController : ControllerBase
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =
             [
-                Field("QOBUZ_USER_AUTH_TOKEN", "User auth token", "password", "qobuz.userAuthToken", sensitive: true),
-                Field("QOBUZ_USER_ID", "User ID", "text", "qobuz.userId"),
                 Field("QOBUZ_QUALITY", "Quality", "select", "qobuz.quality", ["MP3_320", "FLAC", "HI_RES"]),
                 Field("QOBUZ_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "qobuz.minRequestIntervalMs", min: 0)
             ]

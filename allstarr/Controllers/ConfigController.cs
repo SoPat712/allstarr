@@ -247,7 +247,10 @@ public class ConfigController : ControllerBase
             },
             appleDownload = new
             {
-                baseUrl = RuntimeString("AppleDownload:BaseUrl", _appleMusicSettings.BaseUrl ?? string.Empty),
+                baseUrl = !string.IsNullOrWhiteSpace(_configuration["AppleDownload:BaseUrl"])
+                    ? _appleMusicSettings.BaseUrl ?? string.Empty
+                    : RuntimeString("AppleDownload:BaseUrl", _appleMusicSettings.BaseUrl ?? string.Empty),
+                endpointManagedByDeployment = !string.IsNullOrWhiteSpace(_configuration["AppleDownload:BaseUrl"]),
                 quality = RuntimeString("AppleDownload:Quality", _appleMusicSettings.Quality ?? "alac-16-44")
             },
             musicBrainz = new

@@ -373,6 +373,10 @@ const API = {
     ),
   createProviderAccount: (payload) =>
     requestJson("/api/admin/provider-accounts", jsonBody(payload), "Failed to create provider account"),
+  replaceProviderAccountSecret: (id, secret) =>
+    requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}/secret`, jsonBody({ secret }, "PUT"), "Failed to replace provider credential"),
+  setProviderAccountEnabled: (id, enabled, expectedRevision) =>
+    requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}`, jsonBody({ enabled, expectedRevision }, "PATCH"), "Failed to update provider account"),
   revokeProviderAccount: (id) =>
     requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}`, { method: "DELETE" }, "Failed to revoke provider account"),
   createDatabaseBackup: () =>
@@ -2536,8 +2540,12 @@ class AllstarrApp extends LitElement {
                       })}
                     </div>` : html`<span class="muted">${administrator ? "No testable capabilities" : "Administrator tested"}</span>`}
                   </td>
-                  <td><span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Revoked"}</span></td>
-                  <td>${enabled && canManage ? html`<button class="danger" @click=${async () => { await API.revokeProviderAccount(id); await this.loadProviderAccounts(); this.toast("Provider account revoked"); }}>Revoke</button>` : nothing}</td>
+                  <td><span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>${secret.revoked ? html` <span class="status-chip warning">Credential revoked</span>` : nothing}</td>
+                  <td>${canManage ? html`<div class="actions compact-actions">
+                    <button @click=${async () => { await API.setProviderAccountEnabled(id, !enabled, account.revision ?? account.Revision); await this.loadProviderAccounts(); this.toast(`Provider account ${enabled ? "disabled" : "enabled"}`); }}>${enabled ? "Disable" : "Enable"}</button>
+                    ${this.renderProviderCredentialEditor(account)}
+                    <button class="danger" @click=${async () => { await API.revokeProviderAccount(id); await this.loadProviderAccounts(); this.toast("Provider credential revoked"); }}>Revoke credential</button>
+                  </div>` : nothing}</td>
                 </tr>
               `;
             }) : html`<tr><td colspan="6"><div class="empty">No scoped provider accounts yet.</div></td></tr>`}
@@ -2570,6 +2578,45 @@ class AllstarrApp extends LitElement {
     await this.loadProviderAccounts();
     this.toast("Encrypted provider account added");
   };
+
+  renderProviderCredentialEditor(account) {
+    const providerId = String(account.providerId || account.ProviderId || "").toLowerCase();
+    return html`<details class="inline-details">
+      <summary>Replace credential</summary>
+      <form class="form-stack compact-form" @submit=${(event) => this.replaceProviderAccountCredential(event, account)}>
+        ${providerId === "spotify" ? html`<label>New sp_dc cookie<input name="sessionCookie" type="password" autocomplete="off" required></label>` : nothing}
+        ${providerId === "deezer" ? html`<label>New ARL cookie<input name="arl" type="password" autocomplete="off" required></label>` : nothing}
+        ${providerId === "qobuz" ? html`<label>User auth token<input name="userAuthToken" type="password" autocomplete="off" required></label><label>User ID<input name="userId" required></label>` : nothing}
+        ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
+        ${providerId === "lastfm" ? html`<label>API key<input name="apiKey" type="password" autocomplete="off" required></label><label>Shared secret<input name="sharedSecret" type="password" autocomplete="off" required></label><label>Username<input name="username" required></label><label>Session key<input name="sessionKey" type="password" autocomplete="off" required></label>` : nothing}
+        ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? html`<label>Credential JSON<textarea name="secretJson" rows="3" required></textarea></label>` : nothing}
+        <button class="primary">Save encrypted credential</button>
+      </form>
+    </details>`;
+  }
+
+  async replaceProviderAccountCredential(event, account) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const providerId = String(account.providerId || account.ProviderId || "").toLowerCase();
+    let secret;
+    try {
+      if (providerId === "spotify") secret = { sessionCookie: String(data.get("sessionCookie") || ""), sessionCookieSetDate: new Date().toISOString() };
+      else if (providerId === "deezer") secret = { arl: String(data.get("arl") || "") };
+      else if (providerId === "qobuz") secret = { userAuthToken: String(data.get("userAuthToken") || ""), userId: String(data.get("userId") || "") };
+      else if (providerId === "listenbrainz") secret = { token: String(data.get("token") || "") };
+      else if (providerId === "lastfm") secret = { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || ""), sessionKey: String(data.get("sessionKey") || "") };
+      else secret = JSON.parse(String(data.get("secretJson") || "{}"));
+    } catch {
+      this.toast("Credential JSON is invalid", "error");
+      return;
+    }
+    await API.replaceProviderAccountSecret(account.id || account.Id, secret);
+    form.reset();
+    await this.loadProviderAccounts();
+    this.toast("Encrypted provider credential replaced");
+  }
 
   async testProviderAccountCapability(accountId, provider, capability) {
     const testKey = `${accountId}:${capability}`;
@@ -2628,6 +2675,14 @@ class AllstarrApp extends LitElement {
   }
 
   providerStatus(provider) {
+    const accountConfigured = asArray(this.providerAccounts).some((account) => {
+      const secret = account.secret || account.Secret || {};
+      return String(account.providerId || account.ProviderId).toLowerCase() === String(provider.id).toLowerCase() &&
+        Boolean(account.enabled ?? account.Enabled) && Boolean(secret.configured) && !Boolean(secret.revoked);
+    });
+    if (accountConfigured && provider.status === "needs_config") {
+      return "configured";
+    }
     if (provider.id !== "apple-download" || !this.appleMusicStatus) {
       return provider.status;
     }
@@ -2747,6 +2802,7 @@ class AllstarrApp extends LitElement {
     const loginState = appleLoginState(status);
     const result = this.serviceResults.applemusic;
     const discoveredCapabilities = asArray(status.capabilities);
+    const gatewayReady = Boolean(status.ready && status.staged && status.daemon_running && status.wrapper_healthy);
     return html`
       <div class="inline-panel">
         <div class="stat-list compact">
@@ -2767,11 +2823,13 @@ class AllstarrApp extends LitElement {
             </div>
           </div>
         ` : nothing}
-        <form class="form-stack compact-form" @submit=${this.submitAppleLogin}>
+        ${gatewayReady ? html`<form class="form-stack compact-form" @submit=${this.submitAppleLogin}>
           <div class="form-row"><label>Apple ID</label><input name="username" autocomplete="username" required></div>
           <div class="form-row"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
           <button class="primary">Start login</button>
-        </form>
+        </form>` : html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>Prepare the optional profile on the Docker host before signing in. The WebUI cannot accept or redistribute the Apple Music Android package.</p><pre><code>./allstarr.sh prepare-apple /path/to/apple-music.apkm x86_64
+./allstarr.sh up
+./allstarr.sh status</code></pre></div>`}
         ${isAwaitingApple2fa({ ...status, state: loginState }) || result?.state === "warning" ? html`
           <form class="form-stack compact-form" @submit=${this.submitApple2fa}>
             <div class="form-row"><label>2FA code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required></div>

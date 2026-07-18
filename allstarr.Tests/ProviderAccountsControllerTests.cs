@@ -119,6 +119,31 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ImportedDisabledAccount_CanBeEnabledWithoutReplacingItsCredential()
+    {
+        var account = await CreateUserAccount(_userId, "spotify", "Imported Spotify");
+        await using (var context = await _factory.CreateDbContextAsync())
+        {
+            var persisted = await context.ProviderAccounts.SingleAsync(item => item.Id == account.Id);
+            persisted.Enabled = false;
+            await context.SaveChangesAsync();
+            account = persisted;
+        }
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(Session(_userId)).SetEnabled(
+            account.Id,
+            new ProviderAccountsController.SetProviderAccountEnabledRequest
+            {
+                Enabled = true,
+                ExpectedRevision = account.Revision
+            }));
+
+        Assert.DoesNotContain("secretReferenceFixture", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        await using var verification = await _factory.CreateDbContextAsync();
+        Assert.True((await verification.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Enabled);
+    }
+
+    [Fact]
     public async Task UserCannotCreateGlobalAccountOrReplaceAnotherUsersSecret()
     {
         var other = await CreateUserAccount(_otherUserId, "deezer", "Other account");

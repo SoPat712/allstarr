@@ -152,6 +152,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         {
             ["Cache:SearchResultsMinutes"] = "1",
             ["Deezer:Arl"] = "bootstrap-secret",
+            ["AppleDownload:BaseUrl"] = "http://compose-apple-gateway:8000",
             ["MULTI_PROVIDER_STREAMING_ORDER"] = "qobuz"
         }).Build();
         var signal = new RuntimeSettingsChangeSignal();
@@ -166,7 +167,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
         ], "webui", _userId);
         var cache = new CacheSettings(); var deezer = new DeezerSettings { Arl = "bootstrap-secret" };
-        var apple = new AppleDownloadSettings();
+        var apple = new AppleDownloadSettings { BaseUrl = "http://compose-apple-gateway:8000" };
         var spotifyApi = new SpotifyApiSettings();
         var spotifyImport = new SpotifyImportSettings();
         var jellyfin = new JellyfinSettings(); var subsonic = new SubsonicSettings();
@@ -185,7 +186,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("MP3_320", deezer.Quality);
         Assert.Equal("bootstrap-secret", deezer.Arl);
         Assert.Equal("deezer,qobuz", configuration["MULTI_PROVIDER_STREAMING_ORDER"]);
-        Assert.Equal("http://apple-gateway.lan/base", apple.BaseUrl);
+        Assert.Equal("http://compose-apple-gateway:8000", apple.BaseUrl);
         Assert.Equal("alac-24-96", apple.Quality);
         Assert.Equal("http://spotify-lyrics:8080", spotifyApi.LyricsApiUrl);
         var importedPlaylist = Assert.Single(spotifyImport.Playlists);
@@ -197,7 +198,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             new RecordingFactory(new HttpClient(handler)), Options.Create(apple));
         var discoveryResult = await discovery.DiscoverAsync();
         Assert.Equal(AppleDownloadEndpointState.Incompatible, discoveryResult.State);
-        Assert.Equal("/base/api/capabilities", handler.RequestedPath);
+        Assert.Equal("/api/capabilities", handler.RequestedPath);
         Assert.Equal(DownloadMode.Album, jellyfin.DownloadMode); Assert.Equal(DownloadMode.Album, subsonic.DownloadMode);
     }
 

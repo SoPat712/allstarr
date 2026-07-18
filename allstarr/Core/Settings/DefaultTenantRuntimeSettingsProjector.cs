@@ -22,6 +22,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
     private readonly JellyfinSettings _jellyfin;
     private readonly SubsonicSettings _subsonic;
     private readonly ILogger<DefaultTenantRuntimeSettingsProjector> _logger;
+    private readonly string? _bootstrapAppleBaseUrl;
     private readonly SemaphoreSlim _refresh = new(0, 1);
 
     public DefaultTenantRuntimeSettingsProjector(
@@ -34,6 +35,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         ILogger<DefaultTenantRuntimeSettingsProjector> logger)
     {
         (_settings, _signal, _configuration, _logger) = (settings, signal, configuration, logger);
+        _bootstrapAppleBaseUrl = configuration["AppleDownload:BaseUrl"];
         _tenantId = identity.GetDefaultTenantId();
         (_cache, _deezer, _qobuz, _squid, _apple) = (cache.Value, deezer.Value, qobuz.Value, squid.Value, apple.Value);
         (_spotifyApi, _spotifyImport, _musicBrainz, _scrobbling) =
@@ -107,7 +109,9 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "Qobuz:MinRequestIntervalMs": _qobuz.MinRequestIntervalMs = (int)value; break;
             case "SquidWTF:Quality": _squid.Quality = (string)value; break;
             case "SquidWTF:MinRequestIntervalMs": _squid.MinRequestIntervalMs = (int)value; break;
-            case "AppleDownload:BaseUrl": _apple.BaseUrl = (string)value; break;
+            case "AppleDownload:BaseUrl":
+                if (string.IsNullOrWhiteSpace(_bootstrapAppleBaseUrl)) _apple.BaseUrl = (string)value;
+                break;
             case "AppleDownload:Quality": _apple.Quality = (string)value; break;
             case "MusicBrainz:Enabled": _musicBrainz.Enabled = (bool)value; break;
             case "SpotifyApi:Enabled": _spotifyApi.Enabled = (bool)value; break;
