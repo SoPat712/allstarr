@@ -1617,8 +1617,27 @@ fieldset.form-row > label small {
     text-underline-offset: 0.2em;
 }
 
-.injected-playlist-details {
-    margin-block: var(--space-4);
+.injected-playlist-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(760px, 100%);
+    max-height: min(760px, calc(100dvh - (2 * var(--space-5))));
+    overflow: hidden;
+    border-color: color-mix(in srgb, var(--accent), var(--border) 68%);
+    border-radius: 22px;
+    box-shadow: var(--shadow-modal);
+    padding: 0;
+}
+
+.injected-playlist-heading {
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-5);
+}
+
+.injected-playlist-scroll {
+    min-height: 8rem;
+    overflow: auto;
+    padding: 0 var(--space-5) var(--space-5);
 }
 
 .injected-track-row {
@@ -2260,6 +2279,20 @@ button.setup-choice {
         max-height: 100dvh;
         border: 0;
         border-radius: 0;
+    }
+
+    .injected-playlist-dialog {
+        width: 100%;
+        height: 100dvh;
+        max-height: 100dvh;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .injected-playlist-heading,
+    .injected-playlist-scroll {
+        padding-left: var(--space-4);
+        padding-right: var(--space-4);
     }
 
     .setup-guide-header,

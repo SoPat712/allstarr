@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Models.Domain;
+using allstarr.Services.Spotify;
 
 namespace allstarr.Services.Common;
 
@@ -262,6 +263,15 @@ public class CacheWarmingService : IHostedService
                         }
                         else if (!string.IsNullOrEmpty(mapping.ExternalProvider) && !string.IsNullOrEmpty(mapping.ExternalId))
                         {
+                            if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(mapping.ExternalProvider))
+                            {
+                                _logger.LogInformation(
+                                    "Skipped metadata-only manual mapping for Spotify {SpotifyId} in {Playlist}",
+                                    mapping.SpotifyId,
+                                    playlistName);
+                                continue;
+                            }
+
                             // External mapping
                             var redisKey = CacheKeyBuilder.BuildSpotifyExternalMappingKey(playlistName, mapping.SpotifyId);
                             var externalMapping = new { provider = mapping.ExternalProvider, id = mapping.ExternalId };

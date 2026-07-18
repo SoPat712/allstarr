@@ -492,6 +492,15 @@ public class SpotifyAdminController : ControllerBase
     {
         try
         {
+            if (string.Equals(request.TargetType, "external", StringComparison.OrdinalIgnoreCase) &&
+                !ExternalTrackPlaybackPolicy.CanUseForPlayback(request.ExternalProvider))
+            {
+                return BadRequest(new
+                {
+                    error = $"{request.ExternalProvider} is metadata-only and cannot be used as a playable track mapping"
+                });
+            }
+
             var metadata = request.Metadata != null ? new TrackMetadata
             {
                 Title = request.Metadata.Title,

@@ -31,7 +31,29 @@ public class SpotifyMappingService
 
         if (mapping != null)
         {
+            var containedBlockedTarget = HasPolicyBlockedExternalTarget(mapping);
             EnsureExternalMappingsConsistency(mapping);
+
+            if (mapping.TargetType == "external" &&
+                !mapping.TryGetExternalTarget(preferredProvider: null, out _, out _))
+            {
+                await DeleteMappingAsync(spotifyId);
+                _logger.LogWarning(
+                    "Removed unusable external mapping for Spotify {SpotifyId}; its provider cannot supply playback audio",
+                    spotifyId);
+                return null;
+            }
+
+            if (containedBlockedTarget)
+            {
+                mapping.UpdatedAt = DateTime.UtcNow;
+                await _cache.SetAsync(key, mapping, expiry: null);
+                await InvalidateAllPlaylistStatsCachesAsync();
+                _logger.LogWarning(
+                    "Removed policy-blocked playback provider from Spotify mapping {SpotifyId}",
+                    spotifyId);
+            }
+
             _logger.LogDebug("Found mapping for Spotify ID {SpotifyId}: {TargetType}", spotifyId, mapping.TargetType);
         }
 
@@ -566,6 +588,16 @@ public class SpotifyMappingService
     {
         mapping.ExternalMappings ??= new List<ExternalTrackMapping>();
 
+        mapping.ExternalMappings.RemoveAll(external =>
+            string.IsNullOrWhiteSpace(external.ExternalId) ||
+            !ExternalTrackPlaybackPolicy.CanUseForPlayback(external.Provider));
+
+        if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(mapping.ExternalProvider))
+        {
+            mapping.ExternalProvider = null;
+            mapping.ExternalId = null;
+        }
+
         if (!string.IsNullOrWhiteSpace(mapping.ExternalProvider) && !string.IsNullOrWhiteSpace(mapping.ExternalId))
         {
             UpsertExternalMapping(
@@ -581,7 +613,18 @@ public class SpotifyMappingService
             mapping.ExternalProvider = first.Provider;
             mapping.ExternalId = first.ExternalId;
         }
+        else
+        {
+            mapping.ExternalProvider = null;
+            mapping.ExternalId = null;
+        }
     }
+
+    private static bool HasPolicyBlockedExternalTarget(SpotifyTrackMapping mapping) =>
+        (!string.IsNullOrWhiteSpace(mapping.ExternalProvider) &&
+         !ExternalTrackPlaybackPolicy.CanUseForPlayback(mapping.ExternalProvider)) ||
+        (mapping.ExternalMappings?.Any(external =>
+            !ExternalTrackPlaybackPolicy.CanUseForPlayback(external.Provider)) ?? false);
 }
 
 /// <summary>

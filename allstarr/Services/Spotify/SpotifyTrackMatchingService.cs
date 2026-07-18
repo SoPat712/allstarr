@@ -624,11 +624,21 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             var hasIncompleteLocalSnapshots = existingMatched.Any(m =>
                 m.MatchedSong?.IsLocal == true && !JellyfinItemSnapshotHelper.HasRawItemSnapshot(m.MatchedSong));
+            var hasPolicyBlockedExternalMatches = existingMatched.Any(m =>
+                m.MatchedSong is { IsLocal: false } song &&
+                !ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id));
 
             if (hasIncompleteLocalSnapshots)
             {
                 _logger.LogInformation(
                     "Rebuilding matched track cache for {Playlist}: cached local matches are missing full Jellyfin item snapshots",
+                    playlistName);
+            }
+
+            if (hasPolicyBlockedExternalMatches)
+            {
+                _logger.LogInformation(
+                    "Rebuilding matched track cache for {Playlist}: a cached provider can no longer supply playback audio",
                     playlistName);
             }
 
@@ -654,7 +664,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                 }
             }
 
-            if (!hasNewManualMappings && !hasIncompleteLocalSnapshots)
+            if (!hasNewManualMappings && !hasIncompleteLocalSnapshots && !hasPolicyBlockedExternalMatches)
             {
                 _logger.LogWarning("✓ Playlist {Playlist} already has {Count} matched tracks cached (skipping {ToMatch} new tracks), no re-matching needed",
                     playlistName, existingMatched.Count, tracksToMatch.Count);
@@ -819,7 +829,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                                 trackCancellationToken);
                         }
 
-                        if (mappedSong != null)
+                        if (mappedSong != null &&
+                            ExternalTrackPlaybackPolicy.CanUseForPlayback(mappedSong.ExternalProvider, mappedSong.Id))
                         {
                             candidates.Add((mappedSong, 100.0, "global-mapping-external"));
                             trackStopwatch.Stop();
@@ -844,7 +855,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                                 metadataService,
                                 trackCancellationToken);
 
-                            if (isrcSong != null)
+                            if (isrcSong != null &&
+                                ExternalTrackPlaybackPolicy.CanUseForPlayback(isrcSong.ExternalProvider, isrcSong.Id))
                             {
                                 candidates.Add((isrcSong, 100.0, "isrc"));
                             }
@@ -874,7 +886,8 @@ public class SpotifyTrackMatchingService : BackgroundService
 
                     foreach (var (song, score) in fuzzySongs)
                     {
-                        if (!song.IsLocal) // Only external tracks
+                        if (!song.IsLocal &&
+                            ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id))
                         {
                             candidates.Add((song, score, "fuzzy-external"));
                         }
@@ -955,6 +968,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             if (externalAssignments.ContainsKey(spotifyTrack.SpotifyId)) continue;
             if (usedSongIds.Contains(song.Id)) continue;
+            if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id)) continue;
 
             externalAssignments[spotifyTrack.SpotifyId] = (song, score, matchType);
             usedSongIds.Add(song.Id);
@@ -1663,7 +1677,9 @@ public class SpotifyTrackMatchingService : BackgroundService
                             externalId = idEl.GetString();
                         }
 
-                        if (!string.IsNullOrEmpty(provider) && !string.IsNullOrEmpty(externalId))
+                        if (!string.IsNullOrEmpty(provider) &&
+                            !string.IsNullOrEmpty(externalId) &&
+                            ExternalTrackPlaybackPolicy.CanUseForPlayback(provider))
                         {
                             // Fetch full metadata from the provider instead of using minimal Spotify data
                             Song? externalSong = null;

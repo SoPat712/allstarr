@@ -1281,7 +1281,7 @@ public class PlaylistController : ControllerBase
     [HttpGet("external/search")]
     public async Task<IActionResult> SearchExternalTracks(
         [FromQuery] string query,
-        [FromQuery] string provider = "squidwtf",
+        [FromQuery] string provider = "deezer",
         [FromQuery] int limit = 20)
     {
         if (string.IsNullOrWhiteSpace(query))
@@ -1290,7 +1290,12 @@ public class PlaylistController : ControllerBase
         }
 
         var normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
-        if (normalizedProvider != "squidwtf" && normalizedProvider != "deezer" && normalizedProvider != "qobuz" && normalizedProvider != "applemusic")
+        if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(normalizedProvider))
+        {
+            return BadRequest(new { error = $"{provider} is metadata-only and cannot be used as a playable track mapping" });
+        }
+
+        if (normalizedProvider != "deezer" && normalizedProvider != "qobuz" && normalizedProvider != "applemusic")
         {
             return BadRequest(new { error = "Unsupported provider" });
         }
@@ -1592,6 +1597,14 @@ public class PlaylistController : ControllerBase
                 // Store external mapping in cache (NO EXPIRATION - manual mappings are permanent)
                 var externalMappingKey = $"spotify:external-map:{decodedName}:{request.SpotifyId}";
                 normalizedProvider = request.ExternalProvider!.ToLowerInvariant(); // Normalize to lowercase
+                if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(normalizedProvider))
+                {
+                    return BadRequest(new
+                    {
+                        error = $"{request.ExternalProvider} is metadata-only and cannot be used as a playable track mapping"
+                    });
+                }
+
                 normalizedExternalId = NormalizeExternalTrackId(normalizedProvider, request.ExternalId!);
                 var externalMapping = new { provider = normalizedProvider, id = normalizedExternalId };
                 await _cache.SetAsync(externalMappingKey, externalMapping);

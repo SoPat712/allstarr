@@ -2094,6 +2094,8 @@ class AllstarrApp extends LitElement {
   async openInjectedPlaylist(name) {
     this.selectedInjectedPlaylist = String(name || "");
     this.injectedPlaylistDetails = null;
+    await this.updateComplete;
+    this.renderRoot.querySelector(".injected-playlist-dialog")?.focus();
     try {
       this.injectedPlaylistDetails = await API.playlistTracks(this.selectedInjectedPlaylist);
     } catch (error) {
@@ -2106,18 +2108,26 @@ class AllstarrApp extends LitElement {
     if (!this.selectedInjectedPlaylist) return nothing;
     const details = this.injectedPlaylistDetails;
     const tracks = asArray(details?.tracks || details?.Tracks);
-    return html`<div class="panel injected-playlist-details">
-      <div class="section-heading">
-        <div><h3>${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks..."}</p></div>
-        <button class="ghost" @click=${() => { this.selectedInjectedPlaylist = ""; this.injectedPlaylistDetails = null; }}>Close</button>
-      </div>
-      ${details ? html`<ol class="playlist-preview-list">
-        ${tracks.length ? tracks.map((track, index) => html`<li class="playlist-preview-entry injected-track-row">
-          <span class="track-position">${display(track.position ?? index + 1)}</span>
-          <div><strong>${display(track.title)}</strong><div class="muted">${asArray(track.artists).join(", ") || "Unknown artist"}${track.album ? ` · ${track.album}` : ""}</div></div>
-          <span class="status-chip ${track.isLocal === true ? "configured" : track.isLocal === false ? "unknown" : "needs_config"}">${track.isLocal === true ? "Local" : track.isLocal === false ? display(track.externalProvider, "External") : "Missing"}</span>
-        </li>`) : html`<li class="empty">This playlist has no tracks.</li>`}
-      </ol>` : html`<div class="empty">Loading playlist tracks...</div>`}
+    const close = () => { this.selectedInjectedPlaylist = ""; this.injectedPlaylistDetails = null; };
+    return html`<div class="modal-backdrop injected-playlist-backdrop"
+      @click=${(event) => { if (event.target === event.currentTarget) close(); }}
+      @keydown=${(event) => { if (event.key === "Escape") close(); }}>
+      <section class="panel injected-playlist-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="injected-playlist-title" tabindex="-1">
+        <div class="section-heading injected-playlist-heading">
+          <div><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks..."}</p></div>
+          <button class="ghost" @click=${close} aria-label="Close playlist tracks">Close</button>
+        </div>
+        <div class="injected-playlist-scroll">
+          ${details ? html`<ol class="playlist-preview-list">
+            ${tracks.length ? tracks.map((track, index) => html`<li class="playlist-preview-entry injected-track-row">
+              <span class="track-position">${display(track.position ?? index + 1)}</span>
+              <div><strong>${display(track.title)}</strong><div class="muted">${asArray(track.artists).join(", ") || "Unknown artist"}${track.album ? ` · ${track.album}` : ""}</div></div>
+              <span class="status-chip ${track.isLocal === true ? "configured" : track.isLocal === false ? "unknown" : "needs_config"}">${track.isLocal === true ? "Local" : track.isLocal === false ? display(track.externalProvider, "External") : "Missing"}</span>
+            </li>`) : html`<li class="empty">This playlist has no tracks.</li>`}
+          </ol>` : html`<div class="empty">Loading playlist tracks...</div>`}
+        </div>
+      </section>
     </div>`;
   }
 

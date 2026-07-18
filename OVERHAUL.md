@@ -280,6 +280,7 @@ Default download priority should be:
 4. SquidWTF only if it ever exposes a working download capability again
 
 SquidWTF is metadata-only until working stream/download endpoints are restored.
+Metadata-only results may help identify a recording, but must never be persisted or reused as playable external mappings. Existing SquidWTF/Tidal playback mappings are discarded and rematched through an enabled audio-capable provider.
 
 The router returns a route plan, ordered candidates, and an explainable decision record rather than only the chosen provider. It must:
 

@@ -214,4 +214,28 @@ public class SpotifyMappingServiceTests
         // Assert
         Assert.Null(result); // Redis is disabled, so nothing will be found
     }
+
+    [Theory]
+    [InlineData("squidwtf")]
+    [InlineData("tidal")]
+    public async Task SaveExternalMappingAsync_RejectsMetadataOnlyProvider(string provider)
+    {
+        var result = await _service.SaveExternalMappingAsync("spotify-track", provider, "provider-track");
+
+        Assert.False(result);
+    }
+
+    [Theory]
+    [InlineData("squidwtf")]
+    [InlineData("tidal")]
+    public async Task SaveManualMappingAsync_RejectsMetadataOnlyProvider(string provider)
+    {
+        var result = await _service.SaveManualMappingAsync(
+            "spotify-track",
+            "external",
+            externalProvider: provider,
+            externalId: "provider-track");
+
+        Assert.False(result);
+    }
 }

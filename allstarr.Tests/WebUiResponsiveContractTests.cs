@@ -170,6 +170,19 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void InjectedPlaylistTracks_OpenInAnAccessibleResponsiveModal()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("class=\"modal-backdrop injected-playlist-backdrop\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"panel injected-playlist-dialog\" role=\"dialog\" aria-modal=\"true\"", script, StringComparison.Ordinal);
+        Assert.Contains("if (event.key === \"Escape\") close();", script, StringComparison.Ordinal);
+        Assert.Contains(".injected-playlist-scroll", css, StringComparison.Ordinal);
+        Assert.Contains(".injected-playlist-dialog", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProviderCards_SeparateConfigurationFromObservedHealth()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
