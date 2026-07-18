@@ -922,6 +922,34 @@ tbody tr:hover {
     box-shadow: var(--shadow-soft);
 }
 
+.injected-controls {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.injected-controls .section-heading {
+    margin-bottom: 0;
+}
+
+.injected-toolbar {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: var(--space-5);
+}
+
+.injected-refresh-actions {
+    flex: 0 0 auto;
+}
+
+.injected-add-fields {
+    display: grid;
+    grid-template-columns: minmax(170px, 1fr) minmax(220px, 1.25fr) auto;
+    align-items: end;
+    gap: var(--space-3);
+    width: min(620px, 100%);
+}
+
 .toolbar .form-row {
     min-width: 180px;
 }
@@ -1795,7 +1823,7 @@ fieldset.form-row > label small {
 
 .playlist-link-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 430px);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     gap: var(--space-5);
     min-width: 0;
@@ -1814,12 +1842,25 @@ fieldset.form-row > label small {
 }
 
 .playlist-preview {
-    position: sticky;
-    top: var(--space-4);
+    position: relative;
     display: grid;
     gap: var(--space-4);
-    max-height: calc(100vh - (2 * var(--space-4)));
+    width: min(760px, 100%);
+    max-height: min(760px, calc(100dvh - (2 * var(--space-5))));
     overflow: auto;
+}
+
+.playlist-preview-backdrop {
+    z-index: 22;
+}
+
+.legacy-mappings-panel {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.legacy-mappings-panel .section-heading {
+    margin-bottom: 0;
 }
 
 .playlist-preview-list {
@@ -2476,8 +2517,7 @@ button.setup-choice {
     }
 
     .playlist-preview {
-        position: static;
-        max-height: none;
+        max-height: calc(100dvh - (2 * var(--space-3)));
     }
 
     .env-migration-heading,
@@ -2625,6 +2665,20 @@ button.setup-choice {
     .setup-guide-footer {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .injected-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .injected-add-fields {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .injected-refresh-actions button,
+    .injected-add-fields button {
+        width: 100%;
     }
 
     .actions > button,

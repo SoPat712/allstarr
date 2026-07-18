@@ -43,6 +43,19 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void LibraryWorkflows_UseCompactControlsModalPreviewAndScrollableShell()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("class=\"injected-toolbar\"", script, StringComparison.Ordinal);
+        Assert.Contains("return nothing;", script, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Playlist preview\"", script, StringComparison.Ordinal);
+        Assert.Contains("Imported legacy decisions", script, StringComparison.Ordinal);
+        Assert.Contains(".playlist-preview-backdrop", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MusicalTheme_UsesLayeredAccentTokensWithoutSacrificingStatusColors()
     {
         var tokens = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "tokens.css"));
@@ -302,7 +315,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains(".playlist-link-layout", css, StringComparison.Ordinal);
         Assert.Contains(".playlist-link-form-grid", css, StringComparison.Ordinal);
         Assert.Contains(".playlist-preview", css, StringComparison.Ordinal);
-        Assert.Contains("position: static;", css, StringComparison.Ordinal);
+        Assert.Contains("max-height: calc(100dvh - (2 * var(--space-3)));", css, StringComparison.Ordinal);
     }
 
     [Fact]

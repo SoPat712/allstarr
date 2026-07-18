@@ -413,6 +413,8 @@ const API = {
     }
     return requestJson(`/api/admin/track-matches?${query}`, {}, "Failed to load track matches");
   },
+  legacyMappings: () =>
+    requestJson("/api/admin/mappings/tracks", { cache: "no-store" }, "Failed to load imported legacy mappings"),
   saveMapping: (externalSnapshotId, payload) =>
     requestJson(`/api/admin/playlist-links/matches/${encodeURIComponent(externalSnapshotId)}/override`, jsonBody(payload), "Failed to save match review"),
   deleteMapping: (overrideId, expectedRevision = 0) =>
@@ -514,6 +516,7 @@ class AllstarrApp extends LitElement {
     providerTests: { state: true },
     endpointUsage: { state: true },
     mappings: { state: true },
+    legacyMappings: { state: true },
     externalPlaylists: { state: true },
     externalPlaylistTracks: { state: true },
     extensionStore: { state: true },
@@ -575,6 +578,7 @@ class AllstarrApp extends LitElement {
     this.providerTests = new Set();
     this.endpointUsage = null;
     this.mappings = null;
+    this.legacyMappings = null;
     this.externalPlaylists = null;
     this.externalPlaylistTracks = new Map();
     this.extensionStore = null;
@@ -1150,7 +1154,12 @@ class AllstarrApp extends LitElement {
   }
 
   async loadMappings() {
-    this.mappings = await API.mappings(this.mappingFilters);
+    const [mappings, legacyMappings] = await Promise.all([
+      API.mappings(this.mappingFilters),
+      API.legacyMappings(),
+    ]);
+    this.mappings = mappings;
+    this.legacyMappings = legacyMappings;
   }
 
   async loadMigrationData() {
@@ -1984,8 +1993,8 @@ class AllstarrApp extends LitElement {
             ${links.length ? links.map((link) => this.renderPlaylistLinkRow(link)) : html`<tr><td colspan="6"><div class="empty">No playlist links yet.</div></td></tr>`}
           </tbody></table></div>
         </div>
-        ${this.renderPlaylistLinkPreview()}
-      </div>`;
+      </div>
+      ${this.renderPlaylistLinkPreview()}`;
   }
 
   renderPlaylistLinkRow(link) {
@@ -2005,20 +2014,20 @@ class AllstarrApp extends LitElement {
 
   renderPlaylistLinkPreview() {
     if (!this.selectedPlaylistLinkId) {
-      return html`<aside class="panel playlist-preview empty" aria-live="polite"><h3>Preview</h3><p>Choose a playlist link to review included songs, skipped songs, and conflicts before a run.</p></aside>`;
+      return nothing;
     }
     if (!this.playlistLinkPreview) {
-      return html`<aside class="panel playlist-preview" aria-live="polite"><p>Loading preview…</p></aside>`;
+      return html`<div class="modal-backdrop playlist-preview-backdrop" @click=${() => { this.selectedPlaylistLinkId = ""; }}><aside class="panel playlist-preview" aria-live="polite" @click=${(event) => event.stopPropagation()}><p>Loading preview…</p></aside></div>`;
     }
     const preview = this.playlistLinkPreview;
     const entries = asArray(preview.entries || preview.Entries);
     const included = entries.filter((entry) => String(entry.status || entry.Status).toLowerCase() === "included").length;
     const conflicts = entries.filter((entry) => ["ambiguous", "conflict"].includes(String(entry.status || entry.Status).toLowerCase())).length;
-    return html`<aside class="panel playlist-preview" aria-live="polite">
+    return html`<div class="modal-backdrop playlist-preview-backdrop" @click=${() => { this.selectedPlaylistLinkId = ""; this.playlistLinkPreview = null; }}><aside class="panel playlist-preview" role="dialog" aria-modal="true" aria-label="Playlist preview" aria-live="polite" @click=${(event) => event.stopPropagation()}>
       <div class="view-header"><div><h3>${preview.name || preview.Name || "Playlist preview"}</h3><p>${included} included · ${entries.length - included} skipped · ${conflicts} conflicts</p></div><button class="ghost" aria-label="Close preview" @click=${() => { this.selectedPlaylistLinkId = ""; this.playlistLinkPreview = null; }}>Close</button></div>
       <div class="actions"><button class="primary" @click=${() => this.runPlaylistLink(this.selectedPlaylistLinkId)}>Run now</button></div>
       <ol class="playlist-preview-list">${entries.length ? entries.map((entry) => this.renderPlaylistPreviewEntry(entry)) : html`<li class="empty">The source playlist has no tracks.</li>`}</ol>
-    </aside>`;
+    </aside></div>`;
   }
 
   renderPlaylistPreviewEntry(entry) {
@@ -2114,11 +2123,14 @@ class AllstarrApp extends LitElement {
   renderInjectedPlaylists() {
     const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
     return html`
-      <div class="panel">
-        <div class="toolbar">
-          <button class="primary" @click=${async () => { await this.loadPlaylists(true); this.toast("Playlists refreshed"); }}>Refresh</button>
-          <button @click=${async () => { await API.refreshPlaylists(); this.toast("Refresh requested"); }}>Refresh all</button>
-          <form class="toolbar" @submit=${this.addInjectedPlaylist}>
+      <div class="panel injected-controls">
+        <div class="section-heading"><div><h3>Injected playlists</h3><p class="muted">Refresh existing playlists or add another Spotify playlist.</p></div></div>
+        <form class="injected-toolbar" @submit=${this.addInjectedPlaylist}>
+          <div class="actions injected-refresh-actions">
+            <button type="button" class="primary" @click=${async () => { await this.loadPlaylists(true); this.toast("Playlists refreshed"); }}>Refresh</button>
+            <button type="button" @click=${async () => { await API.refreshPlaylists(); this.toast("Refresh requested"); }}>Refresh all</button>
+          </div>
+          <div class="injected-add-fields">
             <div class="form-row">
               <label>Name</label>
               <input name="name" required>
@@ -2128,8 +2140,8 @@ class AllstarrApp extends LitElement {
               <input name="spotifyId" required>
             </div>
             <button>Add</button>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
       ${this.renderInjectedPlaylistDetails()}
       <div class="table-wrap">
@@ -2343,6 +2355,7 @@ class AllstarrApp extends LitElement {
 
   renderMappings() {
     const mappings = asArray(this.mappings?.mappings || this.mappings?.Mappings);
+    const legacyMappings = asArray(this.legacyMappings?.mappings || this.legacyMappings?.Mappings);
     const stats = this.mappings?.stats || this.mappings?.Stats || {};
     const pagination = this.mappings?.pagination || this.mappings?.Pagination || {};
 
@@ -2352,6 +2365,7 @@ class AllstarrApp extends LitElement {
         <div class="card metric"><span class="metric-label">Accepted</span><span class="metric-value">${display(stats.accepted ?? 0)}</span></div>
         <div class="card metric"><span class="metric-label">Needs review</span><span class="metric-value">${display(stats.review ?? 0)}</span></div>
         <div class="card metric"><span class="metric-label">Unresolved</span><span class="metric-value">${display(stats.unresolved ?? 0)}</span></div>
+        <div class="card metric"><span class="metric-label">Imported legacy</span><span class="metric-value">${display(legacyMappings.length)}</span></div>
       </div>
       <div class="panel">
         <div class="toolbar">
@@ -2375,6 +2389,10 @@ class AllstarrApp extends LitElement {
           <button class="primary" @click=${async () => { this.mappingFilters.page = 1; await this.loadMappings(); }}>Apply</button>
         </div>
       </div>
+      ${legacyMappings.length ? html`<div class="panel legacy-mappings-panel">
+        <div class="section-heading"><div><h3>Imported legacy decisions</h3><p class="muted">Preserved from your previous installation. These remain available to the compatibility matcher while v3 builds its provider-neutral index.</p></div><span class="chip success">${legacyMappings.length} restored</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => html`<tr><td>${display(mapping.playlist || mapping.Playlist)}</td><td class="mono">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td>${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td>${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`)}</tbody></table></div>
+      </div>` : nothing}
       <div class="panel">
         <h3>Manual match review</h3>
         <p class="muted">Pin a provider snapshot to an indexed local track, or reject the current match. Provider identities remain attached to the same canonical recording.</p>
