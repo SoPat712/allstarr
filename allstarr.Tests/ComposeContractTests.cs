@@ -149,6 +149,22 @@ public sealed class ComposeContractTests
     }
 
     [Fact]
+    public void Upgrade_CreatesPortableStateExportBeforeUpdating()
+    {
+        var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
+
+        Assert.Contains("upgrade [OUTPUT_DIR]", controller, StringComparison.Ordinal);
+        Assert.Contains("backup [OUTPUT_DIR]", controller, StringComparison.Ordinal);
+        Assert.Contains("volume-data.tar.gz", controller, StringComparison.Ordinal);
+        Assert.Contains("deployment-files.tar", controller, StringComparison.Ordinal);
+        Assert.Contains("allstarr_allstarr-cache:/volume-cache:ro", controller, StringComparison.Ordinal);
+        Assert.Contains("allstarr_postgres-data:/volume-postgres:ro", controller, StringComparison.Ordinal);
+        Assert.Contains("allstarr_valkey-data:/volume-valkey:ro", controller, StringComparison.Ordinal);
+        Assert.Contains("backup_state \"${1:-$ROOT/allstarr-backups}\" false", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RuntimeImage_ContainsBackupToolsAndPinnedDotnetBases()
     {
         var dockerfile = File.ReadAllText(Path.Combine(_repositoryRoot, "Dockerfile"));

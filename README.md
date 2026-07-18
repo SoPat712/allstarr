@@ -30,8 +30,10 @@ curl --fail http://127.0.0.1:5274/health/ready
 ```
 
 `allstarr.sh` remembers optional profiles, validates the merged Compose model, creates secrets with private file
-permissions, and never deletes volumes. Normal upgrades are `./allstarr.sh update`; they pull reviewed images and
-recreate the saved profile without requiring users to remember a growing list of `-f` arguments.
+permissions, and never deletes volumes. For a normal upgrade, run `./allstarr.sh upgrade`; it briefly stops the
+stack, creates a private portable export under `allstarr-backups/`, then updates and restarts the saved profile.
+The export includes configuration, the encryption keyring, provider profiles, Postgres, Valkey, mappings, playlist
+caches, and durable application state. Downloaded and kept music stay in their existing host-mounted folders.
 
 The default `release` mode runs reviewed images. Beta testers and contributors who want the checked-out commit can
 run `./allstarr.sh mode source`, then `./allstarr.sh up`. For later source updates, run

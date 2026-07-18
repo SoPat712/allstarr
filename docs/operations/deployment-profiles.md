@@ -62,10 +62,14 @@ quietly enable provider accounts or sidecars.
 ## Updates
 
 ```bash
-./allstarr.sh update
+./allstarr.sh upgrade
 ```
 
-In release mode, the command pulls reviewed images and rebuilds the repository-owned Apple gateway only when that
+`upgrade` briefly stops the stack, saves configuration, secrets, all named data volumes, mappings, and playlist
+caches to a private archive under `allstarr-backups/`, then updates and restarts. Use `./allstarr.sh backup` when
+you want the same portable export without upgrading.
+
+In release mode, the update pulls reviewed images and rebuilds the repository-owned Apple gateway only when that
 profile is enabled. In source mode, `update` refuses tracked local changes, runs `git pull --ff-only`, then rebuilds
 the Allstarr source and enabled Apple gateway. The private wrapper image is rebuilt only by `prepare-apple`, when
 its verified inputs may have changed. Both modes recreate the saved profile and show the resulting containers.

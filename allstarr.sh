@@ -170,6 +170,66 @@ update() {
   docker compose "${COMPOSE[@]}" ps
 }
 
+create_state_archive() {
+  local output_dir="$1" staging archive runtime_image host_uid host_gid
+  output_dir="$(mkdir -p "$output_dir" && cd "$output_dir" && pwd)"
+  chmod 700 "$output_dir"
+  staging="$(mktemp -d "$output_dir/.allstarr-export.XXXXXX")"
+  archive="$output_dir/allstarr-upgrade-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+  runtime_image="$(docker compose "${COMPOSE[@]}" images -q postgres | head -1)"
+  [[ -n "$runtime_image" ]] || die "the Postgres image must exist before state can be exported"
+  host_uid="$(id -u)"
+  host_gid="$(id -g)"
+
+  docker run --rm --read-only \
+    -e HOST_UID="$host_uid" -e HOST_GID="$host_gid" \
+    -v allstarr_allstarr-state:/volume-state:ro \
+    -v allstarr_allstarr-cache:/volume-cache:ro \
+    -v allstarr_postgres-data:/volume-postgres:ro \
+    -v allstarr_valkey-data:/volume-valkey:ro \
+    -v "$staging:/export" \
+    "$runtime_image" sh -c '
+      tar -czf /export/volume-data.tar.gz -C / volume-state volume-cache volume-postgres volume-valkey &&
+      chown "$HOST_UID:$HOST_GID" /export/volume-data.tar.gz &&
+      chmod 600 /export/volume-data.tar.gz
+    '
+
+  tar -cf "$staging/deployment-files.tar" --ignore-failed-read \
+    .env .allstarr-profiles .allstarr-mode secrets .apple-provider
+  printf '%s\n' \
+    'Allstarr portable upgrade export' \
+    "Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    'Includes: configuration, encryption keyring, provider profiles, Postgres, Valkey, mappings, playlist caches, and durable application state.' \
+    'Does not include downloaded or kept music; those host folders remain where the user mounted them.' \
+    > "$staging/README.txt"
+  tar -czf "$archive" -C "$staging" README.txt deployment-files.tar volume-data.tar.gz
+  chmod 600 "$archive"
+  rm -r "$staging"
+  printf '%s\n' "$archive"
+}
+
+backup_state() {
+  local output_dir="${1:-$ROOT/allstarr-backups}" restart_after="${2:-true}" was_running result archive
+  compose_args
+  was_running="$(docker compose "${COMPOSE[@]}" ps --status running -q | head -1)"
+  echo "Stopping Allstarr briefly so every database and cache file is consistent..."
+  docker compose "${COMPOSE[@]}" stop
+  set +e
+  archive="$(create_state_archive "$output_dir")"
+  result=$?
+  set -e
+  if [[ "$restart_after" == true && -n "$was_running" ]]; then
+    docker compose "${COMPOSE[@]}" up -d --remove-orphans
+  fi
+  [[ $result -eq 0 ]] || die "state export failed; the stopped services were left unchanged"
+  echo "Portable upgrade export created: $archive"
+}
+
+upgrade() {
+  backup_state "${1:-$ROOT/allstarr-backups}" false
+  update
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./allstarr.sh COMMAND
@@ -178,6 +238,8 @@ Usage: ./allstarr.sh COMMAND
   mode [release|source]             Show or change the saved deployment mode
   up                                Start the saved deployment profile
   update                            Pull the saved release/source and safely recreate
+  upgrade [OUTPUT_DIR]              Export all user state, then update and restart
+  backup [OUTPUT_DIR]               Export config, secrets, databases, mappings, and caches
   status                            Show containers and the saved profile
   logs [service]                    Follow redacted container logs
   enable spotify-lyrics|aio         Add an optional saved profile
@@ -207,6 +269,8 @@ case "$command" in
   install-apple) install_apple "$@" ;;
   up) up ;;
   update) update ;;
+  upgrade) upgrade "$@" ;;
+  backup) backup_state "${1:-$ROOT/allstarr-backups}" true ;;
   status) compose_args; echo "Mode: $(deployment_mode)"; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
