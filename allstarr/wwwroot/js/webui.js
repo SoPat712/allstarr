@@ -3414,7 +3414,8 @@ class AllstarrApp extends LitElement {
           <button class="primary" @click=${async () => { await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]); this.toast("Activity refreshed"); }}>Refresh</button>
         </div>
         <div class="panel">
-          <h3>Durable jobs</h3>
+          <h3>Background jobs</h3>
+          <p class="muted">Queued work that Allstarr remembers across restarts, retries when appropriate, and records until it finishes or is cancelled.</p>
           ${this.renderDurableJobs()}
         </div>
         <div class="wide-grid">
@@ -3502,6 +3503,8 @@ class AllstarrApp extends LitElement {
   renderScrobbling() {
     const status = this.scrobbling || {};
     const config = this.config?.scrobbling || {};
+    const lastFm = status.lastFm || status.LastFm || {};
+    const listenBrainz = status.listenBrainz || status.ListenBrainz || {};
     const fields = [
       { key: "SCROBBLING_ENABLED", label: "Scrobbling", type: "toggle", valuePath: "scrobbling.enabled" },
       { key: "SCROBBLING_LOCAL_TRACKS_ENABLED", label: "Local tracks", type: "toggle", valuePath: "scrobbling.localTracksEnabled" },
@@ -3514,7 +3517,10 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="stat-list">
         <div class="stat-row"><span>Runtime</span><span class="status-chip ${status.enabled || status.Enabled ? "configured" : "needs_config"}">${status.enabled || status.Enabled ? "Enabled" : "Disabled"}</span></div>
+        <div class="stat-row"><span>Last.fm account</span><span class="status-chip ${lastFm.configured || lastFm.Configured ? "configured" : "needs_config"}">${lastFm.configured || lastFm.Configured ? "Configured" : "Needs setup"}</span></div>
+        <div class="stat-row"><span>ListenBrainz account</span><span class="status-chip ${listenBrainz.configured || listenBrainz.Configured ? "configured" : "needs_config"}">${listenBrainz.configured || listenBrainz.Configured ? "Configured" : "Needs setup"}</span></div>
       </div>
+      <p class="muted">Imported personal credentials are encrypted in your Allstarr account. They are not copied back into the host <code>.env</code>.</p>
       <div class="config-grid">${fields.map((field) => this.renderConfigField(field))}</div>
       <div class="actions scrobble-actions">
         <button @click=${() => this.runServiceAction("lastfm", API.testLastFm)}>Test Last.fm</button>

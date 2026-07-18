@@ -19,13 +19,13 @@ namespace allstarr.Tests;
 public class ScrobblingAdminControllerTests
 {
     [Fact]
-    public void GetStatus_ReturnsOk()
+    public async Task GetStatus_ReturnsOk()
     {
         var controller = CreateController(
             CreateSettings(username: null, password: null),
             new HttpResponseMessage(HttpStatusCode.OK));
 
-        var result = controller.GetStatus();
+        var result = await controller.GetStatus();
         Assert.IsType<OkObjectResult>(result);
     }
 

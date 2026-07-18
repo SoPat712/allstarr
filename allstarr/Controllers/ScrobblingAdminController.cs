@@ -4,9 +4,14 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
+using System.Text.Json;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.Spotify;
+using allstarr.Core.Storage;
 using allstarr.Filters;
-using allstarr.Models.Settings;
 using allstarr.Services.Admin;
+using allstarr.Models.Settings;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
 
@@ -24,29 +29,42 @@ public class ScrobblingAdminController : ControllerBase
     private readonly ILogger<ScrobblingAdminController> _logger;
     private readonly HttpClient _httpClient;
     private readonly AdminHelperService _adminHelper;
+    private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
+    private readonly IProviderAccountSecretAccessor? _accountSecrets;
 
     public ScrobblingAdminController(
         IOptions<ScrobblingSettings> settings,
         IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
         ILogger<ScrobblingAdminController> logger,
-        AdminHelperService adminHelper)
+        AdminHelperService adminHelper,
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null,
+        IProviderAccountSecretAccessor? accountSecrets = null)
     {
         _settings = settings.Value;
         _configuration = configuration;
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient("LastFm");
         _adminHelper = adminHelper;
+        _contextFactory = contextFactory;
+        _accountSecrets = accountSecrets;
     }
 
     /// <summary>
     /// Gets current scrobbling configuration status.
     /// </summary>
     [HttpGet("status")]
-    public IActionResult GetStatus()
+    public async Task<IActionResult> GetStatus(CancellationToken cancellationToken = default)
     {
-        var hasApiCredentials = !string.IsNullOrEmpty(_settings.LastFm.ApiKey) &&
-                               !string.IsNullOrEmpty(_settings.LastFm.SharedSecret);
+        var lastFmAccount = await ReadCurrentAccountSecretsAsync("lastfm", cancellationToken);
+        var listenBrainzAccount = await ReadCurrentAccountSecretsAsync("listenbrainz", cancellationToken);
+        var lastFmApiKey = Secret(lastFmAccount, "apikey") ?? _settings.LastFm.ApiKey;
+        var lastFmSharedSecret = Secret(lastFmAccount, "sharedsecret") ?? _settings.LastFm.SharedSecret;
+        var lastFmSessionKey = Secret(lastFmAccount, "sessionkey") ?? _settings.LastFm.SessionKey;
+        var listenBrainzToken = Secret(listenBrainzAccount, "token", "usertoken") ?? _settings.ListenBrainz.UserToken;
+        var lastFmEnabled = lastFmAccount != null || _settings.LastFm.Enabled;
+        var listenBrainzEnabled = listenBrainzAccount != null || _settings.ListenBrainz.Enabled;
+        var hasApiCredentials = !string.IsNullOrEmpty(lastFmApiKey) && !string.IsNullOrEmpty(lastFmSharedSecret);
 
         return Ok(new
         {
@@ -55,20 +73,22 @@ public class ScrobblingAdminController : ControllerBase
             SyntheticLocalPlayedSignalEnabled = _settings.SyntheticLocalPlayedSignalEnabled,
             LastFm = new
             {
-                Enabled = _settings.LastFm.Enabled,
-                Configured = hasApiCredentials && !string.IsNullOrEmpty(_settings.LastFm.SessionKey),
+                Enabled = lastFmEnabled,
+                Configured = hasApiCredentials && !string.IsNullOrEmpty(lastFmSessionKey),
                 HasApiKey = hasApiCredentials,
-                HasSessionKey = !string.IsNullOrEmpty(_settings.LastFm.SessionKey),
-                Username = _settings.LastFm.Username,
-                UsingHardcodedCredentials = LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.LastFm.ApiKey),
+                HasSessionKey = !string.IsNullOrEmpty(lastFmSessionKey),
+                Username = Secret(lastFmAccount, "username") ?? _settings.LastFm.Username,
+                UsingHardcodedCredentials = LastFmSettings.IsLegacyJellyfinPluginApiKey(lastFmApiKey),
                 RequiresOwnApiAccount = hasApiCredentials &&
-                    LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.LastFm.ApiKey)
+                    LastFmSettings.IsLegacyJellyfinPluginApiKey(lastFmApiKey),
+                Source = lastFmAccount != null ? "user_account" : "runtime_settings"
             },
             ListenBrainz = new
             {
-                Enabled = _settings.ListenBrainz.Enabled,
-                Configured = !string.IsNullOrEmpty(_settings.ListenBrainz.UserToken),
-                HasUserToken = !string.IsNullOrEmpty(_settings.ListenBrainz.UserToken)
+                Enabled = listenBrainzEnabled,
+                Configured = !string.IsNullOrEmpty(listenBrainzToken),
+                HasUserToken = !string.IsNullOrEmpty(listenBrainzToken),
+                Source = listenBrainzAccount != null ? "user_account" : "runtime_settings"
             }
         });
     }
@@ -227,16 +247,18 @@ public class ScrobblingAdminController : ControllerBase
     /// Test Last.fm connection with current configuration.
     /// </summary>
     [HttpPost("lastfm/test")]
-    public async Task<IActionResult> TestLastFmConnection()
+    public async Task<IActionResult> TestLastFmConnection(CancellationToken cancellationToken = default)
     {
-        if (!_settings.LastFm.Enabled)
+        var account = await ReadCurrentAccountSecretsAsync("lastfm", cancellationToken);
+        var apiKey = Secret(account, "apikey") ?? _settings.LastFm.ApiKey;
+        var sharedSecret = Secret(account, "sharedsecret") ?? _settings.LastFm.SharedSecret;
+        var sessionKey = Secret(account, "sessionkey") ?? _settings.LastFm.SessionKey;
+        if (account == null && !_settings.LastFm.Enabled)
         {
             return BadRequest(new { error = "Last.fm scrobbling is not enabled" });
         }
 
-        if (string.IsNullOrEmpty(_settings.LastFm.ApiKey) ||
-            string.IsNullOrEmpty(_settings.LastFm.SharedSecret) ||
-            string.IsNullOrEmpty(_settings.LastFm.SessionKey))
+        if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(sharedSecret) || string.IsNullOrEmpty(sessionKey))
         {
             return BadRequest(new { error = "Last.fm is not fully configured (missing API key, shared secret, or session key)" });
         }
@@ -246,17 +268,17 @@ public class ScrobblingAdminController : ControllerBase
             // Try to get user info to test the session key
             var parameters = new Dictionary<string, string>
             {
-                ["api_key"] = _settings.LastFm.ApiKey,
+                ["api_key"] = apiKey,
                 ["method"] = "user.getInfo",
-                ["sk"] = _settings.LastFm.SessionKey
+                ["sk"] = sessionKey
             };
 
-            var signature = GenerateSignature(parameters, _settings.LastFm.SharedSecret);
+            var signature = GenerateSignature(parameters, sharedSecret);
             parameters["api_sig"] = signature;
 
             var content = new FormUrlEncodedContent(parameters);
-            var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content);
-            var responseBody = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.PostAsync("https://ws.audioscrobbler.com/2.0/", content, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -410,14 +432,16 @@ public class ScrobblingAdminController : ControllerBase
     /// Test ListenBrainz connection with current configuration.
     /// </summary>
     [HttpPost("listenbrainz/test")]
-    public async Task<IActionResult> TestListenBrainzConnection()
+    public async Task<IActionResult> TestListenBrainzConnection(CancellationToken cancellationToken = default)
     {
-        if (!_settings.ListenBrainz.Enabled)
+        var account = await ReadCurrentAccountSecretsAsync("listenbrainz", cancellationToken);
+        var token = Secret(account, "token", "usertoken") ?? _settings.ListenBrainz.UserToken;
+        if (account == null && !_settings.ListenBrainz.Enabled)
         {
             return BadRequest(new { error = "ListenBrainz scrobbling is not enabled" });
         }
 
-        if (string.IsNullOrEmpty(_settings.ListenBrainz.UserToken))
+        if (string.IsNullOrEmpty(token))
         {
             return BadRequest(new { error = "ListenBrainz user token is not configured" });
         }
@@ -425,10 +449,10 @@ public class ScrobblingAdminController : ControllerBase
         try
         {
             var httpRequest = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
-            httpRequest.Headers.Add("Authorization", $"Token {_settings.ListenBrainz.UserToken}");
+            httpRequest.Headers.Add("Authorization", $"Token {token}");
 
-            var response = await _httpClient.SendAsync(httpRequest);
-            var responseBody = await response.Content.ReadAsStringAsync();
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -460,6 +484,67 @@ public class ScrobblingAdminController : ControllerBase
             _logger.LogError(ex, "Error testing ListenBrainz connection");
             return StatusCode(500, new { error = "Failed to test ListenBrainz connection" });
         }
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>?> ReadCurrentAccountSecretsAsync(
+        string providerId,
+        CancellationToken cancellationToken)
+    {
+        if (_contextFactory == null || _accountSecrets == null ||
+            !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession session || session.TenantId is not { } tenant ||
+            session.AllstarrUserId is not { } user)
+        {
+            return null;
+        }
+
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await db.ProviderAccounts.AsNoTracking()
+            .Where(item => item.ProviderId == providerId && item.Enabled && item.SecretReferenceId != null &&
+                item.Scope == ProviderAccountScope.User && item.TenantId == tenant && item.OwnerUserId == user)
+            .OrderBy(item => item.UpdatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (account == null)
+        {
+            return null;
+        }
+
+        var context = new ProviderAccountContext(
+            account.Id,
+            account.ProviderId,
+            account.Scope,
+            account.Revision,
+            account.Enabled,
+            account.TenantId,
+            account.OwnerUserId,
+            account.LibraryScopeId,
+            "scrobbling-admin",
+            account.SecretReferenceId);
+        return await _accountSecrets.UseAsync(context, bytes =>
+        {
+            using var document = JsonDocument.Parse(bytes);
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                var key = new string(property.Name.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+                if (!string.IsNullOrWhiteSpace(key) && property.Value.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(property.Value.GetString()))
+                {
+                    values[key] = property.Value.GetString()!;
+                }
+            }
+            return Task.FromResult<IReadOnlyDictionary<string, string>>(values);
+        }, cancellationToken);
+    }
+
+    private static string? Secret(IReadOnlyDictionary<string, string>? values, params string[] names)
+    {
+        if (values == null) return null;
+        foreach (var name in names)
+        {
+            if (values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)) return value;
+        }
+        return null;
     }
 
     private IActionResult BuildProviderConnectionError(
