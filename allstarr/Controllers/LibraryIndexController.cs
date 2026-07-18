@@ -14,7 +14,8 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class LibraryIndexController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    DurableJobQueue jobs) : ControllerBase
+    DurableJobQueue jobs,
+    AdminAuthSessionService? sessionService = null) : ControllerBase
 {
     [HttpPost("enqueue")]
     public async Task<IActionResult> Enqueue([FromBody] EnqueueLibraryIndexRequest request, CancellationToken cancellationToken)
@@ -91,8 +92,14 @@ public sealed class LibraryIndexController(
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
     {
         session = null; error = null;
-        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) || value is not AdminAuthSession authenticated)
-        { error = Unauthorized(new { error = "Authentication required" }); return false; }
+        HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value);
+        var authenticated = value as AdminAuthSession;
+        if (authenticated == null && sessionService?.TryGetValidSession(Request, out var cookieSession) == true)
+        {
+            authenticated = cookieSession;
+            HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = cookieSession;
+        }
+        if (authenticated == null) { error = Unauthorized(new { error = "Authentication required" }); return false; }
         if (!authenticated.TenantId.HasValue || !authenticated.AllstarrUserId.HasValue)
         { error = StatusCode(403, new { error = "The backend identity is not linked to an Allstarr user" }); return false; }
         session = authenticated; return true;

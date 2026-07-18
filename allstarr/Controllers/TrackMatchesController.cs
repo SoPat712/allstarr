@@ -14,7 +14,9 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/track-matches")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class TrackMatchesController(IDbContextFactory<AllstarrDbContext> contextFactory) : ControllerBase
+public sealed class TrackMatchesController(
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    AdminAuthSessionService? sessionService = null) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List(
@@ -158,8 +160,14 @@ public sealed class TrackMatchesController(IDbContextFactory<AllstarrDbContext> 
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
     {
         session = null; error = null;
-        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) || value is not AdminAuthSession found)
-        { error = Unauthorized(new { error = "Authentication required" }); return false; }
+        HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value);
+        var found = value as AdminAuthSession;
+        if (found == null && sessionService?.TryGetValidSession(Request, out var cookieSession) == true)
+        {
+            found = cookieSession;
+            HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = cookieSession;
+        }
+        if (found == null) { error = Unauthorized(new { error = "Authentication required" }); return false; }
         if (!found.TenantId.HasValue || !found.AllstarrUserId.HasValue)
         { error = StatusCode(403, new { error = "The backend identity is not linked to an Allstarr user" }); return false; }
         session = found; return true;
