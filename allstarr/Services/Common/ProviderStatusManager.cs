@@ -795,6 +795,11 @@ public class ProviderStatusManager
         string? sessionCookie,
         CancellationToken cancellationToken)
     {
+        sessionCookie = allstarr.Core.Providers.Spotify.SpotifySessionCookie.Normalize(sessionCookie);
+        if (sessionCookie == null)
+        {
+            return new ProbeOutcome(false, "account_needs_configuration");
+        }
         using var client = _httpClientFactory.CreateClient();
         using var request = new HttpRequestMessage(
             HttpMethod.Get,

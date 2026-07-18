@@ -210,7 +210,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 context.Account!,
                 async secret =>
                 {
-                    var cookie = Encoding.UTF8.GetString(secret.Span);
+                    var cookie = SpotifySessionCookie.Normalize(Encoding.UTF8.GetString(secret.Span));
                     if (string.IsNullOrWhiteSpace(cookie))
                         return ProviderOutcome<T>.Failure(new ProviderError(ProviderErrorKind.AccountNeedsConfiguration));
                     var token = await ExchangeCookieAsync(cookie, context.CancellationToken);
@@ -237,7 +237,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     private async Task<TokenResult> ExchangeCookieAsync(string cookie, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, TokenEndpoint);
-        request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={cookie}");
+        request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={SpotifySessionCookie.Normalize(cookie)}");
         var response = await SendAsync(request, cancellationToken);
         if (!response.Outcome.IsSuccess) return new(response.Outcome, null);
         try

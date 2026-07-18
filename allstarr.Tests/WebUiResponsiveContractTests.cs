@@ -218,6 +218,9 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("Personal accounts are managed in Sources", script, StringComparison.Ordinal);
         Assert.Contains("Local songs are not being scrobbled", script, StringComparison.Ordinal);
         Assert.Contains("accountLabel(lastFmConfigured, lastFmHealth)", script, StringComparison.Ordinal);
+        Assert.Contains("Save scrobbling settings", script, StringComparison.Ordinal);
+        Assert.Contains("saveScrobblingSettings", script, StringComparison.Ordinal);
+        Assert.Contains(">Reconnect</button>", script, StringComparison.Ordinal);
         Assert.Contains(".provider-qobuz", css, StringComparison.Ordinal);
         Assert.Contains("background: #f7f7f8", css, StringComparison.Ordinal);
         Assert.Contains("Available but untested", script, StringComparison.Ordinal);

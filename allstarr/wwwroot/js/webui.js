@@ -2900,7 +2900,7 @@ class AllstarrApp extends LitElement {
   }
 
   renderNewProviderCredentialFields(providerId) {
-    if (providerId === "spotify") return html`<div class="form-row full-span"><label>Spotify session cookie (sp_dc)</label><input name="sessionCookie" type="password" autocomplete="off" required><small>Sign in at spotify.com, then copy the current <span class="mono">sp_dc</span> cookie from that browser session. Spotify periodically replaces it.</small></div>`;
+    if (providerId === "spotify") return html`<div class="form-row full-span"><label>Spotify browser session (sp_dc)</label><input name="sessionCookie" type="password" autocomplete="off" required><small>Sign in at spotify.com and copy the current <span class="mono">sp_dc</span> cookie. You may paste just its value, <span class="mono">sp_dc=…</span>, or the full Cookie header.</small></div>`;
     if (providerId === "deezer") return html`<div class="form-row full-span"><label>ARL cookie</label><input name="arl" type="password" autocomplete="off" required></div>`;
     if (providerId === "qobuz") return html`<div class="form-row"><label>User auth token</label><input name="userAuthToken" type="password" autocomplete="off" required></div><div class="form-row"><label>User ID</label><input name="userId" required></div>`;
     if (providerId === "lastfm") return html`<div class="form-row full-span"><div class="callout"><strong>One-time Last.fm application setup</strong><p>Last.fm no longer accepts the shared Jellyfin plugin key. Create a free API application, paste its key and shared secret below, then sign in normally. Allstarr exchanges the password for a session and does not save the password.</p><a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener noreferrer">Create a Last.fm API application</a></div></div><div class="form-row"><label>Application API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Application shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Last.fm username</label><input name="username" autocomplete="username" required></div><div class="form-row"><label>Last.fm password</label><input name="password" type="password" autocomplete="current-password" required><small>Used once to request a Last.fm session; never stored by Allstarr.</small></div>`;
@@ -3027,7 +3027,7 @@ class AllstarrApp extends LitElement {
     const providerId = String(account.providerId || account.ProviderId || "").toLowerCase();
     return html`<div class="credential-editor" aria-label="${titleCase(providerId)} account setup">
       <form class="form-stack compact-form" @submit=${(event) => this.replaceProviderAccountCredential(event, account)}>
-        ${providerId === "spotify" ? html`<label>New sp_dc cookie<input name="sessionCookie" type="password" autocomplete="off" required></label>` : nothing}
+        ${providerId === "spotify" ? html`<div class="callout"><strong>Reconnect Spotify</strong><p>Paste a fresh browser cookie below. Allstarr accepts the value, <span class="mono">sp_dc=…</span>, or a full Cookie header.</p></div><label>New sp_dc cookie<input name="sessionCookie" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "deezer" ? html`<label>New ARL cookie<input name="arl" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "qobuz" ? html`<label>User auth token<input name="userAuthToken" type="password" autocomplete="off" required></label><label>User ID<input name="userId" required></label>` : nothing}
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
@@ -3085,7 +3085,12 @@ class AllstarrApp extends LitElement {
     await this.loadProviderAccounts();
     this.toggleProviderAccountConfiguration(accountId);
     const healthy = Boolean(tested?.healthy ?? tested?.success);
-    this.toast(healthy ? "Credential saved and connection verified" : `Credential saved, but the connection test failed${tested?.error ? `: ${tested.error}` : ""}`, healthy ? "success" : "error");
+    const reason = tested?.reasonCode || tested?.error;
+    const providerName = providerDisplayName(providerId, this.schema?.providers);
+    const failure = providerId === "spotify"
+      ? `Account details stored; Spotify rejected the session${reason ? ` (${titleCase(reason)})` : ""}. Open setup and try a newly copied sp_dc cookie.`
+      : `Account details stored; ${providerName} connection failed${reason ? ` (${titleCase(reason)})` : ""}.`;
+    this.toast(healthy ? `${providerName} connected` : failure, healthy ? "success" : "error");
   }
 
   async testProviderAccount(account) {
@@ -3754,8 +3759,6 @@ class AllstarrApp extends LitElement {
     const accountLabel = (configured, health) => !configured ? "Needs setup" : health === "healthy" ? "Connected" : health === "degraded" ? "Rejected" : "Stored · not tested";
     const accountClass = (configured, health) => !configured ? "needs_config" : health === "healthy" ? "configured" : health === "degraded" ? "degraded" : "unknown";
     const fields = [
-      { key: "SCROBBLING_ENABLED", label: "Scrobbling", type: "toggle", valuePath: "scrobbling.enabled" },
-      { key: "SCROBBLING_LOCAL_TRACKS_ENABLED", label: "Local tracks", type: "toggle", valuePath: "scrobbling.localTracksEnabled" },
       ...(!lastFmManaged ? [
         { key: "SCROBBLING_LASTFM_ENABLED", label: "Last.fm", type: "toggle", valuePath: "scrobbling.lastFm.enabled" },
         { key: "SCROBBLING_LASTFM_API_KEY", label: "Last.fm API key", type: "password", valuePath: "scrobbling.lastFm.apiKey", sensitive: true },
@@ -3772,11 +3775,16 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="stat-list">
         <div class="stat-row"><span>Runtime</span><span class="status-chip ${status.enabled || status.Enabled ? "configured" : "needs_config"}">${status.enabled || status.Enabled ? "Enabled" : "Disabled"}</span></div>
-        <div class="stat-row"><span>Last.fm account</span><span class="status-chip ${accountClass(lastFmConfigured, lastFmHealth)}">${accountLabel(lastFmConfigured, lastFmHealth)}</span></div>
+        <div class="stat-row"><span>Last.fm account</span><span class="actions"><span class="status-chip ${accountClass(lastFmConfigured, lastFmHealth)}">${accountLabel(lastFmConfigured, lastFmHealth)}</span>${lastFmHealth === "degraded" ? html`<button class="compact" @click=${() => this.navigate("/sources")}>Reconnect</button>` : nothing}</span></div>
         <div class="stat-row"><span>ListenBrainz account</span><span class="status-chip ${accountClass(listenBrainzConfigured, listenBrainzHealth)}">${accountLabel(listenBrainzConfigured, listenBrainzHealth)}</span></div>
       </div>
       ${lastFmManaged || listenBrainzManaged ? html`<div class="callout"><strong>Personal accounts are managed in Sources</strong><p>Imported credentials are encrypted in your Allstarr account, so their old host <code>.env</code> fields are intentionally blank and hidden here.</p><button @click=${() => this.navigate("/sources")}>Manage connected accounts</button></div>` : nothing}
       ${!localTracksEnabled ? html`<div class="callout warning"><strong>Local songs are not being scrobbled</strong><p>Enable Local tracks below if plays from your Jellyfin or Subsonic library should be submitted to Last.fm and ListenBrainz.</p></div>` : nothing}
+      <form class="config-grid" @submit=${this.saveScrobblingSettings}>
+        <div class="config-field"><div class="field-heading"><label class="field-label" for="scrobbling-runtime-enabled">Scrobbling</label></div><label class="inline-check"><input id="scrobbling-runtime-enabled" name="enabled" type="checkbox" .checked=${parseBoolValue(getPathValue(config, "scrobbling.enabled", false))}><span>Submit eligible listening activity</span></label></div>
+        <div class="config-field"><div class="field-heading"><label class="field-label" for="scrobbling-local-enabled">Local tracks</label></div><label class="inline-check"><input id="scrobbling-local-enabled" name="localTracksEnabled" type="checkbox" .checked=${parseBoolValue(getPathValue(config, "scrobbling.localTracksEnabled", false))}><span>Include songs stored in my media library</span></label></div>
+        <div class="actions full-span"><button class="primary" type="submit">Save scrobbling settings</button><small class="muted">A restart prompt appears when a changed setting needs to be applied.</small></div>
+      </form>
       <div class="config-grid">${fields.map((field) => this.renderConfigField(field))}</div>
       <div class="actions scrobble-actions">
         <button @click=${() => this.runServiceAction("lastfm", API.testLastFm)}>Test Last.fm</button>
@@ -3786,6 +3794,21 @@ class AllstarrApp extends LitElement {
       ${this.serviceResults.listenbrainz ? html`<div class="callout ${this.serviceResults.listenbrainz.state}">ListenBrainz: ${this.serviceResults.listenbrainz.message}</div>` : nothing}
     `;
   }
+
+  saveScrobblingSettings = async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const settings = [
+      { key: "SCROBBLING_ENABLED", label: "Scrobbling", type: "toggle", valuePath: "scrobbling.enabled", requiresRestart: true, value: data.has("enabled") ? "true" : "false" },
+      { key: "SCROBBLING_LOCAL_TRACKS_ENABLED", label: "Local tracks", type: "toggle", valuePath: "scrobbling.localTracksEnabled", requiresRestart: true, value: data.has("localTracksEnabled") ? "true" : "false" },
+    ];
+    try {
+      for (const setting of settings) await this.saveField(setting, setting.value);
+      this.toast("Scrobbling settings saved");
+    } catch (error) {
+      this.toast(error.message, "error");
+    }
+  };
 
   renderEndpointUsage() {
     const endpoints = asArray(this.endpointUsage?.endpoints || this.endpointUsage?.Endpoints);

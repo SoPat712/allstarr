@@ -45,6 +45,21 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.DoesNotContain("image-cdn", serialized, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("sp_dc=account-cookie-secret")]
+    [InlineData("other=value; sp_dc=account-cookie-secret; another=value")]
+    [InlineData("{\"sessionCookie\":\"account-cookie-secret\",\"sessionCookieSetDate\":\"2026-07-18T00:00:00Z\"}")]
+    public async Task Session_cookie_input_formats_are_normalized_for_account_bound_requests(string storedSecret)
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor(storedSecret));
+
+        var outcome = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
+
+        Assert.True(outcome.IsSuccess);
+        Assert.Equal("sp_dc=account-cookie-secret", handler.CookieHeader);
+    }
+
     [Fact]
     public async Task User_playlist_and_search_cursors_are_stable_offsets()
     {
