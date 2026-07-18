@@ -819,6 +819,7 @@ class AllstarrApp extends LitElement {
     const playlists = playlistOutcome.status === "fulfilled" ? playlistOutcome.value : null;
     const mediaReady = Boolean(media?.success ?? media?.Success);
     const playlistsReady = Boolean(playlists?.success ?? playlists?.Success);
+    const affectedPlaylists = asArray(playlists?.affectedPlaylists ?? playlists?.AffectedPlaylists);
     const failedRequests = [mediaOutcome, playlistOutcome, providerOutcome].filter((item) => item.status === "rejected");
     const spotifyPlaylist = this.providerHealth.find((item) =>
       String(item.provider || item.Provider || "").toLowerCase() === "spotify" &&
@@ -836,9 +837,37 @@ class AllstarrApp extends LitElement {
         playlistsReady,
         spotifyReady,
         failedRequests: failedRequests.length,
+        playlistCode: playlists?.code || playlists?.Code || "",
         playlistMessage: playlists?.message || playlists?.Message || "Playlist check unavailable.",
+        unavailableItems: Number(playlists?.unavailableItems ?? playlists?.UnavailableItems ?? 0),
+        affectedPlaylists,
       },
     };
+  };
+
+  rematchUnavailablePlaylists = async () => {
+    const readiness = this.serviceResults.readiness;
+    const affectedPlaylists = asArray(readiness?.affectedPlaylists);
+    if (!affectedPlaylists.length) {
+      this.navigate("/library/injected");
+      return;
+    }
+
+    this.serviceResults = {
+      ...this.serviceResults,
+      readiness: { ...readiness, rematching: true },
+    };
+    const results = await Promise.allSettled(affectedPlaylists.map((name) => API.matchPlaylist(name)));
+    const matched = results.filter((result) => result.status === "fulfilled").length;
+    const failed = results.length - matched;
+    this.serviceResults = {
+      ...this.serviceResults,
+      readiness: { ...this.serviceResults.readiness, rematching: false },
+    };
+    this.toast(failed
+      ? `Rematching started for ${matched} ${matched === 1 ? "playlist" : "playlists"}; ${failed} could not be started.`
+      : `Rematching started for ${matched} ${matched === 1 ? "playlist" : "playlists"}.`);
+    this.navigate("/library/injected");
   };
 
   recordLoadFailure(key, label, error) {
@@ -1895,7 +1924,10 @@ class AllstarrApp extends LitElement {
               ${this.renderReadinessCheck("Spotify refresh", readiness.spotifyReady, readiness.spotifyReady ? "Spotify playlist access is healthy." : "Reconnect Spotify to resume playlist refreshes.")}
             </div>` : nothing}
           ` : html`<div class="empty compact">Run the check after an update, provider change, or player problem.</div>`}
-          ${readiness?.state === "warning" ? html`<div class="actions"><button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button><button @click=${() => this.navigate("/settings")}>Open detailed diagnostics</button></div>` : nothing}
+          ${readiness?.state === "warning" ? html`<div class="actions">
+            ${readiness.affectedPlaylists?.length ? html`<button class="primary" ?disabled=${readiness.rematching} @click=${this.rematchUnavailablePlaylists}>${readiness.rematching ? "Starting rematch..." : "Rematch with available providers"}</button><button @click=${() => this.navigate("/library/injected")}>Review affected playlists</button>` : html`<button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button>`}
+            <button @click=${() => this.navigate("/settings")}>Open detailed diagnostics</button>
+          </div>` : nothing}
         </div>
 
         <div class="setup-launcher">

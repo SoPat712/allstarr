@@ -380,6 +380,7 @@ public class DiagnosticsController : ControllerBase
         var sourceTracks = 0;
         var playableItems = 0;
         var unavailableItems = 0;
+        var affectedPlaylists = new List<string>();
 
         foreach (var playlist in configured)
         {
@@ -400,8 +401,13 @@ public class DiagnosticsController : ControllerBase
 
             renderedPlaylists++;
             playableItems += InjectedPlaylistItemHelper.RemoveUnavailableExternalItems(items).Count;
-            unavailableItems += items.Count(item =>
+            var unavailableInPlaylist = items.Count(item =>
                 InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
+            unavailableItems += unavailableInPlaylist;
+            if (unavailableInPlaylist > 0)
+            {
+                affectedPlaylists.Add(playlist.Name);
+            }
         }
 
         var providerStatus = HttpContext.RequestServices.GetService<ProviderStatusManager>()?
@@ -439,6 +445,7 @@ public class DiagnosticsController : ControllerBase
             sourceTracks,
             playableItems,
             unavailableItems,
+            affectedPlaylists,
             source = new
             {
                 provider = "spotify",

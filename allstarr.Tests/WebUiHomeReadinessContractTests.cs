@@ -16,6 +16,9 @@ public sealed class WebUiHomeReadinessContractTests
         Assert.Contains("Restored playlists", _script, StringComparison.Ordinal);
         Assert.Contains("Spotify refresh", _script, StringComparison.Ordinal);
         Assert.Contains("Fix source connections", _script, StringComparison.Ordinal);
+        Assert.Contains("Rematch with available providers", _script, StringComparison.Ordinal);
+        Assert.Contains("affectedPlaylists.map((name) => API.matchPlaylist(name))", _script, StringComparison.Ordinal);
+        Assert.Contains("Review affected playlists", _script, StringComparison.Ordinal);
     }
 
     [Fact]
