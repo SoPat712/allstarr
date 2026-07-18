@@ -1,6 +1,7 @@
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using System.Runtime.ExceptionServices;
 
 namespace allstarr.Core.Playback;
 
@@ -24,13 +25,32 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         var track = new ScopedPlaybackTrack(item.Title, item.Artist, item.Album, item.DurationMilliseconds);
         if (payload.Transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop &&
             !EligibleForCompletedScrobble(track.DurationMilliseconds, payload.PositionTicks)) return;
+        Exception? unauthorizedFailure = null;
+        Exception? retryableFailure = null;
         foreach (var target in targets)
         {
-            if (!await target.IsConfiguredAsync(payload.Scope, cancellationToken)) continue;
-            if (await checkpoints.IsCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, payload.SignalKey, target.ProviderId, cancellationToken)) continue;
-            await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks, payload.ObservedAt, payload.SignalKey, cancellationToken);
-            await checkpoints.MarkCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, payload.SignalKey, target.ProviderId, cancellationToken);
+            try
+            {
+                if (!await target.IsConfiguredAsync(payload.Scope, cancellationToken)) continue;
+                if (await checkpoints.IsCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, payload.SignalKey, target.ProviderId, cancellationToken)) continue;
+                await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks, payload.ObservedAt, payload.SignalKey, cancellationToken);
+                await checkpoints.MarkCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, payload.SignalKey, target.ProviderId, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                unauthorizedFailure ??= ex;
+            }
+            catch (Exception ex)
+            {
+                retryableFailure ??= ex;
+            }
         }
+        if (retryableFailure != null) ExceptionDispatchInfo.Capture(retryableFailure).Throw();
+        if (unauthorizedFailure != null) ExceptionDispatchInfo.Capture(unauthorizedFailure).Throw();
     }
 
     public static bool EligibleForCompletedScrobble(long durationMilliseconds, long? positionTicks)

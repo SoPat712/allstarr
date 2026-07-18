@@ -939,7 +939,7 @@ class AllstarrApp extends LitElement {
           await this.loadProviderAccounts();
         }
       } else if (zone === "activity") {
-        await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]);
+        await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs(), this.loadProviderAccounts()]);
       } else if (zone === "home" || !zone) {
         await this.loadProviderAccounts();
       }
@@ -3740,22 +3740,43 @@ class AllstarrApp extends LitElement {
     const config = this.config?.scrobbling || {};
     const lastFm = status.lastFm || status.LastFm || {};
     const listenBrainz = status.listenBrainz || status.ListenBrainz || {};
+    const lastFmManaged = String(lastFm.source || lastFm.Source || "") === "user_account";
+    const listenBrainzManaged = String(listenBrainz.source || listenBrainz.Source || "") === "user_account";
+    const capabilityHealth = (provider) => {
+      const samples = this.providerHealth.filter((item) =>
+        String(item.provider || item.Provider || item.providerId || item.ProviderId || "").toLowerCase() === provider);
+      if (samples.some((item) => String(item.health || item.Health).toLowerCase() === "healthy")) return "healthy";
+      if (samples.some((item) => String(item.health || item.Health).toLowerCase() === "degraded")) return "degraded";
+      return "unknown";
+    };
+    const lastFmHealth = capabilityHealth("lastfm");
+    const listenBrainzHealth = capabilityHealth("listenbrainz");
+    const accountLabel = (configured, health) => !configured ? "Needs setup" : health === "healthy" ? "Connected" : health === "degraded" ? "Rejected" : "Stored · not tested";
+    const accountClass = (configured, health) => !configured ? "needs_config" : health === "healthy" ? "configured" : health === "degraded" ? "degraded" : "unknown";
     const fields = [
       { key: "SCROBBLING_ENABLED", label: "Scrobbling", type: "toggle", valuePath: "scrobbling.enabled" },
       { key: "SCROBBLING_LOCAL_TRACKS_ENABLED", label: "Local tracks", type: "toggle", valuePath: "scrobbling.localTracksEnabled" },
-      { key: "SCROBBLING_LASTFM_ENABLED", label: "Last.fm", type: "toggle", valuePath: "scrobbling.lastFm.enabled" },
-      { key: "SCROBBLING_LASTFM_API_KEY", label: "Last.fm API key", type: "password", valuePath: "scrobbling.lastFm.apiKey", sensitive: true },
-      { key: "SCROBBLING_LASTFM_SHARED_SECRET", label: "Last.fm secret", type: "password", valuePath: "scrobbling.lastFm.sharedSecret", sensitive: true },
-      { key: "SCROBBLING_LISTENBRAINZ_ENABLED", label: "ListenBrainz", type: "toggle", valuePath: "scrobbling.listenBrainz.enabled" },
-      { key: "SCROBBLING_LISTENBRAINZ_USER_TOKEN", label: "ListenBrainz token", type: "password", valuePath: "scrobbling.listenBrainz.userToken", sensitive: true },
+      ...(!lastFmManaged ? [
+        { key: "SCROBBLING_LASTFM_ENABLED", label: "Last.fm", type: "toggle", valuePath: "scrobbling.lastFm.enabled" },
+        { key: "SCROBBLING_LASTFM_API_KEY", label: "Last.fm API key", type: "password", valuePath: "scrobbling.lastFm.apiKey", sensitive: true },
+        { key: "SCROBBLING_LASTFM_SHARED_SECRET", label: "Last.fm secret", type: "password", valuePath: "scrobbling.lastFm.sharedSecret", sensitive: true },
+      ] : []),
+      ...(!listenBrainzManaged ? [
+        { key: "SCROBBLING_LISTENBRAINZ_ENABLED", label: "ListenBrainz", type: "toggle", valuePath: "scrobbling.listenBrainz.enabled" },
+        { key: "SCROBBLING_LISTENBRAINZ_USER_TOKEN", label: "ListenBrainz token", type: "password", valuePath: "scrobbling.listenBrainz.userToken", sensitive: true },
+      ] : []),
     ];
+    const localTracksEnabled = Boolean(status.localTracksEnabled ?? status.LocalTracksEnabled);
+    const lastFmConfigured = Boolean(lastFm.configured ?? lastFm.Configured);
+    const listenBrainzConfigured = Boolean(listenBrainz.configured ?? listenBrainz.Configured);
     return html`
       <div class="stat-list">
         <div class="stat-row"><span>Runtime</span><span class="status-chip ${status.enabled || status.Enabled ? "configured" : "needs_config"}">${status.enabled || status.Enabled ? "Enabled" : "Disabled"}</span></div>
-        <div class="stat-row"><span>Last.fm account</span><span class="status-chip ${lastFm.configured || lastFm.Configured ? "configured" : "needs_config"}">${lastFm.configured || lastFm.Configured ? "Configured" : "Needs setup"}</span></div>
-        <div class="stat-row"><span>ListenBrainz account</span><span class="status-chip ${listenBrainz.configured || listenBrainz.Configured ? "configured" : "needs_config"}">${listenBrainz.configured || listenBrainz.Configured ? "Configured" : "Needs setup"}</span></div>
+        <div class="stat-row"><span>Last.fm account</span><span class="status-chip ${accountClass(lastFmConfigured, lastFmHealth)}">${accountLabel(lastFmConfigured, lastFmHealth)}</span></div>
+        <div class="stat-row"><span>ListenBrainz account</span><span class="status-chip ${accountClass(listenBrainzConfigured, listenBrainzHealth)}">${accountLabel(listenBrainzConfigured, listenBrainzHealth)}</span></div>
       </div>
-      <p class="muted">Imported personal credentials are encrypted in your Allstarr account. They are not copied back into the host <code>.env</code>.</p>
+      ${lastFmManaged || listenBrainzManaged ? html`<div class="callout"><strong>Personal accounts are managed in Sources</strong><p>Imported credentials are encrypted in your Allstarr account, so their old host <code>.env</code> fields are intentionally blank and hidden here.</p><button @click=${() => this.navigate("/sources")}>Manage connected accounts</button></div>` : nothing}
+      ${!localTracksEnabled ? html`<div class="callout warning"><strong>Local songs are not being scrobbled</strong><p>Enable Local tracks below if plays from your Jellyfin or Subsonic library should be submitted to Last.fm and ListenBrainz.</p></div>` : nothing}
       <div class="config-grid">${fields.map((field) => this.renderConfigField(field))}</div>
       <div class="actions scrobble-actions">
         <button @click=${() => this.runServiceAction("lastfm", API.testLastFm)}>Test Last.fm</button>

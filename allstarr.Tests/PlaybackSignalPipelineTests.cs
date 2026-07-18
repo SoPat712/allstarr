@@ -185,6 +185,22 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Equal(1, first.Successes); Assert.Equal(1, second.Successes);
     }
 
+    [Fact]
+    public async Task ScopedDelivery_FirstUnauthorizedProviderDoesNotBlockHealthyProvider()
+    {
+        var rejected = new Target("lastfm", true) { Reject = true };
+        var healthy = new Target("listenbrainz", true);
+        var checkpoints = new Checkpoints();
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [rejected, healthy], checkpoints);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => delivery.DeliverAsync(Payload(), default));
+        Assert.Equal(0, rejected.Successes);
+        Assert.Equal(1, healthy.Successes);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => delivery.DeliverAsync(Payload(), default));
+        Assert.Equal(1, healthy.Successes);
+    }
+
     [Theory]
     [InlineData(59, 0)]
     [InlineData(60, 1)]
@@ -286,7 +302,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public string? LastType; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; LastType = t; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) { Calls++; LastType = t; } return Task.FromResult(true); } }
     private sealed class Scrobbles : IScopedPlaybackScrobbleDelivery { public int Calls; public int Successes; public bool FailFirst; public Task DeliverAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
     private sealed class Lyrics : IPlaybackLyricsPrefetch { public int Calls; public Task PrefetchAsync(PlaybackSignalPayload p, CancellationToken c) { Calls++; return Task.CompletedTask; } }
-    private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget { public string ProviderId => id; public int Successes; public bool FailFirst; public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured); public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p, DateTimeOffset o, string key, CancellationToken c) { if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
+    private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget { public string ProviderId => id; public int Successes; public bool FailFirst; public bool Reject; public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured); public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p, DateTimeOffset o, string key, CancellationToken c) { if (Reject) throw new UnauthorizedAccessException(); if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
     private sealed class Checkpoints : IPlaybackDeliveryCheckpointStore { private readonly HashSet<string> values = []; public Task<bool> IsCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) => Task.FromResult(values.Contains(k + target)); public Task MarkCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) { values.Add(k + target); return Task.CompletedTask; } }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type t) => null; }
 }

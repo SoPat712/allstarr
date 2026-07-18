@@ -215,6 +215,9 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("authenticateLastFmAccount", script, StringComparison.Ordinal);
         Assert.Contains("never stored by Allstarr", script, StringComparison.Ordinal);
         Assert.Contains("Last.fm no longer accepts the shared Jellyfin plugin key", script, StringComparison.Ordinal);
+        Assert.Contains("Personal accounts are managed in Sources", script, StringComparison.Ordinal);
+        Assert.Contains("Local songs are not being scrobbled", script, StringComparison.Ordinal);
+        Assert.Contains("accountLabel(lastFmConfigured, lastFmHealth)", script, StringComparison.Ordinal);
         Assert.Contains(".provider-qobuz", css, StringComparison.Ordinal);
         Assert.Contains("background: #f7f7f8", css, StringComparison.Ordinal);
         Assert.Contains("Available but untested", script, StringComparison.Ordinal);
