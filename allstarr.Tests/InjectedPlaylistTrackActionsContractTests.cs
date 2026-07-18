@@ -57,6 +57,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("BuildSpotifyMatchedTracksKey(config.Name)", controller, StringComparison.Ordinal);
         Assert.Contains("ExternalTrackPlaybackPolicy.CanUseForPlayback(", controller, StringComparison.Ordinal);
         Assert.Contains("ApplyPlaylistStats(playlistInfo, canonicalLocal, canonicalExternal, canonicalMissing)", controller, StringComparison.Ordinal);
+        Assert.Contains("var canonicalTracks = await _playlistFetcher.GetPlaylistTracksAsync(config.Name)", controller, StringComparison.Ordinal);
+        Assert.Contains("var mapping = await _mappingService.GetMappingAsync(track.SpotifyId)", controller, StringComparison.Ordinal);
         Assert.Contains("matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
     }

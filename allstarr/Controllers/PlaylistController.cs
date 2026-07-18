@@ -350,6 +350,44 @@ public class PlaylistController : ControllerBase
                 {
                     _logger.LogWarning(ex, "Failed to read canonical match stats for {Name}", config.Name);
                 }
+
+                // Durable global mappings are the final authority and survive upgrades even when
+                // legacy per-playlist caches do not. This also runs every mapping through
+                // SpotifyMappingService's playback-policy cleanup before it reaches the summary.
+                try
+                {
+                    var canonicalTracks = await _playlistFetcher.GetPlaylistTracksAsync(config.Name);
+                    var canonicalLocal = 0;
+                    var canonicalExternal = 0;
+
+                    foreach (var track in canonicalTracks)
+                    {
+                        var mapping = await _mappingService.GetMappingAsync(track.SpotifyId);
+                        if (mapping?.TargetType == "local")
+                        {
+                            canonicalLocal++;
+                        }
+                        else if (mapping?.TargetType == "external" &&
+                                 mapping.TryGetExternalTarget(preferredProvider: null, out var provider, out var externalId) &&
+                                 ExternalTrackPlaybackPolicy.CanUseForPlayback(provider, externalId))
+                        {
+                            canonicalExternal++;
+                        }
+                    }
+
+                    if (canonicalTracks.Count == spotifyTrackCount)
+                    {
+                        ApplyPlaylistStats(
+                            playlistInfo,
+                            canonicalLocal,
+                            canonicalExternal,
+                            spotifyTrackCount - canonicalLocal - canonicalExternal);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to calculate durable mapping stats for {Name}", config.Name);
+                }
             }
 
             // LEGACY FALLBACK: Only used if global mappings fail
