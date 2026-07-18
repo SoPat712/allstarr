@@ -161,6 +161,10 @@ public sealed class ComposeContractTests
         Assert.Contains("allstarr_postgres-data:/volume-postgres:ro", controller, StringComparison.Ordinal);
         Assert.Contains("allstarr_valkey-data:/volume-valkey:ro", controller, StringComparison.Ordinal);
         Assert.Contains("backup_state \"${1:-$ROOT/allstarr-backups}\" false", controller, StringComparison.Ordinal);
+        Assert.Contains("restore BACKUP --confirm-replace", controller, StringComparison.Ordinal);
+        Assert.Contains("validate_restore_archive", controller, StringComparison.Ordinal);
+        Assert.Contains("Creating a rollback backup of the current installation", controller, StringComparison.Ordinal);
+        Assert.Contains("find /volume-state /volume-cache /volume-postgres /volume-valkey -mindepth 1 -delete", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
     }
 

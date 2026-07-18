@@ -230,6 +230,83 @@ upgrade() {
   update
 }
 
+validate_restore_archive() {
+  local archive="$1" staging="$2" entry
+  [[ -f "$archive" ]] || die "backup archive not found: $archive"
+  case "$archive" in *.tar.gz|*.tgz) ;; *) die "restore requires an Allstarr .tar.gz backup" ;; esac
+
+  while IFS= read -r entry; do
+    case "$entry" in README.txt|deployment-files.tar|volume-data.tar.gz) ;;
+      *) die "backup contains an unexpected top-level entry: $entry" ;;
+    esac
+  done < <(tar -tzf "$archive")
+  tar -xzf "$archive" -C "$staging"
+  [[ -s "$staging/deployment-files.tar" && -s "$staging/volume-data.tar.gz" ]] ||
+    die "backup is incomplete; deployment-files.tar and volume-data.tar.gz are required"
+  ! tar -tvf "$staging/deployment-files.tar" | awk '$1 ~ /^[lh]/ { found=1 } END { exit !found }' ||
+    die "backup deployment files may not contain links"
+  ! tar -tvzf "$staging/volume-data.tar.gz" | awk '$1 ~ /^[lh]/ { found=1 } END { exit !found }' ||
+    die "backup volume data may not contain links"
+
+  while IFS= read -r entry; do
+    entry="${entry#./}"
+    case "$entry" in
+      .env|.allstarr-profiles|.allstarr-mode|secrets|secrets/*|.apple-provider|.apple-provider/*) ;;
+      *) die "backup contains an unsafe deployment path: $entry" ;;
+    esac
+  done < <(tar -tf "$staging/deployment-files.tar")
+  while IFS= read -r entry; do
+    entry="${entry#./}"
+    case "$entry" in
+      volume-state|volume-state/*|volume-cache|volume-cache/*|volume-postgres|volume-postgres/*|volume-valkey|volume-valkey/*) ;;
+      *) die "backup contains an unsafe volume path: $entry" ;;
+    esac
+  done < <(tar -tzf "$staging/volume-data.tar.gz")
+}
+
+restore_state() {
+  local archive="${1:-}" confirmation="${2:-}" staging runtime_image was_running rollback_dir
+  [[ -n "$archive" ]] || die "usage: ./allstarr.sh restore BACKUP.tar.gz --confirm-replace"
+  [[ "$confirmation" == "--confirm-replace" ]] ||
+    die "restore replaces this installation's config, secrets, database, mappings, and caches; rerun with --confirm-replace"
+  need docker
+  need tar
+  archive="$(cd "$(dirname "$archive")" && pwd)/$(basename "$archive")"
+  staging="$(mktemp -d)"
+  trap 'rm -rf "$staging"' EXIT
+  validate_restore_archive "$archive" "$staging"
+
+  compose_args
+  runtime_image="$(docker compose "${COMPOSE[@]}" images -q postgres | head -1)"
+  [[ -n "$runtime_image" ]] || die "initialize or pull the Allstarr stack before restoring"
+  was_running="$(docker compose "${COMPOSE[@]}" ps --status running -q | head -1)"
+  rollback_dir="$ROOT/allstarr-backups/pre-restore"
+  echo "Creating a rollback backup of the current installation..."
+  backup_state "$rollback_dir" false
+
+  echo "Restoring configuration, encrypted accounts, databases, mappings, and caches..."
+  tar -xf "$staging/deployment-files.tar" -C "$ROOT"
+  chmod 600 "$ROOT/.env" "$ROOT/secrets/postgres-password.txt" "$ROOT/secrets/allstarr-keyring.json" 2>/dev/null || true
+  docker run --rm --read-only \
+    -v allstarr_allstarr-state:/volume-state \
+    -v allstarr_allstarr-cache:/volume-cache \
+    -v allstarr_postgres-data:/volume-postgres \
+    -v allstarr_valkey-data:/volume-valkey \
+    -v "$staging:/restore:ro" \
+    "$runtime_image" sh -c '
+      find /volume-state /volume-cache /volume-postgres /volume-valkey -mindepth 1 -delete &&
+      tar -xzf /restore/volume-data.tar.gz -C /
+    '
+
+  if [[ -n "$was_running" ]]; then
+    compose_args
+    docker compose "${COMPOSE[@]}" up -d --remove-orphans
+  fi
+  echo "Restore complete. A rollback backup of the replaced installation is in: $rollback_dir"
+  rm -rf "$staging"
+  trap - EXIT
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./allstarr.sh COMMAND
@@ -240,6 +317,7 @@ Usage: ./allstarr.sh COMMAND
   update                            Pull the saved release/source and safely recreate
   upgrade [OUTPUT_DIR]              Export all user state, then update and restart
   backup [OUTPUT_DIR]               Export config, secrets, databases, mappings, and caches
+  restore BACKUP --confirm-replace  Restore a portable backup; saves current state first
   status                            Show containers and the saved profile
   logs [service]                    Follow redacted container logs
   enable spotify-lyrics|aio         Add an optional saved profile
@@ -271,6 +349,7 @@ case "$command" in
   update) update ;;
   upgrade) upgrade "$@" ;;
   backup) backup_state "${1:-$ROOT/allstarr-backups}" true ;;
+  restore) restore_state "$@" ;;
   status) compose_args; echo "Mode: $(deployment_mode)"; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)

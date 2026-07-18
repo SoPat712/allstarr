@@ -34,6 +34,9 @@ permissions, and never deletes volumes. For a normal upgrade, run `./allstarr.sh
 stack, creates a private portable export under `allstarr-backups/`, then updates and restarts the saved profile.
 The export includes configuration, the encryption keyring, provider profiles, Postgres, Valkey, mappings, playlist
 caches, and durable application state. Downloaded and kept music stay in their existing host-mounted folders.
+To move or recover an installation, initialize the destination and run
+`./allstarr.sh restore /path/to/allstarr-upgrade-….tar.gz --confirm-replace`. Restore validates the archive,
+creates a rollback backup of the destination, replaces its saved state, and restarts it if it was running.
 
 The default `release` mode runs reviewed images. Beta testers and contributors who want the checked-out commit can
 run `./allstarr.sh mode source`, then `./allstarr.sh up`. For later source updates, run

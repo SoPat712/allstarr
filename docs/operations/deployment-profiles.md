@@ -69,6 +69,18 @@ quietly enable provider accounts or sidecars.
 caches to a private archive under `allstarr-backups/`, then updates and restarts. Use `./allstarr.sh backup` when
 you want the same portable export without upgrading.
 
+To restore the export on this or a freshly initialized host:
+
+```bash
+./allstarr.sh restore /path/to/allstarr-upgrade-20260718T221125Z.tar.gz --confirm-replace
+```
+
+Restore rejects unexpected archive paths and links, stops the destination stack, and first writes a private
+rollback export under `allstarr-backups/pre-restore/`. It then restores the deployment configuration, encryption
+keyring, provider profiles, database, mappings, playlist caches, and other application state. The explicit
+`--confirm-replace` argument is required because the destination state is replaced. Downloaded and kept music are
+host-mounted folders and are not copied or replaced.
+
 In release mode, the update pulls reviewed images and rebuilds the repository-owned Apple gateway only when that
 profile is enabled. In source mode, `update` refuses tracked local changes, runs `git pull --ff-only`, then rebuilds
 the Allstarr source and enabled Apple gateway. The private wrapper image is rebuilt only by `prepare-apple`, when
