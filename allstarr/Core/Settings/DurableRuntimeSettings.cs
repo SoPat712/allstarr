@@ -133,6 +133,8 @@ public static class RuntimeSettingCatalog
         Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");
         Bool("MusicBrainz:Enabled"); Bool("SpotifyApi:Enabled");
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);
+        items.Add(new("SpotifyApi:LyricsApiUrl", RuntimeSettingValueType.String,
+            "SpotifyApi:LyricsApiUrl", AllowEmpty: true));
         Bool("SpotifyApi:PreferIsrcMatching"); Bool("SpotifyImport:Enabled");
         Int("SpotifyImport:MatchingIntervalHours", 0, 8760);
         items.Add(new("SpotifyImport:Playlists", RuntimeSettingValueType.String,

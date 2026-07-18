@@ -113,6 +113,7 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
             case "SpotifyApi:Enabled": _spotifyApi.Enabled = (bool)value; break;
             case "SpotifyApi:CacheDurationMinutes": _spotifyApi.CacheDurationMinutes = (int)value; break;
             case "SpotifyApi:RateLimitDelayMs": _spotifyApi.RateLimitDelayMs = (int)value; break;
+            case "SpotifyApi:LyricsApiUrl": _spotifyApi.LyricsApiUrl = (string)value; break;
             case "SpotifyApi:PreferIsrcMatching": _spotifyApi.PreferIsrcMatching = (bool)value; break;
             case "SpotifyImport:Enabled": _spotifyImport.Enabled = (bool)value; break;
             case "SpotifyImport:MatchingIntervalHours": _spotifyImport.MatchingIntervalHours = (int)value; break;

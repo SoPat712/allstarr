@@ -168,6 +168,9 @@ public static class LegacyEnvParser
     public static bool TryGetDurableAlias(string legacyKey, out string durableKey) =>
         DurableAliases.TryGetValue(legacyKey, out durableKey!);
 
+    public static IReadOnlyCollection<string> DurableAliasTargets { get; } =
+        DurableAliases.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
     public static LegacyEnvDocument Parse(ReadOnlyMemory<byte> source)
     {
         if (source.IsEmpty || source.Length > MaxBytes)

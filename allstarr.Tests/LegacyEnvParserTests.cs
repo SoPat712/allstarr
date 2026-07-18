@@ -1,5 +1,6 @@
 using System.Text;
 using allstarr.Core.Configuration;
+using allstarr.Core.Settings;
 
 namespace allstarr.Tests;
 
@@ -49,6 +50,14 @@ public sealed class LegacyEnvParserTests
             document.Entries.Single(item => item.Key == "SPOTIFY_LYRICS_API_URL").DurableKey);
         Assert.Equal("AppleDownload:BaseUrl",
             document.Entries.Single(item => item.Key == "APPLE_DOWNLOAD_URL").DurableKey);
+    }
+
+    [Fact]
+    public void EveryDurableAliasTargetsARegisteredRuntimeSetting()
+    {
+        Assert.All(LegacyEnvParser.DurableAliasTargets, key =>
+            Assert.True(RuntimeSettingCatalog.Definitions.ContainsKey(key),
+                $"Legacy migration targets unsupported runtime setting '{key}'."));
     }
 
     [Fact]

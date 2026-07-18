@@ -162,16 +162,18 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             new("Providers:StreamingOrder", "deezer,qobuz"), new("Library:DownloadMode", "Album"),
             new("AppleDownload:BaseUrl", "http://apple-gateway.lan/base"),
             new("AppleDownload:Quality", "alac-24-96"),
+            new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
             new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
         ], "webui", _userId);
         var cache = new CacheSettings(); var deezer = new DeezerSettings { Arl = "bootstrap-secret" };
         var apple = new AppleDownloadSettings();
+        var spotifyApi = new SpotifyApiSettings();
         var spotifyImport = new SpotifyImportSettings();
         var jellyfin = new JellyfinSettings(); var subsonic = new SubsonicSettings();
         var identity = new IdentityOptions { DefaultTenantId = _tenantId.ToString() };
         var projector = new DefaultTenantRuntimeSettingsProjector(service, signal, identity, configuration,
             Options.Create(cache), Options.Create(deezer), Options.Create(new QobuzSettings()), Options.Create(new SquidWTFSettings()),
-            Options.Create(apple), Options.Create(new SpotifyApiSettings()), Options.Create(spotifyImport),
+            Options.Create(apple), Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
             NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance);
         await projector.StartAsync(CancellationToken.None);
@@ -185,6 +187,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal("deezer,qobuz", configuration["MULTI_PROVIDER_STREAMING_ORDER"]);
         Assert.Equal("http://apple-gateway.lan/base", apple.BaseUrl);
         Assert.Equal("alac-24-96", apple.Quality);
+        Assert.Equal("http://spotify-lyrics:8080", spotifyApi.LyricsApiUrl);
         var importedPlaylist = Assert.Single(spotifyImport.Playlists);
         Assert.Equal("Discover Weekly", importedPlaylist.Name);
         Assert.Equal("target-id", importedPlaylist.JellyfinId);
