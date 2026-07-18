@@ -53,6 +53,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.True(
             controller.Split("playlistInfo[\"externalTracks\"]", StringSplitOptions.None).Length >= 5,
             "Every playlist statistics path must populate the canonical externalTracks field.");
+        Assert.Contains("BuildSpotifyPlaylistStatsKey(config.Name)", controller, StringComparison.Ordinal);
+        Assert.Contains("matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
     }
 

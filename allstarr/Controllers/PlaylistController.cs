@@ -299,6 +299,34 @@ public class PlaylistController : ControllerBase
                 {
                     _logger.LogError(ex, "Failed to calculate playlist stats for {Name}", config.Name);
                 }
+
+                // The matcher writes this cache from the final, policy-filtered assignments.
+                // Prefer it over reconstructing status from serialized Jellyfin item dictionaries,
+                // whose ProviderIds shape varies between local and synthetic external items.
+                try
+                {
+                    var statsCacheKey = CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(config.Name);
+                    var matchedStats = await _cache.GetAsync<Dictionary<string, int>>(statsCacheKey);
+                    if (matchedStats != null &&
+                        matchedStats.TryGetValue("local", out var matchedLocal) &&
+                        matchedStats.TryGetValue("external", out var matchedExternal) &&
+                        matchedStats.TryGetValue("missing", out var matchedMissing) &&
+                        matchedLocal >= 0 && matchedExternal >= 0 && matchedMissing >= 0 &&
+                        matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount)
+                    {
+                        playlistInfo["localTracks"] = matchedLocal;
+                        playlistInfo["externalTracks"] = matchedExternal;
+                        playlistInfo["externalMatched"] = matchedExternal;
+                        playlistInfo["externalMissing"] = matchedMissing;
+                        playlistInfo["externalTotal"] = matchedExternal + matchedMissing;
+                        playlistInfo["totalInJellyfin"] = matchedLocal + matchedExternal;
+                        playlistInfo["totalPlayable"] = matchedLocal + matchedExternal;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to read canonical match stats for {Name}", config.Name);
+                }
             }
 
             // LEGACY FALLBACK: Only used if global mappings fail
