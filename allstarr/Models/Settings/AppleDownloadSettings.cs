@@ -20,4 +20,10 @@ public class AppleDownloadSettings
     /// - aac-96: 96kbps AAC (low quality lossy)
     /// </summary>
     public string? Quality { get; set; } = "alac-16-44";
+
+    /// <summary>
+    /// Host-mounted staging directory used by the administrator WebUI for an
+    /// Apple Music APK/APKM upload. The host helper consumes the staged file.
+    /// </summary>
+    public string SetupUploadDirectory { get; set; } = "/app/apple-upload";
 }

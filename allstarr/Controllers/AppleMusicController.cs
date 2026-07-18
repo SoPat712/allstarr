@@ -16,6 +16,7 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public class AppleMusicController : ControllerBase
 {
+    private const long MaxSetupPackageBytes = 512L * 1024 * 1024;
     private static readonly HashSet<string> SecretFieldNames = new(StringComparer.Ordinal)
     {
         "accesstoken",
@@ -33,6 +34,7 @@ public class AppleMusicController : ControllerBase
     private readonly HttpClient _httpClient;
     private readonly ILogger<AppleMusicController> _logger;
     private readonly IAppleDownloadEndpointDiscovery? _discovery;
+    private readonly string _setupUploadDirectory;
 
     public AppleMusicController(
         IHttpClientFactory httpClientFactory,
@@ -43,6 +45,9 @@ public class AppleMusicController : ControllerBase
         _httpClient = httpClientFactory.CreateClient("AppleMusic");
         _logger = logger;
         _discovery = discovery;
+        _setupUploadDirectory = string.IsNullOrWhiteSpace(settings.Value.SetupUploadDirectory)
+            ? "/app/apple-upload"
+            : settings.Value.SetupUploadDirectory;
 
         if (allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(
                 settings.Value.BaseUrl, out var baseUri, out _))
@@ -169,16 +174,54 @@ public class AppleMusicController : ControllerBase
     }
 
     [HttpPost("setup")]
+    [RequestSizeLimit(MaxSetupPackageBytes)]
     public async Task<IActionResult> Setup(
-        [FromForm] IFormFile file,
+        [FromForm] IFormFile? file,
         CancellationToken cancellationToken = default)
     {
-        await Task.CompletedTask;
-        return JsonContent(new JsonObject
+        if (file == null || file.Length == 0)
         {
-            ["error"] = "external_provider_managed",
-            ["message"] = "Install and configure the Apple download provider outside Allstarr. Package uploads are not accepted."
-        }, StatusCodes.Status410Gone);
+            return BadRequest(new { error = "package_required", message = "Choose an Apple Music APK or APKM package first." });
+        }
+
+        if (file.Length > MaxSetupPackageBytes)
+        {
+            return BadRequest(new { error = "package_too_large", message = "Apple Music packages must be 512 MB or smaller." });
+        }
+
+        var extension = Path.GetExtension(file.FileName);
+        if (!extension.Equals(".apk", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".apkm", StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { error = "unsupported_package", message = "Upload an .apk or .apkm file." });
+        }
+
+        try
+        {
+            Directory.CreateDirectory(_setupUploadDirectory);
+            var safeName = Path.GetFileName(file.FileName);
+            var stagedName = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}-{safeName}";
+            var destination = Path.Combine(_setupUploadDirectory, stagedName);
+            await using var stream = System.IO.File.Create(destination);
+            await file.CopyToAsync(stream, cancellationToken);
+
+            _logger.LogInformation("Apple provider package staged for host preparation: {Extension} ({Bytes} bytes)", extension, file.Length);
+            return Accepted(new
+            {
+                state = "staged",
+                fileName = safeName,
+                message = "Package uploaded. Run ./allstarr.sh install-apple on the Docker host to verify, build, and start the Apple gateway."
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Apple provider package could not be staged");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "package_stage_failed", message = "The Apple package could not be staged on the host." });
+        }
     }
 
     [HttpPost("login")]

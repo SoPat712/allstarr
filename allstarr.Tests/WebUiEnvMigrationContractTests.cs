@@ -106,7 +106,7 @@ public sealed class WebUiEnvMigrationContractTests
     public void Wizard_AcceptsFileOrPasteAndShowsAllLifecycleStates()
     {
         Assert.Contains("id=\"legacy-env-file\" type=\"file\" @change=", _script, StringComparison.Ordinal);
-        Assert.DoesNotContain("type=\"file\" accept=", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("id=\"legacy-env-file\" type=\"file\" accept=", _script, StringComparison.Ordinal);
         Assert.Contains("The picker shows all files", _script, StringComparison.Ordinal);
         Assert.Contains("this.previewEnvMigration(file, file.name)", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("file.text()", _script, StringComparison.Ordinal);
@@ -134,7 +134,7 @@ public sealed class WebUiEnvMigrationContractTests
         Assert.Contains("docs/operations/spotify-lyrics-sidecar.md", _script, StringComparison.Ordinal);
         Assert.Contains("docs/operations/apple-download-provider.md", _script, StringComparison.Ordinal);
         Assert.Contains("./allstarr.sh enable spotify-lyrics", _script, StringComparison.Ordinal);
-        Assert.Contains("./allstarr.sh prepare-apple", _script, StringComparison.Ordinal);
+        Assert.Contains("./allstarr.sh install-apple", _script, StringComparison.Ordinal);
         Assert.Contains("./allstarr.sh status", _script, StringComparison.Ordinal);
         Assert.Contains("target=\"_blank\" rel=\"noopener noreferrer\"", _script, StringComparison.Ordinal);
         Assert.Contains("this.renderMigrationOptionalRuntimeGuidance()", _script, StringComparison.Ordinal);

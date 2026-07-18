@@ -461,6 +461,11 @@ const API = {
     requestJson("/api/admin/apple-download/login", jsonBody({ username, password }), "Failed to start Apple Music login"),
   appleMusic2fa: (code) =>
     requestJson("/api/admin/apple-download/login/2fa", jsonBody({ code }), "Failed to submit Apple Music 2FA"),
+  appleMusicSetup: (file) => {
+    const data = new FormData();
+    data.append("file", file, file.name);
+    return requestJson("/api/admin/apple-download/setup", { method: "POST", body: data }, "Failed to stage Apple Music package");
+  },
 };
 
 class ThemeManager {
@@ -580,6 +585,7 @@ class AllstarrApp extends LitElement {
     this.selectedExtensionPackageId = "";
     this.scrobbling = null;
     this.appleMusicStatus = null;
+    this.appleUpload = null;
     this.serviceResults = {};
     this.extensionActions = {};
     this.extensionRegistryError = "";
@@ -1441,6 +1447,25 @@ class AllstarrApp extends LitElement {
       await this.loadAppleMusicStatus();
       const feedback = appleAuthFeedback(this.appleMusicStatus, "2fa");
       this.serviceResults = { ...this.serviceResults, applemusic: feedback };
+    } catch (error) {
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
+    }
+  }
+
+  async submitApplePackage(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = form.elements.namedItem("package")?.files?.[0];
+    if (!file) {
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "warning", message: "Choose an .apk or .apkm package first." } };
+      return;
+    }
+    this.serviceResults = { ...this.serviceResults, applemusic: { state: "running", message: "Uploading Apple Music package..." } };
+    try {
+      const result = await API.appleMusicSetup(file);
+      this.appleUpload = result;
+      form.reset();
+      this.serviceResults = { ...this.serviceResults, applemusic: { state: "success", message: result.message || "Package staged." } };
     } catch (error) {
       this.serviceResults = { ...this.serviceResults, applemusic: { state: "error", message: error.message } };
     }
@@ -3118,7 +3143,7 @@ class AllstarrApp extends LitElement {
           <div class="form-row"><label>Apple ID</label><input name="username" autocomplete="username" required></div>
           <div class="form-row"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
           <button class="primary">Start login</button>
-        </form>` : !gatewayReady ? html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>The Apple Android package must be prepared on the Docker host because the main Allstarr container has no Docker or host-file access.</p><pre><code>./allstarr.sh install-apple /path/to/apple-music.apkm x86_64</code></pre></div>` : html`<div class="callout success"><strong>Apple Music connected</strong><p>The external gateway and saved Apple session are ready.</p></div>`}
+        </form>` : !gatewayReady ? html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>Upload the legally obtained Apple Music Android package here. Allstarr stages it in the host profile; run the one-line host helper afterward to verify, build, and start the gateway.</p><form class="form-stack compact-form" @submit=${this.submitApplePackage}><div class="form-row"><label for="apple-package">Apple Music package</label><input id="apple-package" name="package" type="file" accept=".apk,.apkm,application/vnd.android.package-archive" required></div><button class="primary" type="submit">Upload package</button></form>${this.appleUpload ? html`<div class="callout success"><strong>Package staged</strong><p>${this.appleUpload.fileName || "Apple package"} is ready on the host.</p><pre><code>./allstarr.sh install-apple x86_64</code></pre></div>` : nothing}</div>` : html`<div class="callout success"><strong>Apple Music connected</strong><p>The external gateway and saved Apple session are ready.</p></div>`}
         ${isAwaitingApple2fa({ ...status, state: loginState }) || result?.state === "warning" ? html`
           <form class="form-stack compact-form" @submit=${this.submitApple2fa}>
             <div class="form-row"><label>2FA code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required></div>
@@ -4078,7 +4103,7 @@ class AllstarrApp extends LitElement {
         title: "Apple download gateway",
         text: "The endpoint URL is imported as a runtime setting. Prepare the optional Apple profile with legally obtained Apple Music Android libraries, then verify it under Sources > Apple download. Do not point Allstarr directly at wrapper-v2.",
         guide: "https://github.com/SoPat712/allstarr/blob/dev/docs/operations/apple-download-provider.md",
-        command: "./allstarr.sh install-apple /path/to/apple-music.apkm x86_64\n# Then open Sources > Apple download and finish login",
+        command: "./allstarr.sh install-apple x86_64\n# Upload the package in Sources > Apple download first, then finish login",
       });
     }
     return services;

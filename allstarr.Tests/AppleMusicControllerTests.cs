@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.IO;
 using allstarr.Controllers;
 using allstarr.Models.Settings;
 using Microsoft.AspNetCore.Http;
@@ -246,6 +247,27 @@ public sealed class AppleMusicControllerTests
         Assert.DoesNotContain("sessionKey", content.Content, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Setup_StagesApkmForHostHelper()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "allstarr-apple-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var controller = CreateController(_ => Json(HttpStatusCode.OK, "{}"), directory);
+            var form = new FormFile(new MemoryStream([1, 2, 3]), 0, 3, "file", "apple-music.apkm");
+
+            var result = await controller.Setup(form);
+
+            var accepted = Assert.IsType<AcceptedResult>(result);
+            Assert.Equal(StatusCodes.Status202Accepted, accepted.StatusCode);
+            Assert.EndsWith("-apple-music.apkm", Directory.EnumerateFiles(directory).Single(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
     private static ContentResult AssertContent(IActionResult result, int expectedStatus)
     {
         var content = Assert.IsType<ContentResult>(result);
@@ -256,7 +278,8 @@ public sealed class AppleMusicControllerTests
     }
 
     private static AppleMusicController CreateController(
-        Func<HttpRequestMessage, HttpResponseMessage> responder)
+        Func<HttpRequestMessage, HttpResponseMessage> responder,
+        string? uploadDirectory = null)
     {
         var client = new HttpClient(new StubHttpMessageHandler(responder));
         var factory = new Mock<IHttpClientFactory>();
@@ -264,7 +287,7 @@ public sealed class AppleMusicControllerTests
 
         return new AppleMusicController(
             factory.Object,
-            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-sidecar.test" }),
+            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-sidecar.test", SetupUploadDirectory = uploadDirectory ?? "/tmp/allstarr-apple-test" }),
             NullLogger<AppleMusicController>.Instance);
     }
 

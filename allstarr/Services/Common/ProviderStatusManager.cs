@@ -19,6 +19,7 @@ namespace allstarr.Services.Common;
 /// </summary>
 public class ProviderStatusManager
 {
+    private readonly record struct ProbeOutcome(bool Success, string? ReasonCode = null);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
     private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
     private static readonly (string Provider, string Capability)[] KnownCapabilities =
@@ -302,7 +303,7 @@ public class ProviderStatusManager
         try
         {
             var startedAt = DateTimeOffset.UtcNow;
-            var isHealthy = await ProbeCapabilityAsync(
+            var probe = await ProbeCapabilityAsync(
                 key.Provider,
                 key.Capability,
                 accountSecrets,
@@ -316,15 +317,15 @@ public class ProviderStatusManager
                 : "probe_failed";
             var result = baseline with
             {
-                Health = isHealthy ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                Health = probe.Success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
                 TestedAt = DateTimeOffset.UtcNow,
-                ReasonCode = isHealthy ? null : failureReason
+                ReasonCode = probe.Success ? null : probe.ReasonCode ?? failureReason
             };
 
             _observations[key] = result;
             await PersistObservationAsync(
                 key,
-                isHealthy
+                probe.Success
                     ? allstarr.Core.Storage.ProviderHealthState.Healthy
                     : allstarr.Core.Storage.ProviderHealthState.Degraded,
                 (long)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalMilliseconds),
@@ -680,7 +681,7 @@ public class ProviderStatusManager
         };
     }
 
-    private async Task<bool> ProbeCapabilityAsync(
+    private async Task<ProbeOutcome> ProbeCapabilityAsync(
         string provider,
         string capability,
         IReadOnlyDictionary<string, string>? accountSecrets,
@@ -691,25 +692,27 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist) => await TestSpotifyPlaylistAsync(
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie,
                 cancellationToken),
-            ("spotify", ProviderCapabilities.Lyrics) => await TestSpotifyLyricsAsync(cancellationToken),
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestAppleDownloadAsync(capability, cancellationToken),
-            ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestDeezerMetadataAsync(cancellationToken),
-            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestDeezerAccountAsync(
+            ("spotify", ProviderCapabilities.Lyrics) => await AsOutcome(TestSpotifyLyricsAsync(cancellationToken)),
+            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
+            ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestDeezerMetadataAsync(cancellationToken)),
+            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
-                cancellationToken),
-            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestQobuzMetadataAsync(cancellationToken),
-            ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestQobuzAccountAsync(
+                cancellationToken)),
+            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestQobuzMetadataAsync(cancellationToken)),
+            ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestQobuzAccountAsync(
                 SecretValue(accountSecrets, "userauthtoken", "token") ?? _qobuzSettings.UserAuthToken,
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
-                cancellationToken),
-            ("squidwtf", ProviderCapabilities.Metadata) => await TestSquidWtfAsync(cancellationToken),
-            ("lyricsplus", ProviderCapabilities.Lyrics) => await TestLyricsPlusAsync(cancellationToken),
-            ("lrclib", ProviderCapabilities.Lyrics) => await TestLrclibAsync(cancellationToken),
-            ("lastfm", ProviderCapabilities.Scrobbling) => await TestLastFmAsync(accountSecrets, cancellationToken),
-            ("listenbrainz", ProviderCapabilities.Scrobbling) => await TestListenBrainzAsync(accountSecrets, cancellationToken),
-            _ => false
+                cancellationToken)),
+            ("squidwtf", ProviderCapabilities.Metadata) => await AsOutcome(TestSquidWtfAsync(cancellationToken)),
+            ("lyricsplus", ProviderCapabilities.Lyrics) => await AsOutcome(TestLyricsPlusAsync(cancellationToken)),
+            ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
+            ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
+            ("listenbrainz", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(accountSecrets, cancellationToken)),
+            _ => new ProbeOutcome(false, "probe_not_available")
         };
     }
+
+    private static async Task<ProbeOutcome> AsOutcome(Task<bool> probe) => new(await probe);
 
     private async Task<bool> TestLastFmAsync(
         IReadOnlyDictionary<string, string>? secrets,
@@ -788,7 +791,7 @@ public class ProviderStatusManager
             System.Net.HttpStatusCode.TooManyRequests;
     }
 
-    private async Task<bool> TestSpotifyPlaylistAsync(
+    private async Task<ProbeOutcome> TestSpotifyPlaylistAsync(
         string? sessionCookie,
         CancellationToken cancellationToken)
     {
@@ -802,13 +805,19 @@ public class ProviderStatusManager
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return false;
+            return new ProbeOutcome(
+                false,
+                response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden
+                    ? "provider_unauthorized"
+                    : $"upstream_http_{(int)response.StatusCode}");
         }
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var document = JsonDocument.Parse(json);
         return document.RootElement.TryGetProperty("accessToken", out var token) &&
-               !string.IsNullOrWhiteSpace(token.GetString());
+               !string.IsNullOrWhiteSpace(token.GetString())
+            ? new ProbeOutcome(true)
+            : new ProbeOutcome(false, "invalid_response");
     }
 
     private async Task<bool> TestSpotifyLyricsAsync(CancellationToken cancellationToken)

@@ -75,7 +75,7 @@ init() {
   docker compose version >/dev/null
   [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
   install -d -m 700 "$ROOT/secrets"
-  install -d -m 755 "$ROOT/downloads" "$ROOT/kept"
+  install -d -m 755 "$ROOT/downloads" "$ROOT/kept" "$ROOT/.apple-provider/incoming"
   if [[ ! -s "$ROOT/secrets/postgres-password.txt" ]]; then
     umask 077
     openssl rand -base64 36 > "$ROOT/secrets/postgres-password.txt"
@@ -96,7 +96,19 @@ init() {
 prepare_apple() {
   local input="${1:-}" arch="${2:-x86_64}" runtime="linux/amd64"
   [[ -f "$ROOT/.env" ]] || die "run ./allstarr.sh init before enabling providers"
-  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "usage: ./allstarr.sh prepare-apple APK_OR_STAGED_LIBS [x86_64|arm64-v8a]"
+  if [[ "$input" == "x86_64" || "$input" == "arm64-v8a" ]]; then
+    arch="$input"
+    input=""
+  fi
+  if [[ -z "$input" ]]; then
+    local candidate
+    for candidate in "$ROOT"/.apple-provider/incoming/*.apk "$ROOT"/.apple-provider/incoming/*.apkm; do
+      if [[ -f "$candidate" && ( -z "$input" || "$candidate" -nt "$input" ) ]]; then
+        input="$candidate"
+      fi
+    done
+  fi
+  [[ -n "$input" && ( -f "$input" || -d "$input" ) ]] || die "no staged Apple package found; upload an .apk/.apkm in Sources > Apple download first"
   case "$arch" in
     x86_64) ;;
     arm64-v8a) runtime=linux/arm64 ;;
@@ -170,8 +182,8 @@ Usage: ./allstarr.sh COMMAND
   logs [service]                    Follow redacted container logs
   enable spotify-lyrics|aio         Add an optional saved profile
   disable spotify-lyrics|apple|aio  Remove an optional profile on next up
-  prepare-apple INPUT [ARCH]        Verify an APK/APKM or staged libs; enable Apple
-  install-apple INPUT [ARCH]        Verify, build, and start the Apple gateway
+  prepare-apple [INPUT] [ARCH]      Verify an APK/APKM or staged libs; enable Apple
+  install-apple [ARCH]              Build and start Apple from the WebUI-staged package
   down                              Stop containers without deleting data
 
 The deployment mode is saved in .allstarr-mode. Release mode pulls reviewed

@@ -10,11 +10,11 @@ GAMDL search and download HTTP gateway by itself.
 
 ## Prepare wrapper-v2
 
-Obtain Apple Music for Android legally from a source you are permitted to use. Allstarr does not download,
-redistribute, or retain that package. Then run:
+Obtain Apple Music for Android legally from a source you are permitted to use. Allstarr does not download or
+redistribute that package. Open Sources > Apple download in the WebUI, upload the APK/APKM, and run:
 
 ```bash
-./allstarr.sh install-apple /private/path/apple-music.apkm x86_64
+./allstarr.sh install-apple x86_64
 ```
 
 Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
@@ -23,7 +23,7 @@ Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
 An old installation's archived libraries can be reused only when they pass the official hash lock:
 
 ```bash
-./allstarr.sh install-apple /backup/rootfs/system/lib64 x86_64
+./allstarr.sh prepare-apple /backup/rootfs/system/lib64 x86_64
 ```
 
 The controller clones official wrapper-v2 tag `0.0.2`, verifies its full locked commit, stages the official

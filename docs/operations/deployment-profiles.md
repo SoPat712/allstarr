@@ -34,11 +34,11 @@ Spotify lyrics needs only its cookie in the protected `.env`:
 ./allstarr.sh up
 ```
 
-Apple needs a legally obtained Apple Music Android 3.6.0-beta build 1109 APK/APKM. Allstarr verifies every native
-library against the official wrapper-v2 lock before it will build:
+Apple needs a legally obtained Apple Music Android 3.6.0-beta build 1109 APK/APKM. Upload it in Sources > Apple
+download, then Allstarr verifies every native library against the official wrapper-v2 lock before it will build:
 
 ```bash
-./allstarr.sh install-apple /private/path/apple-music.apkm x86_64
+./allstarr.sh install-apple x86_64
 ```
 
 Use `arm64-v8a` instead of `x86_64` on an ARM64 Docker host. Finish Apple login and 2FA in the WebUI. The Apple

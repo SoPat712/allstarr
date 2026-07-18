@@ -318,6 +318,22 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
+    public async Task SpotifyPlaylistProbe_ReportsUnauthorizedWithoutExposingCookie()
+    {
+        var manager = CreateManager(
+            new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(
+                new QueuedResponseHandler(Json(HttpStatusCode.Unauthorized, "{}"))),
+            spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "expired-cookie" });
+
+        var result = await manager.TestProviderCapabilityAsync("spotify", ProviderCapabilities.Playlist);
+
+        Assert.Equal(ProviderHealthState.Degraded, result.Health);
+        Assert.Equal("provider_unauthorized", result.ReasonCode);
+        Assert.DoesNotContain("expired-cookie", result.ReasonCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ManagedAccountStatus_PreservesCapabilityFailureReason()
     {
         var manager = CreateManager(
