@@ -110,6 +110,18 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
         Assert.Equal(7, configuration.GetValue<int>("SpotifyImport:MatchingIntervalHours"));
     }
 
+    [Fact]
+    public void LoadDotEnvOverrides_DoesNotReplaceDeploymentOwnedAliasDestination()
+    {
+        File.WriteAllText(_envFilePath, "APPLE_DOWNLOAD_URL=http://legacy-gamdl:8000\n");
+
+        var overrides = RuntimeEnvConfiguration.LoadDotEnvOverrides(
+            _envFilePath,
+            new HashSet<string>(["AppleDownload:BaseUrl"], StringComparer.OrdinalIgnoreCase));
+
+        Assert.DoesNotContain("AppleDownload:BaseUrl", overrides);
+    }
+
     public void Dispose()
     {
         if (File.Exists(_envFilePath))

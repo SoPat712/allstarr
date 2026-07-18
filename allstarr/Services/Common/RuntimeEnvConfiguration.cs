@@ -158,7 +158,18 @@ public static class RuntimeEnvConfiguration
         ConfigurationManager configuration,
         string envFilePath)
     {
-        var overrides = LoadDotEnvOverrides(envFilePath);
+        var deploymentOwnedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry variable in Environment.GetEnvironmentVariables())
+        {
+            foreach (var mapping in MapEnvVarToConfiguration(
+                         Convert.ToString(variable.Key) ?? string.Empty,
+                         Convert.ToString(variable.Value)))
+            {
+                deploymentOwnedKeys.Add(mapping.Key);
+            }
+        }
+
+        var overrides = LoadDotEnvOverrides(envFilePath, deploymentOwnedKeys);
         if (overrides.Count == 0)
         {
             return;
@@ -167,7 +178,9 @@ public static class RuntimeEnvConfiguration
         configuration.AddInMemoryCollection(overrides);
     }
 
-    public static Dictionary<string, string?> LoadDotEnvOverrides(string envFilePath)
+    public static Dictionary<string, string?> LoadDotEnvOverrides(
+        string envFilePath,
+        IReadOnlySet<string>? deploymentOwnedKeys = null)
     {
         var overrides = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
@@ -194,6 +207,10 @@ public static class RuntimeEnvConfiguration
 
             foreach (var mapping in MapEnvVarToConfiguration(envKey, envValue))
             {
+                if (deploymentOwnedKeys?.Contains(mapping.Key) == true)
+                {
+                    continue;
+                }
                 overrides[mapping.Key] = mapping.Value;
             }
         }
