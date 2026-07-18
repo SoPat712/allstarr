@@ -71,7 +71,9 @@ public class AdminStaticFilesMiddlewareTests
             Assert.False(nextInvoked());
             Assert.Equal("application/javascript", context.Response.ContentType);
             Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
-            Assert.Equal("no-cache, must-revalidate", context.Response.Headers.CacheControl);
+            Assert.Equal("no-store", context.Response.Headers.CacheControl);
+            Assert.Equal("no-cache", context.Response.Headers.Pragma);
+            Assert.Equal("0", context.Response.Headers.Expires);
         }
         finally
         {

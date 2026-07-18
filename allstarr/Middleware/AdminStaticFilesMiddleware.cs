@@ -47,7 +47,7 @@ public class AdminStaticFilesMiddleware
                 var indexPath = Path.Combine(_webRootPath, "index.html");
                 if (File.Exists(indexPath))
                 {
-                    SetRevalidationHeaders(context.Response, isEntryPoint: true);
+                    SetRevalidationHeaders(context.Response);
                     context.Response.ContentType = "text/html";
                     await context.Response.SendFileAsync(indexPath);
                     return;
@@ -64,7 +64,7 @@ public class AdminStaticFilesMiddleware
 
             if (File.Exists(candidatePath))
             {
-                SetRevalidationHeaders(context.Response, isEntryPoint: false);
+                SetRevalidationHeaders(context.Response);
                 var contentType = GetContentType(candidatePath);
                 context.Response.ContentType = contentType;
                 await context.Response.SendFileAsync(candidatePath);
@@ -76,11 +76,14 @@ public class AdminStaticFilesMiddleware
         await _next(context);
     }
 
-    private static void SetRevalidationHeaders(HttpResponse response, bool isEntryPoint)
+    private static void SetRevalidationHeaders(HttpResponse response)
     {
-        response.Headers.CacheControl = isEntryPoint
-            ? "no-store"
-            : "no-cache, must-revalidate";
+        // The WebUI ships inside the application image without content-hashed asset
+        // names. Prevent a browser from reusing JavaScript or CSS from the previous
+        // container after an update.
+        response.Headers.CacheControl = "no-store";
+        response.Headers.Pragma = "no-cache";
+        response.Headers.Expires = "0";
     }
 
     private string? ResolveStaticFilePath(string requestPath)
