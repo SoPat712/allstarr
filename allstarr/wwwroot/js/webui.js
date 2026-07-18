@@ -2939,10 +2939,14 @@ class AllstarrApp extends LitElement {
     const reason = String(failed.reasonCode || failed.ReasonCode || "").toLowerCase();
     const failedCapability = String(failed.capability || failed.Capability || "").toLowerCase();
     const expiredSpotify = providerId === "spotify" && failedCapability === "playlist" &&
-      (["", "provider_unauthorized", "unauthorized", "invalid_credentials"].includes(reason) || reason.includes("credential"));
+      (["provider_unauthorized", "unauthorized", "invalid_credentials"].includes(reason) || reason.includes("credential"));
     const rejectedLastFm = providerId === "lastfm" && failedCapability === "scrobbling";
     const message = expiredSpotify
       ? "Spotify rejected the saved session. Add a fresh sp_dc cookie to resume playlist refreshes; cached playlists will keep working meanwhile."
+      : providerId === "spotify" && failedCapability === "playlist" && reason === "invalid_response"
+        ? "Spotify accepted the request but did not return a usable web-player token. The browser-session method may have changed; your saved cookie has not been proven invalid."
+      : providerId === "spotify" && failedCapability === "playlist" && reason.startsWith("upstream_http_")
+        ? `Spotify returned HTTP ${reason.slice("upstream_http_".length)} while checking playlists. This does not necessarily mean your cookie is wrong.`
       : rejectedLastFm
         ? "Last.fm rejected the saved session. Reconnect with your password; if this account used the old Jellyfin app key, replace the application key and shared secret too."
       : reason === "timeout" || reason === "unreachable"
@@ -3087,8 +3091,11 @@ class AllstarrApp extends LitElement {
     const healthy = Boolean(tested?.healthy ?? tested?.success);
     const reason = tested?.reasonCode || tested?.error;
     const providerName = providerDisplayName(providerId, this.schema?.providers);
-    const failure = providerId === "spotify"
-      ? `Account details stored; Spotify rejected the session${reason ? ` (${titleCase(reason)})` : ""}. Open setup and try a newly copied sp_dc cookie.`
+    const spotifyRejected = ["provider_unauthorized", "unauthorized", "invalid_credentials"].includes(String(reason || "").toLowerCase());
+    const failure = providerId === "spotify" && spotifyRejected
+      ? "Account details stored; Spotify returned 401/403 for this browser session. Open setup and try a newly copied sp_dc cookie."
+      : providerId === "spotify"
+        ? `Account details stored; Spotify playlist verification failed${reason ? ` (${titleCase(reason)})` : ""}. This does not prove the cookie is invalid.`
       : `Account details stored; ${providerName} connection failed${reason ? ` (${titleCase(reason)})` : ""}.`;
     this.toast(healthy ? `${providerName} connected` : failure, healthy ? "success" : "error");
   }

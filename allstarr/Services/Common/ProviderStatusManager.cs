@@ -332,10 +332,11 @@ public class ProviderStatusManager
                 result.ReasonCode,
                 cancellationToken);
             _logger.LogInformation(
-                "Provider capability probe result: {Provider}/{Capability} => {Health}",
+                "Provider capability probe result: {Provider}/{Capability} => {Health} ({ReasonCode})",
                 key.Provider,
                 key.Capability,
-                result.Health);
+                result.Health,
+                result.ReasonCode ?? "none");
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -1080,12 +1080,21 @@ public class ConfigController : ControllerBase
                 account.Id,
                 accountSecrets,
                 HttpContext.RequestAborted);
+            var failedCapabilities = statusManager.GetAllManagedStatuses(
+                    normalizedProvider,
+                    account.Id,
+                    accountSecrets)
+                .Where(item => item.Health == allstarr.Services.Common.ProviderHealthState.Degraded)
+                .Select(item => new { capability = item.Capability, reasonCode = item.ReasonCode })
+                .ToArray();
             return Ok(new
             {
                 success = true,
                 provider = normalizedProvider,
                 providerAccountId = account.Id,
-                healthy
+                healthy,
+                reasonCode = failedCapabilities.FirstOrDefault()?.reasonCode,
+                failedCapabilities
             });
         }
 
