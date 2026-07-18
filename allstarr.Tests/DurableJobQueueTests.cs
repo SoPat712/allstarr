@@ -407,7 +407,8 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             var scheduled = await context.Jobs.SingleAsync();
             Assert.Equal(DurableJobState.RetryScheduled, scheduled.State);
             Assert.DoesNotContain("fixture", scheduled.LastErrorMessage ?? string.Empty, StringComparison.Ordinal);
-            Assert.DoesNotContain("provider.invalid", scheduled.LastErrorMessage ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("provider.invalid", scheduled.LastErrorMessage ?? string.Empty, StringComparison.Ordinal);
+            Assert.Contains("token=<redacted>", scheduled.LastErrorMessage ?? string.Empty, StringComparison.Ordinal);
         }
 
         _clock.Advance(TimeSpan.FromSeconds(2));
