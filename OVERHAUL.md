@@ -494,6 +494,7 @@ Output:
 Matching rules:
 
 - Make tie-breaking deterministic and retain the exact signals and threshold policy used for each decision.
+- Playlist track views expose compact per-track actions for local search, playable-provider search, automatic rematch, and clearing a manual choice. Metadata-only providers are never offered as playable manual targets.
 - Never trigger a download, placement, metadata rewrite, or cross-provider stream solely from a low-confidence suggestion.
 - A manual rejection or pinned match survives re-indexing until its owner changes it; a source snapshot change may create a reviewable rematch suggestion.
 - Evaluate matching quality against a versioned fixture corpus and report false positives separately from unmatched tracks.

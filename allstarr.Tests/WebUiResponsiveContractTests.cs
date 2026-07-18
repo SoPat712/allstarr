@@ -177,9 +177,12 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.Contains("class=\"modal-backdrop injected-playlist-backdrop\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"panel injected-playlist-dialog\" role=\"dialog\" aria-modal=\"true\"", script, StringComparison.Ordinal);
-        Assert.Contains("if (event.key === \"Escape\") close();", script, StringComparison.Ordinal);
+        Assert.Contains("if (event.key !== \"Escape\") return;", script, StringComparison.Ordinal);
+        Assert.Contains("else if (this.injectedTrackMenuId) this.injectedTrackMenuId = \"\";", script, StringComparison.Ordinal);
         Assert.Contains(".injected-playlist-scroll", css, StringComparison.Ordinal);
         Assert.Contains(".injected-playlist-dialog", css, StringComparison.Ordinal);
+        Assert.Contains(".track-action-popover", css, StringComparison.Ordinal);
+        Assert.Contains("position: fixed;", css, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1641,8 +1641,126 @@ fieldset.form-row > label small {
 }
 
 .injected-track-row {
-    grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+    position: relative;
+    grid-template-columns: 2.2rem minmax(0, 1fr) auto auto;
     align-items: center;
+}
+
+.track-action-menu {
+    position: relative;
+}
+
+.track-action-trigger {
+    display: inline-grid;
+    place-items: center;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1.35rem;
+    line-height: 1;
+    padding: 0;
+}
+
+.track-action-trigger:hover,
+.track-action-trigger[aria-expanded="true"] {
+    border-color: var(--border-strong);
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+}
+
+.track-action-popover {
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    right: 0;
+    z-index: 5;
+    display: grid;
+    width: min(220px, 75vw);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+    box-shadow: var(--shadow-modal);
+    padding: var(--space-2);
+}
+
+.track-action-popover button {
+    justify-content: flex-start;
+    min-height: 36px;
+    border: 0;
+    background: transparent;
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+}
+
+.track-action-popover button:hover {
+    background: var(--accent-soft);
+}
+
+.track-action-popover .danger-text {
+    color: var(--error);
+}
+
+.track-match-editor {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: grid;
+    gap: var(--space-4);
+    margin: 0 calc(-1 * var(--space-5)) var(--space-4);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-card);
+    padding: var(--space-4) var(--space-5);
+    box-shadow: 0 12px 22px color-mix(in srgb, #050208, transparent 78%);
+}
+
+.track-match-editor h4,
+.track-match-editor p {
+    margin: 0;
+}
+
+.track-match-search {
+    display: grid;
+    grid-template-columns: minmax(130px, 0.35fr) minmax(220px, 1fr) auto;
+    align-items: end;
+    gap: var(--space-3);
+}
+
+.track-match-query:only-of-type {
+    grid-column: 1 / 3;
+}
+
+.track-match-results {
+    display: grid;
+    gap: var(--space-2);
+    max-height: 280px;
+    overflow: auto;
+}
+
+.track-match-result {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    border-color: var(--border);
+    background: var(--surface-elevated);
+    padding: var(--space-3);
+    text-align: left;
+}
+
+.track-match-result span:first-child {
+    display: grid;
+    min-width: 0;
+}
+
+.track-match-result small {
+    overflow: hidden;
+    color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .track-position {
@@ -2293,6 +2411,43 @@ button.setup-choice {
     .injected-playlist-scroll {
         padding-left: var(--space-4);
         padding-right: var(--space-4);
+    }
+
+    .injected-track-row {
+        grid-template-columns: 2rem minmax(0, 1fr) auto;
+    }
+
+    .injected-track-row > .status-chip {
+        grid-column: 2;
+        justify-self: start;
+    }
+
+    .track-action-menu {
+        grid-column: 3;
+        grid-row: 1 / span 2;
+    }
+
+    .track-action-popover {
+        position: fixed;
+        right: var(--space-3);
+        bottom: max(var(--space-3), env(safe-area-inset-bottom));
+        top: auto;
+        width: calc(100vw - (2 * var(--space-3)));
+    }
+
+    .track-match-editor {
+        margin-right: calc(-1 * var(--space-4));
+        margin-left: calc(-1 * var(--space-4));
+        padding-right: var(--space-4);
+        padding-left: var(--space-4);
+    }
+
+    .track-match-search {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .track-match-query:only-of-type {
+        grid-column: auto;
     }
 
     .setup-guide-header,

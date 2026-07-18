@@ -118,6 +118,7 @@ public class MappingController : ControllerBase
         {
             var removedPlaylistManual = false;
             var removedGlobal = false;
+            var removedCached = false;
 
             if (!string.IsNullOrWhiteSpace(provider))
             {
@@ -130,16 +131,18 @@ public class MappingController : ControllerBase
             else
             {
                 removedPlaylistManual = await TryRemovePlaylistManualMappingAsync(playlist, spotifyId);
-                if (removedPlaylistManual)
-                {
-                    var cacheKey = $"manual:mapping:{playlist}:{spotifyId}";
-                    await _cache.DeleteAsync(cacheKey);
-                }
-
                 removedGlobal = await _mappingService.DeleteMappingAsync(spotifyId);
             }
 
-            if (!removedPlaylistManual && !removedGlobal)
+            removedCached |= await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyManualMappingKey(playlist, spotifyId));
+            removedCached |= await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyExternalMappingKey(playlist, spotifyId));
+            removedCached |= await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist));
+            removedCached |= await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlist));
+            removedCached |= await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist));
+            removedCached |= await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(playlist));
+            RemovePlaylistResultFiles(playlist);
+
+            if (!removedPlaylistManual && !removedGlobal && !removedCached)
             {
                 return NotFound(new { error = "Mapping not found" });
             }
@@ -150,6 +153,19 @@ public class MappingController : ControllerBase
         {
             _logger.LogError(ex, "Failed to delete track mapping for {Playlist} - {SpotifyId}", playlist, spotifyId);
             return StatusCode(500, new { error = "Failed to delete track mapping" });
+        }
+    }
+
+    private void RemovePlaylistResultFiles(string playlist)
+    {
+        var safeName = AdminHelperService.SanitizeFileName(playlist);
+        foreach (var suffix in new[] { "matched", "items", "stats" })
+        {
+            var filePath = Path.Combine("/app/cache/spotify", $"{safeName}_{suffix}.json");
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+            }
         }
     }
 

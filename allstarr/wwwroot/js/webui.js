@@ -292,6 +292,18 @@ const API = {
     requestJson(`/api/admin/playlists${refresh ? "?refresh=true" : ""}`, {}, "Failed to load playlists"),
   playlistTracks: (name) =>
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/tracks`, {}, "Failed to load playlist tracks"),
+  searchLocalTracks: (query) =>
+    requestJson(`/api/admin/jellyfin/search?query=${encodeURIComponent(query)}`, {}, "Failed to search the local library"),
+  searchExternalTracks: (query, provider, limit = 20) => {
+    const params = new URLSearchParams({ query, provider, limit: String(limit) });
+    return requestJson(`/api/admin/external/search?${params}`, {}, "Failed to search the provider");
+  },
+  saveInjectedTrackMapping: (name, payload) =>
+    requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/map`, jsonBody(payload), "Failed to save the track match"),
+  clearInjectedTrackMapping: (name, spotifyId) => {
+    const params = new URLSearchParams({ playlist: name, spotifyId });
+    return requestJson(`/api/admin/mappings/tracks?${params}`, { method: "DELETE" }, "Failed to clear the track match");
+  },
   refreshPlaylists: () => requestJson("/api/admin/playlists/refresh", { method: "POST" }, "Failed to refresh playlists"),
   refreshPlaylist: (name) =>
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/refresh`, { method: "POST" }, "Failed to refresh playlist"),
@@ -482,6 +494,8 @@ class AllstarrApp extends LitElement {
     selectedPlaylistLinkId: { state: true },
     selectedInjectedPlaylist: { state: true },
     injectedPlaylistDetails: { state: true },
+    injectedTrackMenuId: { state: true },
+    injectedTrackEditor: { state: true },
     downloads: { state: true },
     jobs: { state: true },
     providerAccounts: { state: true },
@@ -539,6 +553,8 @@ class AllstarrApp extends LitElement {
     this.selectedPlaylistLinkId = "";
     this.selectedInjectedPlaylist = "";
     this.injectedPlaylistDetails = null;
+    this.injectedTrackMenuId = "";
+    this.injectedTrackEditor = null;
     this.downloads = null;
     this.jobs = [];
     this.providerAccounts = [];
@@ -2094,6 +2110,8 @@ class AllstarrApp extends LitElement {
   async openInjectedPlaylist(name) {
     this.selectedInjectedPlaylist = String(name || "");
     this.injectedPlaylistDetails = null;
+    this.injectedTrackMenuId = "";
+    this.injectedTrackEditor = null;
     await this.updateComplete;
     this.renderRoot.querySelector(".injected-playlist-dialog")?.focus();
     try {
@@ -2108,10 +2126,20 @@ class AllstarrApp extends LitElement {
     if (!this.selectedInjectedPlaylist) return nothing;
     const details = this.injectedPlaylistDetails;
     const tracks = asArray(details?.tracks || details?.Tracks);
-    const close = () => { this.selectedInjectedPlaylist = ""; this.injectedPlaylistDetails = null; };
+    const close = () => {
+      this.selectedInjectedPlaylist = "";
+      this.injectedPlaylistDetails = null;
+      this.injectedTrackMenuId = "";
+      this.injectedTrackEditor = null;
+    };
     return html`<div class="modal-backdrop injected-playlist-backdrop"
       @click=${(event) => { if (event.target === event.currentTarget) close(); }}
-      @keydown=${(event) => { if (event.key === "Escape") close(); }}>
+      @keydown=${(event) => {
+        if (event.key !== "Escape") return;
+        if (this.injectedTrackEditor) this.injectedTrackEditor = null;
+        else if (this.injectedTrackMenuId) this.injectedTrackMenuId = "";
+        else close();
+      }}>
       <section class="panel injected-playlist-dialog" role="dialog" aria-modal="true"
         aria-labelledby="injected-playlist-title" tabindex="-1">
         <div class="section-heading injected-playlist-heading">
@@ -2119,16 +2147,137 @@ class AllstarrApp extends LitElement {
           <button class="ghost" @click=${close} aria-label="Close playlist tracks">Close</button>
         </div>
         <div class="injected-playlist-scroll">
+          ${this.renderInjectedTrackEditor()}
           ${details ? html`<ol class="playlist-preview-list">
             ${tracks.length ? tracks.map((track, index) => html`<li class="playlist-preview-entry injected-track-row">
               <span class="track-position">${display(track.position ?? index + 1)}</span>
               <div><strong>${display(track.title)}</strong><div class="muted">${asArray(track.artists).join(", ") || "Unknown artist"}${track.album ? ` · ${track.album}` : ""}</div></div>
               <span class="status-chip ${track.isLocal === true ? "configured" : track.isLocal === false ? "unknown" : "needs_config"}">${track.isLocal === true ? "Local" : track.isLocal === false ? display(track.externalProvider, "External") : "Missing"}</span>
+              ${this.renderInjectedTrackMenu(track)}
             </li>`) : html`<li class="empty">This playlist has no tracks.</li>`}
           </ol>` : html`<div class="empty">Loading playlist tracks...</div>`}
         </div>
       </section>
     </div>`;
+  }
+
+  renderInjectedTrackMenu(track) {
+    const spotifyId = String(track.spotifyId || "");
+    const open = this.injectedTrackMenuId === spotifyId;
+    return html`<div class="track-action-menu">
+      <button class="track-action-trigger" aria-label="Actions for ${display(track.title, "track")}" aria-haspopup="menu"
+        aria-expanded=${open ? "true" : "false"}
+        @click=${() => { this.injectedTrackMenuId = open ? "" : spotifyId; }}>&#8942;</button>
+      ${open ? html`<div class="track-action-popover" role="menu">
+        <button role="menuitem" @click=${() => this.openInjectedTrackEditor(track, "local")}>Search local library</button>
+        <button role="menuitem" @click=${() => this.openInjectedTrackEditor(track, "external")}>Search music providers</button>
+        <button role="menuitem" @click=${() => this.rematchInjectedTrack(track)}>Rematch automatically</button>
+        <button role="menuitem" class="danger-text" ?disabled=${track.isLocal == null && !track.isManualMapping}
+          @click=${() => this.clearInjectedTrackMapping(track)}>Clear match</button>
+      </div>` : nothing}
+    </div>`;
+  }
+
+  openInjectedTrackEditor(track, mode) {
+    this.injectedTrackMenuId = "";
+    this.injectedTrackEditor = {
+      track,
+      mode,
+      query: track.searchQuery || `${track.title || ""} ${asArray(track.artists)[0] || ""}`.trim(),
+      provider: "deezer",
+      results: [],
+      searched: false,
+      loading: false,
+    };
+  }
+
+  renderInjectedTrackEditor() {
+    const editor = this.injectedTrackEditor;
+    if (!editor) return nothing;
+    const localMode = editor.mode === "local";
+    return html`<section class="track-match-editor" aria-label="Configure match for ${display(editor.track?.title, "track")}">
+      <div class="section-heading">
+        <div><h4>${localMode ? "Choose a local match" : "Choose a provider match"}</h4><p><strong>${display(editor.track?.title)}</strong> · ${asArray(editor.track?.artists).join(", ") || "Unknown artist"}</p></div>
+        <button class="ghost" @click=${() => { this.injectedTrackEditor = null; }}>Close</button>
+      </div>
+      <form class="track-match-search" @submit=${this.searchInjectedTrackMatches}>
+        ${!localMode ? html`<label>Provider<select .value=${editor.provider}
+          @change=${(event) => { this.injectedTrackEditor = { ...editor, provider: event.currentTarget.value, results: [], searched: false }; }}>
+          <option value="deezer">Deezer</option>
+          <option value="qobuz">Qobuz</option>
+          <option value="applemusic">Apple Music</option>
+        </select></label>` : nothing}
+        <label class="track-match-query">Search<input required .value=${editor.query}
+          @input=${(event) => { this.injectedTrackEditor = { ...editor, query: event.currentTarget.value }; }}></label>
+        <button class="primary" ?disabled=${editor.loading}>${editor.loading ? "Searching…" : "Search"}</button>
+      </form>
+      <div class="track-match-results" aria-live="polite">
+        ${editor.results.length ? editor.results.map((result) => html`<button class="track-match-result"
+          @click=${() => this.applyInjectedTrackMatch(result)}>
+          <span><strong>${display(result.title || result.name)}</strong><small>${display(result.artist, "Unknown artist")}${result.album ? ` · ${result.album}` : ""}</small></span>
+          <span class="chip">Use match</span>
+        </button>`) : editor.searched && !editor.loading ? html`<div class="empty">No matching tracks found.</div>` : nothing}
+      </div>
+    </section>`;
+  }
+
+  searchInjectedTrackMatches = async (event) => {
+    event.preventDefault();
+    const editor = this.injectedTrackEditor;
+    if (!editor?.query?.trim()) return;
+    this.injectedTrackEditor = { ...editor, loading: true, searched: true };
+    try {
+      const response = editor.mode === "local"
+        ? await API.searchLocalTracks(editor.query.trim())
+        : await API.searchExternalTracks(editor.query.trim(), editor.provider);
+      this.injectedTrackEditor = { ...editor, results: asArray(response.results || response.tracks), loading: false, searched: true };
+    } catch (error) {
+      this.injectedTrackEditor = { ...editor, loading: false, searched: true, results: [] };
+      this.toast(error.message, "error");
+    }
+  };
+
+  async applyInjectedTrackMatch(result) {
+    const editor = this.injectedTrackEditor;
+    if (!editor?.track?.spotifyId) return;
+    const payload = editor.mode === "local"
+      ? { spotifyId: editor.track.spotifyId, jellyfinId: result.id }
+      : { spotifyId: editor.track.spotifyId, externalProvider: result.externalProvider || editor.provider, externalId: result.externalId || result.id };
+    try {
+      await API.saveInjectedTrackMapping(this.selectedInjectedPlaylist, payload);
+      await this.reloadInjectedPlaylistDetails();
+      this.injectedTrackEditor = null;
+      this.toast("Track match saved");
+    } catch (error) {
+      this.toast(error.message, "error");
+    }
+  }
+
+  async clearInjectedTrackMapping(track, rematch = false) {
+    this.injectedTrackMenuId = "";
+    try {
+      await API.clearInjectedTrackMapping(this.selectedInjectedPlaylist, track.spotifyId);
+      if (rematch) await API.matchPlaylist(this.selectedInjectedPlaylist);
+      await this.reloadInjectedPlaylistDetails();
+      this.toast(rematch ? "Track rematched" : "Track match cleared");
+    } catch (error) {
+      if (rematch && error.status === 404) {
+        await API.matchPlaylist(this.selectedInjectedPlaylist);
+        await this.reloadInjectedPlaylistDetails();
+        this.toast("Track rematched");
+        return;
+      }
+      this.toast(error.message, "error");
+    }
+  }
+
+  async rematchInjectedTrack(track) {
+    await this.clearInjectedTrackMapping(track, true);
+  }
+
+  async reloadInjectedPlaylistDetails() {
+    this.injectedPlaylistDetails = await API.playlistTracks(this.selectedInjectedPlaylist);
+    await this.loadPlaylists();
   }
 
   addInjectedPlaylist = async (event) => {
