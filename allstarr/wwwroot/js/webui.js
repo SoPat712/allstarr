@@ -400,6 +400,8 @@ const API = {
     ),
   createProviderAccount: (payload) =>
     requestJson("/api/admin/provider-accounts", jsonBody(payload), "Failed to create provider account"),
+  authenticateLastFmAccount: (payload) =>
+    requestJson("/api/admin/scrobbling/lastfm/authenticate", jsonBody(payload), "Failed to connect Last.fm"),
   replaceProviderAccountSecret: (id, secret) =>
     requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}/secret`, jsonBody({ secret }, "PUT"), "Failed to replace provider credential"),
   setProviderAccountEnabled: (id, enabled, expectedRevision) =>
@@ -2901,7 +2903,7 @@ class AllstarrApp extends LitElement {
     if (providerId === "spotify") return html`<div class="form-row full-span"><label>Spotify session cookie (sp_dc)</label><input name="sessionCookie" type="password" autocomplete="off" required><small>Sign in at spotify.com, then copy the current <span class="mono">sp_dc</span> cookie from that browser session. Spotify periodically replaces it.</small></div>`;
     if (providerId === "deezer") return html`<div class="form-row full-span"><label>ARL cookie</label><input name="arl" type="password" autocomplete="off" required></div>`;
     if (providerId === "qobuz") return html`<div class="form-row"><label>User auth token</label><input name="userAuthToken" type="password" autocomplete="off" required></div><div class="form-row"><label>User ID</label><input name="userId" required></div>`;
-    if (providerId === "lastfm") return html`<div class="form-row"><label>API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Username</label><input name="username" required></div><div class="form-row"><label>Session key</label><input name="sessionKey" type="password" autocomplete="off" required></div>`;
+    if (providerId === "lastfm") return html`<div class="form-row full-span"><div class="callout"><strong>One-time Last.fm application setup</strong><p>Last.fm no longer accepts the shared Jellyfin plugin key. Create a free API application, paste its key and shared secret below, then sign in normally. Allstarr exchanges the password for a session and does not save the password.</p><a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener noreferrer">Create a Last.fm API application</a></div></div><div class="form-row"><label>Application API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Application shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Last.fm username</label><input name="username" autocomplete="username" required></div><div class="form-row"><label>Last.fm password</label><input name="password" type="password" autocomplete="current-password" required><small>Used once to request a Last.fm session; never stored by Allstarr.</small></div>`;
     return html`<div class="form-row full-span"><label>ListenBrainz user token</label><input name="token" type="password" autocomplete="off" required></div>`;
   }
 
@@ -2988,7 +2990,7 @@ class AllstarrApp extends LitElement {
     const secret = providerId === "spotify" ? { sessionCookie: String(data.get("sessionCookie") || ""), sessionCookieSetDate: new Date().toISOString() }
       : providerId === "deezer" ? { arl: String(data.get("arl") || "") }
       : providerId === "qobuz" ? { userAuthToken: String(data.get("userAuthToken") || ""), userId: String(data.get("userId") || "") }
-      : providerId === "lastfm" ? { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || ""), sessionKey: String(data.get("sessionKey") || "") }
+      : providerId === "lastfm" ? { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || "") }
       : { token: String(data.get("token") || "") };
     const created = await API.createProviderAccount({
       providerId,
@@ -3000,6 +3002,13 @@ class AllstarrApp extends LitElement {
     });
     let tested = true;
     try {
+      if (providerId === "lastfm") {
+        await API.authenticateLastFmAccount({
+          accountId: created.id || created.Id,
+          username: String(data.get("username") || ""),
+          password: String(data.get("password") || ""),
+        });
+      }
       await API.testProviderAccount(created.id || created.Id, providerId);
     } catch (error) {
       tested = false;
@@ -3019,7 +3028,7 @@ class AllstarrApp extends LitElement {
         ${providerId === "deezer" ? html`<label>New ARL cookie<input name="arl" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "qobuz" ? html`<label>User auth token<input name="userAuthToken" type="password" autocomplete="off" required></label><label>User ID<input name="userId" required></label>` : nothing}
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
-        ${providerId === "lastfm" ? html`<label>API key<input name="apiKey" type="password" autocomplete="off" required></label><label>Shared secret<input name="sharedSecret" type="password" autocomplete="off" required></label><label>Username<input name="username" required></label><label>Session key<input name="sessionKey" type="password" autocomplete="off" required></label>` : nothing}
+        ${providerId === "lastfm" ? html`<div class="callout"><strong>Reconnect Last.fm</strong><p>Enter your application credentials and normal Last.fm login. Your password is used once and is not stored.</p></div><label>Application API key<input name="apiKey" type="password" autocomplete="off" required></label><label>Application shared secret<input name="sharedSecret" type="password" autocomplete="off" required></label><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label>` : nothing}
         ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? html`<label>Credential JSON<textarea name="secretJson" rows="3" required></textarea></label>` : nothing}
         <div class="actions"><button class="primary">Save and test</button><button type="button" @click=${() => this.toggleProviderAccountConfiguration(account.id || account.Id)}>Cancel</button></div>
       </form>
@@ -3037,7 +3046,7 @@ class AllstarrApp extends LitElement {
       else if (providerId === "deezer") secret = { arl: String(data.get("arl") || "") };
       else if (providerId === "qobuz") secret = { userAuthToken: String(data.get("userAuthToken") || ""), userId: String(data.get("userId") || "") };
       else if (providerId === "listenbrainz") secret = { token: String(data.get("token") || "") };
-      else if (providerId === "lastfm") secret = { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || ""), sessionKey: String(data.get("sessionKey") || "") };
+      else if (providerId === "lastfm") secret = { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || "") };
       else secret = JSON.parse(String(data.get("secretJson") || "{}"));
     } catch {
       this.toast("Credential JSON is invalid", "error");
@@ -3049,6 +3058,13 @@ class AllstarrApp extends LitElement {
     const provider = account.providerId || account.ProviderId;
     let tested = null;
     try {
+      if (providerId === "lastfm") {
+        await API.authenticateLastFmAccount({
+          accountId,
+          username: String(data.get("username") || ""),
+          password: String(data.get("password") || ""),
+        });
+      }
       tested = await API.testProviderAccount(accountId, provider);
     } catch (error) {
       tested = { healthy: false, error: error.message };

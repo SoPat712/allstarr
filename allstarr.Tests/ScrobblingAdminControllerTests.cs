@@ -149,6 +149,47 @@ public class ScrobblingAdminControllerTests
     }
 
     [Fact]
+    public async Task AuthenticateLastFm_ManagedAccountWithoutSignedInOwner_ReturnsNotFound()
+    {
+        var controller = CreateController(
+            CreateSettings("testuser", "password123"),
+            new HttpResponseMessage(HttpStatusCode.OK));
+
+        var result = await controller.AuthenticateLastFm(new ScrobblingAdminController.LastFmAuthenticationRequest
+        {
+            AccountId = Guid.CreateVersion7(),
+            Username = "testuser",
+            Password = "request-only-password"
+        });
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.DoesNotContain("request-only-password", JsonSerializer.Serialize(notFound.Value), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AuthenticateLastFm_RejectedPassword_DoesNotEchoPassword()
+    {
+        const string password = "request-only-password";
+        var controller = CreateController(
+            CreateSettings("configured-user", "configured-password"),
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<lfm status='failed'><error code='4'>Authentication Failed</error></lfm>", Encoding.UTF8, "application/xml")
+            });
+
+        var result = await controller.AuthenticateLastFm(new ScrobblingAdminController.LastFmAuthenticationRequest
+        {
+            Username = "entered-user",
+            Password = password
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = JsonSerializer.Serialize(badRequest.Value);
+        Assert.Contains("Invalid username or password", payload, StringComparison.Ordinal);
+        Assert.DoesNotContain(password, payload, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task TestLastFmConnection_Forbidden_ReturnsActionableCredentialError()
     {
         var settings = CreateSettings("testuser", "password123");

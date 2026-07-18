@@ -211,6 +211,9 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("Smart mixes", script, StringComparison.Ordinal);
         Assert.Contains("Technical limits and test coverage", script, StringComparison.Ordinal);
         Assert.Contains("capability.state !== \"unavailable\"", script, StringComparison.Ordinal);
+        Assert.Contains("authenticateLastFmAccount", script, StringComparison.Ordinal);
+        Assert.Contains("never stored by Allstarr", script, StringComparison.Ordinal);
+        Assert.Contains("Last.fm no longer accepts the shared Jellyfin plugin key", script, StringComparison.Ordinal);
         Assert.Contains("Available but untested", script, StringComparison.Ordinal);
         Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
         Assert.Contains("capability.configuration", script, StringComparison.Ordinal);

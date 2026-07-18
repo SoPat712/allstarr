@@ -8,6 +8,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
+using allstarr.Core.Secrets;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Models.Settings;
@@ -31,6 +32,7 @@ public class ScrobblingAdminController : ControllerBase
     private readonly AdminHelperService _adminHelper;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
     private readonly IProviderAccountSecretAccessor? _accountSecrets;
+    private readonly EncryptedSecretStore? _secretStore;
 
     public ScrobblingAdminController(
         IOptions<ScrobblingSettings> settings,
@@ -39,7 +41,8 @@ public class ScrobblingAdminController : ControllerBase
         ILogger<ScrobblingAdminController> logger,
         AdminHelperService adminHelper,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
-        IProviderAccountSecretAccessor? accountSecrets = null)
+        IProviderAccountSecretAccessor? accountSecrets = null,
+        EncryptedSecretStore? secretStore = null)
     {
         _settings = settings.Value;
         _configuration = configuration;
@@ -48,6 +51,7 @@ public class ScrobblingAdminController : ControllerBase
         _adminHelper = adminHelper;
         _contextFactory = contextFactory;
         _accountSecrets = accountSecrets;
+        _secretStore = secretStore;
     }
 
     /// <summary>
@@ -98,18 +102,29 @@ public class ScrobblingAdminController : ControllerBase
     /// Requires your own Last.fm API application credentials in .env.
     /// </summary>
     [HttpPost("lastfm/authenticate")]
-    public async Task<IActionResult> AuthenticateLastFm()
+    public async Task<IActionResult> AuthenticateLastFm(
+        [FromBody] LastFmAuthenticationRequest? request = null,
+        CancellationToken cancellationToken = default)
     {
-        // Get username and password from settings (loaded from .env)
-        var username = _settings.LastFm.Username;
-        var password = _settings.LastFm.Password;
+        var managed = request?.AccountId is { } accountId
+            ? await ReadOwnedLastFmAccountAsync(accountId, cancellationToken)
+            : null;
+        if (request?.AccountId != null && managed == null)
+        {
+            return NotFound(new { error = "The selected Last.fm account was not found for the signed-in user." });
+        }
+
+        var username = request?.Username ?? Secret(managed?.Secrets, "username") ?? _settings.LastFm.Username;
+        var password = request?.Password ?? _settings.LastFm.Password;
+        var apiKey = Secret(managed?.Secrets, "apikey") ?? _settings.LastFm.ApiKey;
+        var sharedSecret = Secret(managed?.Secrets, "sharedsecret") ?? _settings.LastFm.SharedSecret;
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
             return BadRequest(new { error = "Username and password must be set in .env file (SCROBBLING_LASTFM_USERNAME and SCROBBLING_LASTFM_PASSWORD)" });
         }
 
-        if (LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.LastFm.ApiKey))
+        if (LastFmSettings.IsLegacyJellyfinPluginApiKey(apiKey))
         {
             return BadRequest(new
             {
@@ -119,7 +134,7 @@ public class ScrobblingAdminController : ControllerBase
             });
         }
 
-        if (string.IsNullOrEmpty(_settings.LastFm.ApiKey) || string.IsNullOrEmpty(_settings.LastFm.SharedSecret))
+        if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(sharedSecret))
         {
             return BadRequest(new
             {
@@ -133,14 +148,14 @@ public class ScrobblingAdminController : ControllerBase
             // Build parameters for auth.getMobileSession
             var parameters = new Dictionary<string, string>
             {
-                ["api_key"] = _settings.LastFm.ApiKey,
+                ["api_key"] = apiKey,
                 ["method"] = "auth.getMobileSession",
                 ["username"] = username,
                 ["password"] = password
             };
 
             // Generate signature
-            var signature = GenerateSignature(parameters, _settings.LastFm.SharedSecret);
+            var signature = GenerateSignature(parameters, sharedSecret);
             parameters["api_sig"] = signature;
 
             // Send POST request over HTTPS
@@ -183,13 +198,26 @@ public class ScrobblingAdminController : ControllerBase
             // Save session key to .env file
             try
             {
-                var updates = new Dictionary<string, string>
+                if (managed != null)
                 {
-                    ["SCROBBLING_LASTFM_SESSION_KEY"] = sessionKey
-                };
-
-                await _adminHelper.UpdateEnvConfigAsync(updates);
-                _logger.LogInformation("Session key saved to .env file");
+                    await SaveManagedLastFmSessionAsync(
+                        managed,
+                        apiKey,
+                        sharedSecret,
+                        authenticatedUsername ?? username,
+                        sessionKey,
+                        cancellationToken);
+                    _logger.LogInformation("Last.fm session saved to encrypted provider account {AccountId}", managed.Account.Id);
+                }
+                else
+                {
+                    var updates = new Dictionary<string, string>
+                    {
+                        ["SCROBBLING_LASTFM_SESSION_KEY"] = sessionKey
+                    };
+                    await _adminHelper.UpdateEnvConfigAsync(updates);
+                    _logger.LogInformation("Last.fm session key saved to runtime configuration");
+                }
             }
             catch (Exception saveEx)
             {
@@ -205,7 +233,9 @@ public class ScrobblingAdminController : ControllerBase
             {
                 Success = true,
                 Username = authenticatedUsername,
-                Message = "Authentication successful! Session key saved. Please restart the container for changes to take effect."
+                Message = managed != null
+                    ? "Last.fm connected. The session was stored securely and is ready now."
+                    : "Authentication successful. Session key saved; restart Allstarr to load the runtime setting."
             });
         }
         catch (Exception ex)
@@ -213,6 +243,13 @@ public class ScrobblingAdminController : ControllerBase
             _logger.LogError(ex, "Error authenticating with Last.fm");
             return StatusCode(500, new { error = "Failed to authenticate with Last.fm" });
         }
+    }
+
+    public sealed class LastFmAuthenticationRequest
+    {
+        public Guid? AccountId { get; set; }
+        public string? Username { get; set; }
+        public string? Password { get; set; }
     }
 
     /// <summary>
@@ -535,6 +572,98 @@ public class ScrobblingAdminController : ControllerBase
             }
             return Task.FromResult<IReadOnlyDictionary<string, string>>(values);
         }, cancellationToken);
+    }
+
+    private sealed record ManagedLastFmAccount(
+        ProviderAccountRecord Account,
+        IReadOnlyDictionary<string, string> Secrets);
+
+    private async Task<ManagedLastFmAccount?> ReadOwnedLastFmAccountAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        if (_contextFactory == null || _accountSecrets == null ||
+            !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession session || session.TenantId is not { } tenant ||
+            session.AllstarrUserId is not { } user)
+        {
+            return null;
+        }
+
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == accountId && item.ProviderId == "lastfm" &&
+            item.Scope == ProviderAccountScope.User && item.TenantId == tenant &&
+            item.OwnerUserId == user && item.SecretReferenceId != null,
+            cancellationToken);
+        if (account == null) return null;
+
+        var accountContext = new ProviderAccountContext(
+            account.Id,
+            account.ProviderId,
+            account.Scope,
+            account.Revision,
+            account.Enabled,
+            account.TenantId,
+            account.OwnerUserId,
+            account.LibraryScopeId,
+            "lastfm-authentication",
+            account.SecretReferenceId);
+        var secrets = await _accountSecrets.UseAsync(accountContext, bytes =>
+        {
+            using var document = JsonDocument.Parse(bytes);
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                var key = new string(property.Name.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+                if (property.Value.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(property.Value.GetString()))
+                {
+                    values[key] = property.Value.GetString()!;
+                }
+            }
+            return Task.FromResult<IReadOnlyDictionary<string, string>>(values);
+        }, cancellationToken);
+        return new ManagedLastFmAccount(account, secrets);
+    }
+
+    private async Task SaveManagedLastFmSessionAsync(
+        ManagedLastFmAccount managed,
+        string apiKey,
+        string sharedSecret,
+        string username,
+        string sessionKey,
+        CancellationToken cancellationToken)
+    {
+        if (_secretStore == null)
+            throw new InvalidOperationException("Encrypted provider account storage is unavailable.");
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            apiKey,
+            sharedSecret,
+            username,
+            sessionKey
+        });
+        try
+        {
+            await _secretStore.StoreAsync(
+                managed.Account.TenantId,
+                $"provider-account:lastfm:{managed.Account.Id:N}",
+                payload,
+                managed.Account.SecretReferenceId,
+                cancellationToken);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(payload);
+        }
+
+        await using var db = await _contextFactory!.CreateDbContextAsync(cancellationToken);
+        var account = await db.ProviderAccounts.SingleAsync(item => item.Id == managed.Account.Id, cancellationToken);
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        account.Revision++;
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static string? Secret(IReadOnlyDictionary<string, string>? values, params string[] names)
