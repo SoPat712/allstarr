@@ -3,6 +3,7 @@ using allstarr.Models.Domain;
 using allstarr.Models.Spotify;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
+using allstarr.Services.Spotify;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -91,6 +92,16 @@ public partial class JellyfinController
         }
 
         if (cachedItems != null && cachedItems.Count > 0 &&
+            InjectedPlaylistItemHelper.ContainsUnavailableExternalItems(cachedItems))
+        {
+            _logger.LogWarning(
+                "Ignoring Redis playlist cache for {Playlist}: it contains unavailable external tracks",
+                spotifyPlaylistName);
+            await _cache.DeleteAsync(cacheKey);
+            cachedItems = null;
+        }
+
+        if (cachedItems != null && cachedItems.Count > 0 &&
             requestNeedsGenreMetadata &&
             InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(cachedItems))
         {
@@ -141,6 +152,15 @@ public partial class JellyfinController
         }
 
         if (fileItems != null && fileItems.Count > 0 &&
+            InjectedPlaylistItemHelper.ContainsUnavailableExternalItems(fileItems))
+        {
+            _logger.LogWarning(
+                "Ignoring file playlist cache for {Playlist}: it contains unavailable external tracks",
+                spotifyPlaylistName);
+            fileItems = null;
+        }
+
+        if (fileItems != null && fileItems.Count > 0 &&
             requestNeedsGenreMetadata &&
             InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(fileItems))
         {
@@ -169,6 +189,32 @@ public partial class JellyfinController
         // Check for ordered matched tracks from SpotifyTrackMatchingService
         var orderedCacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(spotifyPlaylistName);
         var orderedTracks = await _cache.GetAsync<List<MatchedTrack>>(orderedCacheKey);
+
+        if (orderedTracks != null)
+        {
+            var playableOrderedTracks = orderedTracks
+                .Where(track => ExternalTrackPlaybackPolicy.CanUseForPlayback(track.MatchedSong))
+                .ToList();
+            if (playableOrderedTracks.Count != orderedTracks.Count)
+            {
+                _logger.LogWarning(
+                    "Discarded {Count} unavailable ordered matches from {Playlist}",
+                    orderedTracks.Count - playableOrderedTracks.Count,
+                    spotifyPlaylistName);
+                orderedTracks = playableOrderedTracks;
+                if (orderedTracks.Count > 0)
+                {
+                    await _cache.SetAsync(
+                        orderedCacheKey,
+                        orderedTracks,
+                        CacheExtensions.SpotifyMatchedTracksTTL);
+                }
+                else
+                {
+                    await _cache.DeleteAsync(orderedCacheKey);
+                }
+            }
+        }
 
         if (orderedTracks == null || orderedTracks.Count == 0)
         {
@@ -366,6 +412,16 @@ public partial class JellyfinController
                             unresolvedLocalCount++;
                             continue;
                         }
+                    }
+
+                    if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(matched.MatchedSong))
+                    {
+                        _logger.LogWarning(
+                            "Skipping unavailable external match for {Title}: {Provider}/{Id}",
+                            spotifyTrack.Title,
+                            matched.MatchedSong.ExternalProvider,
+                            matched.MatchedSong.ExternalId);
+                        continue;
                     }
 
                     // External track or local track not found - convert Song to Jellyfin item format

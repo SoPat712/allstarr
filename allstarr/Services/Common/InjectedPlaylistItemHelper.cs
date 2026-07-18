@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Services.Spotify;
 
 namespace allstarr.Services.Common;
 
@@ -22,6 +23,11 @@ public static class InjectedPlaylistItemHelper
     public static bool ContainsLegacyExternalSourceLabels(IEnumerable<Dictionary<string, object?>> items)
     {
         return items.Any(LooksLikeLegacyExternalSourceLabeledItem);
+    }
+
+    public static bool ContainsUnavailableExternalItems(IEnumerable<Dictionary<string, object?>> items)
+    {
+        return items.Any(LooksLikeUnavailableExternalItem);
     }
 
     public static bool LooksLikeSyntheticLocalItem(IReadOnlyDictionary<string, object?> item)
@@ -59,6 +65,37 @@ public static class InjectedPlaylistItemHelper
         return name?.EndsWith(" [S]", StringComparison.Ordinal) == true ||
                name?.EndsWith(" [S] [E]", StringComparison.Ordinal) == true;
     }
+
+    public static bool LooksLikeUnavailableExternalItem(IReadOnlyDictionary<string, object?> item)
+    {
+        if (!string.Equals(GetString(item, "ServerId"), SyntheticServerId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var id = GetString(item, "Id");
+        if (!string.IsNullOrWhiteSpace(id) &&
+            !ExternalTrackPlaybackPolicy.CanUseForPlayback("unknown", id))
+        {
+            return true;
+        }
+
+        if (!item.TryGetValue("ProviderIds", out var providerIds) || providerIds == null)
+        {
+            return false;
+        }
+
+        return providerIds switch
+        {
+            IReadOnlyDictionary<string, string> values => values.Keys.Any(IsUnavailableProvider),
+            JsonElement { ValueKind: JsonValueKind.Object } element =>
+                element.EnumerateObject().Any(property => IsUnavailableProvider(property.Name)),
+            _ => false
+        };
+    }
+
+    private static bool IsUnavailableProvider(string provider) =>
+        !ExternalTrackPlaybackPolicy.CanUseForPlayback(provider);
 
     private static bool IsExternalItemId(string itemId)
     {

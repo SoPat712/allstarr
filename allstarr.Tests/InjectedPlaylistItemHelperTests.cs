@@ -117,4 +117,46 @@ public class InjectedPlaylistItemHelperTests
 
         Assert.False(InjectedPlaylistItemHelper.LooksLikeLegacyExternalSourceLabeledItem(item));
     }
+
+    [Fact]
+    public void LooksLikeUnavailableExternalItem_ReturnsTrue_ForTypedSquidId()
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["Id"] = "ext-squidwtf-song-468724403",
+            ["ServerId"] = "allstarr"
+        };
+
+        Assert.True(InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
+    }
+
+    [Fact]
+    public void LooksLikeUnavailableExternalItem_ReturnsTrue_ForLegacyHashedIdWithProviderIds()
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["Id"] = "e052a314b638ce85f68de4f11c076c9a",
+            ["ServerId"] = "allstarr",
+            ["ProviderIds"] = new Dictionary<string, string>
+            {
+                ["squidwtf"] = "468724403",
+                ["Spotify"] = "3oTuTpF1F3A7rEC6RKsMRz"
+            }
+        };
+
+        Assert.True(InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
+    }
+
+    [Fact]
+    public void LooksLikeUnavailableExternalItem_ReturnsFalse_ForRawJellyfinItem()
+    {
+        var item = new Dictionary<string, object?>
+        {
+            ["Id"] = "e052a314b638ce85f68de4f11c076c9a",
+            ["ServerId"] = "real-jellyfin-server",
+            ["ProviderIds"] = new Dictionary<string, string> { ["squidwtf"] = "468724403" }
+        };
+
+        Assert.False(InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
+    }
 }
