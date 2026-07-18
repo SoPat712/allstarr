@@ -179,6 +179,7 @@ public class PlaylistController : ControllerBase
 
             // Calculate stats from playlist items cache (source of truth)
             // This is fast and always accurate
+            var playlistItemStatsApplied = false;
             if (spotifyTrackCount > 0)
             {
                 try
@@ -204,41 +205,26 @@ public class PlaylistController : ControllerBase
 
                         foreach (var item in cachedPlaylistItems)
                         {
-                            if (item.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
+                            var serverId = ReadCachedString(item, "ServerId");
+                            if (string.Equals(serverId, "allstarr", StringComparison.OrdinalIgnoreCase))
                             {
-                                Dictionary<string, string>? providerIds = null;
+                                var providerIds = ReadCachedProviderIds(item);
+                                var externalProvider = providerIds == null
+                                    ? null
+                                    : ResolveExternalProviderFromProviderIds(providerIds);
+                                externalProvider ??= ExtractExternalProviderFromItemId(ReadCachedString(item, "Id"));
 
-                                if (providerIdsObj is Dictionary<string, string> dict)
+                                if (ExternalTrackPlaybackPolicy.CanUseForPlayback(
+                                        externalProvider,
+                                        ReadCachedString(item, "Id")))
                                 {
-                                    providerIds = dict;
-                                }
-                                else if (providerIdsObj is JsonElement jsonEl && jsonEl.ValueKind == JsonValueKind.Object)
-                                {
-                                    providerIds = new Dictionary<string, string>();
-                                    foreach (var prop in jsonEl.EnumerateObject())
-                                    {
-                                        providerIds[prop.Name] = prop.Value.GetString() ?? "";
-                                    }
+                                    externalCount++;
                                 }
 
-                                if (providerIds != null)
-                                {
-                                    // Check if it's external (has squidwtf, deezer, qobuz, or tidal key)
-                                    var isExternal = providerIds.ContainsKey("squidwtf") ||
-                                                    providerIds.ContainsKey("deezer") ||
-                                                    providerIds.ContainsKey("qobuz") ||
-                                                    providerIds.ContainsKey("tidal");
-
-                                    if (isExternal)
-                                    {
-                                        externalCount++;
-                                    }
-                                    else
-                                    {
-                                        localCount++;
-                                    }
-                                }
+                                continue;
                             }
+
+                            localCount++;
                         }
 
                         var missingCount = spotifyTrackCount - (localCount + externalCount);
@@ -253,6 +239,7 @@ public class PlaylistController : ControllerBase
 
                         _logger.LogDebug("📊 Calculated stats from playlist cache for {Name}: {Local} local, {External} external, {Missing} missing",
                             config.Name, localCount, externalCount, missingCount);
+                        playlistItemStatsApplied = true;
                     }
                     else
                     {
@@ -308,7 +295,7 @@ public class PlaylistController : ControllerBase
                 {
                     var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(config.Name);
                     var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
-                    if (matchedTracks != null)
+                    if (!playlistItemStatsApplied && matchedTracks != null)
                     {
                         var resolvedMatches = matchedTracks
                             .Where(match => !string.IsNullOrWhiteSpace(match.SpotifyId) && match.MatchedSong != null)
@@ -336,7 +323,7 @@ public class PlaylistController : ControllerBase
                     var matchedStats = matchedTrackStatsApplied
                         ? null
                         : await _cache.GetAsync<Dictionary<string, int>>(statsCacheKey);
-                    if (!matchedTrackStatsApplied && matchedStats != null &&
+                    if (!playlistItemStatsApplied && !matchedTrackStatsApplied && matchedStats != null &&
                         matchedStats.TryGetValue("local", out var matchedLocal) &&
                         matchedStats.TryGetValue("external", out var matchedExternal) &&
                         matchedStats.TryGetValue("missing", out var matchedMissing) &&
@@ -356,7 +343,9 @@ public class PlaylistController : ControllerBase
                 // SpotifyMappingService's playback-policy cleanup before it reaches the summary.
                 try
                 {
-                    var canonicalTracks = await _playlistFetcher.GetPlaylistTracksAsync(config.Name);
+                    var canonicalTracks = playlistItemStatsApplied
+                        ? []
+                        : await _playlistFetcher.GetPlaylistTracksAsync(config.Name);
                     var canonicalLocal = 0;
                     var canonicalExternal = 0;
 
@@ -375,7 +364,7 @@ public class PlaylistController : ControllerBase
                         }
                     }
 
-                    if (canonicalTracks.Count == spotifyTrackCount)
+                    if (!playlistItemStatsApplied && canonicalTracks.Count == spotifyTrackCount)
                     {
                         ApplyPlaylistStats(
                             playlistInfo,
@@ -704,6 +693,44 @@ public class PlaylistController : ControllerBase
         playlistInfo["externalTotal"] = external + missing;
         playlistInfo["totalInJellyfin"] = local + external;
         playlistInfo["totalPlayable"] = local + external;
+    }
+
+    private static string? ReadCachedString(Dictionary<string, object?> item, string key)
+    {
+        if (!item.TryGetValue(key, out var value) || value == null)
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            string text => text,
+            JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+            _ => value.ToString()
+        };
+    }
+
+    private static Dictionary<string, string>? ReadCachedProviderIds(Dictionary<string, object?> item)
+    {
+        if (!item.TryGetValue("ProviderIds", out var value) || value == null)
+        {
+            return null;
+        }
+
+        if (value is Dictionary<string, string> providerIds)
+        {
+            return providerIds;
+        }
+
+        if (value is not JsonElement { ValueKind: JsonValueKind.Object } element)
+        {
+            return null;
+        }
+
+        return element.EnumerateObject().ToDictionary(
+            property => property.Name,
+            property => property.Value.GetString() ?? "",
+            StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
