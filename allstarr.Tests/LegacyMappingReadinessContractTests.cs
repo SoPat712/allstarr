@@ -13,6 +13,21 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("status = playable ? \"ready\" : \"needs_review\"", controller, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AutomaticPlaylistMatching_QueriesOnlyPlaybackCapableProviders()
+    {
+        var matcher = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
+        var providers = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Services", "Common", "MultiProviderMetadataService.cs"));
+
+        Assert.Contains("SearchPlayableSongsAsync(metadataService", matcher, StringComparison.Ordinal);
+        Assert.Contains("FindPlayableSongByIsrcAsync", matcher, StringComparison.Ordinal);
+        Assert.Contains("GetEnabledStreamingProviders()", providers, StringComparison.Ordinal);
+        Assert.Contains("GetEnabledDownloadProviders()", providers, StringComparison.Ordinal);
+        Assert.Contains("includeExtensions: false", providers, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] segments)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

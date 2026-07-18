@@ -1231,7 +1231,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         cancellationToken.ThrowIfCancellationRequested();
 
         // STEP 2: Only search EXTERNAL if no good local match found
-        var externalResults = await metadataService.SearchSongsAsync(query, limit: 10, cancellationToken);
+        var externalResults = await SearchPlayableSongsAsync(metadataService, query, 10, cancellationToken);
 
         if (externalResults.Count > 0)
         {
@@ -1286,7 +1286,9 @@ public class SpotifyTrackMatchingService : BackgroundService
         cancellationToken.ThrowIfCancellationRequested();
 
         // STEP 2: Search EXTERNAL by ISRC
-        return await metadataService.FindSongByIsrcAsync(isrc, cancellationToken);
+        return metadataService is MultiProviderMetadataService multiProvider
+            ? await multiProvider.FindPlayableSongByIsrcAsync(isrc, cancellationToken)
+            : await metadataService.FindSongByIsrcAsync(isrc, cancellationToken);
     }
 
     /// <summary>
@@ -1310,7 +1312,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             var titleStripped = FuzzyMatcher.StripDecorators(title);
             var query = $"{titleStripped} {primaryArtist}";
 
-            var results = await metadataService.SearchSongsAsync(query, limit: 10);
+            var results = await SearchPlayableSongsAsync(metadataService, query, 10);
 
             if (results.Count == 0) return null;
 
@@ -1468,13 +1470,14 @@ public class SpotifyTrackMatchingService : BackgroundService
             try
             {
                 var query = $"{track.Title} {track.PrimaryArtist}";
-                var results = await metadataService.SearchSongsAsync(query, limit: 5);
+                var results = await SearchPlayableSongsAsync(metadataService, query, 5, cancellationToken);
 
                 if (results.Count > 0)
                 {
                     // Fuzzy match to find best result
                     // Check that ALL artists match (not just some)
                     var bestMatch = results
+                        .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
                         .Select(song => new
                         {
                             Song = song,
@@ -1561,6 +1564,25 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             _logger.LogInformation("No tracks matched for {Playlist}", playlistName);
         }
+    }
+
+    private static Task<List<Song>> SearchPlayableSongsAsync(
+        IMusicMetadataService metadataService,
+        string query,
+        int limit,
+        CancellationToken cancellationToken = default) =>
+        metadataService is MultiProviderMetadataService multiProvider
+            ? multiProvider.SearchPlayableSongsAsync(query, limit, cancellationToken)
+            : SearchAndFilterPlayableSongsAsync(metadataService, query, limit, cancellationToken);
+
+    private static async Task<List<Song>> SearchAndFilterPlayableSongsAsync(
+        IMusicMetadataService metadataService,
+        string query,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var results = await metadataService.SearchSongsAsync(query, limit, cancellationToken);
+        return results.Where(ExternalTrackPlaybackPolicy.CanUseForPlayback).ToList();
     }
 
     private async Task EnsureLegacyPlaylistItemsCacheAsync(

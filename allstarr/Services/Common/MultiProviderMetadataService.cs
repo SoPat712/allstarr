@@ -28,6 +28,34 @@ public class MultiProviderMetadataService : IMusicMetadataService
     {
         var providers = _statusManager.GetEnabledSearchProviders();
 
+        return await SearchSongsFromProvidersAsync(providers, query, limit, includeExtensions: true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Searches only providers that can currently supply audio. Catalog-only providers are
+    /// intentionally excluded so playlist matching cannot select an unplayable result.
+    /// </summary>
+    public async Task<List<Song>> SearchPlayableSongsAsync(
+        string query,
+        int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var providers = _statusManager.GetEnabledStreamingProviders()
+            .Concat(_statusManager.GetEnabledDownloadProviders())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return await SearchSongsFromProvidersAsync(providers, query, limit, includeExtensions: false, cancellationToken);
+    }
+
+    private async Task<List<Song>> SearchSongsFromProvidersAsync(
+        IEnumerable<string> providers,
+        string query,
+        int limit,
+        bool includeExtensions,
+        CancellationToken cancellationToken)
+    {
+
         var tasks = providers.Select(async p =>
         {
             var service = GetMetadataServiceByName(p);
@@ -43,7 +71,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
             }
         }).ToList();
 
-        var extensions = _extensionManager.GetActiveExtensions();
+        var extensions = includeExtensions ? _extensionManager.GetActiveExtensions() : [];
         var extensionTasks = extensions.Select(async ext =>
         {
             try
@@ -63,6 +91,31 @@ public class MultiProviderMetadataService : IMusicMetadataService
 
         var allResultsList = providerResults.Concat(extensionResults).ToList();
         return InterleaveLists(allResultsList);
+    }
+
+    public async Task<Song?> FindPlayableSongByIsrcAsync(
+        string isrc,
+        CancellationToken cancellationToken = default)
+    {
+        var providers = _statusManager.GetEnabledStreamingProviders()
+            .Concat(_statusManager.GetEnabledDownloadProviders())
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        var tasks = providers.Select(async provider =>
+        {
+            var service = GetMetadataServiceByName(provider);
+            if (service == null) return null;
+            try
+            {
+                return await service.FindSongByIsrcAsync(isrc, cancellationToken);
+            }
+            catch
+            {
+                return null;
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+        return results.FirstOrDefault(song => song != null);
     }
 
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
