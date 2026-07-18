@@ -260,12 +260,46 @@ public class DiagnosticsController : ControllerBase
                     });
                 var validImage = imageBytes is { Length: > 0 } &&
                                  contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true;
+                var playerRouteTested = false;
+                var playerRouteAvailable = false;
+                string? playerRouteContentType = null;
+                var playerRouteBytes = 0;
+                if (HttpContext.Items.TryGetValue(
+                        AdminAuthSessionService.HttpContextSessionItemKey,
+                        out var sessionValue) &&
+                    sessionValue is AdminAuthSession session &&
+                    !string.IsNullOrWhiteSpace(session.JellyfinAccessToken))
+                {
+                    playerRouteTested = true;
+                    var playerHeaders = new HeaderDictionary
+                    {
+                        ["X-Emby-Token"] = session.JellyfinAccessToken
+                    };
+                    var playerResult = await proxy.GetBytesSafeAsync(
+                        $"Items/{Uri.EscapeDataString(itemId)}/Images/Primary",
+                        new Dictionary<string, string>
+                        {
+                            ["maxWidth"] = "300",
+                            ["maxHeight"] = "300",
+                            ["tag"] = imageTag ?? string.Empty
+                        },
+                        playerHeaders);
+                    playerRouteContentType = playerResult.ContentType;
+                    playerRouteBytes = playerResult.Body?.Length ?? 0;
+                    playerRouteAvailable = playerResult.Success &&
+                                           playerRouteBytes > 0 &&
+                                           playerRouteContentType?.StartsWith(
+                                               "image/",
+                                               StringComparison.OrdinalIgnoreCase) == true;
+                }
+
+                var successfulPipeline = validImage && (!playerRouteTested || playerRouteAvailable);
 
                 return Ok(new
                 {
-                    success = validImage,
+                    success = successfulPipeline,
                     backend = "Jellyfin",
-                    code = validImage ? "media_pipeline_healthy" : "artwork_probe_failed",
+                    code = successfulPipeline ? "media_pipeline_healthy" : "artwork_probe_failed",
                     metadataStatus = statusCode,
                     checkedItems = items.GetArrayLength(),
                     artwork = new
@@ -274,9 +308,20 @@ public class DiagnosticsController : ControllerBase
                         contentType = validImage ? contentType : null,
                         bytes = imageBytes?.Length ?? 0
                     },
-                    message = validImage
-                        ? "Jellyfin metadata and album artwork are available through Allstarr."
-                        : "Jellyfin metadata worked, but Allstarr could not retrieve the selected artwork."
+                    playerArtwork = new
+                    {
+                        tested = playerRouteTested,
+                        available = playerRouteAvailable,
+                        contentType = playerRouteAvailable ? playerRouteContentType : null,
+                        bytes = playerRouteBytes
+                    },
+                    message = successfulPipeline
+                        ? playerRouteTested
+                            ? "Jellyfin metadata and authenticated player artwork are available through Allstarr."
+                            : "Jellyfin metadata and album artwork are available through Allstarr."
+                        : playerRouteTested && !playerRouteAvailable
+                            ? "Jellyfin metadata worked, but an authenticated player could not retrieve the selected artwork."
+                            : "Jellyfin metadata worked, but Allstarr could not retrieve the selected artwork."
                 });
             }
         }

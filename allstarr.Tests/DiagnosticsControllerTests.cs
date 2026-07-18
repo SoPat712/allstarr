@@ -96,6 +96,15 @@ public sealed class DiagnosticsControllerTests : IDisposable
             .AddSingleton(proxy)
             .BuildServiceProvider();
         var controller = CreateController([], handler, settings, services);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session-1",
+            UserId = "user-1",
+            UserName = "fixture",
+            IsAdministrator = true,
+            JellyfinAccessToken = "player-token",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
 
         var result = Assert.IsType<OkObjectResult>(
             await controller.ProbeMediaPipeline());
@@ -104,9 +113,13 @@ public sealed class DiagnosticsControllerTests : IDisposable
         Assert.Contains("media_pipeline_healthy", json, StringComparison.Ordinal);
         Assert.Contains("image/jpeg", json, StringComparison.Ordinal);
         Assert.Contains("\"bytes\":4", json, StringComparison.Ordinal);
+        Assert.Contains("authenticated player artwork", json, StringComparison.Ordinal);
+        Assert.Contains("\"tested\":true", json, StringComparison.Ordinal);
+        Assert.Contains("\"available\":true", json, StringComparison.Ordinal);
         Assert.DoesNotContain("track-1", json, StringComparison.Ordinal);
         Assert.DoesNotContain("server-api-key", json, StringComparison.Ordinal);
-        Assert.Equal(2, handler.RequestCount);
+        Assert.DoesNotContain("player-token", json, StringComparison.Ordinal);
+        Assert.Equal(3, handler.RequestCount);
     }
 
     [Fact]

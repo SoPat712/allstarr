@@ -355,6 +355,51 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinLocalImage_ForwardsPlayerTokenAndReturnsArtwork()
+    {
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var playerTokenReachedVerification = false;
+        var playerTokenReachedArtwork = false;
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            var hasPlayerToken = request.Headers.TryGetValues("X-Emby-Token", out var values) &&
+                                 values.Contains("fixture-player-token", StringComparer.Ordinal);
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+            {
+                playerTokenReachedVerification = hasPlayerToken;
+                return Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""");
+            }
+
+            if (request.RequestUri.AbsolutePath == "/Items/local-song/Images/Primary")
+            {
+                playerTokenReachedArtwork = hasPlayerToken;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(artworkBytes)
+                    {
+                        Headers = { ContentType = new("image/jpeg") }
+                    }
+                };
+            }
+
+            throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+        });
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            "/Items/local-song/Images/Primary?maxWidth=300&maxHeight=300&tag=art-v1");
+        request.Headers.TryAddWithoutValidation("X-Emby-Token", "fixture-player-token");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        Assert.True(playerTokenReachedVerification);
+        Assert.True(playerTokenReachedArtwork);
+    }
+
+    [Fact]
     public async Task JellyfinLyrics_PreservesLocalFirstFallbackAndNotFoundFixtures()
     {
         using var fixtures = ReadFixture("jellyfin-lyrics.json");

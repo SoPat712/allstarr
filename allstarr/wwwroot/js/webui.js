@@ -752,11 +752,13 @@ class AllstarrApp extends LitElement {
     try {
       const result = await API.mediaProbe();
       const artwork = result?.artwork || result?.Artwork;
+      const playerArtwork = result?.playerArtwork || result?.PlayerArtwork;
       const success = Boolean(result?.success ?? result?.Success);
       const message = result?.message || result?.Message ||
         (success ? "The media pipeline is healthy." : "The media pipeline needs attention.");
+      const playerTested = Boolean(playerArtwork?.tested ?? playerArtwork?.Tested);
       const details = success && artwork
-        ? `${display(artwork.contentType || artwork.ContentType, "image")} · ${Number(artwork.bytes || artwork.Bytes || 0).toLocaleString()} bytes`
+        ? `${display(artwork.contentType || artwork.ContentType, "image")} · ${Number(artwork.bytes || artwork.Bytes || 0).toLocaleString()} bytes${playerTested ? " · authenticated player route passed" : ""}`
         : "";
       this.serviceResults = {
         ...this.serviceResults,
