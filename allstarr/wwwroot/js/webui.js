@@ -260,6 +260,7 @@ const API = {
   logout: () => requestJson("/api/admin/auth/logout", { method: "POST" }, "Logout failed"),
   schema: () => requestJson("/api/admin/ui/schema", { cache: "no-store" }, "Failed to load UI schema"),
   status: () => requestJson("/api/admin/status", { cache: "no-store" }, "Failed to load status"),
+  mediaProbe: () => requestJson("/api/admin/media-probe", { cache: "no-store" }, "Media pipeline test failed"),
   config: () => requestJson("/api/admin/config", { cache: "no-store" }, "Failed to load config"),
   updateConfig: (key, value) =>
     requestJson("/api/admin/config", jsonBody({ updates: { [key]: String(value) } }), "Failed to save setting"),
@@ -741,6 +742,32 @@ class AllstarrApp extends LitElement {
       throw error;
     }
   }
+
+  runMediaProbe = async () => {
+    this.serviceResults = {
+      ...this.serviceResults,
+      media: { state: "running", message: "Testing library metadata and album artwork..." },
+    };
+    try {
+      const result = await API.mediaProbe();
+      const artwork = result?.artwork || result?.Artwork;
+      const success = Boolean(result?.success ?? result?.Success);
+      const message = result?.message || result?.Message ||
+        (success ? "The media pipeline is healthy." : "The media pipeline needs attention.");
+      const details = success && artwork
+        ? `${display(artwork.contentType || artwork.ContentType, "image")} · ${Number(artwork.bytes || artwork.Bytes || 0).toLocaleString()} bytes`
+        : "";
+      this.serviceResults = {
+        ...this.serviceResults,
+        media: { state: success ? "success" : "warning", message, details },
+      };
+    } catch (error) {
+      this.serviceResults = {
+        ...this.serviceResults,
+        media: { state: "error", message: error.message },
+      };
+    }
+  };
 
   recordLoadFailure(key, label, error) {
     this.loadFailures = { ...this.loadFailures, [key]: { label, message: error?.message || "This information could not be loaded." } };
@@ -3618,6 +3645,25 @@ class AllstarrApp extends LitElement {
               <button @click=${() => this.exportEnv()}>Export bootstrap .env</button>
             </div>
             <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
+          </div>
+        </details>
+        <details class="content-disclosure panel" open>
+          <summary><span><strong>Media diagnostics</strong><small>Verify metadata and album artwork through Allstarr</small></span></summary>
+          <div class="disclosure-body">
+            <p class="muted">Runs a read-only check against a small sample from your active media server. It does not reveal track names, IDs, credentials, or server addresses.</p>
+            <div class="actions">
+              <button
+                class="primary"
+                ?disabled=${this.serviceResults.media?.state === "running"}
+                @click=${this.runMediaProbe}
+              >${this.serviceResults.media?.state === "running" ? "Testing media..." : "Test metadata and artwork"}</button>
+            </div>
+            ${this.serviceResults.media ? html`
+              <div class="callout ${this.serviceResults.media.state}" role="status">
+                <strong>${this.serviceResults.media.state === "success" ? "Media pipeline ready" : this.serviceResults.media.state === "running" ? "Checking media pipeline" : "Media pipeline needs attention"}</strong>
+                <span>${this.serviceResults.media.message}</span>
+                ${this.serviceResults.media.details ? html`<small>${this.serviceResults.media.details}</small>` : nothing}
+              </div>` : nothing}
           </div>
         </details>
         <div class="setup-launcher">
