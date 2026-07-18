@@ -1457,10 +1457,12 @@ public class SpotifyTrackMatchingService : BackgroundService
             missingTracks.Count, playlistName);
 
         var matchedSongs = new List<Song>();
+        var orderedMatches = new List<MatchedTrack>();
         var matchCount = 0;
 
-        foreach (var track in missingTracks)
+        for (var missingPosition = 0; missingPosition < missingTracks.Count; missingPosition++)
         {
+            var track = missingTracks[missingPosition];
             if (cancellationToken.IsCancellationRequested) break;
 
             try
@@ -1493,6 +1495,15 @@ public class SpotifyTrackMatchingService : BackgroundService
                     if (bestMatch != null && bestMatch.TotalScore >= 60)
                     {
                         matchedSongs.Add(bestMatch.Song);
+                        orderedMatches.Add(new MatchedTrack
+                        {
+                            Position = missingPosition,
+                            SpotifyId = track.SpotifyId,
+                            SpotifyTitle = track.Title,
+                            SpotifyArtist = track.PrimaryArtist,
+                            MatchType = "legacy-provider-search",
+                            MatchedSong = bestMatch.Song
+                        });
                         matchCount++;
 
                         if (matchCount % 10 == 0)
@@ -1520,29 +1531,30 @@ public class SpotifyTrackMatchingService : BackgroundService
             _logger.LogInformation("✓ Cached {Matched}/{Total} matched tracks for {Playlist}",
                 matchedSongs.Count, missingTracks.Count, playlistName);
 
-            var source = await _cache.GetAsync<SpotifyPlaylist>(
-                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
             var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
                 item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
-            if (source?.Tracks is { Count: > 0 } && !string.IsNullOrWhiteSpace(playlist?.JellyfinId))
+            if (orderedMatches.Count > 0 && !string.IsNullOrWhiteSpace(playlist?.JellyfinId))
             {
-                var orderedMatches = LegacyPlaylistMatchRecovery.ReconstructExact(
-                    source.Tracks,
-                    matchedSongs);
-                if (orderedMatches.Count > 0)
+                var legacySourceTracks = missingTracks.Select((track, position) => new SpotifyPlaylistTrack
                 {
-                    await _cache.SetAsync(
-                        CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
-                        orderedMatches,
-                        CacheExtensions.SpotifyMatchedTracksTTL);
-                    await PreBuildPlaylistItemsCacheAsync(
-                        playlistName,
-                        playlist.JellyfinId,
-                        source.Tracks,
-                        orderedMatches,
-                        TimeSpan.FromHours(24),
-                        cancellationToken);
-                }
+                    SpotifyId = track.SpotifyId,
+                    Position = position,
+                    Title = track.Title,
+                    Album = track.Album,
+                    Artists = track.Artists
+                }).ToList();
+                await _cache.SetAsync(
+                    CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
+                    orderedMatches,
+                    CacheExtensions.SpotifyMatchedTracksTTL);
+                await PreBuildPlaylistItemsCacheAsync(
+                    playlistName,
+                    playlist.JellyfinId,
+                    legacySourceTracks,
+                    orderedMatches,
+                    TimeSpan.FromHours(24),
+                    cancellationToken,
+                    includeUnorderedLocalItems: true);
             }
         }
         else
@@ -1613,7 +1625,8 @@ public class SpotifyTrackMatchingService : BackgroundService
         List<SpotifyPlaylistTrack> spotifyTracks,
         List<MatchedTrack> externalMatchedTracks,
         TimeSpan cacheExpiration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeUnorderedLocalItems = false)
     {
         try
         {
@@ -1704,6 +1717,18 @@ public class SpotifyTrackMatchingService : BackgroundService
             var localUsedCount = 0;
             var externalUsedCount = 0;
             var manualExternalCount = 0;
+
+            if (includeUnorderedLocalItems)
+            {
+                foreach (var (key, item) in jellyfinItemsByName)
+                {
+                    var itemDictionary = JsonSerializer.Deserialize<Dictionary<string, object?>>(item.GetRawText());
+                    if (itemDictionary == null) continue;
+                    finalItems.Add(itemDictionary);
+                    usedJellyfinItems.Add(key);
+                    localUsedCount++;
+                }
+            }
 
             foreach (var spotifyTrack in spotifyTracks.OrderBy(t => t.Position))
             {
