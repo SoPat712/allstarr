@@ -604,19 +604,23 @@ public class SpotifyTrackMatchingService : BackgroundService
         var tracksToMatch = spotifyTracks
             .Where(t => !existingSpotifyIds.Contains(t.SpotifyId))
             .ToList();
+        var existingMatched = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
 
         if (tracksToMatch.Count == 0)
         {
             _logger.LogWarning("All {Count} tracks for {Playlist} already exist in Jellyfin, skipping matching",
                 spotifyTracks.Count, playlistName);
+            await EnsurePlaylistItemsCacheAsync(
+                playlistName,
+                playlistConfig?.JellyfinId,
+                spotifyTracks,
+                existingMatched ?? [],
+                cancellationToken);
             return;
         }
 
         _logger.LogWarning("Matching {ToMatch}/{Total} tracks for {Playlist} (skipping {Existing} already in Jellyfin, ISRC: {IsrcEnabled}, AGGRESSIVE MODE)",
             tracksToMatch.Count, spotifyTracks.Count, playlistName, existingSpotifyIds.Count, _spotifyApiSettings.PreferIsrcMatching);
-
-        // Check cache - use snapshot/timestamp to detect changes
-        var existingMatched = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
 
         // CRITICAL: Skip matching if cache exists and is valid
         // Only re-match if cache is missing OR if we detect manual mappings that need to be applied
@@ -668,6 +672,12 @@ public class SpotifyTrackMatchingService : BackgroundService
             {
                 _logger.LogWarning("✓ Playlist {Playlist} already has {Count} matched tracks cached (skipping {ToMatch} new tracks), no re-matching needed",
                     playlistName, existingMatched.Count, tracksToMatch.Count);
+                await EnsurePlaylistItemsCacheAsync(
+                    playlistName,
+                    playlistConfig?.JellyfinId,
+                    spotifyTracks,
+                    existingMatched,
+                    cancellationToken);
                 return;
             }
 
@@ -1993,6 +2003,30 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             _logger.LogError(ex, "Failed to pre-build playlist items cache for {Playlist}", playlistName);
         }
+    }
+
+    private async Task EnsurePlaylistItemsCacheAsync(
+        string playlistName,
+        string? jellyfinPlaylistId,
+        List<SpotifyPlaylistTrack> spotifyTracks,
+        List<MatchedTrack> matchedTracks,
+        CancellationToken cancellationToken)
+    {
+        var itemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
+        var existingItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(itemsKey);
+        if (existingItems is { Count: > 0 })
+            return;
+
+        _logger.LogInformation(
+            "Rebuilding missing player playlist cache for {Playlist} from retained matches",
+            playlistName);
+        await PreBuildPlaylistItemsCacheAsync(
+            playlistName,
+            jellyfinPlaylistId,
+            spotifyTracks,
+            matchedTracks,
+            TimeSpan.FromHours(24),
+            cancellationToken);
     }
 
     /// <summary>
