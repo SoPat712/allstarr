@@ -296,6 +296,8 @@ public sealed class ProviderStatusManagerTests
             new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(
                 new QueuedResponseHandler(
+                    SpotifyTotpSecrets(),
+                    SpotifyTime(),
                     Json(HttpStatusCode.OK, "{\"accessToken\":\"access-token\"}"),
                     Json(HttpStatusCode.OK, "{\"error\":false,\"syncType\":\"LINE_SYNCED\",\"lines\":[]}"))),
             spotifySettings: new SpotifyApiSettings
@@ -323,7 +325,7 @@ public sealed class ProviderStatusManagerTests
         var manager = CreateManager(
             new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(
-                new QueuedResponseHandler(Json(HttpStatusCode.Unauthorized, "{}"))),
+                new QueuedResponseHandler(SpotifyTotpSecrets(), SpotifyTime(), Json(HttpStatusCode.Unauthorized, "{}"))),
             spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "expired-cookie" });
 
         var result = await manager.TestProviderCapabilityAsync("spotify", ProviderCapabilities.Playlist);
@@ -331,6 +333,25 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal(ProviderHealthState.Degraded, result.Health);
         Assert.Equal("provider_unauthorized", result.ReasonCode);
         Assert.DoesNotContain("expired-cookie", result.ReasonCode, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SpotifyPlaylistProbe_ReportsTotpTokenEndpointForbidden()
+    {
+        var blocked = new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("<html>blocked by edge</html>", Encoding.UTF8, "text/html")
+        };
+        var manager = CreateManager(
+            new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(new QueuedResponseHandler(SpotifyTotpSecrets(), SpotifyTime(), blocked)),
+            spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "valid-looking-cookie" });
+
+        var result = await manager.TestProviderCapabilityAsync("spotify", ProviderCapabilities.Playlist);
+
+        Assert.Equal(ProviderHealthState.Degraded, result.Health);
+        Assert.Equal("provider_unauthorized", result.ReasonCode);
+        Assert.DoesNotContain("valid-looking-cookie", result.ReasonCode, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -390,6 +411,20 @@ public sealed class ProviderStatusManagerTests
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
+
+    private static HttpResponseMessage SpotifyTotpSecrets() => Json(
+        HttpStatusCode.OK,
+        System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new { version = 1, secret = Enumerable.Range(1, 32).ToArray() }
+        }));
+
+    private static HttpResponseMessage SpotifyTime()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK);
+        response.Headers.Date = DateTimeOffset.UtcNow;
+        return response;
+    }
 
     private sealed class CountingHttpClientFactory : IHttpClientFactory
     {

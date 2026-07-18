@@ -40,7 +40,6 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 {
     public const string StableProviderId = "spotify";
     public const string HttpClientName = "SpotifyAccountBound";
-    private static readonly Uri TokenEndpoint = new("https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
     private static readonly Uri ApiOrigin = new("https://api.spotify.com/");
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
@@ -236,22 +235,12 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 
     private async Task<TokenResult> ExchangeCookieAsync(string cookie, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, TokenEndpoint);
-        request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={SpotifySessionCookie.Normalize(cookie)}");
-        var response = await SendAsync(request, cancellationToken);
-        if (!response.Outcome.IsSuccess) return new(response.Outcome, null);
-        try
-        {
-            using var document = JsonDocument.Parse(response.Body!);
-            var token = String(document.RootElement, "accessToken");
-            return string.IsNullOrWhiteSpace(token)
-                ? new(ProviderOutcome<byte[]>.Failure(new ProviderError(ProviderErrorKind.Unauthorized)), null)
-                : new(ProviderOutcome<byte[]>.Success(response.Body!), token);
-        }
-        catch (JsonException)
-        {
-            return new(ProviderOutcome<byte[]>.Failure(new ProviderError(ProviderErrorKind.Unauthorized)), null);
-        }
+        var result = await SpotifyWebTokenExchange.ExchangeAsync(_http, SpotifySessionCookie.Normalize(cookie)!, cancellationToken);
+        if (result.Success) return new(ProviderOutcome<byte[]>.Success([]), result.AccessToken);
+        var kind = result.ReasonCode is "provider_unauthorized" or "anonymous_session"
+            ? ProviderErrorKind.Unauthorized
+            : ProviderErrorKind.TransientFailure;
+        return new(ProviderOutcome<byte[]>.Failure(new ProviderError(kind)), null);
     }
 
     private async Task<HttpResult> SendApiAsync(string token, HttpMethod method, Uri uri, CancellationToken cancellationToken)

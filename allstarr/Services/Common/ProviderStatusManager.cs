@@ -802,28 +802,9 @@ public class ProviderStatusManager
             return new ProbeOutcome(false, "account_needs_configuration");
         }
         using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            "https://open.spotify.com/get_access_token?reason=transport&productType=web_player");
-        request.Headers.Add("Cookie", $"sp_dc={sessionCookie}");
-        request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-
-        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            return new ProbeOutcome(
-                false,
-                response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden
-                    ? "provider_unauthorized"
-                    : $"upstream_http_{(int)response.StatusCode}");
-        }
-
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.TryGetProperty("accessToken", out var token) &&
-               !string.IsNullOrWhiteSpace(token.GetString())
-            ? new ProbeOutcome(true)
-            : new ProbeOutcome(false, "invalid_response");
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        var result = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(client, sessionCookie, cancellationToken);
+        return new ProbeOutcome(result.Success, result.ReasonCode);
     }
 
     private async Task<bool> TestSpotifyLyricsAsync(CancellationToken cancellationToken)

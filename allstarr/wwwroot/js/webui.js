@@ -2800,10 +2800,8 @@ class AllstarrApp extends LitElement {
 
     const providers = asArray(this.schema?.providers).filter((provider) => {
       const providerId = String(provider.id || provider.Id || "").toLowerCase();
-      return !ACCOUNT_MANAGED_PROVIDERS.has(providerId) && providerId !== "apple-download";
+      return !ACCOUNT_MANAGED_PROVIDERS.has(providerId);
     });
-    const gateways = asArray(this.schema?.providers).filter((provider) =>
-      String(provider.id || provider.Id || "").toLowerCase() === "apple-download");
     const providerGroups = [
       ["healthy", "Observed healthy", providers.filter((provider) => this.providerStatus(provider) === "healthy")],
       ["available", "Available but untested", providers.filter((provider) => ["unknown", "available", "partial_config"].includes(this.providerStatus(provider)))],
@@ -2819,7 +2817,6 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
         ${this.renderProviderAccounts()}
-        ${gateways.map((provider) => this.renderProviderSection("gateways", "Optional gateways", [provider]))}
         ${providerGroups.map(([id, label, items]) => this.renderProviderSection(id, label, items))}
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
@@ -2945,6 +2942,8 @@ class AllstarrApp extends LitElement {
       ? "Spotify rejected the saved session. Add a fresh sp_dc cookie to resume playlist refreshes; cached playlists will keep working meanwhile."
       : providerId === "spotify" && failedCapability === "playlist" && reason === "invalid_response"
         ? "Spotify accepted the request but did not return a usable web-player token. The browser-session method may have changed; your saved cookie has not been proven invalid."
+      : providerId === "spotify" && failedCapability === "playlist" && reason === "upstream_blocked"
+        ? "Spotify blocked the web-player token request before checking your saved session. Your cookie has not been rejected; this connection method is currently unavailable from the Allstarr server."
       : providerId === "spotify" && failedCapability === "playlist" && reason.startsWith("upstream_http_")
         ? `Spotify returned HTTP ${reason.slice("upstream_http_".length)} while checking playlists. This does not necessarily mean your cookie is wrong.`
       : rejectedLastFm
@@ -3265,7 +3264,7 @@ class AllstarrApp extends LitElement {
             ` : nothing}
             <div class="provider-title">
               <strong>${provider.name}</strong>
-              <span>${provider.id === "apple-download" ? "Optional gateway" : provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
+              <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
             </div>
           </div>
           <span class="status-chip ${status}">${titleCase(status)}</span>

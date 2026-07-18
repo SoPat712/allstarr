@@ -95,7 +95,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         var unauthorized = await adapter.GetPlaylistTracksAsync(Context(),
             new ProviderPlaylistTracksRequest(playlist, new ProviderPageRequest()));
         Assert.Equal(ProviderErrorKind.Unauthorized, unauthorized.Error!.Kind);
-        Assert.Single(handler.Paths);
+        Assert.Equal(3, handler.Paths.Count);
         Assert.Equal("The provider rejected the selected account credentials.", unauthorized.Error.SafeMessage);
         Assert.DoesNotContain("cookie", unauthorized.Error.ToString(), StringComparison.Ordinal);
     }
@@ -211,6 +211,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Paths.Add(request.RequestUri!.PathAndQuery);
+            if (request.RequestUri.Host == "raw.githubusercontent.com")
+                return Task.FromResult(Json(HttpStatusCode.OK, new[] { new { version = 1, secret = Enumerable.Range(1, 32).ToArray() } }));
             if (request.RequestUri.Host == "i.scdn.co")
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -221,6 +223,12 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                 });
             if (request.RequestUri.Host == "open.spotify.com")
             {
+                if (request.Method == HttpMethod.Head)
+                {
+                    var time = new HttpResponseMessage(HttpStatusCode.OK);
+                    time.Headers.Date = DateTimeOffset.UtcNow;
+                    return Task.FromResult(time);
+                }
                 CookieHeader = request.Headers.GetValues("Cookie").Single();
                 return Task.FromResult(Json(TokenStatus, new { accessToken = "account-access-token" }));
             }
