@@ -3,13 +3,13 @@ name: CI
 on:
   push:
     branches: [main, master, dev, beta]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, master, dev, beta]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches: [main, master, dev, beta]
 
 env:
   DOTNET_VERSION: "10.0.301"
