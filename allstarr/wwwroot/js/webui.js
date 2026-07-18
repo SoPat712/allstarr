@@ -2802,12 +2802,10 @@ class AllstarrApp extends LitElement {
       const providerId = String(provider.id || provider.Id || "").toLowerCase();
       return !ACCOUNT_MANAGED_PROVIDERS.has(providerId);
     });
-    const providerGroups = [
-      ["healthy", "Observed healthy", providers.filter((provider) => this.providerStatus(provider) === "healthy")],
-      ["available", "Available but untested", providers.filter((provider) => ["unknown", "available", "partial_config"].includes(this.providerStatus(provider)))],
-      ["attention", "Needs attention", providers.filter((provider) => ["needs_config", "needs_login", "testing", "degraded"].includes(this.providerStatus(provider)))],
-      ["disabled", "Disabled providers", providers.filter((provider) => this.providerStatus(provider) === "disabled")],
-    ].filter(([, , items]) => items.length > 0);
+    const statusOrder = { degraded: 0, needs_config: 1, needs_login: 1, partial_config: 1, unknown: 2, available: 2, testing: 2, healthy: 3, disabled: 4 };
+    const orderedProviders = [...providers].sort((left, right) =>
+      (statusOrder[this.providerStatus(left)] ?? 2) - (statusOrder[this.providerStatus(right)] ?? 2) ||
+      String(left.name).localeCompare(String(right.name)));
     return html`
       <section class="view-stack">
         <div class="view-header">
@@ -2817,7 +2815,7 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
         ${this.renderProviderAccounts()}
-        ${providerGroups.map(([id, label, items]) => this.renderProviderSection(id, label, items))}
+        ${this.renderProviderSection("all", "Providers", orderedProviders)}
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
         }}>
@@ -3267,7 +3265,7 @@ class AllstarrApp extends LitElement {
               <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
             </div>
           </div>
-          <span class="status-chip ${status}">${titleCase(status)}</span>
+          <span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>
         </div>
         <div class="row-actions provider-actions">
           ${accountManaged && !enabledAccount ? html`
@@ -3303,6 +3301,16 @@ class AllstarrApp extends LitElement {
         ` : nothing}
       </div>
     `;
+  }
+
+  providerStatusLabel(status) {
+    if (status === "healthy") return "Connected";
+    if (status === "degraded") return "Test failed";
+    if (["needs_config", "needs_login", "partial_config"].includes(status)) return "Needs setup";
+    if (["unknown", "available"].includes(status)) return "Not checked yet";
+    if (status === "testing") return "Checking";
+    if (status === "disabled") return "Disabled";
+    return titleCase(status);
   }
 
   renderRuntimeCapability(provider, capability) {

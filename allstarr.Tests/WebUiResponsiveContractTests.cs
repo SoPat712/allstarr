@@ -125,7 +125,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("Refresh readiness", script, StringComparison.Ordinal);
         Assert.Contains("Connected as ${backendUser}", script, StringComparison.Ordinal);
         Assert.Contains("signed-in session is the connection test", script, StringComparison.Ordinal);
-        Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
+        Assert.Contains("Connected", script, StringComparison.Ordinal);
         Assert.Contains("First playlist", script, StringComparison.Ordinal);
         Assert.Contains("leaveSetupGuideFor(\"/library/link\")", script, StringComparison.Ordinal);
         Assert.Contains("SETUP_GUIDE_LAST_STEP = 4", script, StringComparison.Ordinal);
@@ -223,8 +223,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains(">Reconnect</button>", script, StringComparison.Ordinal);
         Assert.Contains(".provider-qobuz", css, StringComparison.Ordinal);
         Assert.Contains("background: #f7f7f8", css, StringComparison.Ordinal);
-        Assert.Contains("Available but untested", script, StringComparison.Ordinal);
-        Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Available but untested", script, StringComparison.Ordinal);
+        Assert.Contains("Not checked yet", script, StringComparison.Ordinal);
         Assert.Contains("capability.configuration", script, StringComparison.Ordinal);
         Assert.Contains("capability.health", script, StringComparison.Ordinal);
     }
