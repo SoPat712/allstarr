@@ -136,6 +136,19 @@ public sealed class ComposeContractTests
     }
 
     [Fact]
+    public void SourceUpdate_FastForwardsTrackedBranchButUpNeverPullsSource()
+    {
+        var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
+
+        Assert.Contains("git diff --quiet && git diff --cached --quiet", controller, StringComparison.Ordinal);
+        Assert.Contains("git pull --ff-only", controller, StringComparison.Ordinal);
+        Assert.Contains("tracked source files have local changes", controller, StringComparison.Ordinal);
+        var upBody = controller[controller.IndexOf("up() {", StringComparison.Ordinal)..controller.IndexOf("update() {", StringComparison.Ordinal)];
+        Assert.DoesNotContain("git pull", upBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RuntimeImage_ContainsBackupToolsAndPinnedDotnetBases()
     {
         var dockerfile = File.ReadAllText(Path.Combine(_repositoryRoot, "Dockerfile"));

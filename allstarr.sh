@@ -137,6 +137,11 @@ update() {
     docker compose "${COMPOSE[@]}" pull --ignore-buildable
   fi
   if [[ "$(deployment_mode)" == source ]]; then
+    need git
+    [[ -d "$ROOT/.git" ]] || die "source mode requires a Git checkout"
+    git diff --quiet && git diff --cached --quiet ||
+      die "tracked source files have local changes; commit or stash them before updating"
+    git pull --ff-only
     docker compose "${COMPOSE[@]}" build allstarr
     if profiles | grep -qx apple; then
       docker compose "${COMPOSE[@]}" build apple-gateway
@@ -155,7 +160,7 @@ Usage: ./allstarr.sh COMMAND
   init [release|source]             Create config; default to release images
   mode [release|source]             Show or change the saved deployment mode
   up                                Start the saved deployment profile
-  update                            Pull reviewed images and safely recreate
+  update                            Pull the saved release/source and safely recreate
   status                            Show containers and the saved profile
   logs [service]                    Follow redacted container logs
   enable spotify-lyrics|aio         Add an optional saved profile
@@ -164,7 +169,7 @@ Usage: ./allstarr.sh COMMAND
   down                              Stop containers without deleting data
 
 The deployment mode is saved in .allstarr-mode. Release mode pulls reviewed
-images; source mode builds the checked-out commit using docker-compose.dev.yml.
+images; source mode fast-forwards its tracked branch, then builds it using docker-compose.dev.yml.
 Optional profiles are saved in .allstarr-profiles. No command deletes volumes,
 Postgres data, managed music, provider sessions, or imported settings.
 EOF

@@ -34,8 +34,9 @@ permissions, and never deletes volumes. Normal upgrades are `./allstarr.sh updat
 recreate the saved profile without requiring users to remember a growing list of `-f` arguments.
 
 The default `release` mode runs reviewed images. Beta testers and contributors who want the checked-out commit can
-run `./allstarr.sh mode source`, then `./allstarr.sh up`. For later source updates, run `git pull --ff-only` followed
-by `./allstarr.sh update`. The same volumes and optional-provider profiles remain attached in either mode.
+run `./allstarr.sh mode source`, then `./allstarr.sh up`. For later source updates, run
+`./allstarr.sh update`; it refuses tracked local changes, fast-forwards the current tracked branch, rebuilds, and
+recreates the services. The same volumes and optional-provider profiles remain attached in either mode.
 
 The standard stack is the smaller, recommended default. The AIO override mounts the checksum-locked offline
 first-party package bundle, but it does not force optional provider sidecars on anyone:
