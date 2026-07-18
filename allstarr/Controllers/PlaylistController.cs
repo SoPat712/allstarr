@@ -244,6 +244,7 @@ public class PlaylistController : ControllerBase
                         var missingCount = spotifyTrackCount - (localCount + externalCount);
 
                         playlistInfo["localTracks"] = localCount;
+                        playlistInfo["externalTracks"] = externalCount;
                         playlistInfo["externalMatched"] = externalCount;
                         playlistInfo["externalMissing"] = missingCount;
                         playlistInfo["externalTotal"] = externalCount + missingCount;
@@ -283,6 +284,7 @@ public class PlaylistController : ControllerBase
                         }
 
                         playlistInfo["localTracks"] = localCount;
+                        playlistInfo["externalTracks"] = externalCount;
                         playlistInfo["externalMatched"] = externalCount;
                         playlistInfo["externalMissing"] = missingCount;
                         playlistInfo["externalTotal"] = externalCount + missingCount;
@@ -421,6 +423,7 @@ public class PlaylistController : ControllerBase
                                     missingCount = spotifyTracks.Count - (localCount + externalCount);
 
                                     playlistInfo["localTracks"] = localCount;
+                                    playlistInfo["externalTracks"] = externalCount;
                                     playlistInfo["externalMatched"] = externalCount;
                                     playlistInfo["externalMissing"] = missingCount;
                                     playlistInfo["externalTotal"] = externalCount + missingCount;
@@ -538,6 +541,7 @@ public class PlaylistController : ControllerBase
                                     }
 
                                     playlistInfo["localTracks"] = localCount;
+                                    playlistInfo["externalTracks"] = externalMatchedCount;
                                     playlistInfo["externalMatched"] = externalMatchedCount;
                                     playlistInfo["externalMissing"] = externalMissingCount;
                                     playlistInfo["externalTotal"] = externalMatchedCount + externalMissingCount;

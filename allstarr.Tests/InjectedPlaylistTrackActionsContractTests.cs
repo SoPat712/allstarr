@@ -44,6 +44,18 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.DoesNotContain("manual:mapping:{playlist}:{spotifyId}", controller, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void InjectedPlaylistSummary_PopulatesTheExternalCountConsumedByTheWebUi()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.True(
+            controller.Split("playlistInfo[\"externalTracks\"]", StringSplitOptions.None).Length >= 5,
+            "Every playlist statistics path must populate the canonical externalTracks field.");
+        Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
