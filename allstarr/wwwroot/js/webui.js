@@ -1483,6 +1483,14 @@ class AllstarrApp extends LitElement {
     const administrator = this.isAdministrator();
     return html`
       <div class="app-shell">
+        ${this.navOpen ? html`
+          <button
+            type="button"
+            class="sidebar-backdrop"
+            aria-label="Close menu"
+            @click=${() => { this.navOpen = false; }}
+          ></button>
+        ` : nothing}
         ${this.renderSidebar()}
         <div class="main-shell ${administrator && this.getRecentPlayback() ? "has-now-playing" : ""}">
           ${this.renderTopbar()}
@@ -1614,7 +1622,8 @@ class AllstarrApp extends LitElement {
         <div>
           <button
             type="button"
-            class="mobile-menu ghost"
+            class="mobile-menu menu-trigger"
+            aria-label="Open menu"
             aria-controls="primary-sidebar"
             aria-expanded=${this.navOpen ? "true" : "false"}
             @click=${() => { this.navOpen = true; }}
@@ -1624,7 +1633,11 @@ class AllstarrApp extends LitElement {
                 this.navOpen = true;
               }
             }}
-          >Menu</button>
+          >
+            <span class="menu-trigger-lines" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+          </button>
           <h1>${titleCase(zone || "home")}${sub ? html` <span class="muted">/ ${titleCase(sub)}</span>` : nothing}</h1>
           <div class="topbar-meta">${display(this.schema?.activeBackend || this.config?.backendType, "Backend unknown")}</div>
         </div>

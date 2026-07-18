@@ -29,12 +29,17 @@ public sealed class WebUiResponsiveContractTests
     public void MobileMenu_ExposesKeyboardAndExpandedStateContracts()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("aria-controls=\"primary-sidebar\"", script, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Open menu\"", script, StringComparison.Ordinal);
         Assert.Contains("aria-expanded=${this.navOpen ? \"true\" : \"false\"}", script, StringComparison.Ordinal);
         Assert.Contains("event.key === \"Enter\" || event.key === \" \"", script, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Close menu\"", script, StringComparison.Ordinal);
         Assert.Contains("this.navOpen = false;", script, StringComparison.Ordinal);
+
+        Assert.Contains(".sidebar-backdrop", css, StringComparison.Ordinal);
+        Assert.Contains(".menu-trigger-lines", css, StringComparison.Ordinal);
     }
 
     [Fact]
