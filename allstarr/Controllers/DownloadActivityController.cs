@@ -157,6 +157,7 @@ public class DownloadActivityController : ControllerBase
                     StartedAt = download.StartedAt,
                     CompletedAt = download.CompletedAt,
                     IsPlaying = hasPlayback,
+                    PlaybackLastActivity = hasPlayback ? playbackState!.LastActivity : null,
                     PlaybackPositionSeconds = hasPlayback
                         ? (int)Math.Max(0, playbackState!.PositionTicks / TimeSpan.TicksPerSecond)
                         : null,
@@ -191,6 +192,7 @@ public class DownloadActivityController : ControllerBase
                 RequestedForStreaming = false,
                 StartedAt = playbackState.LastActivity,
                 IsPlaying = true,
+                PlaybackLastActivity = playbackState.LastActivity,
                 CoverArtUrl = localMetadata?.CoverArtUrl,
                 PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond)
             });
@@ -290,6 +292,7 @@ public class DownloadActivityController : ControllerBase
     private sealed class DownloadActivityEntry : DownloadInfo
     {
         public bool IsPlaying { get; init; }
+        public DateTime? PlaybackLastActivity { get; init; }
         public string? CoverArtUrl { get; init; }
         public int? PlaybackPositionSeconds { get; init; }
         public double? PlaybackProgress { get; init; }

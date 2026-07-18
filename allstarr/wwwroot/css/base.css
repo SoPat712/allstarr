@@ -353,6 +353,9 @@ a {
 
 .main-shell {
     min-width: 0;
+}
+
+.main-shell.has-now-playing {
     padding-bottom: calc(var(--now-playing-height) + var(--space-5));
 }
 
@@ -2322,6 +2325,10 @@ button.setup-choice {
 
     .content {
         padding-top: var(--space-5);
+        padding-bottom: var(--space-7);
+    }
+
+    .main-shell.has-now-playing .content {
         padding-bottom: calc(var(--now-playing-height) + var(--space-7));
     }
 

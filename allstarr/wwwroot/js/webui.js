@@ -1484,7 +1484,7 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="app-shell">
         ${this.renderSidebar()}
-        <div class="main-shell">
+        <div class="main-shell ${administrator && this.getRecentPlayback() ? "has-now-playing" : ""}">
           ${this.renderTopbar()}
           <main class="content">
             ${this.renderLoadFailures()}
@@ -4280,8 +4280,23 @@ class AllstarrApp extends LitElement {
     `;
   }
 
+  getRecentPlayback() {
+    const current = this.activity.find((item) => item.isPlaying || item.IsPlaying);
+    if (!current) return null;
+
+    const rawLastActivity = current.playbackLastActivity || current.PlaybackLastActivity;
+    if (rawLastActivity) {
+      const lastActivity = Date.parse(rawLastActivity);
+      if (Number.isFinite(lastActivity) && Date.now() - lastActivity > 2 * 60 * 1000) {
+        return null;
+      }
+    }
+    return current;
+  }
+
   renderNowPlaying() {
-    const current = this.activity.find((item) => item.isPlaying || item.IsPlaying) || this.activity[0];
+    const current = this.getRecentPlayback();
+    if (!current) return nothing;
     const progress = current ? percent(current.playbackProgress ?? current.PlaybackProgress ?? current.progress ?? current.Progress) : 0;
     const title = current ? display(current.title || current.Title, "Active download") : "No active playback";
     const artist = current ? display(current.artist || current.Artist) : "Queue is idle";
