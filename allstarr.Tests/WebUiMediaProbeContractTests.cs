@@ -12,6 +12,7 @@ public sealed class WebUiMediaProbeContractTests
         Assert.Contains("Test metadata and artwork", _script, StringComparison.Ordinal);
         Assert.Contains("this.runMediaProbe", _script, StringComparison.Ordinal);
         Assert.Contains("Media pipeline ready", _script, StringComparison.Ordinal);
+        Assert.Contains("audio stream passed", _script, StringComparison.Ordinal);
     }
 
     [Fact]

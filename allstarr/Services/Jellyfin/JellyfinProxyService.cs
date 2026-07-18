@@ -653,6 +653,57 @@ public class JellyfinProxyService
     }
 
     /// <summary>
+    /// Reads only the first bounded range of a media stream. Diagnostics use this to
+    /// prove that an authenticated player can receive audio without downloading a song.
+    /// </summary>
+    public async Task<(int StatusCode, int BytesRead, string? ContentType, bool Success)> ProbeAudioStreamAsync(
+        string itemId,
+        IHeaderDictionary clientHeaders,
+        int maximumBytes = 65_536,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(itemId) || maximumBytes is < 1 or > 1_048_576)
+            return (StatusCodes.Status400BadRequest, 0, null, false);
+
+        try
+        {
+            var url = BuildUrl(
+                $"Audio/{Uri.EscapeDataString(itemId)}/stream",
+                new Dictionary<string, string> { ["static"] = "true" });
+            using var request = CreateClientGetRequest(url, clientHeaders, out _, out _);
+            request.Headers.Range = new RangeHeaderValue(0, maximumBytes - 1);
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return ((int)response.StatusCode, 0, response.Content.Headers.ContentType?.ToString(), false);
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var buffer = new byte[maximumBytes];
+            var total = 0;
+            while (total < buffer.Length)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), cancellationToken);
+                if (read == 0) break;
+                total += read;
+            }
+
+            return ((int)response.StatusCode, total,
+                response.Content.Headers.ContentType?.ToString(), total > 0);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Authenticated audio stream probe failed");
+            return (StatusCodes.Status502BadGateway, 0, null, false);
+        }
+    }
+
+    /// <summary>
     /// Searches for items in Jellyfin.
     /// Does not force any library filtering - clients can specify parentId if they want.
     /// </summary>

@@ -264,6 +264,11 @@ public class DiagnosticsController : ControllerBase
                 var playerRouteAvailable = false;
                 string? playerRouteContentType = null;
                 var playerRouteBytes = 0;
+                var playerStreamTested = false;
+                var playerStreamAvailable = false;
+                var playerStreamStatus = 0;
+                var playerStreamBytes = 0;
+                string? playerStreamContentType = null;
                 if (HttpContext.Items.TryGetValue(
                         AdminAuthSessionService.HttpContextSessionItemKey,
                         out var sessionValue) &&
@@ -291,9 +296,21 @@ public class DiagnosticsController : ControllerBase
                                            playerRouteContentType?.StartsWith(
                                                "image/",
                                                StringComparison.OrdinalIgnoreCase) == true;
+
+                    playerStreamTested = true;
+                    var streamResult = await proxy.ProbeAudioStreamAsync(
+                        itemId,
+                        playerHeaders,
+                        cancellationToken: cancellationToken);
+                    playerStreamStatus = streamResult.StatusCode;
+                    playerStreamBytes = streamResult.BytesRead;
+                    playerStreamContentType = streamResult.ContentType;
+                    playerStreamAvailable = streamResult.Success;
                 }
 
-                var successfulPipeline = validImage && (!playerRouteTested || playerRouteAvailable);
+                var successfulPipeline = validImage &&
+                                         (!playerRouteTested || playerRouteAvailable) &&
+                                         (!playerStreamTested || playerStreamAvailable);
 
                 return Ok(new
                 {
@@ -315,10 +332,20 @@ public class DiagnosticsController : ControllerBase
                         contentType = playerRouteAvailable ? playerRouteContentType : null,
                         bytes = playerRouteBytes
                     },
+                    playerStreaming = new
+                    {
+                        tested = playerStreamTested,
+                        available = playerStreamAvailable,
+                        status = playerStreamStatus,
+                        contentType = playerStreamAvailable ? playerStreamContentType : null,
+                        bytes = playerStreamBytes
+                    },
                     message = successfulPipeline
                         ? playerRouteTested
-                            ? "Jellyfin metadata and authenticated player artwork are available through Allstarr."
+                            ? "Jellyfin metadata, authenticated player artwork, and audio streaming are available through Allstarr."
                             : "Jellyfin metadata and album artwork are available through Allstarr."
+                        : playerStreamTested && !playerStreamAvailable
+                            ? "Jellyfin metadata and artwork worked, but an authenticated player could not read audio bytes."
                         : playerRouteTested && !playerRouteAvailable
                             ? "Jellyfin metadata worked, but an authenticated player could not retrieve the selected artwork."
                             : "Jellyfin metadata worked, but Allstarr could not retrieve the selected artwork."

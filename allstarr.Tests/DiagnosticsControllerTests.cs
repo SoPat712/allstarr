@@ -54,6 +54,19 @@ public sealed class DiagnosticsControllerTests : IDisposable
     {
         var handler = new StubHandler(request =>
         {
+            if (request.RequestUri?.AbsolutePath.Contains("/Audio/", StringComparison.Ordinal) == true)
+            {
+                Assert.NotNull(request.Headers.Range);
+                Assert.Equal("bytes=0-65535", request.Headers.Range!.ToString());
+                var audioResponse = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                {
+                    Content = new ByteArrayContent([0x66, 0x4C, 0x61, 0x43, 0x00, 0x00])
+                };
+                audioResponse.Content.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue("audio/flac");
+                return audioResponse;
+            }
+
             if (request.RequestUri?.AbsolutePath.EndsWith("/Images/Primary", StringComparison.Ordinal) == true)
             {
                 var imageResponse = new HttpResponseMessage(HttpStatusCode.OK)
@@ -113,13 +126,16 @@ public sealed class DiagnosticsControllerTests : IDisposable
         Assert.Contains("media_pipeline_healthy", json, StringComparison.Ordinal);
         Assert.Contains("image/jpeg", json, StringComparison.Ordinal);
         Assert.Contains("\"bytes\":4", json, StringComparison.Ordinal);
-        Assert.Contains("authenticated player artwork", json, StringComparison.Ordinal);
+        Assert.Contains("authenticated player artwork, and audio streaming", json, StringComparison.Ordinal);
+        Assert.Contains("audio/flac", json, StringComparison.Ordinal);
+        Assert.Contains("\"status\":206", json, StringComparison.Ordinal);
+        Assert.Contains("\"bytes\":6", json, StringComparison.Ordinal);
         Assert.Contains("\"tested\":true", json, StringComparison.Ordinal);
         Assert.Contains("\"available\":true", json, StringComparison.Ordinal);
         Assert.DoesNotContain("track-1", json, StringComparison.Ordinal);
         Assert.DoesNotContain("server-api-key", json, StringComparison.Ordinal);
         Assert.DoesNotContain("player-token", json, StringComparison.Ordinal);
-        Assert.Equal(3, handler.RequestCount);
+        Assert.Equal(4, handler.RequestCount);
     }
 
     [Fact]
