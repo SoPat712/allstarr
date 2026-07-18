@@ -801,6 +801,42 @@ class AllstarrApp extends LitElement {
     }
   };
 
+  runCoreReadiness = async () => {
+    this.serviceResults = {
+      ...this.serviceResults,
+      readiness: { state: "running", message: "Checking player artwork, playlists, and provider health..." },
+    };
+    const [mediaOutcome, playlistOutcome, providerOutcome] = await Promise.allSettled([
+      API.mediaProbe(),
+      API.playlistReadiness(),
+      this.loadProviderAccounts(),
+    ]);
+    const media = mediaOutcome.status === "fulfilled" ? mediaOutcome.value : null;
+    const playlists = playlistOutcome.status === "fulfilled" ? playlistOutcome.value : null;
+    const mediaReady = Boolean(media?.success ?? media?.Success);
+    const playlistsReady = Boolean(playlists?.success ?? playlists?.Success);
+    const failedRequests = [mediaOutcome, playlistOutcome, providerOutcome].filter((item) => item.status === "rejected");
+    const spotifyPlaylist = this.providerHealth.find((item) =>
+      String(item.provider || item.Provider || "").toLowerCase() === "spotify" &&
+      String(item.capability || item.Capability || "").toLowerCase() === "playlist");
+    const spotifyReady = String(spotifyPlaylist?.health || spotifyPlaylist?.Health || "unknown").toLowerCase() === "healthy";
+    const state = !failedRequests.length && mediaReady && playlistsReady && spotifyReady ? "success" : "warning";
+    this.serviceResults = {
+      ...this.serviceResults,
+      readiness: {
+        state,
+        message: state === "success"
+          ? "All core music paths are ready."
+          : "Your playable library is available, but one or more refresh or connection checks need attention.",
+        mediaReady,
+        playlistsReady,
+        spotifyReady,
+        failedRequests: failedRequests.length,
+        playlistMessage: playlists?.message || playlists?.Message || "Playlist check unavailable.",
+      },
+    };
+  };
+
   recordLoadFailure(key, label, error) {
     this.loadFailures = { ...this.loadFailures, [key]: { label, message: error?.message || "This information could not be loaded." } };
   }
@@ -900,6 +936,8 @@ class AllstarrApp extends LitElement {
         }
       } else if (zone === "activity") {
         await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]);
+      } else if (zone === "home" || !zone) {
+        await this.loadProviderAccounts();
       }
     } catch (error) {
       if (error?.status === 401) {
@@ -1802,6 +1840,11 @@ class AllstarrApp extends LitElement {
       asArray(provider.runtimeCapabilities).some((capability) =>
         capability.id === "download" && capability.canAttempt),
     );
+    const spotifyPlaylistHealth = this.providerHealth.find((item) =>
+      String(item.provider || item.Provider || "").toLowerCase() === "spotify" &&
+      String(item.capability || item.Capability || "").toLowerCase() === "playlist");
+    const spotifyRefreshState = String(spotifyPlaylistHealth?.health || spotifyPlaylistHealth?.Health || "unknown").toLowerCase();
+    const readiness = this.serviceResults.readiness;
 
     return html`
       <section class="view-stack">
@@ -1811,9 +1854,8 @@ class AllstarrApp extends LitElement {
             <p>Runtime state, provider readiness, and current activity.</p>
           </div>
           <div class="actions">
-            <button @click=${async () => { await API.refreshPlaylists(); this.toast("Playlist refresh requested"); }}>Refresh playlists</button>
-            <button @click=${async () => { await API.clearCache(); this.toast("Cache clear requested"); }}>Clear cache</button>
-            <button class="primary" @click=${async () => { await API.restart(); this.toast("Restart requested"); }}>Restart</button>
+            <button @click=${() => this.navigate("/sources")}>Manage sources</button>
+            <button class="primary" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${readiness?.state === "running" ? "Running checks..." : "Run readiness check"}</button>
           </div>
         </div>
 
@@ -1823,8 +1865,8 @@ class AllstarrApp extends LitElement {
             <span class="metric-value">${display(this.status?.backendType || this.config?.backendType)}</span>
           </div>
           <div class="card metric">
-            <span class="metric-label">Spotify</span>
-            <span class="metric-value">${titleCase(spotify.authStatus || "unknown")}</span>
+            <span class="metric-label">Spotify refresh</span>
+            <span class="metric-value">${spotifyRefreshState === "unknown" ? titleCase(spotify.authStatus || "unknown") : titleCase(spotifyRefreshState)}</span>
           </div>
           <div class="card metric">
             <span class="metric-label">Injected playlists</span>
@@ -1834,6 +1876,22 @@ class AllstarrApp extends LitElement {
             <span class="metric-label">Active tasks</span>
             <span class="metric-value">${this.activity.length}</span>
           </div>
+        </div>
+
+        <div class="panel home-readiness">
+          <div class="section-heading">
+            <div><h3>Core readiness</h3><p>One read-only check covers the player artwork route, restored playlists, and source health.</p></div>
+            ${readiness ? html`<span class="status-chip ${readiness.state}">${readiness.state === "success" ? "Ready" : readiness.state === "running" ? "Checking" : "Action needed"}</span>` : html`<span class="status-chip unknown">Not checked</span>`}
+          </div>
+          ${readiness ? html`
+            <div class="callout ${readiness.state}" role="status"><strong>${readiness.state === "success" ? "Core music paths ready" : readiness.state === "running" ? "Running core checks" : "Some paths need attention"}</strong><span>${readiness.message}</span></div>
+            ${readiness.state !== "running" ? html`<div class="readiness-checks">
+              ${this.renderReadinessCheck("Player artwork", readiness.mediaReady, "Authenticated Jellyfin artwork route")}
+              ${this.renderReadinessCheck("Restored playlists", readiness.playlistsReady, readiness.playlistMessage)}
+              ${this.renderReadinessCheck("Spotify refresh", readiness.spotifyReady, readiness.spotifyReady ? "Spotify playlist access is healthy." : "Reconnect Spotify to resume playlist refreshes.")}
+            </div>` : nothing}
+          ` : html`<div class="empty compact">Run the check after an update, provider change, or player problem.</div>`}
+          ${readiness?.state === "warning" ? html`<div class="actions"><button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button><button @click=${() => this.navigate("/settings")}>Open detailed diagnostics</button></div>` : nothing}
         </div>
 
         <div class="setup-launcher">
@@ -1873,6 +1931,10 @@ class AllstarrApp extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  renderReadinessCheck(label, ready, detail) {
+    return html`<div class="readiness-check ${ready ? "ready" : "attention"}"><span class="readiness-icon" aria-hidden="true">${ready ? "✓" : "!"}</span><div><strong>${label}</strong><small>${detail}</small></div><span class="status-chip ${ready ? "healthy" : "degraded"}">${ready ? "Ready" : "Attention"}</span></div>`;
   }
 
   renderIntelligence() {

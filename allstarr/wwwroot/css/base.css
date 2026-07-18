@@ -1027,7 +1027,7 @@ tbody tr:hover {
   padding: 0.8rem 0.9rem;
   border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface-card));
 }
 
 .provider-recovery > div {
@@ -1039,6 +1039,52 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 0.86rem;
   line-height: 1.4;
+}
+
+.home-readiness {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.readiness-checks {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.readiness-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+}
+
+.readiness-check > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.readiness-check small {
+  color: var(--text-secondary);
+}
+
+.readiness-icon {
+  display: grid;
+  width: 1.65rem;
+  height: 1.65rem;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success) 15%, var(--surface-card));
+  color: var(--success);
+  font-weight: 800;
+}
+
+.readiness-check.attention .readiness-icon {
+  background: color-mix(in srgb, var(--warning) 15%, var(--surface-card));
+  color: var(--warning);
 }
 
 .account-capability-list {
