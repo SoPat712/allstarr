@@ -54,6 +54,9 @@ public sealed class InjectedPlaylistTrackActionsContractTests
             controller.Split("playlistInfo[\"externalTracks\"]", StringSplitOptions.None).Length >= 5,
             "Every playlist statistics path must populate the canonical externalTracks field.");
         Assert.Contains("BuildSpotifyPlaylistStatsKey(config.Name)", controller, StringComparison.Ordinal);
+        Assert.Contains("BuildSpotifyMatchedTracksKey(config.Name)", controller, StringComparison.Ordinal);
+        Assert.Contains("ExternalTrackPlaybackPolicy.CanUseForPlayback(", controller, StringComparison.Ordinal);
+        Assert.Contains("ApplyPlaylistStats(playlistInfo, canonicalLocal, canonicalExternal, canonicalMissing)", controller, StringComparison.Ordinal);
         Assert.Contains("matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
     }

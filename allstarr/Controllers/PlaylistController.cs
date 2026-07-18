@@ -300,27 +300,50 @@ public class PlaylistController : ControllerBase
                     _logger.LogError(ex, "Failed to calculate playlist stats for {Name}", config.Name);
                 }
 
-                // The matcher writes this cache from the final, policy-filtered assignments.
-                // Prefer it over reconstructing status from serialized Jellyfin item dictionaries,
-                // whose ProviderIds shape varies between local and synthetic external items.
+                // Prefer the same matched-track records used by the detail modal. Serialized
+                // Jellyfin item dictionaries and old aggregate caches can both outlive a provider
+                // policy change, which previously let the overview drift from the track list.
+                var matchedTrackStatsApplied = false;
                 try
                 {
+                    var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(config.Name);
+                    var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
+                    if (matchedTracks != null)
+                    {
+                        var resolvedMatches = matchedTracks
+                            .Where(match => !string.IsNullOrWhiteSpace(match.SpotifyId) && match.MatchedSong != null)
+                            .GroupBy(match => match.SpotifyId, StringComparer.OrdinalIgnoreCase)
+                            .Select(group => group.First())
+                            .ToList();
+                        var canonicalLocal = resolvedMatches.Count(match => match.MatchedSong!.IsLocal);
+                        var canonicalExternal = resolvedMatches.Count(match =>
+                            !match.MatchedSong!.IsLocal &&
+                            ExternalTrackPlaybackPolicy.CanUseForPlayback(
+                                match.MatchedSong.ExternalProvider,
+                                match.MatchedSong.Id));
+                        var canonicalMissing = spotifyTrackCount - canonicalLocal - canonicalExternal;
+
+                        if (canonicalMissing >= 0)
+                        {
+                            ApplyPlaylistStats(playlistInfo, canonicalLocal, canonicalExternal, canonicalMissing);
+                            matchedTrackStatsApplied = true;
+                        }
+                    }
+
+                    // Compatibility fallback for installations whose older cache did not persist
+                    // MatchedTrack rows but did persist the matcher's aggregate result.
                     var statsCacheKey = CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(config.Name);
-                    var matchedStats = await _cache.GetAsync<Dictionary<string, int>>(statsCacheKey);
-                    if (matchedStats != null &&
+                    var matchedStats = matchedTrackStatsApplied
+                        ? null
+                        : await _cache.GetAsync<Dictionary<string, int>>(statsCacheKey);
+                    if (!matchedTrackStatsApplied && matchedStats != null &&
                         matchedStats.TryGetValue("local", out var matchedLocal) &&
                         matchedStats.TryGetValue("external", out var matchedExternal) &&
                         matchedStats.TryGetValue("missing", out var matchedMissing) &&
                         matchedLocal >= 0 && matchedExternal >= 0 && matchedMissing >= 0 &&
                         matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount)
                     {
-                        playlistInfo["localTracks"] = matchedLocal;
-                        playlistInfo["externalTracks"] = matchedExternal;
-                        playlistInfo["externalMatched"] = matchedExternal;
-                        playlistInfo["externalMissing"] = matchedMissing;
-                        playlistInfo["externalTotal"] = matchedExternal + matchedMissing;
-                        playlistInfo["totalInJellyfin"] = matchedLocal + matchedExternal;
-                        playlistInfo["totalPlayable"] = matchedLocal + matchedExternal;
+                        ApplyPlaylistStats(playlistInfo, matchedLocal, matchedExternal, matchedMissing);
                     }
                 }
                 catch (Exception ex)
@@ -628,6 +651,21 @@ public class PlaylistController : ControllerBase
         }
 
         return Ok(new { playlists });
+    }
+
+    private static void ApplyPlaylistStats(
+        Dictionary<string, object?> playlistInfo,
+        int local,
+        int external,
+        int missing)
+    {
+        playlistInfo["localTracks"] = local;
+        playlistInfo["externalTracks"] = external;
+        playlistInfo["externalMatched"] = external;
+        playlistInfo["externalMissing"] = missing;
+        playlistInfo["externalTotal"] = external + missing;
+        playlistInfo["totalInJellyfin"] = local + external;
+        playlistInfo["totalPlayable"] = local + external;
     }
 
     /// <summary>
