@@ -351,7 +351,7 @@ const API = {
     requestJson(`/api/admin/debug/endpoint-usage?top=${top}`, {}, "Failed to load endpoint usage"),
   clearEndpointUsage: () => requestJson("/api/admin/debug/endpoint-usage", { method: "DELETE" }, "Failed to clear endpoint usage"),
   queue: () => requestJson("/api/admin/downloads/queue", {}, "Failed to load queue"),
-  jobs: () => requestJson("/api/admin/jobs?limit=100", {}, "Failed to load durable jobs"),
+  jobs: () => requestJson("/api/admin/jobs?limit=100", {}, "Failed to load background jobs"),
   cancelJob: (id) =>
     requestJson(`/api/admin/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }, "Failed to cancel job"),
   providerAccounts: () =>
@@ -3409,7 +3409,7 @@ class AllstarrApp extends LitElement {
         <div class="view-header">
           <div>
             <h2>Activity</h2>
-            <p>Durable work, download activity, scrobbling, and endpoint usage.</p>
+            <p>Background work, download activity, scrobbling, and endpoint usage.</p>
           </div>
           <button class="primary" @click=${async () => { await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]); this.toast("Activity refreshed"); }}>Refresh</button>
         </div>
@@ -3467,7 +3467,14 @@ class AllstarrApp extends LitElement {
   renderDurableJobs() {
     const jobs = asArray(this.jobs);
     if (!jobs.length) {
-      return html`<div class="empty">No durable jobs recorded.</div>`;
+      return html`
+        <div class="empty">
+          <strong>No background jobs have been enqueued yet.</strong>
+          <p class="muted">This list covers background work that survives restarts and keeps its history.</p>
+          <p class="muted">Imported legacy Spotify playlists are handled by the legacy scheduler and appear under <a href="#/library/injected">Library &gt; Injected</a>; that older work is not recorded here yet.</p>
+          <p class="muted">New playlist links, library actions, recommendations, and other background operations will appear here after they run.</p>
+        </div>
+      `;
     }
     const terminal = new Set(["Succeeded", "Failed", "Cancelled"]);
     return html`
