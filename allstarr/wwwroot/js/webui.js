@@ -3097,36 +3097,52 @@ class AllstarrApp extends LitElement {
 
   renderProviderSupportMatrix() {
     const providers = asArray(this.schema?.providerSupportMatrix);
+    const capabilityNames = {
+      metadata: "Music search & details",
+      streaming: "Playback",
+      download: "Downloads",
+      playlist: "Playlists",
+      lyrics: "Lyrics",
+      health: "Connection checks",
+      scrobbling: "Listening history",
+      enrichment: "Library enrichment",
+      recommendation: "Smart mixes",
+    };
+    const capabilityDescriptions = {
+      recommendation: "Suggests similar songs for generated playlists.",
+      scrobbling: "Sends completed listens to this service.",
+      enrichment: "Adds useful identity, credit, release, and genre details.",
+      health: "Lets Allstarr check whether this connection is working.",
+    };
     return html`
       <div class="panel">
         <div class="section-heading">
           <div>
-            <h3>Verified provider support</h3>
-            <p>Current adapter coverage and limits. Partial does not mean every upstream feature is exposed.</p>
+            <h3>What each provider can do</h3>
+            <p>Only useful features are shown. “Limited” means the feature works with the restriction described in its details.</p>
           </div>
         </div>
-        <div class="table-wrap">
-          <table class="support-matrix">
-            <thead><tr><th>Provider</th><th>Account</th><th>Capabilities</th></tr></thead>
-            <tbody>
-              ${providers.map((provider) => html`
-                <tr>
-                  <td><strong>${provider.name}</strong><div class="muted">${provider.configuration}</div></td>
-                  <td>${titleCase(provider.accountScope || "none")}</td>
-                  <td>
-                    <div class="chip-list capability-list">
-                      ${asArray(provider.capabilities).map((capability) => html`
-                        <span
-                          class="chip support-${capability.state}"
-                          title=${`${capability.protocolLimit} Tests: ${capability.testCoverage}`}
-                        >${capability.id}: ${titleCase(capability.state)}</span>
-                      `)}
-                    </div>
-                  </td>
-                </tr>
-              `)}
-            </tbody>
-          </table>
+        <div class="support-provider-list">
+          ${providers.map((provider) => {
+            const useful = asArray(provider.capabilities).filter((capability) => capability.state !== "unavailable");
+            return html`<article class="support-provider-row">
+              <div class="support-provider-summary">
+                <div><strong>${provider.name}</strong><small>${provider.configuration}</small></div>
+                <span class="account-scope">${provider.accountScope === "user" ? "Personal account" : provider.accountScope === "global" ? "Server-wide" : provider.accountScope === "mixed" ? "Public + account" : "No account needed"}</span>
+              </div>
+              <div class="support-feature-list" aria-label="Supported features">
+                ${useful.map((capability) => html`
+                  <span class="support-feature support-${capability.state}" title=${capability.protocolLimit}>
+                    <strong>${capabilityNames[capability.id] || titleCase(capability.id)}</strong>
+                    <small>${capability.state === "supported" ? "Ready" : capability.state === "policy_blocked" ? "Disabled for safety" : "Limited"}${capabilityDescriptions[capability.id] ? ` · ${capabilityDescriptions[capability.id]}` : ""}</small>
+                  </span>
+                `)}
+              </div>
+              <details class="support-details"><summary>Technical limits and test coverage</summary>
+                <dl>${useful.map((capability) => html`<div><dt>${capabilityNames[capability.id] || titleCase(capability.id)}</dt><dd>${capability.protocolLimit}<br><span class="muted">Covered by: ${capability.testCoverage}</span></dd></div>`)}</dl>
+              </details>
+            </article>`;
+          })}
         </div>
       </div>
     `;

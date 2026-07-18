@@ -1810,6 +1810,107 @@ fieldset.form-row > label small {
     line-height: 1;
 }
 
+.support-provider-list {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.support-provider-row {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+}
+
+.support-provider-summary {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+}
+
+.support-provider-summary > div {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.support-provider-summary small,
+.support-feature small {
+    color: var(--text-secondary);
+}
+
+.account-scope {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+    font-size: .78rem;
+}
+
+.support-feature-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--space-2);
+}
+
+.support-feature {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border-left: 3px solid var(--success);
+    border-radius: calc(var(--radius) / 2);
+    background: var(--surface);
+    font-size: .82rem;
+}
+
+.support-feature.support-partial {
+    border-left-color: var(--warning);
+}
+
+.support-feature.support-policy_blocked {
+    border-left-color: var(--text-secondary);
+    opacity: .78;
+}
+
+.support-details summary {
+    width: max-content;
+    max-width: 100%;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: .8rem;
+}
+
+.support-details dl {
+    display: grid;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+}
+
+.support-details dl > div {
+    display: grid;
+    grid-template-columns: minmax(130px, .3fr) 1fr;
+    gap: var(--space-3);
+}
+
+.support-details dt {
+    font-weight: 650;
+}
+
+.support-details dd {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: .82rem;
+}
+
+@media (max-width: 640px) {
+    .support-provider-summary,
+    .support-details dl > div {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+}
+
 .scrobble-actions {
     margin-top: var(--space-4);
 }

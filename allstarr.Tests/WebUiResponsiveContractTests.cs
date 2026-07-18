@@ -207,6 +207,10 @@ public sealed class WebUiResponsiveContractTests
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
         Assert.Contains("runtimeCapabilities", script, StringComparison.Ordinal);
+        Assert.Contains("What each provider can do", script, StringComparison.Ordinal);
+        Assert.Contains("Smart mixes", script, StringComparison.Ordinal);
+        Assert.Contains("Technical limits and test coverage", script, StringComparison.Ordinal);
+        Assert.Contains("capability.state !== \"unavailable\"", script, StringComparison.Ordinal);
         Assert.Contains("Available but untested", script, StringComparison.Ordinal);
         Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
         Assert.Contains("capability.configuration", script, StringComparison.Ordinal);
