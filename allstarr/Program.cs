@@ -832,30 +832,16 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         var isController = base.IsController(typeInfo);
         if (!isController) return false;
 
-        // Backend-neutral admin controllers are registered for every deployment.
-        // Backend-specific admin surfaces are composed only with their backend.
+        // Only the protocol catch-all controllers and their backend-specific admin
+        // surfaces are conditional. Every other controller is backend-neutral and
+        // must remain registered; an allowlist here silently sends new admin routes
+        // into the selected protocol catch-all.
         if (typeInfo.Name == "JellyfinAdminController")
         {
             return _backendType == BackendType.Jellyfin;
         }
 
-        if (typeInfo.Name == "AdminController" ||
-            typeInfo.Name == "AdminAuthController" ||
-            typeInfo.Name == "ConfigController" ||
-            typeInfo.Name == "DiagnosticsController" ||
-            typeInfo.Name == "DownloadsController" ||
-            typeInfo.Name == "PlaylistController" ||
-            typeInfo.Name == "SpotifyAdminController" ||
-            typeInfo.Name == "LyricsController" ||
-            typeInfo.Name == "MappingController" ||
-            typeInfo.Name == "ScrobblingAdminController" ||
-            typeInfo.Name == "AppleMusicController" ||
-            typeInfo.Name == "ExtensionController" ||
-            typeInfo.Name == "AdminUiController" ||
-            typeInfo.Name == "DownloadActivityController" ||
-            typeInfo.Name == "JobsController" ||
-            typeInfo.Name == "ProviderAccountsController" ||
-            typeInfo.Name == "StorageController")
+        if (typeInfo.Name != "JellyfinController" && typeInfo.Name != "SubsonicController")
         {
             return true;
         }

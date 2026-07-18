@@ -24,8 +24,7 @@ public sealed class PlaylistLinksController(
     PlaylistOrchestrationService orchestration,
     DurableJobQueue jobs,
     EncryptedSecretStore secretStore,
-    IPlatformClock clock,
-    AdminAuthSessionService? sessionService = null) : ControllerBase
+    IPlatformClock clock) : ControllerBase
 {
     private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
     [HttpGet]
@@ -241,15 +240,8 @@ public sealed class PlaylistLinksController(
 
     private async Task<IActionResult> Execute(Func<AdminAuthSession, Task<IActionResult>> action)
     {
-        AdminAuthSession? session = null;
-        if (HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value))
-            session = value as AdminAuthSession;
-        if (session == null && sessionService?.TryGetValidSession(Request, out var cookieSession) == true)
-        {
-            session = cookieSession;
-            HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = cookieSession;
-        }
-        if (session == null) return Unauthorized(new { error = "Authentication required" });
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) || value is not AdminAuthSession session)
+            return Unauthorized(new { error = "Authentication required" });
         if (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue)
             return StatusCode(403, new { error = "The backend identity is not linked to an Allstarr user" });
         try { return await action(session); }

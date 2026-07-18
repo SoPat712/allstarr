@@ -45,6 +45,16 @@ public sealed class HostCompositionTests
             backend.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase),
             controllerTypes.Contains(typeof(JellyfinAdminController)));
 
+        var backendNeutralControllers = typeof(Program).Assembly.DefinedTypes
+            .Where(type => !type.IsAbstract && typeof(ControllerBase).IsAssignableFrom(type))
+            .Where(type => type.AsType() != typeof(JellyfinController) &&
+                           type.AsType() != typeof(SubsonicController) &&
+                           type.AsType() != typeof(JellyfinAdminController))
+            .Select(type => type.AsType())
+            .ToArray();
+        Assert.All(backendNeutralControllers, controllerType =>
+            Assert.Contains(controllerType, controllerTypes));
+
         var startupValidators = factory.Services.GetServices<IStartupValidator>().ToList();
         Assert.Single(startupValidators);
         Assert.Contains(backend, startupValidators[0].ServiceName, StringComparison.OrdinalIgnoreCase);
