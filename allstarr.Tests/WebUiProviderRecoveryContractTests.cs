@@ -10,6 +10,7 @@ public sealed class WebUiProviderRecoveryContractTests
     public void DegradedSpotifyShowsSpecificRecoveryAction()
     {
         Assert.Contains("provider_unauthorized", _script, StringComparison.Ordinal);
+        Assert.Contains("failedCapability === \"playlist\"", _script, StringComparison.Ordinal);
         Assert.Contains("Reconnect Spotify", _script, StringComparison.Ordinal);
         Assert.Contains("fresh sp_dc cookie", _script, StringComparison.Ordinal);
         Assert.Contains("cached playlists will keep working", _script, StringComparison.OrdinalIgnoreCase);

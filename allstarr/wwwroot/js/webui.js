@@ -2864,7 +2864,9 @@ class AllstarrApp extends LitElement {
     const failed = capabilities.find((item) => String(item.health || item.Health || "").toLowerCase() === "degraded");
     if (!failed) return nothing;
     const reason = String(failed.reasonCode || failed.ReasonCode || "").toLowerCase();
-    const expiredSpotify = providerId === "spotify" && ["provider_unauthorized", "unauthorized", "invalid_credentials"].includes(reason);
+    const failedCapability = String(failed.capability || failed.Capability || "").toLowerCase();
+    const expiredSpotify = providerId === "spotify" && failedCapability === "playlist" &&
+      (["", "provider_unauthorized", "unauthorized", "invalid_credentials"].includes(reason) || reason.includes("credential"));
     const message = expiredSpotify
       ? "Spotify rejected the saved session. Add a fresh sp_dc cookie to resume playlist refreshes; cached playlists will keep working meanwhile."
       : reason === "timeout" || reason === "unreachable"
