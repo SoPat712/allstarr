@@ -146,11 +146,16 @@ public class CacheWarmingService : IHostedService
 
             try
             {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                var playlistName = fileName.Replace("_items", "");
+                var redisKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
+
                 // Check if cache is expired (24 hours)
                 var fileInfo = new FileInfo(file);
                 if (DateTime.UtcNow - fileInfo.LastWriteTimeUtc > TimeSpan.FromHours(24))
                 {
-                    continue; // Don't delete, let the normal flow handle it
+                    await _cache.DeleteAsync(redisKey);
+                    continue; // Don't warm stale in-memory data from an earlier process
                 }
 
                 var json = await File.ReadAllTextAsync(file, cancellationToken);
@@ -158,10 +163,6 @@ public class CacheWarmingService : IHostedService
 
                 if (items != null && items.Count > 0)
                 {
-                    // Extract playlist name from filename
-                    var fileName = Path.GetFileNameWithoutExtension(file);
-                    var playlistName = fileName.Replace("_items", "");
-
                     var playableItems = InjectedPlaylistItemHelper.RemoveUnavailableExternalItems(items);
                     var removedCount = items.Count - playableItems.Count;
                     if (removedCount > 0)
@@ -185,10 +186,10 @@ public class CacheWarmingService : IHostedService
 
                     if (playableItems.Count == 0)
                     {
+                        await _cache.DeleteAsync(redisKey);
                         continue;
                     }
 
-                    var redisKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
                     await _cache.SetAsync(redisKey, playableItems, CacheExtensions.SpotifyPlaylistItemsTTL);
                     warmedCount++;
 
@@ -210,11 +211,18 @@ public class CacheWarmingService : IHostedService
 
             try
             {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                var playlistName = fileName.Replace("_matched", "");
+                var redisKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
+                var legacyRedisKey = CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlistName);
+
                 // Check if cache is expired (1 hour)
                 var fileInfo = new FileInfo(file);
                 if (DateTime.UtcNow - fileInfo.LastWriteTimeUtc > TimeSpan.FromHours(1))
                 {
-                    continue; // Skip expired matched tracks
+                    await _cache.DeleteAsync(redisKey);
+                    await _cache.DeleteAsync(legacyRedisKey);
+                    continue; // Don't retain stale matches from an earlier process
                 }
 
                 var json = await File.ReadAllTextAsync(file, cancellationToken);
@@ -222,10 +230,6 @@ public class CacheWarmingService : IHostedService
 
                 if (matchedTracks != null && matchedTracks.Count > 0)
                 {
-                    // Extract playlist name from filename
-                    var fileName = Path.GetFileNameWithoutExtension(file);
-                    var playlistName = fileName.Replace("_matched", "");
-
                     var playableTracks = matchedTracks
                         .Where(track => ExternalTrackPlaybackPolicy.CanUseForPlayback(track.MatchedSong))
                         .ToList();
@@ -251,10 +255,14 @@ public class CacheWarmingService : IHostedService
 
                     if (playableTracks.Count == 0)
                     {
+                        await _cache.DeleteAsync(redisKey);
+                        await _cache.DeleteAsync(legacyRedisKey);
                         continue;
                     }
 
-                    var redisKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
+                    // Ordered matches are authoritative. Never leave the legacy key pointing
+                    // at a different, potentially unplayable list after a restart.
+                    await _cache.DeleteAsync(legacyRedisKey);
                     await _cache.SetAsync(redisKey, playableTracks, CacheExtensions.SpotifyMatchedTracksTTL);
                     warmedCount++;
 

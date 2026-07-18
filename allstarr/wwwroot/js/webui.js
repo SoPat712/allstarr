@@ -261,6 +261,7 @@ const API = {
   schema: () => requestJson("/api/admin/ui/schema", { cache: "no-store" }, "Failed to load UI schema"),
   status: () => requestJson("/api/admin/status", { cache: "no-store" }, "Failed to load status"),
   mediaProbe: () => requestJson("/api/admin/media-probe", { cache: "no-store" }, "Media pipeline test failed"),
+  playlistReadiness: () => requestJson("/api/admin/playlist-readiness", { cache: "no-store" }, "Playlist readiness test failed"),
   config: () => requestJson("/api/admin/config", { cache: "no-store" }, "Failed to load config"),
   updateConfig: (key, value) =>
     requestJson("/api/admin/config", jsonBody({ updates: { [key]: String(value) } }), "Failed to save setting"),
@@ -765,6 +766,35 @@ class AllstarrApp extends LitElement {
       this.serviceResults = {
         ...this.serviceResults,
         media: { state: "error", message: error.message },
+      };
+    }
+  };
+
+  runPlaylistReadinessProbe = async () => {
+    this.serviceResults = {
+      ...this.serviceResults,
+      playlists: { state: "running", message: "Checking restored playlists and playable cache entries..." },
+    };
+    try {
+      const result = await API.playlistReadiness();
+      const success = Boolean(result?.success ?? result?.Success);
+      const configured = Number(result?.configuredPlaylists ?? result?.ConfiguredPlaylists ?? 0);
+      const sources = Number(result?.sourcePlaylists ?? result?.SourcePlaylists ?? 0);
+      const rendered = Number(result?.renderedPlaylists ?? result?.RenderedPlaylists ?? 0);
+      const playable = Number(result?.playableItems ?? result?.PlayableItems ?? 0);
+      const unavailable = Number(result?.unavailableItems ?? result?.UnavailableItems ?? 0);
+      this.serviceResults = {
+        ...this.serviceResults,
+        playlists: {
+          state: success ? "success" : "warning",
+          message: result?.message || result?.Message || "Playlist readiness checked.",
+          details: `${configured} configured · ${sources} with source data · ${rendered} visible · ${playable} playable · ${unavailable} unavailable`,
+        },
+      };
+    } catch (error) {
+      this.serviceResults = {
+        ...this.serviceResults,
+        playlists: { state: "error", message: error.message },
       };
     }
   };
@@ -3663,6 +3693,25 @@ class AllstarrApp extends LitElement {
                 <strong>${this.serviceResults.media.state === "success" ? "Media pipeline ready" : this.serviceResults.media.state === "running" ? "Checking media pipeline" : "Media pipeline needs attention"}</strong>
                 <span>${this.serviceResults.media.message}</span>
                 ${this.serviceResults.media.details ? html`<small>${this.serviceResults.media.details}</small>` : nothing}
+              </div>` : nothing}
+          </div>
+        </details>
+        <details class="content-disclosure panel" open>
+          <summary><span><strong>Playlist diagnostics</strong><small>Verify restored playlists and playable entries</small></span></summary>
+          <div class="disclosure-body">
+            <p class="muted">Checks configured playlists, cached provider data, and the final items shown to players. It does not reveal playlist or track names.</p>
+            <div class="actions">
+              <button
+                class="primary"
+                ?disabled=${this.serviceResults.playlists?.state === "running"}
+                @click=${this.runPlaylistReadinessProbe}
+              >${this.serviceResults.playlists?.state === "running" ? "Testing playlists..." : "Test playlist readiness"}</button>
+            </div>
+            ${this.serviceResults.playlists ? html`
+              <div class="callout ${this.serviceResults.playlists.state}" role="status">
+                <strong>${this.serviceResults.playlists.state === "success" ? "Playlist pipeline ready" : this.serviceResults.playlists.state === "running" ? "Checking playlists" : "Playlist pipeline needs attention"}</strong>
+                <span>${this.serviceResults.playlists.message}</span>
+                ${this.serviceResults.playlists.details ? html`<small>${this.serviceResults.playlists.details}</small>` : nothing}
               </div>` : nothing}
           </div>
         </details>

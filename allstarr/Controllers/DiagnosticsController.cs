@@ -11,6 +11,7 @@ using allstarr.Services.Scrobbling;
 using allstarr.Services.SquidWTF;
 using System.Runtime;
 using allstarr.Core.Storage;
+using allstarr.Models.Spotify;
 
 namespace allstarr.Controllers;
 
@@ -294,6 +295,86 @@ public class DiagnosticsController : ControllerBase
                 message = "The Jellyfin media pipeline probe failed."
             });
         }
+    }
+
+    [HttpGet("playlist-readiness")]
+    public async Task<IActionResult> ProbePlaylistReadiness()
+    {
+        var configured = _spotifyImportSettings.Playlists
+            .Where(playlist => !string.IsNullOrWhiteSpace(playlist.Name))
+            .ToList();
+        var sourcePlaylists = 0;
+        var renderedPlaylists = 0;
+        var sourceTracks = 0;
+        var playableItems = 0;
+        var unavailableItems = 0;
+
+        foreach (var playlist in configured)
+        {
+            var source = await _cache.GetAsync<SpotifyPlaylist>(
+                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name));
+            if (source?.Tracks.Count > 0)
+            {
+                sourcePlaylists++;
+                sourceTracks += source.Tracks.Count;
+            }
+
+            var items = await _cache.GetAsync<List<Dictionary<string, object?>>>(
+                CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name));
+            if (items is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            renderedPlaylists++;
+            playableItems += InjectedPlaylistItemHelper.RemoveUnavailableExternalItems(items).Count;
+            unavailableItems += items.Count(item =>
+                InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
+        }
+
+        var providerStatus = HttpContext.RequestServices.GetService<ProviderStatusManager>()?
+            .GetStatus("spotify", ProviderCapabilities.Playlist);
+        var sourceReady = providerStatus?.IsReady == true;
+        var cachedFallbackAvailable = sourcePlaylists > 0 && playableItems > 0;
+        var success = configured.Count == 0 ||
+                      (unavailableItems == 0 && (sourceReady || cachedFallbackAvailable));
+        var code = configured.Count == 0
+            ? "no_playlists_configured"
+            : unavailableItems > 0
+                ? "unavailable_items_cached"
+                : sourceReady
+                    ? "playlist_pipeline_healthy"
+                    : cachedFallbackAvailable
+                        ? "cached_playlists_available"
+                        : "playlist_source_unavailable";
+        var message = code switch
+        {
+            "no_playlists_configured" => "No provider playlists are configured yet.",
+            "unavailable_items_cached" => "Some restored playlist entries use providers that cannot currently play them.",
+            "playlist_pipeline_healthy" => "Provider access and cached playlist playback are ready.",
+            "cached_playlists_available" => "Cached playlists remain playable, but reconnect Spotify before they can refresh.",
+            _ => "Reconnect Spotify, then refresh and match the configured playlists."
+        };
+
+        return Ok(new
+        {
+            success,
+            code,
+            message,
+            configuredPlaylists = configured.Count,
+            sourcePlaylists,
+            renderedPlaylists,
+            sourceTracks,
+            playableItems,
+            unavailableItems,
+            source = new
+            {
+                provider = "spotify",
+                ready = sourceReady,
+                health = providerStatus?.Health.ToString().ToLowerInvariant() ?? "unknown",
+                reasonCode = providerStatus?.ReasonCode
+            }
+        });
     }
 
     /// <summary>
