@@ -205,6 +205,7 @@ public sealed class WebUiResponsiveContractTests
     public void ProviderCards_SeparateConfigurationFromObservedHealth()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("runtimeCapabilities", script, StringComparison.Ordinal);
         Assert.Contains("What each provider can do", script, StringComparison.Ordinal);
@@ -214,6 +215,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("authenticateLastFmAccount", script, StringComparison.Ordinal);
         Assert.Contains("never stored by Allstarr", script, StringComparison.Ordinal);
         Assert.Contains("Last.fm no longer accepts the shared Jellyfin plugin key", script, StringComparison.Ordinal);
+        Assert.Contains(".provider-qobuz", css, StringComparison.Ordinal);
+        Assert.Contains("background: #f7f7f8", css, StringComparison.Ordinal);
         Assert.Contains("Available but untested", script, StringComparison.Ordinal);
         Assert.Contains("Observed healthy", script, StringComparison.Ordinal);
         Assert.Contains("capability.configuration", script, StringComparison.Ordinal);

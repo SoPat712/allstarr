@@ -1193,8 +1193,14 @@ tbody tr:hover {
 }
 
 .provider-qobuz {
-    background: #141414;
-    border-color: rgba(255, 255, 255, 0.18);
+    background: #f7f7f8;
+    border-color: #d5d7dc;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .03);
+}
+
+.provider-qobuz img {
+    max-width: 54px;
+    max-height: 18px;
 }
 
 .provider-squidwtf {

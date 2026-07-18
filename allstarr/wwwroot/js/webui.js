@@ -2919,7 +2919,7 @@ class AllstarrApp extends LitElement {
         <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="">` : providerMark(provider)}</span><div class="provider-title"><strong>${display(account.DisplayName || account.displayName)}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
         <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
       </div>
-      <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Credential saved" : "Credential needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
+      <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Account details stored" : "Account setup needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
       ${this.renderProviderRecovery(account, capabilities)}
       ${administrator && capabilities.length ? this.renderProviderAccountHealth(account, capabilities) : html`<p class="muted">No automatic connection test is available for this provider.</p>`}
       <div class="account-actions">
@@ -2940,14 +2940,17 @@ class AllstarrApp extends LitElement {
     const failedCapability = String(failed.capability || failed.Capability || "").toLowerCase();
     const expiredSpotify = providerId === "spotify" && failedCapability === "playlist" &&
       (["", "provider_unauthorized", "unauthorized", "invalid_credentials"].includes(reason) || reason.includes("credential"));
+    const rejectedLastFm = providerId === "lastfm" && failedCapability === "scrobbling";
     const message = expiredSpotify
       ? "Spotify rejected the saved session. Add a fresh sp_dc cookie to resume playlist refreshes; cached playlists will keep working meanwhile."
+      : rejectedLastFm
+        ? "Last.fm rejected the saved session. Reconnect with your password; if this account used the old Jellyfin app key, replace the application key and shared secret too."
       : reason === "timeout" || reason === "unreachable"
         ? `${providerDisplayName(providerId, this.schema?.providers)} could not be reached. Check the service, then test again.`
         : `${providerDisplayName(providerId, this.schema?.providers)} needs attention. Open setup to review its saved connection, then test again.`;
     return html`<div class="provider-recovery" role="status">
-      <div><strong>${expiredSpotify ? "Reconnect Spotify" : "Connection needs attention"}</strong><span>${message}</span></div>
-      <button class=${expiredSpotify ? "primary compact" : "compact"} @click=${() => this.toggleProviderAccountConfiguration(account.Id || account.id)}>${this.providerAccountConfigOpen.has(String(account.Id || account.id)) ? "Close setup" : "Open setup"}</button>
+      <div><strong>${expiredSpotify ? "Reconnect Spotify" : rejectedLastFm ? "Reconnect Last.fm" : "Connection needs attention"}</strong><span>${message}</span></div>
+      <button class=${expiredSpotify || rejectedLastFm ? "primary compact" : "compact"} @click=${() => this.toggleProviderAccountConfiguration(account.Id || account.id)}>${this.providerAccountConfigOpen.has(String(account.Id || account.id)) ? "Close setup" : rejectedLastFm ? "Reconnect" : "Open setup"}</button>
     </div>`;
   }
 
@@ -3028,7 +3031,7 @@ class AllstarrApp extends LitElement {
         ${providerId === "deezer" ? html`<label>New ARL cookie<input name="arl" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "qobuz" ? html`<label>User auth token<input name="userAuthToken" type="password" autocomplete="off" required></label><label>User ID<input name="userId" required></label>` : nothing}
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
-        ${providerId === "lastfm" ? html`<div class="callout"><strong>Reconnect Last.fm</strong><p>Enter your application credentials and normal Last.fm login. Your password is used once and is not stored.</p></div><label>Application API key<input name="apiKey" type="password" autocomplete="off" required></label><label>Application shared secret<input name="sharedSecret" type="password" autocomplete="off" required></label><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label>` : nothing}
+        ${providerId === "lastfm" ? html`<div class="callout"><strong>Reconnect Last.fm</strong><p>Usually only your password is needed. It is used once to request a new session and is never stored.</p></div><label>Username (optional)<input name="username" autocomplete="username"><small>Leave blank to keep the saved username.</small></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><details><summary>Replace Last.fm application credentials</summary><p class="muted">Required if this account used the suspended Jellyfin plugin key.</p><label>New application API key<input name="apiKey" type="password" autocomplete="off"></label><label>New application shared secret<input name="sharedSecret" type="password" autocomplete="off"></label></details>` : nothing}
         ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? html`<label>Credential JSON<textarea name="secretJson" rows="3" required></textarea></label>` : nothing}
         <div class="actions"><button class="primary">Save and test</button><button type="button" @click=${() => this.toggleProviderAccountConfiguration(account.id || account.Id)}>Cancel</button></div>
       </form>
@@ -3041,27 +3044,36 @@ class AllstarrApp extends LitElement {
     const data = new FormData(form);
     const providerId = String(account.providerId || account.ProviderId || "").toLowerCase();
     let secret;
+    let replaceSecret = true;
     try {
       if (providerId === "spotify") secret = { sessionCookie: String(data.get("sessionCookie") || ""), sessionCookieSetDate: new Date().toISOString() };
       else if (providerId === "deezer") secret = { arl: String(data.get("arl") || "") };
       else if (providerId === "qobuz") secret = { userAuthToken: String(data.get("userAuthToken") || ""), userId: String(data.get("userId") || "") };
       else if (providerId === "listenbrainz") secret = { token: String(data.get("token") || "") };
-      else if (providerId === "lastfm") secret = { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || "") };
+      else if (providerId === "lastfm") {
+        const apiKey = String(data.get("apiKey") || "").trim();
+        const sharedSecret = String(data.get("sharedSecret") || "").trim();
+        if (Boolean(apiKey) !== Boolean(sharedSecret)) {
+          this.toast("Enter both the Last.fm application API key and shared secret, or leave both blank", "error");
+          return;
+        }
+        replaceSecret = Boolean(apiKey);
+        secret = { apiKey, sharedSecret, username: String(data.get("username") || "").trim() };
+      }
       else secret = JSON.parse(String(data.get("secretJson") || "{}"));
     } catch {
       this.toast("Credential JSON is invalid", "error");
       return;
     }
-    await API.replaceProviderAccountSecret(account.id || account.Id, secret);
-    form.reset();
     const accountId = account.id || account.Id;
     const provider = account.providerId || account.ProviderId;
+    if (replaceSecret) await API.replaceProviderAccountSecret(accountId, secret);
     let tested = null;
     try {
       if (providerId === "lastfm") {
         await API.authenticateLastFmAccount({
           accountId,
-          username: String(data.get("username") || ""),
+          username: String(data.get("username") || "").trim() || null,
           password: String(data.get("password") || ""),
         });
       }
@@ -3069,6 +3081,7 @@ class AllstarrApp extends LitElement {
     } catch (error) {
       tested = { healthy: false, error: error.message };
     }
+    form.reset();
     await this.loadProviderAccounts();
     this.toggleProviderAccountConfiguration(accountId);
     const healthy = Boolean(tested?.healthy ?? tested?.success);
