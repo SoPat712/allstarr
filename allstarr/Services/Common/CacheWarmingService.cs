@@ -162,12 +162,38 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_items", "");
 
+                    var playableItems = InjectedPlaylistItemHelper.RemoveUnavailableExternalItems(items);
+                    var removedCount = items.Count - playableItems.Count;
+                    if (removedCount > 0)
+                    {
+                        _logger.LogWarning(
+                            "Removed {Count} unavailable persisted playlist items from {Playlist}",
+                            removedCount,
+                            playlistName);
+                        if (playableItems.Count == 0)
+                        {
+                            File.Delete(file);
+                        }
+                        else
+                        {
+                            await File.WriteAllTextAsync(
+                                file,
+                                JsonSerializer.Serialize(playableItems, new JsonSerializerOptions { WriteIndented = true }),
+                                cancellationToken);
+                        }
+                    }
+
+                    if (playableItems.Count == 0)
+                    {
+                        continue;
+                    }
+
                     var redisKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName);
-                    await _cache.SetAsync(redisKey, items, CacheExtensions.SpotifyPlaylistItemsTTL);
+                    await _cache.SetAsync(redisKey, playableItems, CacheExtensions.SpotifyPlaylistItemsTTL);
                     warmedCount++;
 
                     _logger.LogDebug("🔥 Warmed playlist items cache for {Playlist} ({Count} items)",
-                        playlistName, items.Count);
+                        playlistName, playableItems.Count);
                 }
             }
             catch (Exception ex)
@@ -200,12 +226,40 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_matched", "");
 
+                    var playableTracks = matchedTracks
+                        .Where(track => ExternalTrackPlaybackPolicy.CanUseForPlayback(track.MatchedSong))
+                        .ToList();
+                    var removedCount = matchedTracks.Count - playableTracks.Count;
+                    if (removedCount > 0)
+                    {
+                        _logger.LogWarning(
+                            "Removed {Count} unavailable persisted matches from {Playlist}",
+                            removedCount,
+                            playlistName);
+                        if (playableTracks.Count == 0)
+                        {
+                            File.Delete(file);
+                        }
+                        else
+                        {
+                            await File.WriteAllTextAsync(
+                                file,
+                                JsonSerializer.Serialize(playableTracks, new JsonSerializerOptions { WriteIndented = true }),
+                                cancellationToken);
+                        }
+                    }
+
+                    if (playableTracks.Count == 0)
+                    {
+                        continue;
+                    }
+
                     var redisKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
-                    await _cache.SetAsync(redisKey, matchedTracks, CacheExtensions.SpotifyMatchedTracksTTL);
+                    await _cache.SetAsync(redisKey, playableTracks, CacheExtensions.SpotifyMatchedTracksTTL);
                     warmedCount++;
 
                     _logger.LogInformation("🔥 Warmed matched tracks cache for {Playlist} ({Count} tracks)",
-                        playlistName, matchedTracks.Count);
+                        playlistName, playableTracks.Count);
                 }
             }
             catch (Exception ex)

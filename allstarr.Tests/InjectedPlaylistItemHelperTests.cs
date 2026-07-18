@@ -159,4 +159,29 @@ public class InjectedPlaylistItemHelperTests
 
         Assert.False(InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
     }
+
+    [Fact]
+    public void RemoveUnavailableExternalItems_PreservesOrderAndPlayableEntries()
+    {
+        var local = new Dictionary<string, object?>
+        {
+            ["Id"] = "local-1",
+            ["ServerId"] = "real-jellyfin-server"
+        };
+        var blocked = new Dictionary<string, object?>
+        {
+            ["Id"] = "ext-squidwtf-song-25",
+            ["ServerId"] = "allstarr"
+        };
+        var deezer = new Dictionary<string, object?>
+        {
+            ["Id"] = "ext-deezer-song-42",
+            ["ServerId"] = "allstarr"
+        };
+
+        var result = InjectedPlaylistItemHelper.RemoveUnavailableExternalItems(
+            [local, blocked, deezer]);
+
+        Assert.Equal([local, deezer], result);
+    }
 }

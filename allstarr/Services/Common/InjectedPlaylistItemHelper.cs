@@ -30,6 +30,12 @@ public static class InjectedPlaylistItemHelper
         return items.Any(LooksLikeUnavailableExternalItem);
     }
 
+    public static List<Dictionary<string, object?>> RemoveUnavailableExternalItems(
+        IEnumerable<Dictionary<string, object?>> items)
+    {
+        return items.Where(item => !LooksLikeUnavailableExternalItem(item)).ToList();
+    }
+
     public static bool LooksLikeSyntheticLocalItem(IReadOnlyDictionary<string, object?> item)
     {
         var id = GetString(item, "Id");
