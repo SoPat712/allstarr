@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [main, master, dev, beta]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
   pull_request:
     types: [opened, synchronize, reopened]
     branches: [main, master, dev, beta]
@@ -38,11 +42,6 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Setup Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.10"
-
       - name: Install PostgreSQL 18 client
         shell: bash
         run: |
@@ -71,9 +70,6 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
 
-      - name: Test first-party bundle integrity
-        run: python -m unittest discover -s tools/tests -v
-
       - name: Verify C# formatting and analyzers
         run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 
@@ -83,12 +79,32 @@ jobs:
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
 
+  provider-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.10"
+
+      - name: Test first-party bundle integrity
+        run: python -m unittest discover -s tools/tests -v
+
       - name: Test Apple gateway contracts
         working-directory: sidecars/apple-gateway
         run: |
           python -m pip install uv==0.11.29
           UV_CACHE_DIR=/tmp/allstarr-uv-cache uv sync --frozen --extra test
           UV_CACHE_DIR=/tmp/allstarr-uv-cache uv run --frozen --extra test pytest
+
+  compose-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Validate Compose contracts
         env:

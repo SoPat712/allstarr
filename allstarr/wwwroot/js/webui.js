@@ -2514,87 +2514,58 @@ class AllstarrApp extends LitElement {
         <div class="section-heading">
           <div>
             <h3>Provider accounts</h3>
-            <p>Credentials are write-only, encrypted outside the database key boundary, and scoped to a user, library, or administrator-owned global account.</p>
-            <p class="muted">Management mode: <span class="status-chip configured">${managementMode}</span></p>
+            <p>Connect the accounts Allstarr may use. Saved credentials stay encrypted and are never shown again.</p>
           </div>
+          <span class="status-chip configured">${managementMode}</span>
         </div>
-        ${canManage ? html`<form class="config-grid" @submit=${this.createProviderAccount}>
-          <div class="form-row"><label>Provider ID</label><input name="providerId" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required></div>
-          <div class="form-row"><label>Display name</label><input name="displayName" required></div>
-          <div class="form-row">
-            <label>Scope</label>
-            <select name="scope">
-              <option value="User">My account</option>
-              ${canManageAll ? html`<option value="Global">Global/shared</option><option value="Library">Library</option>` : nothing}
-            </select>
-          </div>
-          ${canManageAll ? html`<div class="form-row"><label>Library scope (library accounts)</label><input name="libraryScopeId"></div>` : nothing}
-          <div class="form-row full-span">
-            <label>Credential JSON</label>
-            <textarea name="secret" rows="3" placeholder='{"arl":"..."}' required></textarea>
-            <small>Deezer uses <span class="mono">arl</span>. Qobuz uses <span class="mono">userAuthToken</span> and <span class="mono">userId</span>. Spotify uses <span class="mono">sp_dc</span> or <span class="mono">sessionCookie</span>.</small>
-          </div>
-          <div class="actions"><button class="primary">Add encrypted account</button></div>
-        </form>` : html`<div class="empty">Provider accounts are managed by an administrator.</div>`}
+        ${canManage ? html`<details class="content-disclosure account-create-disclosure">
+          <summary><span><strong>Add provider account</strong><small>Spotify, Deezer, Qobuz, Last.fm, ListenBrainz, or another supported provider</small></span></summary>
+          <form class="config-grid disclosure-body" @submit=${this.createProviderAccount}>
+            <div class="form-row"><label>Provider ID</label><input name="providerId" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required></div>
+            <div class="form-row"><label>Account name</label><input name="displayName" required></div>
+            <div class="form-row"><label>Who can use it?</label><select name="scope"><option value="User">Only me</option>${canManageAll ? html`<option value="Global">Everyone</option><option value="Library">One library</option>` : nothing}</select></div>
+            ${canManageAll ? html`<div class="form-row"><label>Library ID (only for one library)</label><input name="libraryScopeId"></div>` : nothing}
+            <div class="form-row full-span"><label>Credential JSON</label><textarea name="secret" rows="3" placeholder='{"arl":"..."}' required></textarea><small>Spotify: <span class="mono">sp_dc</span>. Deezer: <span class="mono">arl</span>. Qobuz: <span class="mono">userAuthToken</span> and <span class="mono">userId</span>.</small></div>
+            <div class="actions full-span"><button class="primary">Save account</button></div>
+          </form>
+        </details>` : html`<div class="empty">Provider accounts are managed by an administrator.</div>`}
       </div>
-      ${canManage ? html`<div class="table-wrap">
-        <table>
-          <thead><tr><th>Provider</th><th>Scope</th><th>Credential</th><th>Capabilities</th><th>Status</th><th></th></tr></thead>
-          <tbody>
-            ${accounts.length ? accounts.map((account) => {
-              const id = account.Id || account.id;
-              const providerId = account.ProviderId || account.providerId;
-              const secret = account.secret || account.Secret || {};
-              const enabled = account.Enabled ?? account.enabled;
-              const capabilities = this.providerHealth.filter((item) =>
-                String(item.providerAccountId || item.ProviderAccountId).toLowerCase() === String(id).toLowerCase());
-              return html`
-                <tr>
-                  <td><strong>${display(account.DisplayName || account.displayName)}</strong><div class="muted mono">${display(providerId)}</div></td>
-                  <td>${display(account.scope || account.Scope)}${account.LibraryScopeId || account.libraryScopeId ? html`<div class="muted">${account.LibraryScopeId || account.libraryScopeId}</div>` : nothing}</td>
-                  <td><span class="status-chip ${secret.configured ? "configured" : "needs_config"}">${secret.configured ? `Encrypted · v${secret.version || "?"}` : "Not set"}</span></td>
-                  <td>
-                    ${administrator && capabilities.length ? html`<div class="activity-list compact">
-                      ${capabilities.map((capability) => {
-                        const capabilityId = capability.capability || capability.Capability;
-                        const health = capability.health || capability.Health || "unknown";
-                        const configuration = capability.configuration || capability.Configuration || "needs_configuration";
-                        const testKey = `${id}:${capabilityId}`;
-                        const testing = this.providerTests.has(testKey);
-                        const stateClass = health === "healthy"
-                          ? "configured"
-                          : health === "degraded"
-                            ? "degraded"
-                            : configuration === "needs_configuration" ? "needs_config" : "unknown";
-                        return html`<div class="activity-item">
-                          <div>
-                            <strong>${titleCase(capabilityId)}</strong>
-                            <div class="muted">${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Configured" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}${capability.testedAt ? ` · ${formatDate(capability.testedAt)}` : ""}</div>
-                          </div>
-                          <div class="actions">
-                            <span class="status-chip ${stateClass}">${health === "unknown" ? "Not tested" : titleCase(health)}</span>
-                            <button
-                              ?disabled=${testing}
-                              @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}
-                            >${testing ? "Testing..." : enabled ? "Test" : "Test before enabling"}</button>
-                          </div>
-                        </div>`;
-                      })}
-                    </div>` : html`<span class="muted">${administrator ? "No testable capabilities" : "Administrator tested"}</span>`}
-                  </td>
-                  <td><span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>${secret.revoked ? html` <span class="status-chip warning">Credential revoked</span>` : nothing}</td>
-                  <td>${canManage ? html`<div class="actions compact-actions">
-                    <button @click=${async () => { await API.setProviderAccountEnabled(id, !enabled, account.revision ?? account.Revision); await this.loadProviderAccounts(); this.toast(`Provider account ${enabled ? "disabled" : "enabled"}`); }}>${enabled ? "Disable" : "Enable"}</button>
-                    ${this.renderProviderCredentialEditor(account)}
-                    <button class="danger" @click=${async () => { await API.revokeProviderAccount(id); await this.loadProviderAccounts(); this.toast("Provider credential revoked"); }}>Revoke credential</button>
-                  </div>` : nothing}</td>
-                </tr>
-              `;
-            }) : html`<tr><td colspan="6"><div class="empty">No scoped provider accounts yet.</div></td></tr>`}
-          </tbody>
-        </table>
-      </div>` : nothing}
+      ${canManage ? html`<div class="provider-account-grid">${accounts.length ? accounts.map((account) => this.renderProviderAccountCard(account, administrator)) : html`<div class="empty">No provider accounts yet.</div>`}</div>` : nothing}
     `;
+  }
+
+  renderProviderAccountCard(account, administrator) {
+    const id = account.Id || account.id;
+    const providerId = String(account.ProviderId || account.providerId || "").toLowerCase();
+    const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === providerId) || { id: providerId, name: titleCase(providerId) };
+    const secret = account.secret || account.Secret || {};
+    const enabled = Boolean(account.Enabled ?? account.enabled);
+    const capabilities = this.providerHealth.filter((item) => String(item.providerAccountId || item.ProviderAccountId).toLowerCase() === String(id).toLowerCase());
+    return html`<article class="card provider-account-card">
+      <div class="provider-head">
+        <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="">` : providerMark(provider)}</span><div class="provider-title"><strong>${display(account.DisplayName || account.displayName)}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
+        <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
+      </div>
+      <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Credential saved" : "Credential needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
+      ${administrator && capabilities.length ? html`<details class="account-health-disclosure"><summary>Connection tests <span>${capabilities.filter((item) => String(item.health || item.Health) === "healthy").length}/${capabilities.length} passing</span></summary><div class="account-capability-list">${capabilities.map((capability) => this.renderProviderAccountCapability(account, capability))}</div></details>` : html`<p class="muted">No connection tests are needed for this account.</p>`}
+      <div class="account-actions">
+        <button class=${enabled ? "" : "primary"} @click=${async () => { await API.setProviderAccountEnabled(id, !enabled, account.revision ?? account.Revision); await this.loadProviderAccounts(); this.toast(`Provider account ${enabled ? "disabled" : "enabled"}`); }}>${enabled ? "Disable" : "Enable"}</button>
+        ${this.renderProviderCredentialEditor(account)}
+        <button class="ghost danger-text" @click=${async () => { if (!window.confirm("Remove this saved credential?")) return; await API.revokeProviderAccount(id); await this.loadProviderAccounts(); this.toast("Provider credential removed"); }}>Remove</button>
+      </div>
+    </article>`;
+  }
+
+  renderProviderAccountCapability(account, capability) {
+    const id = account.Id || account.id;
+    const providerId = account.ProviderId || account.providerId;
+    const enabled = Boolean(account.Enabled ?? account.enabled);
+    const capabilityId = capability.capability || capability.Capability;
+    const health = capability.health || capability.Health || "unknown";
+    const configuration = capability.configuration || capability.Configuration || "needs_configuration";
+    const testKey = `${id}:${capabilityId}`;
+    const testing = this.providerTests.has(testKey);
+    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div><button ?disabled=${testing} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Test first"}</button></div>`;
   }
 
   createProviderAccount = async (event) => {
@@ -2623,8 +2594,8 @@ class AllstarrApp extends LitElement {
 
   renderProviderCredentialEditor(account) {
     const providerId = String(account.providerId || account.ProviderId || "").toLowerCase();
-    return html`<details class="inline-details">
-      <summary>Replace credential</summary>
+    return html`<details class="inline-details credential-editor">
+      <summary>Configure</summary>
       <form class="form-stack compact-form" @submit=${(event) => this.replaceProviderAccountCredential(event, account)}>
         ${providerId === "spotify" ? html`<label>New sp_dc cookie<input name="sessionCookie" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "deezer" ? html`<label>New ARL cookie<input name="arl" type="password" autocomplete="off" required></label>` : nothing}
@@ -2632,7 +2603,7 @@ class AllstarrApp extends LitElement {
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "lastfm" ? html`<label>API key<input name="apiKey" type="password" autocomplete="off" required></label><label>Shared secret<input name="sharedSecret" type="password" autocomplete="off" required></label><label>Username<input name="username" required></label><label>Session key<input name="sessionKey" type="password" autocomplete="off" required></label>` : nothing}
         ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? html`<label>Credential JSON<textarea name="secretJson" rows="3" required></textarea></label>` : nothing}
-        <button class="primary">Save encrypted credential</button>
+        <button class="primary">Save securely</button>
       </form>
     </details>`;
   }
@@ -2885,7 +2856,7 @@ class AllstarrApp extends LitElement {
     const loginState = appleLoginState(status);
     const result = this.serviceResults.applemusic;
     const discoveredCapabilities = asArray(status.capabilities);
-    const gatewayReady = Boolean(status.ready && status.staged && status.daemon_running && status.wrapper_healthy);
+    const gatewayReady = Boolean(status.staged && status.daemon_running && status.wrapper_healthy);
     return html`
       <div class="inline-panel">
         <div class="stat-list compact">
@@ -2906,13 +2877,13 @@ class AllstarrApp extends LitElement {
             </div>
           </div>
         ` : nothing}
-        ${gatewayReady ? html`<form class="form-stack compact-form" @submit=${this.submitAppleLogin}>
+        ${gatewayReady && !status.logged_in ? html`<form class="form-stack compact-form" @submit=${this.submitAppleLogin}>
           <div class="form-row"><label>Apple ID</label><input name="username" autocomplete="username" required></div>
           <div class="form-row"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
           <button class="primary">Start login</button>
-        </form>` : html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>Prepare the optional profile on the Docker host before signing in. The WebUI cannot accept or redistribute the Apple Music Android package.</p><pre><code>./allstarr.sh prepare-apple /path/to/apple-music.apkm x86_64
+        </form>` : !gatewayReady ? html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>The Apple Android package must be prepared on the Docker host because the main Allstarr container has no Docker or host-file access.</p><pre><code>./allstarr.sh prepare-apple /path/to/apple-music.apkm x86_64
 ./allstarr.sh up
-./allstarr.sh status</code></pre></div>`}
+./allstarr.sh status</code></pre></div>` : html`<div class="callout success"><strong>Apple Music connected</strong><p>The external gateway and saved Apple session are ready.</p></div>`}
         ${isAwaitingApple2fa({ ...status, state: loginState }) || result?.state === "warning" ? html`
           <form class="form-stack compact-form" @submit=${this.submitApple2fa}>
             <div class="form-row"><label>2FA code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required></div>

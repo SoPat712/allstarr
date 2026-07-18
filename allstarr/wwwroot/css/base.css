@@ -712,6 +712,83 @@ tr:last-child td {
     max-width: 100%;
 }
 
+.provider-account-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: var(--space-4);
+}
+
+.provider-account-card {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.account-create-disclosure {
+    margin-top: var(--space-3);
+}
+
+.account-meta,
+.account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.account-actions {
+    margin-top: auto;
+    padding-top: var(--space-2);
+}
+
+.account-health-disclosure {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+}
+
+.account-health-disclosure > summary {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    cursor: pointer;
+    padding: var(--space-3) 0;
+    font-weight: 700;
+}
+
+.account-health-disclosure > summary span,
+.account-capability small {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.account-capability-list {
+    display: grid;
+    gap: var(--space-2);
+    padding-bottom: var(--space-3);
+}
+
+.account-capability {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.account-capability > div {
+    display: grid;
+    gap: 2px;
+}
+
+.credential-editor[open] {
+    flex-basis: 100%;
+}
+
+.danger-text {
+    color: var(--error);
+}
+
 .provider-card {
     display: grid;
     gap: var(--space-4);
@@ -2035,6 +2112,7 @@ button.setup-choice {
 
     .grid,
     .provider-grid,
+    .provider-account-grid,
     .extension-control-grid {
         grid-template-columns: minmax(0, 1fr);
     }

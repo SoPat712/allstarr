@@ -200,6 +200,19 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void ProviderAccounts_UseCompactCardsAndPlainConfigurationLanguage()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("provider-account-grid", script, StringComparison.Ordinal);
+        Assert.Contains("<summary>Configure</summary>", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Replace credential", script, StringComparison.Ordinal);
+        Assert.Contains("account-health-disclosure", styles, StringComparison.Ordinal);
+        Assert.Contains("status.staged && status.daemon_running && status.wrapper_healthy", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LoginCopy_UsesTheSelectedBackendIdentity()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
