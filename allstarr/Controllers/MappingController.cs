@@ -65,6 +65,10 @@ public class MappingController : ControllerBase
                         foreach (var mapping in playlistMappings.Values)
                         {
                             var targets = await BuildExternalTargetsForManualMappingAsync(mapping);
+                            var playable = !string.IsNullOrWhiteSpace(mapping.JellyfinId) ||
+                                ExternalTrackPlaybackPolicy.CanUseForPlayback(
+                                    mapping.ExternalProvider,
+                                    mapping.ExternalId);
                             allMappings.Add(new
                             {
                                 playlist = playlistName,
@@ -74,6 +78,8 @@ public class MappingController : ControllerBase
                                 externalProvider = mapping.ExternalProvider,
                                 externalId = mapping.ExternalId,
                                 externalTargets = targets,
+                                playable,
+                                status = playable ? "ready" : "needs_review",
                                 createdAt = mapping.CreatedAt
                             });
                         }
@@ -90,7 +96,9 @@ public class MappingController : ControllerBase
                 mappings = allMappings.OrderBy(m => ((dynamic)m).playlist).ThenBy(m => ((dynamic)m).createdAt),
                 totalCount = allMappings.Count,
                 jellyfinCount = allMappings.Count(m => ((dynamic)m).type == "jellyfin"),
-                externalCount = allMappings.Count(m => ((dynamic)m).type == "external")
+                externalCount = allMappings.Count(m => ((dynamic)m).type == "external"),
+                playableCount = allMappings.Count(m => ((dynamic)m).playable),
+                needsReviewCount = allMappings.Count(m => !((dynamic)m).playable)
             });
         }
         catch (Exception ex)

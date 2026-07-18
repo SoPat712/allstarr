@@ -52,6 +52,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("return nothing;", script, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Playlist preview\"", script, StringComparison.Ordinal);
         Assert.Contains("Imported legacy decisions", script, StringComparison.Ordinal);
+        Assert.Contains("Legacy ready", script, StringComparison.Ordinal);
+        Assert.Contains("Review affected playlists", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-preview-backdrop", css, StringComparison.Ordinal);
     }
 

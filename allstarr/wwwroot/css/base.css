@@ -1931,6 +1931,22 @@ fieldset.form-row > label small {
     margin-bottom: 0;
 }
 
+.legacy-mappings-panel .callout {
+    align-items: center;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.mapping-needs-review {
+    background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+
+@media (max-width: 760px) {
+    .legacy-mappings-panel .callout {
+        align-items: start;
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
 .playlist-preview-list {
     display: grid;
     gap: var(--space-2);

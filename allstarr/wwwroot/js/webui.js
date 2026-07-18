@@ -2477,6 +2477,8 @@ class AllstarrApp extends LitElement {
   renderMappings() {
     const mappings = asArray(this.mappings?.mappings || this.mappings?.Mappings);
     const legacyMappings = asArray(this.legacyMappings?.mappings || this.legacyMappings?.Mappings);
+    const playableLegacyMappings = legacyMappings.filter((mapping) => mapping.playable ?? mapping.Playable ?? false);
+    const reviewLegacyMappings = legacyMappings.filter((mapping) => !(mapping.playable ?? mapping.Playable ?? false));
     const stats = this.mappings?.stats || this.mappings?.Stats || {};
     const pagination = this.mappings?.pagination || this.mappings?.Pagination || {};
 
@@ -2486,7 +2488,8 @@ class AllstarrApp extends LitElement {
         <div class="card metric"><span class="metric-label">Accepted</span><span class="metric-value">${display(stats.accepted ?? 0)}</span></div>
         <div class="card metric"><span class="metric-label">Needs review</span><span class="metric-value">${display(stats.review ?? 0)}</span></div>
         <div class="card metric"><span class="metric-label">Unresolved</span><span class="metric-value">${display(stats.unresolved ?? 0)}</span></div>
-        <div class="card metric"><span class="metric-label">Imported legacy</span><span class="metric-value">${display(legacyMappings.length)}</span></div>
+        <div class="card metric"><span class="metric-label">Legacy ready</span><span class="metric-value">${display(playableLegacyMappings.length)}</span></div>
+        <div class="card metric"><span class="metric-label">Legacy review</span><span class="metric-value">${display(reviewLegacyMappings.length)}</span></div>
       </div>
       <div class="panel">
         <div class="toolbar">
@@ -2511,8 +2514,12 @@ class AllstarrApp extends LitElement {
         </div>
       </div>
       ${legacyMappings.length ? html`<div class="panel legacy-mappings-panel">
-        <div class="section-heading"><div><h3>Imported legacy decisions</h3><p class="muted">Preserved from your previous installation. These remain available to the compatibility matcher while v3 builds its provider-neutral index.</p></div><span class="chip success">${legacyMappings.length} restored</span></div>
-        <div class="table-wrap"><table><thead><tr><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => html`<tr><td>${display(mapping.playlist || mapping.Playlist)}</td><td class="mono">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td>${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td>${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`)}</tbody></table></div>
+        <div class="section-heading"><div><h3>Imported legacy decisions</h3><p class="muted">Your previous decisions are intact. Ready targets can play now; preserved targets stay visible until a safe replacement can be confirmed.</p></div><div class="actions"><span class="chip success">${playableLegacyMappings.length} ready</span>${reviewLegacyMappings.length ? html`<span class="chip warning">${reviewLegacyMappings.length} need review</span>` : nothing}</div></div>
+        ${reviewLegacyMappings.length ? html`<div class="callout warning"><strong>${reviewLegacyMappings.length} old ${reviewLegacyMappings.length === 1 ? "decision uses" : "decisions use"} an unavailable provider.</strong><span>Nothing was deleted or guessed. Open the affected playlist under Injected, choose Match, and select a playable Jellyfin or provider result.</span><button @click=${() => this.navigate("/library/injected")}>Review affected playlists</button></div>` : html`<div class="callout success"><strong>Every imported decision has a playable target.</strong></div>`}
+        <div class="table-wrap"><table><thead><tr><th>Status</th><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => {
+          const playable = mapping.playable ?? mapping.Playable ?? false;
+          return html`<tr class=${playable ? "" : "mapping-needs-review"}><td><span class="chip ${playable ? "success" : "warning"}">${playable ? "Ready" : "Review"}</span></td><td>${display(mapping.playlist || mapping.Playlist)}</td><td class="mono">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td>${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td>${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`;
+        })}</tbody></table></div>
       </div>` : nothing}
       <div class="panel">
         <h3>Manual match review</h3>
