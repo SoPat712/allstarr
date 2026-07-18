@@ -785,7 +785,8 @@ New WebUI sections:
 - Playlists: links, rewrite rules, preview.
 - Activity: downloads, probes, scrobbles, errors.
 - Settings: users, storage roots, backend, resource profile.
-- Architecture: interactive diagram showing provider lanes and data flow.
+- Architecture: interactive diagram showing provider lanes and data flow. Keep its navigation hidden until
+  every state is useful to an operator; the implementation may remain available for continued development.
 
 Do not ship a data-backed section as a static promise. Each section requires empty, loading, configured, disabled, degraded, unauthorized, and actionable-error states; keyboard navigation and narrow-screen behavior; and an API contract from the corresponding implementation phase.
 
@@ -884,8 +885,12 @@ The Phase 0 completion record included:
   and keyboard checks remain release gates for every data-backed screen.
 - Phase 0 provider status reads no longer invented health or test time. Explicit probes were separated by
   capability/account key, disabled providers leave every lane, public metadata is not blocked by download
-  credentials, SquidWTF is metadata-only, and optional provider startup probes default off. That compatibility
-  projection remains available; later durable account-scoped observations and accounts are authoritative for typed routes.
+  credentials, SquidWTF is metadata-only, and optional deployment-global startup probes default off. Enabled
+  durable accounts now receive non-blocking account-scoped startup probes, and saving a credential immediately
+  tests and refreshes the account card. Those durable account observations are authoritative for typed routes.
+- Sources now presents account-managed providers once, under Connected accounts, with provider-specific fields,
+  consistent actions, visible capability results, and provider-specific names for imported accounts. The unfinished
+  Intelligence and Architecture navigation entries remain hidden until their operator workflows are ready.
 - Apple wrapper `/me`, login, and pending-2FA responses are shaped without returning raw tokens. Last.fm
   and ListenBrainz admin tests return actionable sanitized failures. Local Jellyfin playback metadata and
   bounded artwork flow through backend-neutral admin activity seams.

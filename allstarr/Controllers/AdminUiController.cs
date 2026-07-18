@@ -65,8 +65,7 @@ public class AdminUiController : ControllerBase
                 ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
                 Routes =
                 [
-                    Route("sources", "#/sources", "Provider accounts", "sources"),
-                    Route("intelligence", "#/intelligence", "Intelligence", "intelligence")
+                    Route("sources", "#/sources", "Provider accounts", "sources")
                 ]
             });
         }
@@ -137,8 +136,6 @@ public class AdminUiController : ControllerBase
         Route("library", "#/library", "Library", "library"),
         Route("sources", "#/sources", "Sources", "sources"),
         Route("activity", "#/activity", "Activity", "activity"),
-        Route("intelligence", "#/intelligence", "Intelligence", "intelligence"),
-        Route("architecture", "#/architecture", "Architecture", "architecture"),
         Route("settings", "#/settings", "Settings", "settings")
     ];
 

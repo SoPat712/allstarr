@@ -491,6 +491,7 @@ if (probeOptionalProvidersAtStartup)
 // Tests and local contract hosts must never call live providers during startup.
 if (!builder.Environment.IsEnvironment("Testing"))
 {
+    builder.Services.AddHostedService<ManagedProviderAccountHealthWarmupService>();
     builder.Services.AddHostedService<StartupValidationOrchestrator>();
 }
 

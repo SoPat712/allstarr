@@ -81,8 +81,6 @@ public sealed class LegacyEnvMigrationException(string code, string message) : E
 
 public sealed class LegacyEnvMigrationService
 {
-    private const string ImportedAccountName = "Legacy .env import";
-    private const string ImportedPersonalAccountName = "Legacy .env import (current user)";
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -417,7 +415,7 @@ public sealed class LegacyEnvMigrationService
                         Id = Guid.CreateVersion7(),
                         TenantId = null,
                         ProviderId = provider.ProviderId,
-                        DisplayName = ImportedAccountName,
+                        DisplayName = ImportedAccountName(provider.ProviderId, personal: false),
                         Scope = ProviderAccountScope.Global,
                         Enabled = false,
                         CreatedAt = _clock.UtcNow,
@@ -475,7 +473,7 @@ public sealed class LegacyEnvMigrationService
                         TenantId = state.TenantId.Value,
                         OwnerUserId = state.ActorUserId.Value,
                         ProviderId = providerId,
-                        DisplayName = ImportedPersonalAccountName,
+                        DisplayName = ImportedAccountName(providerId, personal: true),
                         Scope = ProviderAccountScope.User,
                         Enabled = true,
                         CreatedAt = _clock.UtcNow,
@@ -580,6 +578,20 @@ public sealed class LegacyEnvMigrationService
         {
             state.Gate.Release();
         }
+    }
+
+    private static string ImportedAccountName(string providerId, bool personal)
+    {
+        var provider = providerId.ToLowerInvariant() switch
+        {
+            "lastfm" => "Last.fm",
+            "listenbrainz" => "ListenBrainz",
+            "qobuz" => "Qobuz",
+            "deezer" => "Deezer",
+            "spotify" => "Spotify",
+            _ => providerId
+        };
+        return personal ? $"My {provider} account" : $"Shared {provider} account";
     }
 
     private async Task<string> ComputeRevisionAsync(

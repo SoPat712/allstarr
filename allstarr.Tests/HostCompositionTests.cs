@@ -108,7 +108,7 @@ public sealed class HostCompositionTests
     [InlineData("AdminManaged")]
     [InlineData("UserManaged")]
     [InlineData("Hybrid")]
-    public void NonAdministratorSchema_ExposesOwnAccountsAndIntelligenceWithoutAdminConfiguration(
+    public void NonAdministratorSchema_ExposesOnlyReadyAccountSelfService(
         string managementMode)
     {
         using var factory = new AllstarrFactory("Jellyfin", managementMode);
@@ -120,7 +120,7 @@ public sealed class HostCompositionTests
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
 
         Assert.Equal(managementMode, schema.ProviderAccountManagementMode);
-        Assert.Equal(["sources", "intelligence"], schema.Routes.Select(route => route.Id));
+        Assert.Equal(["sources"], schema.Routes.Select(route => route.Id));
         Assert.Empty(schema.Providers);
         Assert.Empty(schema.ProviderSupportMatrix);
         Assert.Empty(schema.ConfigSections);

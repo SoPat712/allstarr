@@ -142,18 +142,14 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
-    public void ArchitectureRoute_IsDataBackedInteractiveAndResponsive()
+    public void ArchitectureAndIntelligenceRoutes_AreHiddenUntilTheirUiIsReady()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
-        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
 
-        Assert.Contains("#/architecture", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("Route(\"architecture\"", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("Route(\"intelligence\"", controller, StringComparison.Ordinal);
         Assert.Contains("renderArchitecture()", script, StringComparison.Ordinal);
-        Assert.Contains("asArray(this.schema?.providers)", script, StringComparison.Ordinal);
-        Assert.Contains("aria-label=\"Allstarr request and media flow\"", script, StringComparison.Ordinal);
-        Assert.Contains(".architecture-flow", css, StringComparison.Ordinal);
-        Assert.Contains("@media (max-width: 560px)", css, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -222,9 +218,15 @@ public sealed class WebUiResponsiveContractTests
         var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("provider-account-grid", script, StringComparison.Ordinal);
-        Assert.Contains("<summary>Configure</summary>", script, StringComparison.Ordinal);
+        Assert.Contains("<button @click=${() => this.toggleProviderAccountConfiguration(id)}", script, StringComparison.Ordinal);
+        Assert.Contains(": \"Configure\"}</button>", script, StringComparison.Ordinal);
+        Assert.Contains("Save and test", script, StringComparison.Ordinal);
+        Assert.Contains("Test connection", script, StringComparison.Ordinal);
+        Assert.Contains("renderNewProviderCredentialFields", script, StringComparison.Ordinal);
+        Assert.Contains("<option value=\"spotify\">Spotify</option>", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("textarea name=\"secret\"", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Replace credential", script, StringComparison.Ordinal);
-        Assert.Contains("account-health-disclosure", styles, StringComparison.Ordinal);
+        Assert.Contains("account-health-panel", styles, StringComparison.Ordinal);
         Assert.Contains("status.staged && status.daemon_running && status.wrapper_healthy", script, StringComparison.Ordinal);
     }
 

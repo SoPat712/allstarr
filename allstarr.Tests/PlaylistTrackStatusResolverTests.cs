@@ -33,7 +33,7 @@ public class PlaylistTrackStatusResolverTests
     }
 
     [Fact]
-    public void TryResolveFromMatchedTrack_ExternalMatch_ReturnsProvider()
+    public void TryResolveFromMatchedTrack_MetadataOnlyMatch_IsTreatedAsMissing()
     {
         var matchedBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase)
         {
@@ -54,9 +54,9 @@ public class PlaylistTrackStatusResolverTests
             out var isLocal,
             out var externalProvider);
 
-        Assert.True(resolved);
-        Assert.False(isLocal);
-        Assert.Equal("squidwtf", externalProvider);
+        Assert.False(resolved);
+        Assert.Null(isLocal);
+        Assert.Null(externalProvider);
     }
 
     [Fact]

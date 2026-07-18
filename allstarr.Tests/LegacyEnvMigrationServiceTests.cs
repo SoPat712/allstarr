@@ -141,6 +141,7 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal("21", Assert.Single(await db.TenantRuntimeSettings.ToListAsync()).ValueJson);
         var deezer = Assert.Single(await db.ProviderAccounts.ToListAsync());
+        Assert.Equal("Shared Deezer account", deezer.DisplayName);
         using var lease = await CreateSecretStore().OpenAsync(
             deezer.SecretReferenceId!.Value,
             new SecretAccessContext(null, AllowGlobal: true));
@@ -179,6 +180,8 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
             Assert.Equal(4, accounts.Count);
             Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Global), account => Assert.False(account.Enabled));
             var listenBrainz = Assert.Single(accounts, account => account.ProviderId == "listenbrainz");
+            Assert.Equal("My ListenBrainz account", listenBrainz.DisplayName);
+            Assert.Equal("Shared Spotify account", Assert.Single(accounts, account => account.ProviderId == "spotify").DisplayName);
             Assert.True(listenBrainz.Enabled);
             Assert.Equal(ProviderAccountScope.User, listenBrainz.Scope);
             Assert.Equal(_tenantId, listenBrainz.TenantId);
@@ -241,6 +244,7 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         Assert.Equal(_tenantId, account.TenantId);
         Assert.Equal(_userId, account.OwnerUserId);
         Assert.True(account.Enabled);
+        Assert.Equal("My Last.fm account", account.DisplayName);
         using var lease = await CreateSecretStore().OpenAsync(
             account.SecretReferenceId!.Value,
             new SecretAccessContext(_tenantId));

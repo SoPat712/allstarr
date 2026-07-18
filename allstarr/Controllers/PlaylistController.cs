@@ -917,6 +917,14 @@ public class PlaylistController : ControllerBase
                 if (isLocal == false)
                 {
                     externalProvider = NormalizeExternalProviderForDisplay(externalProvider);
+                    if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(externalProvider))
+                    {
+                        isLocal = null;
+                        externalProvider = null;
+                        isManualMapping = false;
+                        manualMappingType = null;
+                        manualMappingId = null;
+                    }
                 }
 
                 // Check lyrics status
@@ -1018,6 +1026,11 @@ public class PlaylistController : ControllerBase
             if (isLocal == false)
             {
                 externalProvider = NormalizeExternalProviderForDisplay(externalProvider);
+                if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(externalProvider))
+                {
+                    isLocal = null;
+                    externalProvider = null;
+                }
             }
 
             tracksWithStatus.Add(new

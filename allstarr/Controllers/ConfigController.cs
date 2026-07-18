@@ -988,7 +988,8 @@ public class ConfigController : ControllerBase
                     ready = account.Enabled && status.IsReady,
                     canAttempt = account.Enabled && status.CanAttempt,
                     testedAt = status.TestedAt,
-                    reasonCode = account.Enabled ? status.ReasonCode : "account_disabled"
+                    reasonCode = account.Enabled ? status.ReasonCode : "account_disabled",
+                    canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
                 });
             }
         }

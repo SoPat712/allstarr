@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using allstarr.Models.Settings;
 using allstarr.Services.SquidWTF;
@@ -35,7 +37,9 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Playlist),
         ("squidwtf", ProviderCapabilities.Metadata),
         ("lyricsplus", ProviderCapabilities.Lyrics),
-        ("lrclib", ProviderCapabilities.Lyrics)
+        ("lrclib", ProviderCapabilities.Lyrics),
+        ("lastfm", ProviderCapabilities.Scrobbling),
+        ("listenbrainz", ProviderCapabilities.Scrobbling)
     ];
 
     private readonly IConfiguration _configuration;
@@ -594,6 +598,12 @@ public class ProviderStatusManager
             ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "userauthtoken", "token")) &&
                 IsConfiguredValue(SecretValue(secrets, "userid")),
+            ("lastfm", ProviderCapabilities.Scrobbling) =>
+                IsConfiguredValue(SecretValue(secrets, "apikey")) &&
+                IsConfiguredValue(SecretValue(secrets, "sharedsecret")) &&
+                IsConfiguredValue(SecretValue(secrets, "sessionkey")),
+            ("listenbrainz", ProviderCapabilities.Scrobbling) =>
+                IsConfiguredValue(SecretValue(secrets, "token", "usertoken")),
             _ => null
         };
 
@@ -627,6 +637,8 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lyricsplus", ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
+            ("lastfm", ProviderCapabilities.Scrobbling) => true,
+            ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
             _ => false
         };
     }
@@ -642,6 +654,8 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist) => true,
             ("lyricsplus", ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
+            ("lastfm", ProviderCapabilities.Scrobbling) => true,
+            ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
             _ => false
         };
     }
@@ -670,8 +684,65 @@ public class ProviderStatusManager
             ("squidwtf", ProviderCapabilities.Metadata) => await TestSquidWtfAsync(cancellationToken),
             ("lyricsplus", ProviderCapabilities.Lyrics) => await TestLyricsPlusAsync(cancellationToken),
             ("lrclib", ProviderCapabilities.Lyrics) => await TestLrclibAsync(cancellationToken),
+            ("lastfm", ProviderCapabilities.Scrobbling) => await TestLastFmAsync(accountSecrets, cancellationToken),
+            ("listenbrainz", ProviderCapabilities.Scrobbling) => await TestListenBrainzAsync(accountSecrets, cancellationToken),
             _ => false
         };
+    }
+
+    private async Task<bool> TestLastFmAsync(
+        IReadOnlyDictionary<string, string>? secrets,
+        CancellationToken cancellationToken)
+    {
+        var apiKey = SecretValue(secrets, "apikey");
+        var sharedSecret = SecretValue(secrets, "sharedsecret");
+        var sessionKey = SecretValue(secrets, "sessionkey");
+        if (!IsConfiguredValue(apiKey) || !IsConfiguredValue(sharedSecret) || !IsConfiguredValue(sessionKey))
+        {
+            return false;
+        }
+
+        var parameters = new SortedDictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["api_key"] = apiKey!,
+            ["method"] = "user.getInfo",
+            ["sk"] = sessionKey!
+        };
+        var signatureText = string.Concat(parameters.Select(item => item.Key + item.Value)) + sharedSecret;
+        parameters["api_sig"] = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(signatureText)));
+        parameters["format"] = "json";
+        using var client = _httpClientFactory.CreateClient();
+        using var response = await SendWithProbeTimeoutAsync(
+            client,
+            new HttpRequestMessage(HttpMethod.Post, "https://ws.audioscrobbler.com/2.0/")
+            {
+                Content = new FormUrlEncodedContent(parameters)
+            },
+            cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    private async Task<bool> TestListenBrainzAsync(
+        IReadOnlyDictionary<string, string>? secrets,
+        CancellationToken cancellationToken)
+    {
+        var token = SecretValue(secrets, "token", "usertoken");
+        if (!IsConfiguredValue(token))
+        {
+            return false;
+        }
+
+        using var client = _httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.listenbrainz.org/1/validate-token");
+        request.Headers.Authorization = new("Token", token);
+        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return document.RootElement.TryGetProperty("valid", out var valid) && valid.ValueKind == JsonValueKind.True;
     }
 
     private async Task<bool> TestLyricsPlusAsync(CancellationToken cancellationToken)
@@ -918,6 +989,7 @@ public class ProviderStatusManager
         "deezer" => ProviderCapabilities.Download,
         "qobuz" => ProviderCapabilities.Download,
         "squidwtf" => ProviderCapabilities.Metadata,
+        "lastfm" or "listenbrainz" => ProviderCapabilities.Scrobbling,
         _ => null
     };
 

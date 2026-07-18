@@ -1,4 +1,5 @@
 using allstarr.Models.Spotify;
+using allstarr.Services.Spotify;
 
 namespace allstarr.Services.Admin;
 
@@ -37,6 +38,12 @@ public static class PlaylistTrackStatusResolver
         var isExplicitExternalMatch = matchType.Contains("external", StringComparison.OrdinalIgnoreCase);
         var providerFromSong = NormalizeExternalProvider(matched.MatchedSong.ExternalProvider)
             ?? ExtractExternalProviderFromItemId(matched.MatchedSong.Id);
+
+        if (!string.IsNullOrWhiteSpace(providerFromSong) &&
+            !ExternalTrackPlaybackPolicy.CanUseForPlayback(providerFromSong, matched.MatchedSong.Id))
+        {
+            return false;
+        }
 
         // If we have an explicit external signature (provider or ext- ID prefix),
         // trust that over a stale/incorrect local match type.

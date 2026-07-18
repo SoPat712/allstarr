@@ -550,7 +550,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         {
             account.Id,
             account.ProviderId,
-            account.DisplayName,
+            displayName = FriendlyDisplayName(account),
             scope = account.Scope.ToString(),
             account.TenantId,
             account.OwnerUserId,
@@ -567,6 +567,27 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.CreatedAt,
             account.UpdatedAt
         };
+
+    private static string FriendlyDisplayName(ProviderAccountRecord account)
+    {
+        if (account.DisplayName is not ("Legacy .env import" or "Legacy .env import (current user)"))
+        {
+            return account.DisplayName;
+        }
+
+        var provider = account.ProviderId.ToLowerInvariant() switch
+        {
+            "lastfm" => "Last.fm",
+            "listenbrainz" => "ListenBrainz",
+            "qobuz" => "Qobuz",
+            "deezer" => "Deezer",
+            "spotify" => "Spotify",
+            _ => account.ProviderId
+        };
+        return account.Scope == ProviderAccountScope.User
+            ? $"My {provider} account"
+            : $"Shared {provider} account";
+    }
 
     [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant)]
     private static partial Regex ProviderIdPattern();

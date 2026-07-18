@@ -336,6 +336,12 @@ SquidWTF, and lyrics startup probes are registered only when
 not run the validation orchestrator or live SquidWTF discovery. Automated tests must use fake HTTP and
 temporary state, not real provider accounts.
 
+Enabled durable provider accounts are different from deployment-global compatibility settings. After the
+host becomes available, a background warmup probes every testable configured capability for each enabled
+managed account and records the account-scoped result. It never delays startup, never borrows another
+account's secret, and is not registered in the `Testing` environment. Saving a credential in the WebUI also
+runs its primary account probe immediately and refreshes the visible status.
+
 ## Shared Data Contracts
 
 ### External IDs

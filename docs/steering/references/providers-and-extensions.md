@@ -58,9 +58,10 @@ projection for legacy paths. Typed routes additionally persist capability/accoun
 - Disabled providers are excluded from every current lane. A failed download probe does not degrade a
   provider's metadata capability. Missing Deezer ARL or Qobuz download credentials do not disable their
   public metadata paths.
-- Optional provider startup probes are opt-in through
-  `StartupValidation:ProbeOptionalProviders` and default to `false`. The `Testing` environment never
-  registers live provider validation as hosted startup work and uses no live SquidWTF discovery.
+- Optional deployment-global compatibility probes are opt-in through
+  `StartupValidation:ProbeOptionalProviders` and default to `false`. Enabled durable provider accounts are
+  probed in a non-blocking account-scoped warmup so the dashboard has a truthful initial status. The
+  `Testing` environment registers neither live probe path and uses no live SquidWTF discovery.
 
 Do not infer readiness from container health, configuration presence, or a provider-wide compatibility flag.
 New typed routes must use the durable account/capability health boundary and redacted route decisions rather

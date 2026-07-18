@@ -384,6 +384,12 @@ const API = {
       { method: "POST" },
       "Failed to test provider capability",
     ),
+  testProviderAccount: (accountId, provider) =>
+    requestJson(
+      `/api/admin/providers/test/${encodeURIComponent(provider)}?accountId=${encodeURIComponent(accountId)}`,
+      { method: "POST" },
+      "Failed to test provider account",
+    ),
   testProviderCapability: (provider, capability) =>
     requestJson(
       `/api/admin/providers/test/${encodeURIComponent(provider)}/${encodeURIComponent(capability)}`,
@@ -517,6 +523,8 @@ class AllstarrApp extends LitElement {
     extensionActions: { state: true },
     extensionRegistryError: { state: true },
     providerConfigOpen: { state: true },
+    providerAccountConfigOpen: { state: true },
+    newProviderAccountId: { state: true },
     favoritePolicy: { state: true },
     intelligence: { state: true },
     intelligenceLoading: { state: true },
@@ -576,6 +584,8 @@ class AllstarrApp extends LitElement {
     this.extensionActions = {};
     this.extensionRegistryError = "";
     this.providerConfigOpen = new Set();
+    this.providerAccountConfigOpen = new Set();
+    this.newProviderAccountId = "spotify";
     this.favoritePolicy = null;
     this.intelligence = null;
     this.intelligenceLoading = false;
@@ -2598,7 +2608,8 @@ class AllstarrApp extends LitElement {
       `;
     }
 
-    const providers = asArray(this.schema?.providers);
+    const providers = asArray(this.schema?.providers).filter((provider) =>
+      !ACCOUNT_MANAGED_PROVIDERS.has(String(provider.id || provider.Id || "").toLowerCase()));
     const providerGroups = [
       ["healthy", "Observed healthy", providers.filter((provider) => this.providerStatus(provider) === "healthy")],
       ["available", "Available but untested", providers.filter((provider) => ["unknown", "available", "partial_config"].includes(this.providerStatus(provider)))],
@@ -2610,7 +2621,7 @@ class AllstarrApp extends LitElement {
         <div class="view-header">
           <div>
             <h2>Services and sources</h2>
-            <p>Connect providers and choose where Allstarr finds your music.</p>
+            <p>Connect an account once, test it here, then choose how Allstarr may use it.</p>
           </div>
         </div>
         ${this.renderProviderAccounts()}
@@ -2672,25 +2683,33 @@ class AllstarrApp extends LitElement {
       <div class="panel" id="provider-accounts" tabindex="-1">
         <div class="section-heading">
           <div>
-            <h3>Provider accounts</h3>
-            <p>Connect the accounts Allstarr may use. Saved credentials stay encrypted and are never shown again.</p>
+            <h3>Connected accounts</h3>
+            <p>This is the single place to configure, enable, and test Spotify, Deezer, Qobuz, Last.fm, and ListenBrainz accounts.</p>
           </div>
           <span class="status-chip configured">${managementMode}</span>
         </div>
         ${canManage ? html`<details class="content-disclosure account-create-disclosure">
           <summary><span><strong>Add provider account</strong><small>Spotify, Deezer, Qobuz, Last.fm, ListenBrainz, or another supported provider</small></span></summary>
           <form class="config-grid disclosure-body" @submit=${this.createProviderAccount}>
-            <div class="form-row"><label>Provider ID</label><input name="providerId" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required></div>
-            <div class="form-row"><label>Account name</label><input name="displayName" required></div>
+            <div class="form-row"><label>Provider</label><select name="providerId" .value=${this.newProviderAccountId} @change=${(event) => { this.newProviderAccountId = event.target.value; }}><option value="spotify">Spotify</option><option value="deezer">Deezer</option><option value="qobuz">Qobuz</option><option value="lastfm">Last.fm</option><option value="listenbrainz">ListenBrainz</option></select></div>
+            <div class="form-row"><label>Account name</label><input name="displayName" placeholder=${`My ${providerDisplayName(this.newProviderAccountId, this.schema?.providers)} account`}></div>
             <div class="form-row"><label>Who can use it?</label><select name="scope"><option value="User">Only me</option>${canManageAll ? html`<option value="Global">Everyone</option><option value="Library">One library</option>` : nothing}</select></div>
             ${canManageAll ? html`<div class="form-row"><label>Library ID (only for one library)</label><input name="libraryScopeId"></div>` : nothing}
-            <div class="form-row full-span"><label>Credential JSON</label><textarea name="secret" rows="3" placeholder='{"arl":"..."}' required></textarea><small>Spotify: <span class="mono">sp_dc</span>. Deezer: <span class="mono">arl</span>. Qobuz: <span class="mono">userAuthToken</span> and <span class="mono">userId</span>.</small></div>
-            <div class="actions full-span"><button class="primary">Save account</button></div>
+            ${this.renderNewProviderCredentialFields(this.newProviderAccountId)}
+            <div class="actions full-span"><button class="primary">Save and test account</button></div>
           </form>
         </details>` : html`<div class="empty">Provider accounts are managed by an administrator.</div>`}
       </div>
       ${canManage ? html`<div class="provider-account-grid">${accounts.length ? accounts.map((account) => this.renderProviderAccountCard(account, administrator)) : html`<div class="empty">No provider accounts yet.</div>`}</div>` : nothing}
     `;
+  }
+
+  renderNewProviderCredentialFields(providerId) {
+    if (providerId === "spotify") return html`<div class="form-row full-span"><label>sp_dc session cookie</label><input name="sessionCookie" type="password" autocomplete="off" required><small>Copied from your signed-in Spotify browser session.</small></div>`;
+    if (providerId === "deezer") return html`<div class="form-row full-span"><label>ARL cookie</label><input name="arl" type="password" autocomplete="off" required></div>`;
+    if (providerId === "qobuz") return html`<div class="form-row"><label>User auth token</label><input name="userAuthToken" type="password" autocomplete="off" required></div><div class="form-row"><label>User ID</label><input name="userId" required></div>`;
+    if (providerId === "lastfm") return html`<div class="form-row"><label>API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Username</label><input name="username" required></div><div class="form-row"><label>Session key</label><input name="sessionKey" type="password" autocomplete="off" required></div>`;
+    return html`<div class="form-row full-span"><label>ListenBrainz user token</label><input name="token" type="password" autocomplete="off" required></div>`;
   }
 
   renderProviderAccountCard(account, administrator) {
@@ -2706,13 +2725,26 @@ class AllstarrApp extends LitElement {
         <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
       </div>
       <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Credential saved" : "Credential needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
-      ${administrator && capabilities.length ? html`<details class="account-health-disclosure"><summary>Connection tests <span>${capabilities.filter((item) => String(item.health || item.Health) === "healthy").length}/${capabilities.length} passing</span></summary><div class="account-capability-list">${capabilities.map((capability) => this.renderProviderAccountCapability(account, capability))}</div></details>` : html`<p class="muted">No connection tests are needed for this account.</p>`}
+      ${administrator && capabilities.length ? this.renderProviderAccountHealth(account, capabilities) : html`<p class="muted">No automatic connection test is available for this provider.</p>`}
       <div class="account-actions">
         <button class=${enabled ? "" : "primary"} @click=${async () => { await API.setProviderAccountEnabled(id, !enabled, account.revision ?? account.Revision); await this.loadProviderAccounts(); this.toast(`Provider account ${enabled ? "disabled" : "enabled"}`); }}>${enabled ? "Disable" : "Enable"}</button>
-        ${this.renderProviderCredentialEditor(account)}
+        <button @click=${() => this.toggleProviderAccountConfiguration(id)} aria-expanded=${this.providerAccountConfigOpen.has(String(id)) ? "true" : "false"}>${this.providerAccountConfigOpen.has(String(id)) ? "Close setup" : "Configure"}</button>
+        ${administrator && enabled && capabilities.some((item) => Boolean(item.canTest ?? item.CanTest)) ? html`<button class="primary" ?disabled=${this.providerTests.has(`${id}:account`)} @click=${() => this.testProviderAccount(account)}>${this.providerTests.has(`${id}:account`) ? "Testing..." : "Test connection"}</button>` : nothing}
         <button class="ghost danger-text" @click=${async () => { if (!window.confirm("Remove this saved credential?")) return; await API.revokeProviderAccount(id); await this.loadProviderAccounts(); this.toast("Provider credential removed"); }}>Remove</button>
       </div>
+      ${this.providerAccountConfigOpen.has(String(id)) ? this.renderProviderCredentialEditor(account) : nothing}
     </article>`;
+  }
+
+  renderProviderAccountHealth(account, capabilities) {
+    const testable = capabilities.filter((item) => Boolean(item.canTest ?? item.CanTest));
+    const passing = testable.filter((item) => String(item.health || item.Health) === "healthy").length;
+    const tested = testable.filter((item) => !["", "unknown"].includes(String(item.health || item.Health || "unknown"))).length;
+    const summary = !testable.length ? "No automatic tests" : !tested ? `${testable.length} test${testable.length === 1 ? "" : "s"} ready` : `${passing}/${testable.length} passing`;
+    return html`<div class="account-health-panel">
+      <div class="account-health-summary"><strong>Connection status</strong><span>${summary}</span></div>
+      <div class="account-capability-list">${capabilities.map((capability) => this.renderProviderAccountCapability(account, capability))}</div>
+    </div>`;
   }
 
   renderProviderAccountCapability(account, capability) {
@@ -2724,37 +2756,51 @@ class AllstarrApp extends LitElement {
     const configuration = capability.configuration || capability.Configuration || "needs_configuration";
     const testKey = `${id}:${capabilityId}`;
     const testing = this.providerTests.has(testKey);
-    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div><button ?disabled=${testing} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Test first"}</button></div>`;
+    const canTest = Boolean(capability.canTest ?? capability.CanTest);
+    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div>${canTest ? html`<button class="compact" ?disabled=${testing || !enabled} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Enable to test"}</button>` : html`<span class="muted">No probe</span>`}</div>`;
+  }
+
+  toggleProviderAccountConfiguration(id) {
+    const key = String(id);
+    const next = new Set(this.providerAccountConfigOpen);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    this.providerAccountConfigOpen = next;
   }
 
   createProviderAccount = async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    let secret;
-    try {
-      secret = JSON.parse(String(data.get("secret") || "{}"));
-    } catch {
-      this.toast("Credential JSON is invalid", "error");
-      return;
-    }
-    await API.createProviderAccount({
-      providerId: String(data.get("providerId") || "").trim(),
-      displayName: String(data.get("displayName") || "").trim(),
+    const providerId = String(data.get("providerId") || "").trim();
+    const secret = providerId === "spotify" ? { sessionCookie: String(data.get("sessionCookie") || ""), sessionCookieSetDate: new Date().toISOString() }
+      : providerId === "deezer" ? { arl: String(data.get("arl") || "") }
+      : providerId === "qobuz" ? { userAuthToken: String(data.get("userAuthToken") || ""), userId: String(data.get("userId") || "") }
+      : providerId === "lastfm" ? { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || ""), sessionKey: String(data.get("sessionKey") || "") }
+      : { token: String(data.get("token") || "") };
+    const created = await API.createProviderAccount({
+      providerId,
+      displayName: String(data.get("displayName") || "").trim() || `My ${providerDisplayName(providerId, this.schema?.providers)} account`,
       scope: String(data.get("scope") || "User"),
       libraryScopeId: String(data.get("libraryScopeId") || "").trim() || null,
       enabled: true,
       secret,
     });
+    let tested = true;
+    try {
+      await API.testProviderAccount(created.id || created.Id, providerId);
+    } catch (error) {
+      tested = false;
+      this.toast(`Account saved, but the connection test failed: ${error.message}`, "error");
+    }
     form.reset();
+    this.newProviderAccountId = "spotify";
     await this.loadProviderAccounts();
-    this.toast("Encrypted provider account added");
+    if (tested) this.toast("Encrypted provider account added and connection verified");
   };
 
   renderProviderCredentialEditor(account) {
     const providerId = String(account.providerId || account.ProviderId || "").toLowerCase();
-    return html`<details class="inline-details credential-editor">
-      <summary>Configure</summary>
+    return html`<div class="credential-editor" aria-label="${titleCase(providerId)} account setup">
       <form class="form-stack compact-form" @submit=${(event) => this.replaceProviderAccountCredential(event, account)}>
         ${providerId === "spotify" ? html`<label>New sp_dc cookie<input name="sessionCookie" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "deezer" ? html`<label>New ARL cookie<input name="arl" type="password" autocomplete="off" required></label>` : nothing}
@@ -2762,9 +2808,9 @@ class AllstarrApp extends LitElement {
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "lastfm" ? html`<label>API key<input name="apiKey" type="password" autocomplete="off" required></label><label>Shared secret<input name="sharedSecret" type="password" autocomplete="off" required></label><label>Username<input name="username" required></label><label>Session key<input name="sessionKey" type="password" autocomplete="off" required></label>` : nothing}
         ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? html`<label>Credential JSON<textarea name="secretJson" rows="3" required></textarea></label>` : nothing}
-        <button class="primary">Save securely</button>
+        <div class="actions"><button class="primary">Save and test</button><button type="button" @click=${() => this.toggleProviderAccountConfiguration(account.id || account.Id)}>Cancel</button></div>
       </form>
-    </details>`;
+    </div>`;
   }
 
   async replaceProviderAccountCredential(event, account) {
@@ -2786,8 +2832,35 @@ class AllstarrApp extends LitElement {
     }
     await API.replaceProviderAccountSecret(account.id || account.Id, secret);
     form.reset();
+    const accountId = account.id || account.Id;
+    const provider = account.providerId || account.ProviderId;
+    let tested = null;
+    try {
+      tested = await API.testProviderAccount(accountId, provider);
+    } catch (error) {
+      tested = { healthy: false, error: error.message };
+    }
     await this.loadProviderAccounts();
-    this.toast("Encrypted provider credential replaced");
+    this.toggleProviderAccountConfiguration(accountId);
+    const healthy = Boolean(tested?.healthy ?? tested?.success);
+    this.toast(healthy ? "Credential saved and connection verified" : `Credential saved, but the connection test failed${tested?.error ? `: ${tested.error}` : ""}`, healthy ? "success" : "error");
+  }
+
+  async testProviderAccount(account) {
+    const id = account.id || account.Id;
+    const provider = account.providerId || account.ProviderId;
+    const testKey = `${id}:account`;
+    this.providerTests = new Set([...this.providerTests, testKey]);
+    try {
+      const result = await API.testProviderAccount(id, provider);
+      await this.loadProviderAccounts();
+      const healthy = Boolean(result.healthy ?? result.success);
+      this.toast(`${providerDisplayName(provider, this.schema?.providers)} connection ${healthy ? "passed" : "failed"}`, healthy ? "success" : "error");
+    } catch (error) {
+      this.toast(error.message, "error");
+    } finally {
+      const next = new Set(this.providerTests); next.delete(testKey); this.providerTests = next;
+    }
   }
 
   async testProviderAccountCapability(accountId, provider, capability) {

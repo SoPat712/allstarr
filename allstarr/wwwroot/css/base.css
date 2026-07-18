@@ -742,21 +742,21 @@ tr:last-child td {
     padding-top: var(--space-2);
 }
 
-.account-health-disclosure {
+.account-health-panel {
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+    padding: var(--space-3) 0;
+    display: grid;
+    gap: var(--space-3);
 }
 
-.account-health-disclosure > summary {
+.account-health-summary {
     display: flex;
     justify-content: space-between;
     gap: var(--space-3);
-    cursor: pointer;
-    padding: var(--space-3) 0;
-    font-weight: 700;
 }
 
-.account-health-disclosure > summary span,
+.account-health-summary span,
 .account-capability small {
     color: var(--text-secondary);
     font-size: 0.8rem;
@@ -766,7 +766,6 @@ tr:last-child td {
 .account-capability-list {
     display: grid;
     gap: var(--space-2);
-    padding-bottom: var(--space-3);
 }
 
 .account-capability {
@@ -781,8 +780,10 @@ tr:last-child td {
     gap: 2px;
 }
 
-.credential-editor[open] {
-    flex-basis: 100%;
+.credential-editor {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
+    animation: modal-in 140ms ease-out;
 }
 
 .danger-text {

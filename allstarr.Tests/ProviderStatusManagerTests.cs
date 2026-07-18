@@ -249,6 +249,47 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
+    public async Task ManagedLastFmAccount_UsesItsEncryptedAccountFieldsForProbe()
+    {
+        var manager = CreateManager(
+            new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(
+                new QueuedResponseHandler(Json(HttpStatusCode.OK, "{\"user\":{\"name\":\"listener\"}}"))));
+        var accountId = Guid.CreateVersion7();
+        var secrets = new Dictionary<string, string>
+        {
+            ["apikey"] = "api-key",
+            ["sharedsecret"] = "shared-secret",
+            ["sessionkey"] = "session-key"
+        };
+
+        var status = manager.GetManagedStatus("lastfm", ProviderCapabilities.Scrobbling, accountId, secrets);
+        var tested = await manager.TestManagedProviderCapabilityAsync(
+            "lastfm", ProviderCapabilities.Scrobbling, accountId, secrets);
+
+        Assert.Equal(ProviderConfigurationState.Configured, status.Configuration);
+        Assert.Equal(ProviderHealthState.Healthy, tested.Health);
+        Assert.True(tested.IsReady);
+    }
+
+    [Fact]
+    public async Task ManagedListenBrainzAccount_ValidatesItsOwnToken()
+    {
+        var manager = CreateManager(
+            new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(
+                new QueuedResponseHandler(Json(HttpStatusCode.OK, "{\"valid\":true,\"user_name\":\"listener\"}"))));
+        var accountId = Guid.CreateVersion7();
+        var secrets = new Dictionary<string, string> { ["token"] = "user-token" };
+
+        var tested = await manager.TestManagedProviderCapabilityAsync(
+            "listenbrainz", ProviderCapabilities.Scrobbling, accountId, secrets);
+
+        Assert.Equal(ProviderHealthState.Healthy, tested.Health);
+        Assert.True(tested.IsReady);
+    }
+
+    [Fact]
     public async Task ManagedAccountStatus_PreservesCapabilityFailureReason()
     {
         var manager = CreateManager(
