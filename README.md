@@ -51,7 +51,7 @@ the AIO files are mounted.
 Apple downloads are optional and are not bundled with Standard or AIO. The Apple profile builds the repository's
 small gateway with GAMDL 3.8.2 and the official wrapper-v2 0.0.2 source. Allstarr never supplies Apple binaries, so
 the operator provides one legally obtained compatible APK/APKM and runs
-`./allstarr.sh prepare-apple /path/to/file.apkm`. Removing the profile disables Apple download routes without
+`./allstarr.sh install-apple /path/to/file.apkm`. Removing the profile disables Apple download routes without
 changing Postgres, media, or the persistent wrapper login session. See
 [Apple download provider setup](docs/operations/apple-download-provider.md).
 

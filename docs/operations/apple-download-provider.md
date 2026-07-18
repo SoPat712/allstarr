@@ -14,8 +14,7 @@ Obtain Apple Music for Android legally from a source you are permitted to use. A
 redistribute, or retain that package. Then run:
 
 ```bash
-./allstarr.sh prepare-apple /private/path/apple-music.apkm x86_64
-./allstarr.sh up
+./allstarr.sh install-apple /private/path/apple-music.apkm x86_64
 ```
 
 Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
@@ -24,7 +23,7 @@ Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
 An old installation's archived libraries can be reused only when they pass the official hash lock:
 
 ```bash
-./allstarr.sh prepare-apple /backup/rootfs/system/lib64 x86_64
+./allstarr.sh install-apple /backup/rootfs/system/lib64 x86_64
 ```
 
 The controller clones official wrapper-v2 tag `0.0.2`, verifies its full locked commit, stages the official
@@ -101,7 +100,8 @@ Apply deployment changes through the saved profile:
 ```
 
 For later application and gateway updates, use `./allstarr.sh update`. It preserves the Apple profile and its
-session volumes. Run `prepare-apple` again only when the verified wrapper inputs need to change.
+session volumes. Run `prepare-apple` again only when the verified wrapper inputs need to change; use
+`install-apple` when you want that verification, build, and startup handled in one command.
 
 Use the dashboard to check the provider state, finish login or 2FA if the compatible gateway supports that flow,
 and test the capabilities you intend to route. A reachable container is not enough. Allstarr should select only the

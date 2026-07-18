@@ -38,8 +38,7 @@ Apple needs a legally obtained Apple Music Android 3.6.0-beta build 1109 APK/APK
 library against the official wrapper-v2 lock before it will build:
 
 ```bash
-./allstarr.sh prepare-apple /private/path/apple-music.apkm x86_64
-./allstarr.sh up
+./allstarr.sh install-apple /private/path/apple-music.apkm x86_64
 ```
 
 Use `arm64-v8a` instead of `x86_64` on an ARM64 Docker host. Finish Apple login and 2FA in the WebUI. The Apple
@@ -49,7 +48,7 @@ An existing installation can pass its staged library directory instead of the AP
 must pass before the profile is enabled:
 
 ```bash
-./allstarr.sh prepare-apple /backup/apple_libs x86_64
+./allstarr.sh install-apple /backup/apple_libs x86_64
 ```
 
 The AIO override remains an offline first-party extension bundle. It is not an everything-in-one image and does not
@@ -85,7 +84,7 @@ window followed by new events.
 ```
 
 Disabling a profile removes its containers on the next `up` but keeps its volumes and durable Allstarr settings.
-Re-enable Spotify lyrics with `enable spotify-lyrics`; re-enable Apple by running `prepare-apple` again or adding `apple` to the
+Re-enable Spotify lyrics with `enable spotify-lyrics`; re-enable Apple by running `install-apple` again or adding `apple` to the
 local `.allstarr-profiles` file after the locked wrapper context is present.
 
 ## Adding another sidecar

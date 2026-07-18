@@ -2608,8 +2608,12 @@ class AllstarrApp extends LitElement {
       `;
     }
 
-    const providers = asArray(this.schema?.providers).filter((provider) =>
-      !ACCOUNT_MANAGED_PROVIDERS.has(String(provider.id || provider.Id || "").toLowerCase()));
+    const providers = asArray(this.schema?.providers).filter((provider) => {
+      const providerId = String(provider.id || provider.Id || "").toLowerCase();
+      return !ACCOUNT_MANAGED_PROVIDERS.has(providerId) && providerId !== "apple-download";
+    });
+    const gateways = asArray(this.schema?.providers).filter((provider) =>
+      String(provider.id || provider.Id || "").toLowerCase() === "apple-download");
     const providerGroups = [
       ["healthy", "Observed healthy", providers.filter((provider) => this.providerStatus(provider) === "healthy")],
       ["available", "Available but untested", providers.filter((provider) => ["unknown", "available", "partial_config"].includes(this.providerStatus(provider)))],
@@ -2625,6 +2629,7 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
         ${this.renderProviderAccounts()}
+        ${gateways.map((provider) => this.renderProviderSection("gateways", "Optional gateways", [provider]))}
         ${providerGroups.map(([id, label, items]) => this.renderProviderSection(id, label, items))}
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
@@ -2995,7 +3000,7 @@ class AllstarrApp extends LitElement {
             ` : nothing}
             <div class="provider-title">
               <strong>${provider.name}</strong>
-              <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
+              <span>${provider.id === "apple-download" ? "Optional gateway" : provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
             </div>
           </div>
           <span class="status-chip ${status}">${titleCase(status)}</span>
@@ -3113,9 +3118,7 @@ class AllstarrApp extends LitElement {
           <div class="form-row"><label>Apple ID</label><input name="username" autocomplete="username" required></div>
           <div class="form-row"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
           <button class="primary">Start login</button>
-        </form>` : !gatewayReady ? html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>The Apple Android package must be prepared on the Docker host because the main Allstarr container has no Docker or host-file access.</p><pre><code>./allstarr.sh prepare-apple /path/to/apple-music.apkm x86_64
-./allstarr.sh up
-./allstarr.sh status</code></pre></div>` : html`<div class="callout success"><strong>Apple Music connected</strong><p>The external gateway and saved Apple session are ready.</p></div>`}
+        </form>` : !gatewayReady ? html`<div class="callout warning"><strong>Apple gateway setup required</strong><p>The Apple Android package must be prepared on the Docker host because the main Allstarr container has no Docker or host-file access.</p><pre><code>./allstarr.sh install-apple /path/to/apple-music.apkm x86_64</code></pre></div>` : html`<div class="callout success"><strong>Apple Music connected</strong><p>The external gateway and saved Apple session are ready.</p></div>`}
         ${isAwaitingApple2fa({ ...status, state: loginState }) || result?.state === "warning" ? html`
           <form class="form-stack compact-form" @submit=${this.submitApple2fa}>
             <div class="form-row"><label>2FA code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" required></div>
@@ -4075,7 +4078,7 @@ class AllstarrApp extends LitElement {
         title: "Apple download gateway",
         text: "The endpoint URL is imported as a runtime setting. Prepare the optional Apple profile with legally obtained Apple Music Android libraries, then verify it under Sources > Apple download. Do not point Allstarr directly at wrapper-v2.",
         guide: "https://github.com/SoPat712/allstarr/blob/dev/docs/operations/apple-download-provider.md",
-        command: "./allstarr.sh prepare-apple /path/to/apple-music.apkm x86_64\n./allstarr.sh up\n./allstarr.sh status\n# Then open Sources > Apple download and finish login",
+        command: "./allstarr.sh install-apple /path/to/apple-music.apkm x86_64\n# Then open Sources > Apple download and finish login",
       });
     }
     return services;

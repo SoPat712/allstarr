@@ -20,6 +20,7 @@ namespace allstarr.Services.Common;
 public class ProviderStatusManager
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
+    private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
     private static readonly (string Provider, string Capability)[] KnownCapabilities =
     [
         ("spotify", ProviderCapabilities.Playlist),
@@ -461,19 +462,38 @@ public class ProviderStatusManager
         CancellationToken cancellationToken = default)
     {
         var normalized = Normalize(provider);
-        var capability = GetCompatibilityCapability(normalized);
-        if (capability == null)
+        var capabilities = KnownCapabilities
+            .Where(item => item.Provider == normalized && HasProbe(item.Provider, item.Capability))
+            .Select(item => item.Capability)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (capabilities.Length == 0)
         {
             return false;
         }
 
-        var result = await TestManagedProviderCapabilityAsync(
-            normalized,
-            capability,
-            providerAccountId,
-            accountSecrets,
-            cancellationToken);
-        return result.Health == ProviderHealthState.Healthy;
+        var attempted = false;
+        var healthy = true;
+        foreach (var capability in capabilities)
+        {
+            var baseline = GetManagedStatus(normalized, capability, providerAccountId, accountSecrets);
+            if (!baseline.IsSupported || !baseline.IsEnabled ||
+                baseline.Configuration == ProviderConfigurationState.NeedsConfiguration)
+            {
+                continue;
+            }
+
+            attempted = true;
+            var result = await TestManagedProviderCapabilityAsync(
+                normalized,
+                capability,
+                providerAccountId,
+                accountSecrets,
+                cancellationToken);
+            healthy &= result.Health == ProviderHealthState.Healthy;
+        }
+
+        return attempted && healthy;
     }
 
     /// <summary>
@@ -651,7 +671,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("squidwtf", ProviderCapabilities.Metadata) => true,
-            ("spotify", ProviderCapabilities.Playlist) => true,
+            ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lyricsplus", ProviderCapabilities.Lyrics) => true,
             ("lrclib", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
@@ -671,6 +691,7 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist) => await TestSpotifyPlaylistAsync(
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie,
                 cancellationToken),
+            ("spotify", ProviderCapabilities.Lyrics) => await TestSpotifyLyricsAsync(cancellationToken),
             ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestAppleDownloadAsync(capability, cancellationToken),
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestDeezerMetadataAsync(cancellationToken),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestDeezerAccountAsync(
@@ -788,6 +809,27 @@ public class ProviderStatusManager
         using var document = JsonDocument.Parse(json);
         return document.RootElement.TryGetProperty("accessToken", out var token) &&
                !string.IsNullOrWhiteSpace(token.GetString());
+    }
+
+    private async Task<bool> TestSpotifyLyricsAsync(CancellationToken cancellationToken)
+    {
+        if (!IsConfiguredValue(_spotifySettings.LyricsApiUrl))
+        {
+            return false;
+        }
+
+        var url = $"{_spotifySettings.LyricsApiUrl!.TrimEnd('/')}/?trackid={SpotifyLyricsTestTrackId}&format=id3";
+        using var client = _httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return !(document.RootElement.TryGetProperty("error", out var error) &&
+                 error.ValueKind == JsonValueKind.True);
     }
 
     private async Task<bool> TestAppleDownloadAsync(string capability, CancellationToken cancellationToken)

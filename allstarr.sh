@@ -120,6 +120,11 @@ prepare_apple() {
   echo "Apple provider source, verified native libraries, and local images are ready. Run: ./allstarr.sh up"
 }
 
+install_apple() {
+  prepare_apple "$@"
+  up
+}
+
 up() {
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
@@ -166,6 +171,7 @@ Usage: ./allstarr.sh COMMAND
   enable spotify-lyrics|aio         Add an optional saved profile
   disable spotify-lyrics|apple|aio  Remove an optional profile on next up
   prepare-apple INPUT [ARCH]        Verify an APK/APKM or staged libs; enable Apple
+  install-apple INPUT [ARCH]        Verify, build, and start the Apple gateway
   down                              Stop containers without deleting data
 
 The deployment mode is saved in .allstarr-mode. Release mode pulls reviewed
@@ -186,6 +192,7 @@ case "$command" in
     if [[ $# -eq 0 ]]; then deployment_mode; else set_mode "$1"; fi
     ;;
   prepare-apple) prepare_apple "$@" ;;
+  install-apple) install_apple "$@" ;;
   up) up ;;
   update) update ;;
   status) compose_args; echo "Mode: $(deployment_mode)"; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;

@@ -290,6 +290,34 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
+    public async Task SpotifyAccount_ProbesPlaylistAndLyricsSidecar()
+    {
+        var manager = CreateManager(
+            new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(
+                new QueuedResponseHandler(
+                    Json(HttpStatusCode.OK, "{\"accessToken\":\"access-token\"}"),
+                    Json(HttpStatusCode.OK, "{\"error\":false,\"syncType\":\"LINE_SYNCED\",\"lines\":[]}"))),
+            spotifySettings: new SpotifyApiSettings
+            {
+                Enabled = true,
+                SessionCookie = "deployment-cookie",
+                LyricsApiUrl = "http://lyrics-sidecar:8080"
+            });
+        var accountId = Guid.CreateVersion7();
+        var secrets = new Dictionary<string, string> { ["sessioncookie"] = "account-cookie" };
+
+        Assert.True(manager.CanTestCapability("spotify", ProviderCapabilities.Lyrics));
+        Assert.True(await manager.TestManagedProviderConnectionAsync("spotify", accountId, secrets));
+        Assert.Equal(
+            ProviderHealthState.Healthy,
+            manager.GetManagedStatus("spotify", ProviderCapabilities.Playlist, accountId, secrets).Health);
+        Assert.Equal(
+            ProviderHealthState.Healthy,
+            manager.GetManagedStatus("spotify", ProviderCapabilities.Lyrics, accountId, secrets).Health);
+    }
+
+    [Fact]
     public async Task ManagedAccountStatus_PreservesCapabilityFailureReason()
     {
         var manager = CreateManager(
