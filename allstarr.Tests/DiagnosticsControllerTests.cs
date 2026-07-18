@@ -6,12 +6,14 @@ using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
 using allstarr.Services.Spotify;
 using allstarr.Services.SquidWTF;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -45,6 +47,66 @@ public sealed class DiagnosticsControllerTests : IDisposable
         Assert.Contains("Configured", json, StringComparison.Ordinal);
         Assert.DoesNotContain(privateJellyfinUrl, json, StringComparison.Ordinal);
         Assert.DoesNotContain("private-jellyfin.internal", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MediaProbe_VerifiesMetadataAndArtworkThroughInternalProxy()
+    {
+        var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri?.AbsolutePath.EndsWith("/Images/Primary", StringComparison.Ordinal) == true)
+            {
+                var imageResponse = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([0xFF, 0xD8, 0xFF, 0xD9])
+                };
+                imageResponse.Content.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+                return imageResponse;
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"Items\":[{\"Id\":\"track-1\",\"ImageTags\":{\"Primary\":\"art-v1\"}}]}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+        var settings = new JellyfinSettings
+        {
+            Url = "http://jellyfin.example.test:8096",
+            ApiKey = "server-api-key",
+            UserId = "user-1"
+        };
+        var httpClientFactory = new Mock<IHttpClientFactory>();
+        httpClientFactory.Setup(factory => factory.CreateClient(It.IsAny<string>()))
+            .Returns(new HttpClient(handler));
+        var cache = new RedisCacheService(
+            Options.Create(new RedisSettings { Enabled = false }),
+            NullLogger<RedisCacheService>.Instance);
+        var proxy = new JellyfinProxyService(
+            httpClientFactory.Object,
+            Options.Create(settings),
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            NullLogger<JellyfinProxyService>.Instance,
+            cache,
+            new ConfigurationBuilder().Build());
+        var services = new ServiceCollection()
+            .AddSingleton(proxy)
+            .BuildServiceProvider();
+        var controller = CreateController([], handler, settings, services);
+
+        var result = Assert.IsType<OkObjectResult>(
+            await controller.ProbeMediaPipeline());
+        var json = JsonSerializer.Serialize(result.Value);
+
+        Assert.Contains("media_pipeline_healthy", json, StringComparison.Ordinal);
+        Assert.Contains("image/jpeg", json, StringComparison.Ordinal);
+        Assert.Contains("\"bytes\":4", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("track-1", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("server-api-key", json, StringComparison.Ordinal);
+        Assert.Equal(2, handler.RequestCount);
     }
 
     [Fact]
@@ -204,7 +266,8 @@ public sealed class DiagnosticsControllerTests : IDisposable
     private DiagnosticsController CreateController(
         List<string> squidWtfApiUrls,
         HttpMessageHandler handler,
-        JellyfinSettings? jellyfinSettings = null)
+        JellyfinSettings? jellyfinSettings = null,
+        IServiceProvider? requestServices = null)
     {
         var environment = new Mock<IWebHostEnvironment>();
         environment.SetupGet(item => item.EnvironmentName).Returns("Development");
@@ -250,7 +313,10 @@ public sealed class DiagnosticsControllerTests : IDisposable
         {
             ControllerContext = new ControllerContext
             {
-                HttpContext = new DefaultHttpContext()
+                HttpContext = new DefaultHttpContext
+                {
+                    RequestServices = requestServices ?? new ServiceCollection().BuildServiceProvider()
+                }
             }
         };
         return controller;

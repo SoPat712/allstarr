@@ -158,6 +158,144 @@ public class DiagnosticsController : ControllerBase
         return null;
     }
 
+    [HttpGet("media-probe")]
+    public async Task<IActionResult> ProbeMediaPipeline(CancellationToken cancellationToken = default)
+    {
+        var backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
+        if (!backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase))
+        {
+            return Ok(new
+            {
+                success = false,
+                backend = backendType,
+                code = "probe_not_supported",
+                message = "The media probe currently supports Jellyfin backends."
+            });
+        }
+
+        var proxy = HttpContext.RequestServices.GetService<JellyfinProxyService>();
+        if (proxy == null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                success = false,
+                backend = "Jellyfin",
+                code = "proxy_unavailable",
+                message = "The Jellyfin proxy service is unavailable."
+            });
+        }
+
+        try
+        {
+            var itemsEndpoint = string.IsNullOrWhiteSpace(_jellyfinSettings.UserId)
+                ? "Items"
+                : $"Users/{Uri.EscapeDataString(_jellyfinSettings.UserId)}/Items";
+            var (itemsDocument, statusCode) = await proxy.GetJsonAsyncInternal(
+                itemsEndpoint,
+                new Dictionary<string, string>
+                {
+                    ["Recursive"] = "true",
+                    ["IncludeItemTypes"] = "Audio",
+                    ["Limit"] = "25",
+                    ["Fields"] = "PrimaryImageAspectRatio,ProviderIds"
+                });
+            using (itemsDocument)
+            {
+                if (statusCode < 200 || statusCode >= 300 || itemsDocument == null)
+                {
+                    return StatusCode(StatusCodes.Status502BadGateway, new
+                    {
+                        success = false,
+                        backend = "Jellyfin",
+                        code = "metadata_probe_failed",
+                        metadataStatus = statusCode,
+                        message = "Jellyfin did not return library metadata."
+                    });
+                }
+
+                if (!itemsDocument.RootElement.TryGetProperty("Items", out var items) ||
+                    items.ValueKind != System.Text.Json.JsonValueKind.Array)
+                {
+                    return StatusCode(StatusCodes.Status502BadGateway, new
+                    {
+                        success = false,
+                        backend = "Jellyfin",
+                        code = "metadata_shape_invalid",
+                        metadataStatus = statusCode,
+                        message = "Jellyfin returned an unexpected library response."
+                    });
+                }
+
+                var candidate = items.EnumerateArray().FirstOrDefault(item =>
+                    item.TryGetProperty("Id", out var id) &&
+                    id.ValueKind == System.Text.Json.JsonValueKind.String &&
+                    item.TryGetProperty("ImageTags", out var tags) &&
+                    tags.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                    tags.TryGetProperty("Primary", out var primary) &&
+                    primary.ValueKind == System.Text.Json.JsonValueKind.String);
+
+                if (candidate.ValueKind == System.Text.Json.JsonValueKind.Undefined)
+                {
+                    return Ok(new
+                    {
+                        success = false,
+                        backend = "Jellyfin",
+                        code = "no_artwork_candidate",
+                        metadataStatus = statusCode,
+                        checkedItems = items.GetArrayLength(),
+                        message = "No audio item with primary artwork was found in the probe sample."
+                    });
+                }
+
+                var itemId = candidate.GetProperty("Id").GetString()!;
+                var imageTag = candidate.GetProperty("ImageTags").GetProperty("Primary").GetString();
+                var (imageBytes, contentType) = await proxy.GetBytesAsync(
+                    $"Items/{Uri.EscapeDataString(itemId)}/Images/Primary",
+                    new Dictionary<string, string>
+                    {
+                        ["maxWidth"] = "300",
+                        ["maxHeight"] = "300",
+                        ["tag"] = imageTag ?? string.Empty
+                    });
+                var validImage = imageBytes is { Length: > 0 } &&
+                                 contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true;
+
+                return Ok(new
+                {
+                    success = validImage,
+                    backend = "Jellyfin",
+                    code = validImage ? "media_pipeline_healthy" : "artwork_probe_failed",
+                    metadataStatus = statusCode,
+                    checkedItems = items.GetArrayLength(),
+                    artwork = new
+                    {
+                        available = validImage,
+                        contentType = validImage ? contentType : null,
+                        bytes = imageBytes?.Length ?? 0
+                    },
+                    message = validImage
+                        ? "Jellyfin metadata and album artwork are available through Allstarr."
+                        : "Jellyfin metadata worked, but Allstarr could not retrieve the selected artwork."
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Jellyfin media pipeline probe failed");
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                success = false,
+                backend = "Jellyfin",
+                code = "media_probe_failed",
+                message = "The Jellyfin media pipeline probe failed."
+            });
+        }
+    }
+
     /// <summary>
     /// Get a random SquidWTF base URL for searching (round-robin)
     /// </summary>
