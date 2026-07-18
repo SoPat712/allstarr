@@ -1527,6 +1527,39 @@ fieldset.form-row > label small {
     padding: var(--space-3) 0;
 }
 
+.playlist-name-button {
+    border: 0;
+    background: transparent;
+    color: var(--accent-strong);
+    font: inherit;
+    font-weight: 700;
+    padding: 0;
+    text-align: left;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--accent-strong), transparent 58%);
+    text-underline-offset: 0.2em;
+}
+
+.injected-playlist-details {
+    margin-block: var(--space-4);
+}
+
+.injected-track-row {
+    grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+    align-items: center;
+}
+
+.track-position {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.runtime-capability {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
 .hidden {
     display: none !important;
 }

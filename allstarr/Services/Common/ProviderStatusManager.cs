@@ -180,6 +180,9 @@ public class ProviderStatusManager
         return GetStatusCore(key, BuildBaselineStatus(key));
     }
 
+    public bool CanTestCapability(string provider, string capability) =>
+        HasProbe(Normalize(provider), Normalize(capability));
+
     private ProviderRuntimeStatus GetStatusCore(
         ProviderRuntimeStatusKey key,
         ProviderRuntimeStatus baseline)
@@ -637,6 +640,8 @@ public class ProviderStatusManager
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("squidwtf", ProviderCapabilities.Metadata) => true,
             ("spotify", ProviderCapabilities.Playlist) => true,
+            ("lyricsplus", ProviderCapabilities.Lyrics) => true,
+            ("lrclib", ProviderCapabilities.Lyrics) => true,
             _ => false
         };
     }
@@ -663,8 +668,28 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken),
             ("squidwtf", ProviderCapabilities.Metadata) => await TestSquidWtfAsync(cancellationToken),
+            ("lyricsplus", ProviderCapabilities.Lyrics) => await TestLyricsPlusAsync(cancellationToken),
+            ("lrclib", ProviderCapabilities.Lyrics) => await TestLrclibAsync(cancellationToken),
             _ => false
         };
+    }
+
+    private async Task<bool> TestLyricsPlusAsync(CancellationToken cancellationToken)
+    {
+        const string url = "https://lyricsplus.prjktla.workers.dev/v2/lyrics/get?title=Never%20Gonna%20Give%20You%20Up&artist=Rick%20Astley&album=Whenever%20You%20Need%20Somebody&duration=213";
+        using var client = _httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
+        return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound;
+    }
+
+    private async Task<bool> TestLrclibAsync(CancellationToken cancellationToken)
+    {
+        const string url = "https://lrclib.net/api/get?artist_name=Rick%20Astley&track_name=Never%20Gonna%20Give%20You%20Up&album_name=Whenever%20You%20Need%20Somebody&duration=213";
+        using var client = _httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
+        return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound;
     }
 
     private async Task<bool> TestSpotifyPlaylistAsync(

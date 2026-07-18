@@ -151,6 +151,9 @@ public sealed class AdminUiProviderRuntimeCapability
     [JsonPropertyName("canAttempt")]
     public bool CanAttempt { get; set; }
 
+    [JsonPropertyName("canTest")]
+    public bool CanTest { get; set; }
+
     [JsonPropertyName("testedAt")]
     public DateTimeOffset? TestedAt { get; set; }
 

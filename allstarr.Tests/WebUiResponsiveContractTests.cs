@@ -194,7 +194,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("${showBrandMark ? html`", script, StringComparison.Ordinal);
         Assert.Contains("!providersWithoutCardMark.has(normalizedProviderId)", script, StringComparison.Ordinal);
         Assert.Contains("const hasEditableConfig = asArray(provider.configSchema).length > 0;", script, StringComparison.Ordinal);
-        Assert.Contains("${status !== \"disabled\" && hasEditableConfig ? html`", script, StringComparison.Ordinal);
+        Assert.Contains("status !== \"disabled\" && hasEditableConfig ? html`", script, StringComparison.Ordinal);
+        Assert.Contains("Manage accounts", script, StringComparison.Ordinal);
         Assert.Contains("const open = hasEditableConfig &&", script, StringComparison.Ordinal);
     }
 

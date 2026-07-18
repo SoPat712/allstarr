@@ -6,6 +6,7 @@ const SETUP_GUIDE_DISMISSED_KEY = "allstarr-setup-guide-dismissed";
 const SETUP_GUIDE_STEP_KEY = "allstarr-setup-guide-step";
 const SETUP_GUIDE_LAST_STEP = 4;
 const REDACTION_MODE_KEY = "allstarr-sharing-redaction";
+const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz"]);
 
 function normalizeRoute(hash = window.location.hash) {
   const route = hash.replace(/^#/, "") || DEFAULT_ROUTE;
@@ -371,6 +372,12 @@ const API = {
       { method: "POST" },
       "Failed to test provider capability",
     ),
+  testProviderCapability: (provider, capability) =>
+    requestJson(
+      `/api/admin/providers/test/${encodeURIComponent(provider)}/${encodeURIComponent(capability)}`,
+      { method: "POST" },
+      "Failed to test provider capability",
+    ),
   createProviderAccount: (payload) =>
     requestJson("/api/admin/provider-accounts", jsonBody(payload), "Failed to create provider account"),
   replaceProviderAccountSecret: (id, secret) =>
@@ -473,6 +480,8 @@ class AllstarrApp extends LitElement {
     playlistLinks: { state: true },
     playlistLinkPreview: { state: true },
     selectedPlaylistLinkId: { state: true },
+    selectedInjectedPlaylist: { state: true },
+    injectedPlaylistDetails: { state: true },
     downloads: { state: true },
     jobs: { state: true },
     providerAccounts: { state: true },
@@ -528,6 +537,8 @@ class AllstarrApp extends LitElement {
     this.playlistLinks = [];
     this.playlistLinkPreview = null;
     this.selectedPlaylistLinkId = "";
+    this.selectedInjectedPlaylist = "";
+    this.injectedPlaylistDetails = null;
     this.downloads = null;
     this.jobs = [];
     this.providerAccounts = [];
@@ -2054,13 +2065,14 @@ class AllstarrApp extends LitElement {
           </form>
         </div>
       </div>
+      ${this.renderInjectedPlaylistDetails()}
       <div class="table-wrap">
         <table>
           <thead><tr><th>Name</th><th>Tracks</th><th>Local</th><th>External</th><th>Schedule</th><th></th></tr></thead>
           <tbody>
             ${playlists.length ? playlists.map((playlist) => html`
               <tr>
-                <td><strong>${playlist.name}</strong><div class="muted mono">${playlist.id}</div></td>
+                <td><button class="playlist-name-button" @click=${() => this.openInjectedPlaylist(playlist.name)}>${playlist.name}</button><div class="muted mono">${playlist.id}</div></td>
                 <td>${display(playlist.trackCount)}</td>
                 <td>${display(playlist.localTracks)}</td>
                 <td>${display(playlist.externalTracks)}</td>
@@ -2077,6 +2089,36 @@ class AllstarrApp extends LitElement {
         </table>
       </div>
     `;
+  }
+
+  async openInjectedPlaylist(name) {
+    this.selectedInjectedPlaylist = String(name || "");
+    this.injectedPlaylistDetails = null;
+    try {
+      this.injectedPlaylistDetails = await API.playlistTracks(this.selectedInjectedPlaylist);
+    } catch (error) {
+      this.selectedInjectedPlaylist = "";
+      this.toast(error.message, "error");
+    }
+  }
+
+  renderInjectedPlaylistDetails() {
+    if (!this.selectedInjectedPlaylist) return nothing;
+    const details = this.injectedPlaylistDetails;
+    const tracks = asArray(details?.tracks || details?.Tracks);
+    return html`<div class="panel injected-playlist-details">
+      <div class="section-heading">
+        <div><h3>${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks..."}</p></div>
+        <button class="ghost" @click=${() => { this.selectedInjectedPlaylist = ""; this.injectedPlaylistDetails = null; }}>Close</button>
+      </div>
+      ${details ? html`<ol class="playlist-preview-list">
+        ${tracks.length ? tracks.map((track, index) => html`<li class="playlist-preview-entry injected-track-row">
+          <span class="track-position">${display(track.position ?? index + 1)}</span>
+          <div><strong>${display(track.title)}</strong><div class="muted">${asArray(track.artists).join(", ") || "Unknown artist"}${track.album ? ` · ${track.album}` : ""}</div></div>
+          <span class="status-chip ${track.isLocal === true ? "configured" : track.isLocal === false ? "unknown" : "needs_config"}">${track.isLocal === true ? "Local" : track.isLocal === false ? display(track.externalProvider, "External") : "Missing"}</span>
+        </li>`) : html`<li class="empty">This playlist has no tracks.</li>`}
+      </ol>` : html`<div class="empty">Loading playlist tracks...</div>`}
+    </div>`;
   }
 
   addInjectedPlaylist = async (event) => {
@@ -2468,7 +2510,7 @@ class AllstarrApp extends LitElement {
     const canManageAll = administrator && managementMode !== "UserManaged";
     const canManage = canManageAll || managementMode !== "AdminManaged";
     return html`
-      <div class="panel">
+      <div class="panel" id="provider-accounts" tabindex="-1">
         <div class="section-heading">
           <div>
             <h3>Provider accounts</h3>
@@ -2527,14 +2569,14 @@ class AllstarrApp extends LitElement {
                         return html`<div class="activity-item">
                           <div>
                             <strong>${titleCase(capabilityId)}</strong>
-                            <div class="muted">${titleCase(configuration)} · ${titleCase(health)}${capability.testedAt ? ` · ${formatDate(capability.testedAt)}` : ""}</div>
+                            <div class="muted">${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Configured" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}${capability.testedAt ? ` · ${formatDate(capability.testedAt)}` : ""}</div>
                           </div>
                           <div class="actions">
-                            <span class="status-chip ${stateClass}">${titleCase(health)}</span>
+                            <span class="status-chip ${stateClass}">${health === "unknown" ? "Not tested" : titleCase(health)}</span>
                             <button
-                              ?disabled=${testing || !enabled}
+                              ?disabled=${testing}
                               @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}
-                            >${testing ? "Testing..." : "Test"}</button>
+                            >${testing ? "Testing..." : enabled ? "Test" : "Test before enabling"}</button>
                           </div>
                         </div>`;
                       })}
@@ -2675,6 +2717,14 @@ class AllstarrApp extends LitElement {
   }
 
   providerStatus(provider) {
+    const providerId = String(provider.id || provider.Id || "").toLowerCase();
+    if (ACCOUNT_MANAGED_PROVIDERS.has(providerId)) {
+      const accounts = asArray(this.providerAccounts).filter((account) =>
+        String(account.providerId || account.ProviderId).toLowerCase() === providerId);
+      if (!accounts.some((account) => Boolean(account.enabled ?? account.Enabled))) {
+        return "disabled";
+      }
+    }
     const accountConfigured = asArray(this.providerAccounts).some((account) => {
       const secret = account.secret || account.Secret || {};
       return String(account.providerId || account.ProviderId).toLowerCase() === String(provider.id).toLowerCase() &&
@@ -2721,6 +2771,9 @@ class AllstarrApp extends LitElement {
   renderProviderCard(provider) {
     const status = this.providerStatus(provider);
     const providerId = String(provider.id || provider.Id || "").toLowerCase();
+    const accountManaged = ACCOUNT_MANAGED_PROVIDERS.has(providerId);
+    const enabledAccount = asArray(this.providerAccounts).some((account) =>
+      String(account.providerId || account.ProviderId).toLowerCase() === providerId && Boolean(account.enabled ?? account.Enabled));
     const logoUrl = providerLogoUrl(provider);
     const showBrandMark = Boolean(logoUrl) || !providersWithoutCardMark.has(providerId);
     const hasEditableConfig = asArray(provider.configSchema).length > 0;
@@ -2745,14 +2798,16 @@ class AllstarrApp extends LitElement {
           <span class="status-chip ${status}">${titleCase(status)}</span>
         </div>
         <div class="row-actions provider-actions">
-          ${status !== "disabled" && hasEditableConfig ? html`
+          ${accountManaged && !enabledAccount ? html`
+            <button @click=${() => this.revealRouteTarget("/sources", "#provider-accounts")}>Manage accounts</button>
+          ` : status !== "disabled" && hasEditableConfig ? html`
             <button @click=${() => {
               const next = new Set(this.providerConfigOpen);
               next.has(providerId) ? next.delete(providerId) : next.add(providerId);
               this.providerConfigOpen = next;
             }}>${open ? "Hide config" : "Configure"}</button>
           ` : nothing}
-          ${status === "disabled" ? html`
+          ${accountManaged && !enabledAccount ? nothing : status === "disabled" ? html`
             <button class="primary" @click=${() => this.setProviderDisabled(provider, false)}>Enable</button>
           ` : html`
             <button class="danger" @click=${() => this.setProviderDisabled(provider, true)}>Disable</button>
@@ -2762,16 +2817,10 @@ class AllstarrApp extends LitElement {
           ${asArray(provider.categories).map((category) => this.renderCapabilityPill(provider, category))}
           ${asArray(provider.notes).map((note) => html`<span class="chip">${note}</span>`)}
         </div>
-        ${asArray(provider.runtimeCapabilities).length ? html`
+        ${accountManaged && !enabledAccount ? html`<p class="muted">Add or enable a provider account above before Allstarr uses this source.</p>` : nothing}
+        ${asArray(provider.runtimeCapabilities).length && !(accountManaged && !enabledAccount) ? html`
           <div class="chip-list capability-list" aria-label="Runtime capability status">
-            ${asArray(provider.runtimeCapabilities).map((capability) => html`
-              <span
-                class="chip runtime-${capability.health}"
-                title=${capability.reasonCode
-                  ? `${titleCase(capability.reasonCode)}; last tested ${formatDate(capability.testedAt)}`
-                  : `Last tested ${formatDate(capability.testedAt)}`}
-              >${titleCase(capability.id)}: ${titleCase(capability.configuration)} · ${titleCase(capability.health)}</span>
-            `)}
+            ${asArray(provider.runtimeCapabilities).map((capability) => this.renderRuntimeCapability(provider, capability))}
           </div>
         ` : nothing}
         ${open ? html`
@@ -2784,12 +2833,46 @@ class AllstarrApp extends LitElement {
     `;
   }
 
+  renderRuntimeCapability(provider, capability) {
+    const providerId = String(provider.id || provider.Id || "").toLowerCase();
+    const configuration = String(capability.configuration || "needs_configuration");
+    const health = String(capability.health || "unknown");
+    const configurationLabel = configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Configured" : "Needs setup";
+    const healthLabel = health === "unknown" ? "Not tested" : health === "healthy" ? "Healthy" : health === "degraded" ? "Failed" : titleCase(health);
+    const testKey = `global:${providerId}:${capability.id}`;
+    const testing = this.providerTests.has(testKey);
+    return html`<span class="runtime-capability">
+      <span class="chip runtime-${health}" title=${capability.reasonCode ? titleCase(capability.reasonCode) : `Last tested ${formatDate(capability.testedAt)}`}>${titleCase(capability.id)}: ${configurationLabel} · ${healthLabel}</span>
+      ${capability.canTest && capability.canAttempt ? html`<button class="compact" ?disabled=${testing} @click=${() => this.testProviderCapability(providerId, capability.id)}>${testing ? "Testing..." : "Test"}</button>` : nothing}
+    </span>`;
+  }
+
+  async testProviderCapability(provider, capability) {
+    const testKey = `global:${provider}:${capability}`;
+    this.providerTests = new Set([...this.providerTests, testKey]);
+    try {
+      const result = await API.testProviderCapability(provider, capability);
+      await this.loadSchema();
+      this.toast(`${providerDisplayName(provider, this.schema?.providers)} ${titleCase(capability)} test ${result.success ? "passed" : "failed"}`, result.success ? "success" : "error");
+    } catch (error) {
+      this.toast(error.message, "error");
+    } finally {
+      const next = new Set(this.providerTests);
+      next.delete(testKey);
+      this.providerTests = next;
+    }
+  }
+
   renderCapabilityPill(provider, category) {
-    const enabled = this.providerCapabilityEnabled(provider, category);
+    const accountBlocked = ACCOUNT_MANAGED_PROVIDERS.has(String(provider.id || provider.Id || "").toLowerCase()) &&
+      !asArray(this.providerAccounts).some((account) =>
+        String(account.providerId || account.ProviderId).toLowerCase() === String(provider.id || provider.Id || "").toLowerCase() && Boolean(account.enabled ?? account.Enabled));
+    const enabled = !accountBlocked && this.providerCapabilityEnabled(provider, category);
     return html`
       <button
         class="chip capability-pill ${enabled ? "success" : "muted-chip"}"
-        title=${`${enabled ? "Disable" : "Enable"} ${provider.name} for ${category}`}
+        ?disabled=${accountBlocked}
+        title=${accountBlocked ? `Enable a ${provider.name} account first` : `${enabled ? "Disable" : "Enable"} ${provider.name} for ${category}`}
         @click=${() => this.toggleProviderCapability(provider, category, !enabled)}>
         ${titleCase(category)}
       </button>

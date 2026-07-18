@@ -950,7 +950,7 @@ public class ConfigController : ControllerBase
         {
             IReadOnlyDictionary<string, string> accountSecrets =
                 new Dictionary<string, string>(StringComparer.Ordinal);
-            if (account.Enabled && account.SecretReferenceId.HasValue)
+            if (account.SecretReferenceId.HasValue)
             {
                 try
                 {
@@ -1009,16 +1009,40 @@ public class ConfigController : ControllerBase
             return adminCheck;
         }
 
+        var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
+        var normalizedProvider = provider.Trim().ToLowerInvariant();
         if (!accountId.HasValue || accountId == Guid.Empty)
         {
-            return BadRequest(new
+            if (string.IsNullOrWhiteSpace(capability))
             {
-                success = false,
-                error = "Select a managed provider account before testing a capability"
+                return BadRequest(new
+                {
+                    success = false,
+                    error = "Select a capability to test"
+                });
+            }
+
+            var currentGlobal = statusManager.GetStatus(normalizedProvider, capability);
+            if (!currentGlobal.IsSupported || !statusManager.CanTestCapability(normalizedProvider, capability))
+            {
+                return BadRequest(new { success = false, error = "This provider capability has no endpoint probe" });
+            }
+
+            var testedGlobal = await statusManager.TestProviderCapabilityAsync(
+                normalizedProvider,
+                capability,
+                cancellationToken: HttpContext.RequestAborted);
+            return Ok(new
+            {
+                success = testedGlobal.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
+                provider = testedGlobal.Provider,
+                capability = testedGlobal.Capability,
+                health = testedGlobal.Health.ToString().ToLowerInvariant(),
+                testedAt = testedGlobal.TestedAt,
+                reasonCode = testedGlobal.ReasonCode
             });
         }
 
-        var normalizedProvider = provider.Trim().ToLowerInvariant();
         var contextFactory = HttpContext.RequestServices
             .GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(HttpContext.RequestAborted);
@@ -1029,11 +1053,6 @@ public class ConfigController : ControllerBase
             !account.ProviderId.Equals(normalizedProvider, StringComparison.OrdinalIgnoreCase))
         {
             return NotFound(new { success = false, error = "Managed provider account not found" });
-        }
-
-        if (!account.Enabled)
-        {
-            return Conflict(new { success = false, error = "Managed provider account is disabled" });
         }
 
         IReadOnlyDictionary<string, string> accountSecrets;
@@ -1053,7 +1072,6 @@ public class ConfigController : ControllerBase
             });
         }
 
-        var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
         if (string.IsNullOrWhiteSpace(capability))
         {
             var healthy = await statusManager.TestManagedProviderConnectionAsync(

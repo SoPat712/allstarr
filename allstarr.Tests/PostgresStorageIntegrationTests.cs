@@ -393,7 +393,7 @@ public sealed class PostgresStorageIntegrationTests
 
             Assert.True(result.Success);
             Assert.Equal(3, result.SettingsImported);
-            Assert.Equal(1, result.ProviderAccountsCreated);
+            Assert.Equal(2, result.ProviderAccountsCreated);
             await using (var db = await factory.CreateDbContextAsync())
             {
                 var storedSettings = await db.TenantRuntimeSettings.AsNoTracking().ToListAsync();
@@ -406,10 +406,16 @@ public sealed class PostgresStorageIntegrationTests
                     setting.Key == "SpotifyImport:Playlists" &&
                     setting.ValueJson == JsonSerializer.Serialize(
                         "[[\"Browser Mix\",\"spotify-source-id\",\"last\"]]"));
-                var account = Assert.Single(await db.ProviderAccounts.AsNoTracking().ToListAsync());
+                var accounts = await db.ProviderAccounts.AsNoTracking().ToListAsync();
+                Assert.Equal(2, accounts.Count);
+                var account = Assert.Single(accounts, item => item.ProviderId == "deezer");
                 Assert.Equal("deezer", account.ProviderId);
                 Assert.False(account.Enabled);
                 Assert.NotNull(account.SecretReferenceId);
+                var personalAccount = Assert.Single(accounts, item => item.ProviderId == "lastfm");
+                Assert.True(personalAccount.Enabled);
+                Assert.Equal(tenantId, personalAccount.TenantId);
+                Assert.Equal(userId, personalAccount.OwnerUserId);
                 Assert.Single(await db.AuditEvents.AsNoTracking().ToListAsync());
 
                 using var lease = await secrets.OpenAsync(
@@ -428,7 +434,7 @@ public sealed class PostgresStorageIntegrationTests
                 actor);
             Assert.True(replay.AlreadyApplied);
             await using var verify = await factory.CreateDbContextAsync();
-            Assert.Single(await verify.ProviderAccounts.AsNoTracking().ToListAsync());
+            Assert.Equal(2, await verify.ProviderAccounts.AsNoTracking().CountAsync());
             Assert.Single(await verify.AuditEvents.AsNoTracking().ToListAsync());
         }
         finally

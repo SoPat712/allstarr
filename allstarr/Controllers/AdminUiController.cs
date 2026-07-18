@@ -311,7 +311,7 @@ public class AdminUiController : ControllerBase
         return providers;
     }
 
-    private static AdminUiProviderRuntimeCapability ToAdminRuntimeCapability(ProviderRuntimeStatus status) =>
+    private AdminUiProviderRuntimeCapability ToAdminRuntimeCapability(ProviderRuntimeStatus status) =>
         new()
         {
             Id = status.Capability,
@@ -325,6 +325,7 @@ public class AdminUiController : ControllerBase
             Health = status.Health.ToString().ToLowerInvariant(),
             Ready = status.IsReady,
             CanAttempt = status.CanAttempt,
+            CanTest = _providerStatusManager.CanTestCapability(status.Provider, status.Capability),
             TestedAt = status.TestedAt,
             ReasonCode = status.ReasonCode
         };
@@ -369,7 +370,7 @@ public class AdminUiController : ControllerBase
             return "partial_config";
         }
 
-        return "unknown";
+        return "available";
     }
 
     private List<AdminUiPriorityGroup> BuildPriorityGroups() =>

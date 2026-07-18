@@ -289,7 +289,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
     }
 
     [Fact]
-    public async Task ProviderHealthEndpoints_RequireAdministratorSessionAndManagedAccountId()
+    public async Task ProviderHealthEndpoints_RequireAdministratorSessionAndAllowPublicCapabilityProbe()
     {
         var nonAdministrator = CreateController(CreateHttpContextWithSession(isAdmin: false));
         AssertForbidden(await nonAdministrator.GetProvidersStatus());
@@ -299,10 +299,10 @@ public class ConfigControllerAuthorizationTests : IDisposable
             _providerAccountId));
 
         var administrator = CreateController(CreateHttpContextWithSession(isAdmin: true));
-        var missingAccount = Assert.IsType<BadRequestObjectResult>(await administrator.TestProvider(
+        var publicProbe = Assert.IsType<OkObjectResult>(await administrator.TestProvider(
             "deezer",
             ProviderCapabilities.Metadata));
-        Assert.Equal(StatusCodes.Status400BadRequest, missingAccount.StatusCode);
+        Assert.Equal(StatusCodes.Status200OK, publicProbe.StatusCode);
     }
 
     [Fact]
