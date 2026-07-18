@@ -1396,6 +1396,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             {
                 _logger.LogWarning("Playlist {Playlist} already has {Count} matched tracks cached, skipping",
                     playlistName, existingMatched.Count);
+                await EnsureLegacyPlaylistItemsCacheAsync(playlistName, cancellationToken);
                 return;
             }
 
@@ -1496,6 +1497,35 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             _logger.LogInformation("No tracks matched for {Playlist}", playlistName);
         }
+    }
+
+    private async Task EnsureLegacyPlaylistItemsCacheAsync(
+        string playlistName,
+        CancellationToken cancellationToken)
+    {
+        var source = await _cache.GetAsync<SpotifyPlaylist>(
+            CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
+        var retainedMatches = await _cache.GetAsync<List<MatchedTrack>>(
+            CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName));
+        var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
+            item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+
+        if (source?.Tracks is not { Count: > 0 } ||
+            retainedMatches is not { Count: > 0 } ||
+            string.IsNullOrWhiteSpace(playlist?.JellyfinId))
+        {
+            _logger.LogWarning(
+                "Could not rebuild missing player playlist cache for {Playlist}: retained source, ordered matches, or Jellyfin playlist identity is unavailable",
+                playlistName);
+            return;
+        }
+
+        await EnsurePlaylistItemsCacheAsync(
+            playlistName,
+            playlist.JellyfinId,
+            source.Tracks,
+            retainedMatches,
+            cancellationToken);
     }
 
     /// <summary>

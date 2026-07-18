@@ -12,6 +12,9 @@ public sealed class PlaylistItemsRecoveryContractTests
         Assert.Contains("Rebuilding missing player playlist cache", source, StringComparison.Ordinal);
         Assert.Contains("existingMatched ?? []", source, StringComparison.Ordinal);
         Assert.Contains("existingItems is { Count: > 0 }", source, StringComparison.Ordinal);
+        Assert.Contains("EnsureLegacyPlaylistItemsCacheAsync", source, StringComparison.Ordinal);
+        Assert.Contains("BuildSpotifyMatchedTracksKey(playlistName)", source, StringComparison.Ordinal);
+        Assert.Contains("source.Tracks", source, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] segments)
