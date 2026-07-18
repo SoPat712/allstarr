@@ -68,9 +68,9 @@ public sealed class WebUiResponsiveContractTests
         var tokens = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "tokens.css"));
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
-        Assert.Contains("--control-height: 36px;", tokens, StringComparison.Ordinal);
+        Assert.Contains("--control-height: 40px;", tokens, StringComparison.Ordinal);
         Assert.Contains("--surface-control:", tokens, StringComparison.Ordinal);
-        Assert.Contains("padding: 7px 13px;", css, StringComparison.Ordinal);
+        Assert.Contains("padding: 8px 14px;", css, StringComparison.Ordinal);
         Assert.Contains("backdrop-filter: blur(10px)", css, StringComparison.Ordinal);
         Assert.Contains("button.setup-choice", css, StringComparison.Ordinal);
         Assert.Contains(".setup-guide-footer button", css, StringComparison.Ordinal);

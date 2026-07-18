@@ -1567,7 +1567,7 @@ class AllstarrApp extends LitElement {
         <div class="brand">
           <button
             type="button"
-            class="mobile-menu ghost"
+            class="mobile-menu sidebar-close"
             aria-label="Close menu"
             @click=${() => { this.navOpen = false; }}
             @keydown=${(event) => {
@@ -1576,10 +1576,16 @@ class AllstarrApp extends LitElement {
                 this.navOpen = false;
               }
             }}
-          >Close</button>
-          <a class="brand-title" href=${administrator ? "#/home" : "#/sources"}>Allstarr</a>
-          <div class="brand-subtitle">${display(this.status?.version || this.status?.Version, "Media manager")}</div>
-          <span class="status-chip configured">${display(this.schema?.activeBackend || this.config?.backendType)}</span>
+          >×</button>
+          <a class="brand-title" href=${administrator ? "#/home" : "#/sources"}>
+            <span class="brand-mark" aria-hidden="true">A</span>
+            <span><strong>Allstarr</strong><small>Music control center</small></span>
+          </a>
+          <div class="brand-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>${display(this.schema?.activeBackend || this.config?.backendType)}</span>
+            <span class="brand-version">v${display(this.status?.version || this.status?.Version, "—")}</span>
+          </div>
         </div>
         <nav class="nav-list" aria-label="Primary">
           <div class="nav-section">
@@ -1594,13 +1600,7 @@ class AllstarrApp extends LitElement {
             </details>` : nothing}
         </nav>
         <div class="sidebar-footer">
-          <div>Signed in as <strong>${display(this.session?.name || this.session?.Name)}</strong></div>
-          <select aria-label="Theme" .value=${this.theme} @change=${(event) => this.setTheme(event.target.value)}>
-            <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
-          ${administrator ? html`<button class="ghost" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus()]); this.toast("Status refreshed"); }}>Refresh</button>` : nothing}
+          <div class="user-summary"><span class="user-avatar" aria-hidden="true">${display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
           ${administrator ? html`<button class="ghost" aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</button>` : nothing}
           <button class="ghost" @click=${this.logout}>Logout</button>
         </div>
@@ -1619,7 +1619,7 @@ class AllstarrApp extends LitElement {
     const administrator = this.isAdministrator();
     return html`
       <header class="topbar">
-        <div>
+        <div class="topbar-main">
           <button
             type="button"
             class="mobile-menu menu-trigger"
@@ -1638,16 +1638,18 @@ class AllstarrApp extends LitElement {
               <span></span><span></span><span></span>
             </span>
           </button>
-          <h1>${titleCase(zone || "home")}${sub ? html` <span class="muted">/ ${titleCase(sub)}</span>` : nothing}</h1>
-          <div class="topbar-meta">${display(this.schema?.activeBackend || this.config?.backendType, "Backend unknown")}</div>
+          <div class="topbar-title-group">
+            <span class="topbar-eyebrow">Workspace</span>
+            <h1>${titleCase(zone || "home")}${sub ? html` <span>/ ${titleCase(sub)}</span>` : nothing}</h1>
+          </div>
         </div>
         <div class="actions">
-          <select aria-label="Theme" .value=${this.theme} @change=${(event) => this.setTheme(event.target.value)}>
+          <select class="theme-select" aria-label="Theme" .value=${this.theme} @change=${(event) => this.setTheme(event.target.value)}>
             <option value="system">System</option>
             <option value="dark">Dark</option>
             <option value="light">Light</option>
           </select>
-          ${administrator ? html`<button class="ghost" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus()]); this.toast("Status refreshed"); }}>Refresh</button>` : nothing}
+          ${administrator ? html`<button class="refresh-button ghost" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus()]); this.toast("Status refreshed"); }}>Refresh</button>` : nothing}
         </div>
       </header>
     `;
