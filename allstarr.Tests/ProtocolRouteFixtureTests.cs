@@ -297,6 +297,64 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinExternalAlbumImage_ParsesHyphenatedProviderAndReturnsPositiveArtwork()
+    {
+        var artworkBytes = new byte[] { 10, 20, 30, 40 };
+        var observedPaths = new List<string>();
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.GetAlbumAsync(
+                It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin),
+                "apple-musickit",
+                "i.album"))
+            .ReturnsAsync(new Album
+            {
+                Id = "ext-apple-musickit-album-i.album",
+                ExternalProvider = "apple-musickit",
+                ExternalId = "i.album",
+                Title = "Library Album",
+                Artist = "Library Artist",
+                CoverArtUrl = "https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
+                IsLocal = false
+            });
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request =>
+            {
+                observedPaths.Add(request.RequestUri!.PathAndQuery);
+                if (request.RequestUri.AbsolutePath == "/Users/Me")
+                    return Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""");
+                if (request.RequestUri.Host == "is1-ssl.mzstatic.com")
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new ByteArrayContent(artworkBytes)
+                        {
+                            Headers = { ContentType = new("image/jpeg") }
+                        }
+                    };
+                }
+                throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
+            },
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-apple-musickit-album-i.album/Images/Primary?api_key=fixture-key&tag=revision-1");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        Assert.NotNull(response.Headers.ETag);
+        Assert.Contains(observedPaths, path => path == "/Users/Me?api_key=fixture-key");
+        Assert.Contains(observedPaths, path => path == "/image/thumb/library/1024x1024bb.jpg");
+        gateway.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinLyrics_PreservesLocalFirstFallbackAndNotFoundFixtures()
     {
         using var fixtures = ReadFixture("jellyfin-lyrics.json");

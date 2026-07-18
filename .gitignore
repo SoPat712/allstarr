@@ -71,6 +71,7 @@ obj/
 /.env
 /.env.before-*
 /.allstarr-profiles
+/.allstarr-mode
 /.apple-provider/
 /secrets/
 /allstarr-backups/

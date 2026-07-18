@@ -623,18 +623,26 @@ public class JellyfinProxyService
     /// </summary>
     public async Task<(byte[]? Body, string? ContentType, bool Success)> GetBytesSafeAsync(
         string endpoint,
-        Dictionary<string, string>? queryParams = null)
+        Dictionary<string, string>? queryParams = null,
+        IHeaderDictionary? clientHeaders = null)
     {
         try
         {
-            var result = await GetBytesAsync(endpoint, queryParams);
-            return (result.Body, result.ContentType, true);
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            // 404s are expected for missing images - log at debug level
-            _logger.LogDebug("Image not available for {Endpoint}", endpoint);
-            return (null, null, false);
+            var url = BuildUrl(endpoint, queryParams);
+            using var request = CreateClientGetRequest(
+                url, clientHeaders, out _, out _);
+            using var response = await _httpClient.SendAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                    _logger.LogDebug("Image not available for {Endpoint}", endpoint);
+                else
+                    _logger.LogWarning("Image request for {Endpoint} returned {StatusCode}", endpoint, response.StatusCode);
+                return (null, null, false);
+            }
+
+            return (await response.Content.ReadAsByteArrayAsync(),
+                response.Content.Headers.ContentType?.ToString(), true);
         }
         catch (Exception ex)
         {
@@ -921,7 +929,8 @@ public class JellyfinProxyService
         string imageType = "Primary",
         int? maxWidth = null,
         int? maxHeight = null,
-        string? imageTag = null)
+        string? imageTag = null,
+        IHeaderDictionary? clientHeaders = null)
     {
         // Build cache key
         var cacheKey = $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}:{imageTag}";
@@ -957,7 +966,8 @@ public class JellyfinProxyService
             queryParams["tag"] = imageTag;
         }
 
-        var result = await GetBytesSafeAsync($"Items/{itemId}/Images/{imageType}", queryParams);
+        var result = await GetBytesSafeAsync(
+            $"Items/{itemId}/Images/{imageType}", queryParams, clientHeaders);
 
         // Cache for 7 days if successful
         if (result.Success && result.Body != null)

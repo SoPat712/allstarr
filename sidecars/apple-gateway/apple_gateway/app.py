@@ -88,6 +88,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         config.prepare()
+        jobs.start()
         yield
         await jobs.close()
         await wrapper_client.close()

@@ -176,7 +176,7 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
     }
 
     [Fact]
-    public void RuntimeLogger_RedactsStructuredSecretsUrlsPathsAndExceptionText()
+    public void RuntimeLogger_RedactsSecretsButKeepsUsefulUrlAndPathContext()
     {
         var output = new StringWriter();
         var error = new StringWriter();
@@ -204,8 +204,8 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
         Assert.Contains("deezer", log, StringComparison.Ordinal);
         Assert.Contains("redacted", log, StringComparison.Ordinal);
         Assert.DoesNotContain("private-token", log, StringComparison.Ordinal);
-        Assert.DoesNotContain("provider.invalid", log, StringComparison.Ordinal);
-        Assert.DoesNotContain("/media/private", log, StringComparison.Ordinal);
+        Assert.Contains("provider.invalid", log, StringComparison.Ordinal);
+        Assert.Contains("/media/private", log, StringComparison.Ordinal);
         Assert.DoesNotContain("request https", log, StringComparison.Ordinal);
         Assert.DoesNotContain("database-secret", log, StringComparison.Ordinal);
     }

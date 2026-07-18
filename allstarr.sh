@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 PROFILE_FILE="$ROOT/.allstarr-profiles"
+MODE_FILE="$ROOT/.allstarr-mode"
 
 die() { echo "allstarr: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
@@ -20,8 +21,21 @@ profiles() {
   printf '%s\n' "${values[@]}" | awk '!seen[$0]++'
 }
 
+deployment_mode() {
+  local mode="release"
+  [[ -f "$MODE_FILE" ]] && read -r mode < "$MODE_FILE"
+  case "$mode" in release|source) printf '%s\n' "$mode" ;; *) die "invalid deployment mode in .allstarr-mode" ;; esac
+}
+
+set_mode() {
+  local mode="${1:-}"
+  case "$mode" in release|source) printf '%s\n' "$mode" > "$MODE_FILE" ;; *) die "mode must be release or source" ;; esac
+  echo "Deployment mode set to $mode. Run: ./allstarr.sh up"
+}
+
 compose_args() {
   COMPOSE=(-f "$ROOT/docker-compose.yml")
+  [[ "$(deployment_mode)" == source ]] && COMPOSE+=(-f "$ROOT/docker-compose.dev.yml")
   while IFS= read -r profile; do
     case "$profile" in
       spotify-lyrics) COMPOSE+=(-f "$ROOT/docker-compose.spotify-lyrics.yml") ;;
@@ -74,6 +88,8 @@ init() {
   fi
   chmod 600 "$ROOT/secrets/postgres-password.txt" "$ROOT/secrets/allstarr-keyring.json"
   touch "$PROFILE_FILE"
+  [[ -f "$MODE_FILE" ]] || printf '%s\n' "${1:-release}" > "$MODE_FILE"
+  deployment_mode >/dev/null
   echo "Allstarr is initialized. Edit .env, then run: ./allstarr.sh up"
 }
 
@@ -105,7 +121,7 @@ prepare_apple() {
 up() {
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
-  if profiles | grep -qx apple; then
+  if [[ "$(deployment_mode)" == source ]] || profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" up -d --build --remove-orphans
   else
     docker compose "${COMPOSE[@]}" up -d --remove-orphans
@@ -116,8 +132,15 @@ up() {
 update() {
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
-  docker compose "${COMPOSE[@]}" pull --ignore-buildable
-  if profiles | grep -qx apple; then
+  if [[ "$(deployment_mode)" == release ]]; then
+    docker compose "${COMPOSE[@]}" pull --ignore-buildable
+  fi
+  if [[ "$(deployment_mode)" == source ]]; then
+    docker compose "${COMPOSE[@]}" build allstarr
+    if profiles | grep -qx apple; then
+      docker compose "${COMPOSE[@]}" build apple-wrapper apple-gateway
+    fi
+  elif profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" build apple-wrapper apple-gateway
   fi
   docker compose "${COMPOSE[@]}" up -d --remove-orphans
@@ -128,7 +151,8 @@ usage() {
   cat <<'EOF'
 Usage: ./allstarr.sh COMMAND
 
-  init                              Create .env, directories, and secrets
+  init [release|source]             Create config; default to release images
+  mode [release|source]             Show or change the saved deployment mode
   up                                Start the saved deployment profile
   update                            Pull reviewed images and safely recreate
   status                            Show containers and the saved profile
@@ -138,6 +162,8 @@ Usage: ./allstarr.sh COMMAND
   prepare-apple INPUT [ARCH]        Verify an APK/APKM or staged libs; enable Apple
   down                              Stop containers without deleting data
 
+The deployment mode is saved in .allstarr-mode. Release mode pulls reviewed
+images; source mode builds the checked-out commit using docker-compose.dev.yml.
 Optional profiles are saved in .allstarr-profiles. No command deletes volumes,
 Postgres data, managed music, provider sessions, or imported settings.
 EOF
@@ -147,11 +173,16 @@ command="${1:-help}"
 shift || true
 cd "$ROOT"
 case "$command" in
-  init) init ;;
+  init)
+    case "${1:-release}" in release|source) init "${1:-release}" ;; *) die "init mode must be release or source" ;; esac
+    ;;
+  mode)
+    if [[ $# -eq 0 ]]; then deployment_mode; else set_mode "$1"; fi
+    ;;
   prepare-apple) prepare_apple "$@" ;;
   up) up ;;
   update) update ;;
-  status) compose_args; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
+  status) compose_args; echo "Mode: $(deployment_mode)"; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
     case "${1:-}" in

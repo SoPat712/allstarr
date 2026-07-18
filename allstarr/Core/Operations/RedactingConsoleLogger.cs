@@ -185,7 +185,7 @@ internal sealed partial class RedactingConsoleLogger(
     }
 
     [GeneratedRegex(
-        "(^key$)|(^name$)|(^file$)|(^error$)|(^message$)|([.]message$)|token|password|secret|cookie|authorization|credential|api.?key|cachekey|connectionstring|dsn|arl|url|uri|path|query|body|xml|json|header|commandtext|parameters|accountname|username|email|displayname|filename|title|artist|album|trackname|playlist|searchterm|isrc|externalid|spotifyid|tidalid|jellyfinid|itemid|trackid|songid|lyricsid|userid|deviceid|sessionid|playsessionid|endpoint|host|value|result|response|content|payload|exception|preview|reasonphrase",
+        "(^key$)|(^error$)|(^message$)|([.]message$)|token|password|secret|cookie|authorization|credential|api.?key|client.?id|private.?key|cachekey|connectionstring|dsn|arl|body|xml|json|header|commandtext|parameters|sessionid|playsessionid|response|content|payload|exception|preview|reasonphrase",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SensitiveFieldName();
 }

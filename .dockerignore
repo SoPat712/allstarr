@@ -1,4 +1,5 @@
 .git
+.apple-provider/
 .github
 .idea
 .vscode

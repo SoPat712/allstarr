@@ -707,7 +707,8 @@ public partial class JellyfinController : ControllerBase
                 imageType,
                 maxWidth,
                 maxHeight,
-                effectiveImageTag);
+                effectiveImageTag,
+                Request.Headers);
 
             if (imageBytes == null || contentType == null)
             {
@@ -740,7 +741,8 @@ public partial class JellyfinController : ControllerBase
                             fallbackItemId,
                             imageType,
                             maxWidth,
-                            maxHeight);
+                            maxHeight,
+                            clientHeaders: Request.Headers);
 
                         if (fallbackBytes != null && fallbackContentType != null)
                         {

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 LOCK="$ROOT/tools/apple-provider/source-lock.json"
@@ -34,7 +35,7 @@ commit=$(jq -r '.wrapper.commit' "$LOCK")
 if [[ -e "$OUTPUT" ]]; then
   [[ -d "$OUTPUT/.git" ]] || { echo "Output exists and is not a wrapper-v2 checkout: $OUTPUT" >&2; exit 1; }
 else
-  mkdir -p "$(dirname "$OUTPUT")"
+  install -d -m 700 "$(dirname "$OUTPUT")"
   git clone --filter=blob:none --branch "$tag" --single-branch "$repository" "$OUTPUT"
 fi
 
@@ -49,11 +50,11 @@ if [[ -n "$PACKAGE" ]]; then
   bash "$OUTPUT/tools/extract-libs.sh" --bundle "$PACKAGE" --arch "$ARCH"
 else
   [[ -d "$STAGED_LIBS" ]] || { echo "Staged library directory not found: $STAGED_LIBS" >&2; exit 1; }
-  mkdir -p "$OUTPUT/rootfs/system/lib64"
+  install -d -m 700 "$OUTPUT/rootfs/system/lib64"
   while IFS= read -r library; do
     source="$STAGED_LIBS/$library"
     [[ -f "$source" ]] || { echo "Missing pinned staged library: $library" >&2; exit 1; }
-    install -m 0644 "$source" "$OUTPUT/rootfs/system/lib64/$library"
+    install -m 0600 "$source" "$OUTPUT/rootfs/system/lib64/$library"
   done < <(jq -r --arg arch "$ARCH" '.libs[$arch] | keys[]' "$OUTPUT/LIBS_VERSION.json")
 fi
 

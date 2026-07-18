@@ -234,11 +234,22 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
     }
 
     private static ProviderArtworkReference? Artwork(
-        ProviderExternalResourceId resource, JsonElement attributes, string? revision) =>
-        attributes.TryGetProperty("artwork", out var artwork) && artwork.ValueKind == JsonValueKind.Object &&
-        String(artwork, "url") != null
-            ? new ProviderArtworkReference(resource, revision: revision)
-            : null;
+        ProviderExternalResourceId resource, JsonElement attributes, string? revision)
+    {
+        if (!attributes.TryGetProperty("artwork", out var artwork) || artwork.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var template = String(artwork, "url");
+        if (template == null) return null;
+
+        var resolved = template.Replace("{w}", "1024", StringComparison.Ordinal)
+            .Replace("{h}", "1024", StringComparison.Ordinal);
+        return Uri.TryCreate(resolved, UriKind.Absolute, out var uri) &&
+               uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+               IsAppleArtworkHost(uri.Host) && uri.Port == 443 && string.IsNullOrEmpty(uri.UserInfo)
+            ? new ProviderArtworkReference(resource, uri, revision)
+            : new ProviderArtworkReference(resource, revision: revision);
+    }
 
     private static ProviderExternalResourceId Resource(JsonElement item, ProviderResourceKind kind) =>
         new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, kind, Required(item, "id"));
@@ -267,6 +278,10 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
         uri.Host.Equals(ApiOrigin.Host, StringComparison.OrdinalIgnoreCase) &&
         uri.Port == 443 && string.IsNullOrEmpty(uri.UserInfo);
+
+    private static bool IsAppleArtworkHost(string host) =>
+        host.Equals("mzstatic.com", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".mzstatic.com", StringComparison.OrdinalIgnoreCase);
 
     private static ProviderError Error(HttpResponseMessage response) => response.StatusCode switch
     {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -204,6 +205,69 @@ def test_generic_catalog_and_library_download_jobs_are_bounded_to_apple_urls(cli
         "url": "https://evil.example/album/123",
         "quality": "alac",
     }).status_code == 400
+
+
+def test_terminal_download_job_is_persisted_and_rehydrated_after_restart(settings: Settings):
+    runner = FakeRunner()
+    first_app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    with TestClient(first_app) as first_client:
+        accepted = first_client.post("/api/jobs/download", json={
+            "url": "https://music.apple.com/us/playlist/fixture/pl.123",
+            "quality": "alac",
+        })
+        job_id = accepted.json()["id"]
+        for _ in range(30):
+            state = first_client.get(f"/api/jobs/download/{job_id}").json()
+            if state["state"] == "succeeded":
+                break
+            asyncio.run(asyncio.sleep(0.01))
+        assert state["state"] == "succeeded"
+
+    state_file = settings.data_root / "jobs" / job_id / "job.json"
+    persisted = json.loads(state_file.read_text(encoding="utf-8"))
+    assert persisted["state"] == "succeeded"
+    assert persisted["artifacts"] == ["artifacts/fixture.m4a"]
+    assert not state_file.with_name("job.json.partial").exists()
+
+    second_runner = FakeRunner()
+    second_app = create_app(settings, FakeWrapper(), FakeCatalog(), second_runner)
+    with TestClient(second_app) as second_client:
+        restored = second_client.get(f"/api/jobs/download/{job_id}")
+        assert restored.status_code == 200
+        assert restored.json() == {
+            "id": job_id,
+            "state": "succeeded",
+            "media_kind": "playlist",
+            "artifact_count": 1,
+            "error_code": None,
+        }
+    assert second_runner.calls == []
+
+
+def test_restart_ignores_nonterminal_and_invalid_persisted_jobs(settings: Settings):
+    settings.prepare()
+    jobs_root = settings.data_root / "jobs"
+    running_id = "a" * 32
+    invalid_id = "b" * 32
+    for job_id, state, artifacts in (
+        (running_id, "running", []),
+        (invalid_id, "succeeded", ["../../outside.m4a"]),
+    ):
+        root = jobs_root / job_id
+        root.mkdir()
+        (root / "job.json").write_text(json.dumps({
+            "version": 1,
+            "id": job_id,
+            "media_kind": "album",
+            "state": state,
+            "artifacts": artifacts,
+            "error_code": None,
+        }), encoding="utf-8")
+
+    app = create_app(settings, FakeWrapper(), FakeCatalog(), FakeRunner())
+    with TestClient(app) as test_client:
+        assert test_client.get(f"/api/jobs/download/{running_id}").status_code == 404
+        assert test_client.get(f"/api/jobs/download/{invalid_id}").status_code == 404
 
 
 @pytest.mark.asyncio

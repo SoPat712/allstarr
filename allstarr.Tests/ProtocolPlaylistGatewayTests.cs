@@ -87,7 +87,13 @@ public sealed class ProtocolPlaylistGatewayTests
 
         var result = await gateway.GetPlaylistTracksAsync(context, "spotify", "playlist-1");
 
-        Assert.Equal("Track", Assert.Single(result).Title);
+        var track = Assert.Single(result);
+        Assert.Equal("Track", track.Title);
+        Assert.Equal("ext-spotify-song-track-1", track.Id);
+        Assert.Equal("ext-spotify-album-album-1", track.AlbumId);
+        Assert.Equal("ext-spotify-artist-artist-1", track.ArtistId);
+        Assert.Equal(["ext-spotify-artist-artist-1"], track.ArtistIds);
+        Assert.Equal("https://images.example.test/album-1.webp", track.CoverArtUrl);
         legacy.VerifyNoOtherCalls();
         capability.VerifyAll();
     }
@@ -193,7 +199,9 @@ public sealed class ProtocolPlaylistGatewayTests
                 "Artist",
                 new ProviderExternalResourceId("spotify", ProviderResourceKind.Artist, "artist-1"))],
             new ProviderExternalResourceId("spotify", ProviderResourceKind.Album, "album-1"),
-            "Album");
+            "Album",
+            artwork: new ProviderArtworkReference(
+                publicUri: new Uri("https://images.example.test/album-1.webp")));
         return ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
             summary,
             new ProviderPage<ProviderPlaylistTrack>(

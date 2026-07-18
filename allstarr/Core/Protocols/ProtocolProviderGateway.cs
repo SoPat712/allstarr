@@ -521,20 +521,21 @@ public sealed class ProtocolProviderGateway(
     private static Song Map(ProviderTrackMetadata item)
     {
         var artists = item.Artists.Select(artist => artist.Name).ToList();
-        var artistIds = item.Artists.Where(artist => artist.ArtistId != null)
-            .Select(artist => artist.ArtistId!.Value).ToList();
         return new Song
         {
-            Id = $"ext-{item.Id.ProviderId}-{item.Id.Value}",
+            Id = ProtocolItemId(item.Id),
             ExternalProvider = item.Id.ProviderId,
             ExternalId = item.Id.Value,
             Title = item.Title,
             Artist = artists.FirstOrDefault() ?? string.Empty,
             Artists = artists,
-            ArtistId = item.Artists.FirstOrDefault()?.ArtistId?.Value,
-            ArtistIds = artistIds,
+            ArtistId = item.Artists.FirstOrDefault()?.ArtistId is { } primaryArtist
+                ? ProtocolItemId(primaryArtist)
+                : null,
+            ArtistIds = item.Artists.Where(artist => artist.ArtistId != null)
+                .Select(artist => ProtocolItemId(artist.ArtistId!)).ToList(),
             Album = item.AlbumTitle ?? string.Empty,
-            AlbumId = item.AlbumId?.Value,
+            AlbumId = item.AlbumId is { } albumId ? ProtocolItemId(albumId) : null,
             Duration = item.Duration.HasValue ? (int)item.Duration.Value.TotalSeconds : null,
             Isrc = item.Isrc,
             CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
@@ -550,7 +551,9 @@ public sealed class ProtocolProviderGateway(
         ExternalId = item.Id.Value,
         Title = item.Title,
         Artist = item.Artists.FirstOrDefault()?.Name ?? string.Empty,
-        ArtistId = item.Artists.FirstOrDefault()?.ArtistId?.Value,
+        ArtistId = item.Artists.FirstOrDefault()?.ArtistId is { } artistId
+            ? ProtocolItemId(artistId)
+            : null,
         SongCount = item.TrackCount,
         CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
         IsLocal = false
@@ -565,6 +568,16 @@ public sealed class ProtocolProviderGateway(
         ImageUrl = item.Artwork?.PublicUri?.ToString(),
         IsLocal = false
     };
+
+    private static string ProtocolItemId(ProviderExternalResourceId id) =>
+        $"ext-{id.ProviderId}-{id.ResourceKind switch
+        {
+            ProviderResourceKind.Track => "song",
+            ProviderResourceKind.Album => "album",
+            ProviderResourceKind.Artist => "artist",
+            ProviderResourceKind.Playlist => "playlist",
+            _ => throw new ArgumentOutOfRangeException(nameof(id), id.ResourceKind, "Unsupported protocol resource kind.")
+        }}-{id.Value}";
 
     private static ExternalPlaylist Map(ProviderPlaylistSummary item) => new()
     {

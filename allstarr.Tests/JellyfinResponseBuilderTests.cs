@@ -78,6 +78,34 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
+    public void ConvertSongToJellyfinItem_ExternalRelationshipsRemainRoutableForAlbumArtwork()
+    {
+        var song = new Song
+        {
+            Id = "ext-apple-musickit-song-i.song",
+            Title = "Library Song",
+            Artist = "Library Artist",
+            Artists = ["Library Artist"],
+            ArtistId = "ext-apple-musickit-artist-i.artist",
+            ArtistIds = ["ext-apple-musickit-artist-i.artist"],
+            Album = "Library Album",
+            AlbumId = "ext-apple-musickit-album-i.album",
+            IsLocal = false,
+            ExternalProvider = "apple-musickit",
+            ExternalId = "i.song"
+        };
+
+        var result = _builder.ConvertSongToJellyfinItem(song);
+
+        Assert.Equal("ext-apple-musickit-song-i.song", result["Id"]);
+        Assert.Equal("ext-apple-musickit-album-i.album", result["AlbumId"]);
+        Assert.Equal("ext-apple-musickit-album-i.album", result["AlbumPrimaryImageTag"]);
+        Assert.Equal("ext-apple-musickit-album-i.album", result["ParentLogoImageTag"]);
+        var imageTags = Assert.IsType<Dictionary<string, string>>(result["ImageTags"]);
+        Assert.Equal("ext-apple-musickit-song-i.song", imageTags["Primary"]);
+    }
+
+    [Fact]
     public void ConvertSongToJellyfinItem_ExternalExplicitSong_AppendsStreamingAndExplicitLabels()
     {
         var song = new Song

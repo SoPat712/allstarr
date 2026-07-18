@@ -228,6 +228,8 @@ public class LocalLibraryServiceTests : IDisposable
     [InlineData("ext-deezer-album-789012", true, "deezer", "album", "789012")]
     [InlineData("ext-deezer-artist-259", true, "deezer", "artist", "259")]
     [InlineData("ext-spotify-song-abc123", true, "spotify", "song", "abc123")]
+    [InlineData("ext-apple-musickit-album-i.album", true, "apple-musickit", "album", "i.album")]
+    [InlineData("ext-apple-musickit-song-i-song-1", true, "apple-musickit", "song", "i-song-1")]
     [InlineData("ext-deezer-123", true, "deezer", "song", "123")]  // Legacy format defaults to song
     [InlineData("ext-tidal-999", true, "tidal", "song", "999")]    // Legacy format defaults to song
     [InlineData("123456", false, null, null, null)]

@@ -110,27 +110,30 @@ public class LocalLibraryService : ILocalLibraryService
             return (false, null, null, null);
         }
 
-        var parts = id.Split('-');
+        var remainder = id[4..];
 
-        // Known types for the new format
-        var knownTypes = new HashSet<string> { "song", "album", "artist" };
-
-        // New format: ext-{provider}-{type}-{id} (e.g., ext-deezer-artist-259)
-        // Only use new format if parts[2] is a known type
-        if (parts.Length >= 4 && knownTypes.Contains(parts[2]))
+        // Provider IDs may contain hyphens, so locate the typed resource marker instead
+        // of assuming the provider occupies one dash-delimited segment.
+        foreach (var type in new[] { "song", "album", "artist", "playlist" })
         {
-            var provider = parts[1];
-            var type = parts[2];
-            var externalId = string.Join("-", parts.Skip(3)); // Handle IDs with dashes
-            return (true, provider, type, externalId);
+            var marker = $"-{type}-";
+            var markerIndex = remainder.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex > 0 && markerIndex + marker.Length < remainder.Length)
+            {
+                return (true,
+                    remainder[..markerIndex],
+                    type,
+                    remainder[(markerIndex + marker.Length)..]);
+            }
         }
 
         // Legacy format: ext-{provider}-{id} (assumes "song" type for backward compatibility)
         // This handles both 3-part IDs and 4+ part IDs where parts[2] is NOT a known type
-        if (parts.Length >= 3)
+        var firstSeparator = remainder.IndexOf('-');
+        if (firstSeparator > 0 && firstSeparator + 1 < remainder.Length)
         {
-            var provider = parts[1];
-            var externalId = string.Join("-", parts.Skip(2)); // Everything after provider is the ID
+            var provider = remainder[..firstSeparator];
+            var externalId = remainder[(firstSeparator + 1)..];
             return (true, provider, "song", externalId);
         }
 

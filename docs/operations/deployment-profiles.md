@@ -16,6 +16,15 @@ Allstarr encryption key ring with owner-only permissions. Edit `.env`, then star
 ./allstarr.sh up
 ```
 
+The default `release` mode uses reviewed published images. To run the checked-out commit instead:
+
+```bash
+./allstarr.sh mode source
+./allstarr.sh up
+```
+
+Source mode includes `docker-compose.dev.yml` automatically. Switch back with `./allstarr.sh mode release`.
+
 ## Optional services
 
 Spotify lyrics needs only its cookie in the protected `.env`:
@@ -57,11 +66,12 @@ quietly enable provider accounts or sidecars.
 ./allstarr.sh update
 ```
 
-The command pulls reviewed images, rebuilds local Apple components only when that profile is enabled, recreates the
-saved profile, and shows the resulting containers. It does not run `git pull`; source updates are an explicit
-operator action. It does not remove Postgres, Valkey, Allstarr state, media, or provider-session volumes.
+In release mode, the command pulls reviewed images and rebuilds local Apple components only when that profile is
+enabled. In source mode, first run `git pull --ff-only`; `update` then rebuilds the checked-out Allstarr source and
+enabled Apple components. Both modes recreate the saved profile and show the resulting containers. The helper does
+not run `git pull` and does not remove Postgres, Valkey, Allstarr state, media, or provider-session volumes.
 
-Use `./allstarr.sh status` to see the active profile and `./allstarr.sh logs SERVICE` for a bounded starting log
+Use `./allstarr.sh status` to see the deployment mode and active profile, and `./allstarr.sh logs SERVICE` for a bounded starting log
 window followed by new events.
 
 ## Removing and re-adding a service

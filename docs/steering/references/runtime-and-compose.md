@@ -26,6 +26,11 @@ For the fresh overhaul baseline, keep `.env` for deployment settings, initial se
 
 Standard deployment is the default: core app, Postgres, and Valkey. Optional sidecars should be selectable, removable, and re-addable without breaking startup.
 
+`allstarr.sh` persists an explicit `release` or `source` mode. Release mode uses reviewed images. Source mode adds
+the development override and builds the checked-out commit. Both modes reuse the same saved optional profiles and
+volumes. Private `.apple-provider` inputs are excluded from the core Docker context, and Apple preparation uses
+owner-only staging permissions.
+
 ## Historical Phase 1 Checkpoint
 
 This section preserves the Phase 1 exit evidence. It is historical, not the current release test inventory. The
@@ -118,6 +123,9 @@ Possible later repository profiles remain separate work:
 `docker-compose.apple.yml` is an explicit optional profile. It builds the repository gateway and the locked
 wrapper-v2 source only after the operator supplies hash-verified legal Apple libraries. Standard and AIO remain
 complete without it, and removing the profile preserves Postgres, media, gateway state, and wrapper login state.
+Terminal generic gateway jobs are written atomically beneath the gateway data volume and rehydrated after restart.
+Nonterminal or malformed records are ignored rather than exposed as successful work. Multi-artifact manifests and
+host ingestion are still required before broader GAMDL feature claims can be advertised.
 
 Compose-file selection and any Compose profiles are explicit operator inputs. Deployment documentation should show the selected files/profile, database choice, persistent volume locations, and the rendered `docker compose config` output before an upgrade. Do not infer AIO or low-RAM mode from available memory, and do not hide a storage-provider change inside an override file.
 

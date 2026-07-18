@@ -41,6 +41,10 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal("Library Album", album.RequireValue().Title);
         Assert.Equal(12, album.RequireValue().TrackCount);
         Assert.Equal("Library Artist", artist.RequireValue().Name);
+        Assert.Equal("https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
+            track.RequireValue().Artwork?.PublicUri?.ToString());
+        Assert.Equal("https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
+            album.RequireValue().Artwork?.PublicUri?.ToString());
         Assert.Equal("\"revision-1\"", track.RequireValue().SnapshotVersion);
         Assert.Equal(6, secrets.AccountIds.Count);
         Assert.All(handler.Authorization, value => Assert.Equal("Bearer developer-token", value));
@@ -218,7 +222,13 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
             {
                 id,
                 type,
-                attributes = new { name = "Library Album", artistName = "Library Artist", trackCount = 12 }
+                attributes = new
+                {
+                    name = "Library Album",
+                    artistName = "Library Artist",
+                    trackCount = 12,
+                    artwork = new { url = "https://is1-ssl.mzstatic.com/image/thumb/library/{w}x{h}bb.jpg" }
+                }
             },
             "library-artists" => new
             {
@@ -238,7 +248,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
                     albumId = "i.album",
                     durationInMillis = 180000,
                     isrc = "USABC1234567",
-                    contentRating = "clean"
+                    contentRating = "clean",
+                    artwork = new { url = "https://is1-ssl.mzstatic.com/image/thumb/library/{w}x{h}bb.jpg" }
                 }
             }
         };
