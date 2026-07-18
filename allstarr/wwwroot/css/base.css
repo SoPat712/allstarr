@@ -1019,6 +1019,28 @@ tbody tr:hover {
     font-weight: 500;
 }
 
+.provider-recovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+}
+
+.provider-recovery > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.provider-recovery span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
 .account-capability-list {
     display: grid;
     gap: var(--space-2);

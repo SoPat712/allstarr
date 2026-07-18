@@ -2827,7 +2827,7 @@ class AllstarrApp extends LitElement {
   }
 
   renderNewProviderCredentialFields(providerId) {
-    if (providerId === "spotify") return html`<div class="form-row full-span"><label>sp_dc session cookie</label><input name="sessionCookie" type="password" autocomplete="off" required><small>Copied from your signed-in Spotify browser session.</small></div>`;
+    if (providerId === "spotify") return html`<div class="form-row full-span"><label>Spotify session cookie (sp_dc)</label><input name="sessionCookie" type="password" autocomplete="off" required><small>Sign in at spotify.com, then copy the current <span class="mono">sp_dc</span> cookie from that browser session. Spotify periodically replaces it.</small></div>`;
     if (providerId === "deezer") return html`<div class="form-row full-span"><label>ARL cookie</label><input name="arl" type="password" autocomplete="off" required></div>`;
     if (providerId === "qobuz") return html`<div class="form-row"><label>User auth token</label><input name="userAuthToken" type="password" autocomplete="off" required></div><div class="form-row"><label>User ID</label><input name="userId" required></div>`;
     if (providerId === "lastfm") return html`<div class="form-row"><label>API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Username</label><input name="username" required></div><div class="form-row"><label>Session key</label><input name="sessionKey" type="password" autocomplete="off" required></div>`;
@@ -2847,6 +2847,7 @@ class AllstarrApp extends LitElement {
         <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
       </div>
       <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Credential saved" : "Credential needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
+      ${this.renderProviderRecovery(account, capabilities)}
       ${administrator && capabilities.length ? this.renderProviderAccountHealth(account, capabilities) : html`<p class="muted">No automatic connection test is available for this provider.</p>`}
       <div class="account-actions">
         <button class=${enabled ? "" : "primary"} @click=${async () => { await API.setProviderAccountEnabled(id, !enabled, account.revision ?? account.Revision); await this.loadProviderAccounts(); this.toast(`Provider account ${enabled ? "disabled" : "enabled"}`); }}>${enabled ? "Disable" : "Enable"}</button>
@@ -2856,6 +2857,23 @@ class AllstarrApp extends LitElement {
       </div>
       ${this.providerAccountConfigOpen.has(String(id)) ? this.renderProviderCredentialEditor(account) : nothing}
     </article>`;
+  }
+
+  renderProviderRecovery(account, capabilities) {
+    const providerId = String(account.ProviderId || account.providerId || "").toLowerCase();
+    const failed = capabilities.find((item) => String(item.health || item.Health || "").toLowerCase() === "degraded");
+    if (!failed) return nothing;
+    const reason = String(failed.reasonCode || failed.ReasonCode || "").toLowerCase();
+    const expiredSpotify = providerId === "spotify" && ["provider_unauthorized", "unauthorized", "invalid_credentials"].includes(reason);
+    const message = expiredSpotify
+      ? "Spotify rejected the saved session. Add a fresh sp_dc cookie to resume playlist refreshes; cached playlists will keep working meanwhile."
+      : reason === "timeout" || reason === "unreachable"
+        ? `${providerDisplayName(providerId, this.schema?.providers)} could not be reached. Check the service, then test again.`
+        : `${providerDisplayName(providerId, this.schema?.providers)} needs attention. Open setup to review its saved connection, then test again.`;
+    return html`<div class="provider-recovery" role="status">
+      <div><strong>${expiredSpotify ? "Reconnect Spotify" : "Connection needs attention"}</strong><span>${message}</span></div>
+      <button class=${expiredSpotify ? "primary compact" : "compact"} @click=${() => this.toggleProviderAccountConfiguration(account.Id || account.id)}>${this.providerAccountConfigOpen.has(String(account.Id || account.id)) ? "Close setup" : "Open setup"}</button>
+    </div>`;
   }
 
   renderProviderAccountHealth(account, capabilities) {
