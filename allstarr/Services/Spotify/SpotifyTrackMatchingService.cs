@@ -1507,6 +1507,28 @@ public class SpotifyTrackMatchingService : BackgroundService
             CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
         var retainedMatches = await _cache.GetAsync<List<MatchedTrack>>(
             CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName));
+        if (retainedMatches is not { Count: > 0 } && source?.Tracks is { Count: > 0 })
+        {
+            var legacySongs = await _cache.GetAsync<List<Song>>(
+                CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlistName));
+            if (legacySongs is { Count: > 0 })
+            {
+                retainedMatches = LegacyPlaylistMatchRecovery.ReconstructExact(
+                    source.Tracks,
+                    legacySongs);
+                if (retainedMatches.Count > 0)
+                {
+                    await _cache.SetAsync(
+                        CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
+                        retainedMatches,
+                        CacheExtensions.SpotifyMatchedTracksTTL);
+                    _logger.LogInformation(
+                        "Recovered {Count} exact ordered matches for legacy playlist {Playlist}",
+                        retainedMatches.Count,
+                        playlistName);
+                }
+            }
+        }
         var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
             item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
 
