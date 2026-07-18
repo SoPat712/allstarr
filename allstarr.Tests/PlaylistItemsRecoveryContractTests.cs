@@ -15,6 +15,9 @@ public sealed class PlaylistItemsRecoveryContractTests
         Assert.Contains("EnsureLegacyPlaylistItemsCacheAsync", source, StringComparison.Ordinal);
         Assert.Contains("BuildSpotifyMatchedTracksKey(playlistName)", source, StringComparison.Ordinal);
         Assert.Contains("source.Tracks", source, StringComparison.Ordinal);
+        Assert.Contains("sourceGenerationChanged", source, StringComparison.Ordinal);
+        Assert.Contains("provider playlist generation changed", source, StringComparison.Ordinal);
+        Assert.Contains("orderedMatches", source, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] segments)

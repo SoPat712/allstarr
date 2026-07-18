@@ -1391,16 +1391,40 @@ public class SpotifyTrackMatchingService : BackgroundService
                 .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
                 .ToList();
             var blockedCount = existingMatched.Count - playableMatched.Count;
+            var currentSource = await _cache.GetAsync<SpotifyPlaylist>(
+                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
+            var exactRetained = currentSource?.Tracks is { Count: > 0 }
+                ? LegacyPlaylistMatchRecovery.ReconstructExact(currentSource.Tracks, playableMatched)
+                : [];
+            var sourceGenerationChanged = currentSource?.Tracks is { Count: > 0 } &&
+                                          exactRetained.Count != playableMatched.Count;
 
-            if (blockedCount == 0)
+            if (blockedCount == 0 && !sourceGenerationChanged)
             {
+                if (exactRetained.Count > 0)
+                {
+                    await _cache.SetAsync(
+                        CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
+                        exactRetained,
+                        CacheExtensions.SpotifyMatchedTracksTTL);
+                }
                 _logger.LogWarning("Playlist {Playlist} already has {Count} matched tracks cached, skipping",
                     playlistName, existingMatched.Count);
                 await EnsureLegacyPlaylistItemsCacheAsync(playlistName, cancellationToken);
                 return;
             }
 
-            if (playableMatched.Count > 0)
+            if (sourceGenerationChanged)
+            {
+                await _cache.DeleteAsync(matchedTracksKey);
+                await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName));
+                _logger.LogInformation(
+                    "Discarded {Count} retained matches for {Playlist} because the provider playlist generation changed",
+                    playableMatched.Count,
+                    playlistName);
+            }
+
+            if (!sourceGenerationChanged && playableMatched.Count > 0)
             {
                 await _cache.SetAsync(
                     matchedTracksKey,
@@ -1412,10 +1436,13 @@ public class SpotifyTrackMatchingService : BackgroundService
                 await _cache.DeleteAsync(matchedTracksKey);
             }
 
-            _logger.LogWarning(
-                "Removed {BlockedCount} unavailable cached tracks from {Playlist}; rebuilding legacy matches",
-                blockedCount,
-                playlistName);
+            if (blockedCount > 0)
+            {
+                _logger.LogWarning(
+                    "Removed {BlockedCount} unavailable cached tracks from {Playlist}; rebuilding legacy matches",
+                    blockedCount,
+                    playlistName);
+            }
         }
 
         // Get missing tracks
@@ -1492,6 +1519,31 @@ public class SpotifyTrackMatchingService : BackgroundService
             await _cache.SetAsync(matchedTracksKey, matchedSongs, CacheExtensions.SpotifyMatchedTracksTTL);
             _logger.LogInformation("✓ Cached {Matched}/{Total} matched tracks for {Playlist}",
                 matchedSongs.Count, missingTracks.Count, playlistName);
+
+            var source = await _cache.GetAsync<SpotifyPlaylist>(
+                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
+            var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
+                item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+            if (source?.Tracks is { Count: > 0 } && !string.IsNullOrWhiteSpace(playlist?.JellyfinId))
+            {
+                var orderedMatches = LegacyPlaylistMatchRecovery.ReconstructExact(
+                    source.Tracks,
+                    matchedSongs);
+                if (orderedMatches.Count > 0)
+                {
+                    await _cache.SetAsync(
+                        CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
+                        orderedMatches,
+                        CacheExtensions.SpotifyMatchedTracksTTL);
+                    await PreBuildPlaylistItemsCacheAsync(
+                        playlistName,
+                        playlist.JellyfinId,
+                        source.Tracks,
+                        orderedMatches,
+                        TimeSpan.FromHours(24),
+                        cancellationToken);
+                }
+            }
         }
         else
         {
