@@ -24,7 +24,7 @@ public class RequestLoggingMiddleware
 
         // Log initialization status
         var initialValue = _configuration.GetValue<bool>("Debug:LogAllRequests");
-        _logger.LogWarning("🔍 RequestLoggingMiddleware initialized - LogAllRequests={LogAllRequests}", initialValue);
+        _logger.LogInformation("RequestLoggingMiddleware initialized - LogAllRequests={LogAllRequests}", initialValue);
 
         if (initialValue)
         {

@@ -43,7 +43,7 @@ public static partial class SafeOperationalText
         return $"{uri.Scheme}://{authority}{uri.AbsolutePath}?{safeQuery}";
     }
 
-    [GeneratedRegex(@"https?://[^\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("https?://[^\\s,;\\\"'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlPattern();
 
     [GeneratedRegex("token|password|secret|cookie|authorization|api.?key|client.?id|private.?key|arl|signature|sig|expires", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

@@ -211,6 +211,25 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
     }
 
     [Fact]
+    public void RuntimeLogger_KeepsNonsecretContentAndMultipleAddresses()
+    {
+        var output = new StringWriter();
+        using var provider = new RedactingConsoleLoggerProvider(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Logging:LogLevel:Default"] = "Information"
+            }).Build(), output, TextWriter.Null);
+        var logger = provider.CreateLogger("allstarr.fixture");
+
+        logger.LogInformation("Serving {ContentRoot} on {Addresses}", "/app", "http://[::]:8080/;http://[::]:5275/");
+
+        var log = output.ToString();
+        Assert.Contains("/app", log, StringComparison.Ordinal);
+        Assert.Contains("http://[::]:8080/", log, StringComparison.Ordinal);
+        Assert.Contains("http://[::]:5275/", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RuntimeLogger_IncludesSafeCorrelationScopeAndRedactsScopedSecrets()
     {
         var output = new StringWriter();

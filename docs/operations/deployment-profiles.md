@@ -66,9 +66,10 @@ quietly enable provider accounts or sidecars.
 ./allstarr.sh update
 ```
 
-In release mode, the command pulls reviewed images and rebuilds local Apple components only when that profile is
-enabled. In source mode, first run `git pull --ff-only`; `update` then rebuilds the checked-out Allstarr source and
-enabled Apple components. Both modes recreate the saved profile and show the resulting containers. The helper does
+In release mode, the command pulls reviewed images and rebuilds the repository-owned Apple gateway only when that
+profile is enabled. In source mode, first run `git pull --ff-only`; `update` then rebuilds the checked-out Allstarr
+source and enabled Apple gateway. The private wrapper image is rebuilt only by `prepare-apple`, when its verified
+inputs may have changed. Both modes recreate the saved profile and show the resulting containers. The helper does
 not run `git pull` and does not remove Postgres, Valkey, Allstarr state, media, or provider-session volumes.
 
 Use `./allstarr.sh status` to see the deployment mode and active profile, and `./allstarr.sh logs SERVICE` for a bounded starting log

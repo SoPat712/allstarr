@@ -115,17 +115,18 @@ prepare_apple() {
     printf '\nAPPLE_WRAPPER_TARGET_ARCH=%s\nAPPLE_WRAPPER_RUNTIME_PLATFORM=%s\n' "$arch" "$runtime" >> "$ROOT/.env"
   fi
   remember_profile apple
-  echo "Apple provider source and verified native libraries are ready. Run: ./allstarr.sh up"
+  compose_args
+  docker compose "${COMPOSE[@]}" build apple-wrapper apple-gateway
+  echo "Apple provider source, verified native libraries, and local images are ready. Run: ./allstarr.sh up"
 }
 
 up() {
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
-  if [[ "$(deployment_mode)" == source ]] || profiles | grep -qx apple; then
-    docker compose "${COMPOSE[@]}" up -d --build --remove-orphans
-  else
-    docker compose "${COMPOSE[@]}" up -d --remove-orphans
+  if [[ "$(deployment_mode)" == source ]]; then
+    docker compose "${COMPOSE[@]}" build allstarr
   fi
+  docker compose "${COMPOSE[@]}" up -d --remove-orphans
   docker compose "${COMPOSE[@]}" ps
 }
 
@@ -138,10 +139,10 @@ update() {
   if [[ "$(deployment_mode)" == source ]]; then
     docker compose "${COMPOSE[@]}" build allstarr
     if profiles | grep -qx apple; then
-      docker compose "${COMPOSE[@]}" build apple-wrapper apple-gateway
+      docker compose "${COMPOSE[@]}" build apple-gateway
     fi
   elif profiles | grep -qx apple; then
-    docker compose "${COMPOSE[@]}" build apple-wrapper apple-gateway
+    docker compose "${COMPOSE[@]}" build apple-gateway
   fi
   docker compose "${COMPOSE[@]}" up -d --remove-orphans
   docker compose "${COMPOSE[@]}" ps
