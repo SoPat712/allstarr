@@ -166,7 +166,8 @@ public class AdminAuthController : ControllerBase
                     name = session.UserName,
                     isAdministrator = session.IsAdministrator,
                     tenantId = session.TenantId,
-                    allstarrUserId = session.AllstarrUserId
+                    allstarrUserId = session.AllstarrUserId,
+                    avatarUrl = "/api/admin/auth/me/avatar"
                 },
                 rememberMe = session.IsPersistent,
                 backend = BackendType.Jellyfin.ToString(),
@@ -211,13 +212,41 @@ public class AdminAuthController : ControllerBase
                 name = session.UserName,
                 isAdministrator = session.IsAdministrator,
                 tenantId = session.TenantId,
-                allstarrUserId = session.AllstarrUserId
+                allstarrUserId = session.AllstarrUserId,
+                avatarUrl = session.BackendType.Equals(BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase)
+                    ? "/api/admin/auth/me/avatar"
+                    : null
             },
             rememberMe = session.IsPersistent,
             backend = session.BackendType,
             providerAccountManagementMode = _providerAccountManagementMode.ToString(),
             expiresAtUtc = session.ExpiresAtUtc
         });
+    }
+
+    [HttpGet("me/avatar")]
+    public async Task<IActionResult> GetCurrentUserAvatar(CancellationToken cancellationToken)
+    {
+        if (!_sessionService.TryGetValidSession(Request, out var session) ||
+            !session.BackendType.Equals(BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(session.JellyfinAccessToken) ||
+            string.IsNullOrWhiteSpace(_jellyfinSettings.Url))
+        {
+            return NotFound();
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"{_jellyfinSettings.Url.TrimEnd('/')}/Users/{Uri.EscapeDataString(session.UserId)}/Images/Primary?width=96&quality=90");
+        request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        if (!response.IsSuccessStatusCode || contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return NotFound();
+        }
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return bytes.Length is > 0 and <= 5 * 1024 * 1024 ? File(bytes, contentType) : NotFound();
     }
 
     [HttpPost("logout")]

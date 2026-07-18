@@ -139,13 +139,17 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
                               imageTags.TryGetProperty("Primary", out var primaryTag) &&
                               primaryTag.ValueKind == JsonValueKind.String &&
                               !string.IsNullOrWhiteSpace(primaryTag.GetString());
+        var albumId = TryGetString(root, "AlbumId");
+        var hasAlbumImage = !string.IsNullOrWhiteSpace(albumId) &&
+                            TryGetString(root, "AlbumPrimaryImageTag") is { Length: > 0 };
+        var artworkItemId = hasPrimaryImage ? itemId : hasAlbumImage ? albumId : null;
 
         return new PlaybackTrackMetadata(
             title,
             artist,
             album,
-            hasPrimaryImage
-                ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString(itemId)}"
+            artworkItemId != null
+                ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString(artworkItemId)}"
                 : null);
     }
 

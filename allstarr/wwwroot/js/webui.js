@@ -6,7 +6,7 @@ const SETUP_GUIDE_DISMISSED_KEY = "allstarr-setup-guide-dismissed";
 const SETUP_GUIDE_STEP_KEY = "allstarr-setup-guide-step";
 const SETUP_GUIDE_LAST_STEP = 4;
 const REDACTION_MODE_KEY = "allstarr-sharing-redaction";
-const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz"]);
+const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz", "lastfm", "listenbrainz"]);
 
 function normalizeRoute(hash = window.location.hash) {
   const route = hash.replace(/^#/, "") || DEFAULT_ROUTE;
@@ -1710,7 +1710,7 @@ class AllstarrApp extends LitElement {
             </details>` : nothing}
         </nav>
         <div class="sidebar-footer">
-          <div class="user-summary"><span class="user-avatar" aria-hidden="true">${display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
+          <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
           ${administrator ? html`<button class="ghost" aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</button>` : nothing}
           <button class="ghost" @click=${this.logout}>Logout</button>
         </div>
@@ -2798,10 +2798,7 @@ class AllstarrApp extends LitElement {
       `;
     }
 
-    const providers = asArray(this.schema?.providers).filter((provider) => {
-      const providerId = String(provider.id || provider.Id || "").toLowerCase();
-      return !ACCOUNT_MANAGED_PROVIDERS.has(providerId);
-    });
+    const providers = asArray(this.schema?.providers);
     const statusOrder = { degraded: 0, needs_config: 1, needs_login: 1, partial_config: 1, unknown: 2, available: 2, testing: 2, healthy: 3, disabled: 4 };
     const orderedProviders = [...providers].sort((left, right) =>
       (statusOrder[this.providerStatus(left)] ?? 2) - (statusOrder[this.providerStatus(right)] ?? 2) ||
@@ -2814,7 +2811,7 @@ class AllstarrApp extends LitElement {
             <p>Connect an account once, test it here, then choose how Allstarr may use it.</p>
           </div>
         </div>
-        ${this.renderProviderAccounts()}
+        ${this.renderProviderAccounts(false)}
         ${this.renderProviderSection("all", "Providers", orderedProviders)}
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
@@ -2863,7 +2860,7 @@ class AllstarrApp extends LitElement {
     </div>`;
   }
 
-  renderProviderAccounts() {
+  renderProviderAccounts(showCards = true) {
     const accounts = asArray(this.providerAccounts);
     const administrator = Boolean(this.session?.isAdministrator || this.session?.IsAdministrator);
     const managementMode = String(this.schema?.providerAccountManagementMode || "Hybrid");
@@ -2873,8 +2870,8 @@ class AllstarrApp extends LitElement {
       <div class="panel" id="provider-accounts" tabindex="-1">
         <div class="section-heading">
           <div>
-            <h3>Connected accounts</h3>
-            <p>This is the single place to configure, enable, and test Spotify, Deezer, Qobuz, Last.fm, and ListenBrainz accounts.</p>
+            <h3>Add an account</h3>
+            <p>Add a personal or shared account. Existing accounts appear inside their provider below.</p>
           </div>
           <span class="status-chip configured">${managementMode}</span>
         </div>
@@ -2890,7 +2887,7 @@ class AllstarrApp extends LitElement {
           </form>
         </details>` : html`<div class="empty">Provider accounts are managed by an administrator.</div>`}
       </div>
-      ${canManage ? html`<div class="provider-account-grid">${accounts.length ? accounts.map((account) => this.renderProviderAccountCard(account, administrator)) : html`<div class="empty">No provider accounts yet.</div>`}</div>` : nothing}
+      ${showCards && canManage ? html`<div class="provider-account-grid">${accounts.length ? accounts.map((account) => this.renderProviderAccountCard(account, administrator)) : html`<div class="empty">No provider accounts yet.</div>`}</div>` : nothing}
     `;
   }
 
@@ -3226,12 +3223,21 @@ class AllstarrApp extends LitElement {
   }
 
   renderProviderSection(id, label, providers) {
+    const administrator = Boolean(this.session?.isAdministrator || this.session?.IsAdministrator);
     return html`
       <div class="provider-section provider-section-${id}">
         <h3>${label}</h3>
         ${providers.length ? html`
           <div class="provider-grid">
-            ${providers.map((provider) => this.renderProviderCard(provider))}
+            ${providers.map((provider) => {
+              const providerId = String(provider.id || provider.Id || "").toLowerCase();
+              const accounts = asArray(this.providerAccounts).filter((account) =>
+                String(account.providerId || account.ProviderId).toLowerCase() === providerId);
+              return html`<div class="provider-cluster">
+                ${this.renderProviderCard(provider)}
+                ${accounts.length ? html`<div class="provider-account-grid embedded-accounts">${accounts.map((account) => this.renderProviderAccountCard(account, administrator))}</div>` : nothing}
+              </div>`;
+            })}
           </div>
         ` : html`<div class="empty">No providers in this section.</div>`}
       </div>

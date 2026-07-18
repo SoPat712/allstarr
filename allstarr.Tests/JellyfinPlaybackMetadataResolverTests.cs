@@ -41,6 +41,24 @@ public sealed class JellyfinPlaybackMetadataResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_UsesAlbumArtworkWhenAudioItemHasNoPrimaryImage()
+    {
+        var resolver = CreateResolver(_ => Json("""
+            {
+              "Name": "Album track",
+              "AlbumArtist": "Artist",
+              "AlbumId": "album-42",
+              "AlbumPrimaryImageTag": "album-etag"
+            }
+            """));
+
+        var metadata = await resolver.ResolveAsync("track-1", CancellationToken.None);
+
+        Assert.NotNull(metadata);
+        Assert.Equal("/api/admin/downloads/artwork/album-42", metadata.CoverArtUrl);
+    }
+
+    [Fact]
     public async Task ResolveArtworkAsync_ReturnsOnlyBoundedImageContent()
     {
         var resolver = CreateResolver(request =>

@@ -455,6 +455,13 @@ a {
     background: var(--surface-elevated);
     color: var(--accent-strong);
     font-weight: 800;
+    overflow: hidden;
+}
+
+.user-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .main-shell {
@@ -966,6 +973,17 @@ tbody tr:hover {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: var(--space-4);
+}
+
+.provider-cluster {
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.embedded-accounts {
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .provider-account-card {
