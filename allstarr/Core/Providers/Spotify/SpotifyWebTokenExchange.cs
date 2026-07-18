@@ -19,37 +19,37 @@ internal static class SpotifyWebTokenExchange
     {
         try
         {
-        using var secretsResponse = await http.GetAsync(SecretsUri, cancellationToken);
-        if (!secretsResponse.IsSuccessStatusCode) return new(null, false, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
-        var secrets = JsonSerializer.Deserialize<TotpSecret[]>(await secretsResponse.Content.ReadAsStringAsync(cancellationToken));
-        var secret = secrets?.OrderByDescending(item => item.Version).FirstOrDefault();
-        if (secret == null || secret.Secret.Count == 0) return new(null, false, "totp_secrets_invalid");
+            using var secretsResponse = await http.GetAsync(SecretsUri, cancellationToken);
+            if (!secretsResponse.IsSuccessStatusCode) return new(null, false, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
+            var secrets = JsonSerializer.Deserialize<TotpSecret[]>(await secretsResponse.Content.ReadAsStringAsync(cancellationToken));
+            var secret = secrets?.OrderByDescending(item => item.Version).FirstOrDefault();
+            if (secret == null || secret.Secret.Count == 0) return new(null, false, "totp_secrets_invalid");
 
-        using var timeRequest = new HttpRequestMessage(HttpMethod.Head, SpotifyOrigin);
-        using var timeResponse = await http.SendAsync(timeRequest, cancellationToken);
-        var serverTime = timeResponse.Headers.Date?.ToUnixTimeSeconds();
-        if (!timeResponse.IsSuccessStatusCode || serverTime == null) return new(null, false, "spotify_time_unavailable");
+            using var timeRequest = new HttpRequestMessage(HttpMethod.Head, SpotifyOrigin);
+            using var timeResponse = await http.SendAsync(timeRequest, cancellationToken);
+            var serverTime = timeResponse.Headers.Date?.ToUnixTimeSeconds();
+            if (!timeResponse.IsSuccessStatusCode || serverTime == null) return new(null, false, "spotify_time_unavailable");
 
-        var transformed = secret.Secret.Select((value, index) => (byte)(value ^ ((index % 33) + 9))).ToArray();
-        var key = Encoding.UTF8.GetBytes(string.Concat(transformed.Select(value => value.ToString())));
-        var otp = new Totp(key, step: 30, totpSize: 6).ComputeTotp(DateTime.UnixEpoch.AddSeconds(serverTime.Value));
-        var clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var uri = new Uri($"https://open.spotify.com/api/token?reason=init&productType=web-player&totp={otp}&totpServer={otp}&totpVer={secret.Version}&sTime={serverTime}&cTime={clientTime}");
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={cookie}");
-        request.Headers.TryAddWithoutValidation("app-platform", "WebPlayer");
-        request.Headers.TryAddWithoutValidation("spotify-app-version", "1.2.46.25.g7f189073");
-        using var response = await http.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-            return new(null, false, response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden ? "provider_unauthorized" : $"upstream_http_{(int)response.StatusCode}");
-        try
-        {
-            var token = JsonSerializer.Deserialize<TokenResponse>(await response.Content.ReadAsStringAsync(cancellationToken));
-            return token == null || string.IsNullOrWhiteSpace(token.AccessToken)
-                ? new(null, false, "invalid_response")
-                : new(token.AccessToken, token.IsAnonymous, token.IsAnonymous ? "anonymous_session" : null);
-        }
-        catch (JsonException) { return new(null, false, "invalid_response"); }
+            var transformed = secret.Secret.Select((value, index) => (byte)(value ^ ((index % 33) + 9))).ToArray();
+            var key = Encoding.UTF8.GetBytes(string.Concat(transformed.Select(value => value.ToString())));
+            var otp = new Totp(key, step: 30, totpSize: 6).ComputeTotp(DateTime.UnixEpoch.AddSeconds(serverTime.Value));
+            var clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var uri = new Uri($"https://open.spotify.com/api/token?reason=init&productType=web-player&totp={otp}&totpServer={otp}&totpVer={secret.Version}&sTime={serverTime}&cTime={clientTime}");
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={cookie}");
+            request.Headers.TryAddWithoutValidation("app-platform", "WebPlayer");
+            request.Headers.TryAddWithoutValidation("spotify-app-version", "1.2.46.25.g7f189073");
+            using var response = await http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return new(null, false, response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden ? "provider_unauthorized" : $"upstream_http_{(int)response.StatusCode}");
+            try
+            {
+                var token = JsonSerializer.Deserialize<TokenResponse>(await response.Content.ReadAsStringAsync(cancellationToken));
+                return token == null || string.IsNullOrWhiteSpace(token.AccessToken)
+                    ? new(null, false, "invalid_response")
+                    : new(token.AccessToken, token.IsAnonymous, token.IsAnonymous ? "anonymous_session" : null);
+            }
+            catch (JsonException) { return new(null, false, "invalid_response"); }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { return new(null, false, $"exchange_exception_{ex.GetType().Name.ToLowerInvariant()}"); }
