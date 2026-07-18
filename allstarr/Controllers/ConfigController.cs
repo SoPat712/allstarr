@@ -181,7 +181,8 @@ public class ConfigController : ControllerBase
             {
                 bindAnyIp = GetEnvBool(envVars, "ADMIN_BIND_ANY_IP", AdminNetworkBindingPolicy.ShouldBindAdminAnyIp(_configuration)),
                 trustedSubnets = GetEnvString(envVars, "ADMIN_TRUSTED_SUBNETS", _configuration.GetValue<string>("Admin:TrustedSubnets") ?? string.Empty),
-                allowEnvExport = IsEnvExportEnabled()
+                allowEnvExport = IsEnvExportEnabled(),
+                redactSensitiveValues = _configuration.GetValue<bool>("Admin:RedactSensitiveValues", false)
             },
             spotifyApi = new
             {
@@ -764,6 +765,8 @@ public class ConfigController : ControllerBase
         [FromForm] IFormFile? file,
         CancellationToken cancellationToken = default)
     {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers.Pragma = "no-cache";
         var adminCheck = RequireAdministratorForSensitiveOperation("env migration preview");
         if (adminCheck != null)
         {

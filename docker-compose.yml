@@ -68,6 +68,7 @@ services:
       Backend__Type: ${BACKEND_TYPE:-Subsonic}
       Admin__BindAnyIp: ${ADMIN_BIND_ANY_IP:-false}
       Admin__TrustedSubnets: ${ADMIN_TRUSTED_SUBNETS:-}
+      Admin__RedactSensitiveValues: ${ADMIN_REDACT_SENSITIVE_VALUES:-false}
       Admin__Containerized: "true"
       Admin__ContainerGateway: auto
 

@@ -5,6 +5,7 @@ const DEFAULT_ROUTE = "/home";
 const SETUP_GUIDE_DISMISSED_KEY = "allstarr-setup-guide-dismissed";
 const SETUP_GUIDE_STEP_KEY = "allstarr-setup-guide-step";
 const SETUP_GUIDE_LAST_STEP = 4;
+const REDACTION_MODE_KEY = "allstarr-sharing-redaction";
 
 function normalizeRoute(hash = window.location.hash) {
   const route = hash.replace(/^#/, "") || DEFAULT_ROUTE;
@@ -500,6 +501,7 @@ class AllstarrApp extends LitElement {
     setupGuideOpen: { state: true },
     setupStep: { state: true },
     loadFailures: { state: true },
+    redactionMode: { state: true },
   };
 
   constructor() {
@@ -554,12 +556,15 @@ class AllstarrApp extends LitElement {
     this.setupGuideOpen = false;
     this.setupStep = Math.max(0, Math.min(SETUP_GUIDE_LAST_STEP, Number(localStorage.getItem(SETUP_GUIDE_STEP_KEY)) || 0));
     this.loadFailures = {};
+    this.redactionPreferenceSet = localStorage.getItem(REDACTION_MODE_KEY) !== null;
+    this.redactionMode = localStorage.getItem(REDACTION_MODE_KEY) === "1";
     this.playlistLinkFilters = { libraryScopeId: "" };
     this.mappingFilters = { page: 1, pageSize: 50, state: "", libraryScopeId: "", search: "" };
     this.externalPlaylistProvider = "deezer";
     this.externalPlaylistQuery = "";
     this.activitySource = null;
     this.routeLoadKey = "";
+    this.envMigrationExpiryTimer = null;
   }
 
   createRenderRoot() {
@@ -586,6 +591,7 @@ class AllstarrApp extends LitElement {
   disconnectedCallback() {
     window.removeEventListener("hashchange", this.onHashChange);
     this.stopActivityStream();
+    clearTimeout(this.envMigrationExpiryTimer);
     super.disconnectedCallback();
   }
 
@@ -658,11 +664,21 @@ class AllstarrApp extends LitElement {
   async loadConfig() {
     try {
       this.config = await API.config();
+      if (!this.redactionPreferenceSet) {
+        this.redactionMode = Boolean(this.config?.admin?.redactSensitiveValues ?? this.config?.Admin?.RedactSensitiveValues);
+      }
       this.clearLoadFailure("config");
     } catch (error) {
       this.recordLoadFailure("config", "Configuration", error);
       throw error;
     }
+  }
+
+  toggleRedactionMode() {
+    this.redactionMode = !this.redactionMode;
+    this.redactionPreferenceSet = true;
+    localStorage.setItem(REDACTION_MODE_KEY, this.redactionMode ? "1" : "0");
+    this.toast(this.redactionMode ? "Sharing redaction enabled" : "Sharing redaction disabled");
   }
 
   async loadStatus() {
@@ -1511,6 +1527,7 @@ class AllstarrApp extends LitElement {
             <option value="light">Light</option>
           </select>
           ${administrator ? html`<button class="ghost" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus()]); this.toast("Status refreshed"); }}>Refresh</button>` : nothing}
+          ${administrator ? html`<button class="ghost" aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</button>` : nothing}
           <button class="ghost" @click=${this.logout}>Logout</button>
         </div>
       </aside>
@@ -3467,6 +3484,8 @@ class AllstarrApp extends LitElement {
   }
 
   resetEnvMigration() {
+    clearTimeout(this.envMigrationExpiryTimer);
+    this.envMigrationExpiryTimer = null;
     this.envMigration = { state: "idle", sourceName: "", preview: null, result: null, error: "" };
     const fileInput = this.querySelector("#legacy-env-file");
     if (fileInput) fileInput.value = "";
@@ -3489,6 +3508,14 @@ class AllstarrApp extends LitElement {
     try {
       const preview = await API.previewEnvMigration(source, sourceName);
       this.envMigration = { state: "preview", sourceName, preview, result: null, error: "" };
+      clearTimeout(this.envMigrationExpiryTimer);
+      const expiresAt = Date.parse(preview.expiresAt || preview.ExpiresAt || "");
+      if (Number.isFinite(expiresAt)) {
+        this.envMigrationExpiryTimer = setTimeout(() => {
+          this.resetEnvMigration();
+          this.toast("Migration preview expired. Upload the file again to continue.", "warning");
+        }, Math.max(0, expiresAt - Date.now()));
+      }
     } catch (error) {
       this.envMigration = { state: "error", sourceName, preview: null, result: null, error: error.message };
     }
@@ -3525,7 +3552,9 @@ class AllstarrApp extends LitElement {
     this.envMigration = { ...this.envMigration, state: "applying", error: "" };
     try {
       const result = await API.applyEnvMigration(previewToken, revision);
-      this.envMigration = { ...this.envMigration, state: "success", result, error: "" };
+      clearTimeout(this.envMigrationExpiryTimer);
+      this.envMigrationExpiryTimer = null;
+      this.envMigration = { state: "success", sourceName: this.envMigration.sourceName, preview: null, result, error: "" };
       await this.loadConfig();
       await this.loadEnvMigrationStatus();
       this.toast("Legacy settings migrated. Imported settings are active now.");
@@ -3620,10 +3649,10 @@ class AllstarrApp extends LitElement {
       deployment: "Deployment checklist",
       deployment_only: "Deployment checklist",
       deployment_checklist: "Deployment checklist",
-      user_accounts: "Per-user reconnects",
-      reconnects: "Per-user reconnects",
-      per_user_reconnects: "Per-user reconnects",
-      per_user_manual: "Per-user reconnects",
+      user_accounts: "Your personal accounts",
+      reconnects: "Your personal accounts",
+      per_user_reconnects: "Your personal accounts",
+      per_user_manual: "Your personal accounts",
       conflicts: "Conflicts",
       unknown: "Unknown keys",
       unknowns: "Unknown keys",
@@ -3640,7 +3669,7 @@ class AllstarrApp extends LitElement {
 
   migrationEntryStatusClass(entry) {
     const state = this.migrationEntryState(entry);
-    if (["import", "imported", "import_if_absent", "ready", "durable"].includes(state)) return "configured";
+    if (["import", "imported", "import_if_absent", "import_for_current_user", "ready", "durable"].includes(state)) return "configured";
     if (["skip", "skipped", "unknown", "unsupported"].includes(state)) return "disabled";
     return "warning";
   }
@@ -3730,7 +3759,7 @@ class AllstarrApp extends LitElement {
   }
 
   migrationEntryValue(entry) {
-    if (this.migrationEntryIsSensitive(entry)) return "[redacted]";
+    if (this.redactionMode && this.migrationEntryIsSensitive(entry)) return "[redacted]";
     return display(entry.displayValue ?? entry.DisplayValue ?? entry.previewValue ?? entry.PreviewValue ??
       entry.redactedValue ?? entry.RedactedValue ?? entry.value ?? entry.Value);
   }
@@ -3775,7 +3804,7 @@ class AllstarrApp extends LitElement {
         <div class="env-migration-heading">
           <div>
             <h3 id="env-migration-title" tabindex="-1">Migrate a legacy .env</h3>
-            <p class="muted">Preview supported settings before importing them into the new configuration and encrypted account model. The original file is never displayed back to you.</p>
+            <p class="muted">Preview supported settings before importing them into the new configuration and encrypted account model. Uploaded values exist only in this short-lived preview.</p>
           </div>
           ${migration.state !== "idle" ? html`<button type="button" class="ghost" @click=${() => this.resetEnvMigration()} ?disabled=${busy}>Start over</button>` : nothing}
         </div>
@@ -3804,7 +3833,7 @@ class AllstarrApp extends LitElement {
 
         ${migration.state === "preview" || migration.state === "applying" ? html`
           <div class="env-migration-review">
-            <div class="callout warning"><strong>Review before applying.</strong> Existing settings are not changed until you confirm. Secret values stay redacted in this preview.</div>
+            <div class="callout warning"><strong>Review before applying.</strong> Existing settings are not changed until you confirm. ${this.redactionMode ? "Sharing redaction is on, so sensitive values are hidden." : "Sensitive values are visible to you in this short-lived preview. Turn on sharing redaction in the sidebar before taking screenshots."}</div>
             ${summary ? html`<div class="callout"><strong>Preview summary</strong><p>${display(summary.message || summary.Message || summary)}</p></div>` : nothing}
             <dl class="env-migration-provenance" aria-label="Migration preview provenance">
               <div><dt>Source SHA-256</dt><dd class="mono">${display(sourceSha256)}</dd></div>
@@ -3829,12 +3858,12 @@ class AllstarrApp extends LitElement {
                 </table></div>
               </section>`;
             }) : html`<div class="empty">No supported legacy settings were found. Nothing will be changed.</div>`}
-            <div class="callout"><strong>What confirmation means</strong><p>Only rows marked for durable import are applied automatically. Disabled shared accounts remain disabled, users reconnect personal accounts themselves, deployment-only values stay on the host checklist, and playlists requiring a target or owner remain handoffs.</p></div>
+            <div class="callout"><strong>What confirmation means</strong><p>Rows marked for durable import are applied automatically. The signed-in administrator's Last.fm and ListenBrainz credentials become encrypted personal accounts owned only by that user. Disabled shared accounts remain disabled, deployment-only values stay on the host checklist, and playlists requiring a target or owner remain handoffs.</p></div>
             ${this.renderMigrationOptionalRuntimeGuidance()}
             <form class="env-migration-confirm" @submit=${(event) => this.applyEnvMigration(event)}>
               <label class="inline-check">
                 <input name="confirmMigration" type="checkbox" required ?disabled=${migration.state === "applying"}>
-                <span>I reviewed this preview and authorize Allstarr to add the settings marked ready and create the listed shared provider accounts in a disabled state. Existing durable settings stay unchanged.</span>
+                <span>I reviewed this preview and authorize Allstarr to add the settings marked ready, create the listed shared provider accounts in a disabled state, and create the listed encrypted personal accounts for my signed-in user. Existing durable settings stay unchanged, and existing accounts are never overwritten.</span>
               </label>
               <button class="primary" type="submit" ?disabled=${migration.state === "applying" || !canApply}>${migration.state === "applying" ? "Applying migration…" : "Apply migration"}</button>
             </form>

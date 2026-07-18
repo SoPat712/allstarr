@@ -50,13 +50,16 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Preview_IsReadOnlyBoundedAndRedactsEverySecret()
+    public async Task Preview_IsReadOnlyBoundedAndReturnsValuesToAuthenticatedAdministrator()
     {
         var service = CreateService();
         var preview = await service.PreviewAsync(Source("""
             CACHE_LYRICS_DAYS=21
             DEEZER_ARL=never-return-this-arl
             JELLYFIN_API_KEY=never-return-this-key
+            SCROBBLING_LASTFM_API_KEY=never-return-this-api-key
+            SCROBBLING_LASTFM_SHARED_SECRET=never-return-this-shared-secret
+            SCROBBLING_LASTFM_USERNAME=administrator
             SCROBBLING_LASTFM_SESSION_KEY=never-return-this-session
             SCROBBLING_LOCAL_TRACKS_ENABLED=true
             SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","source-id","target-id","first","0 8 * * *"]]
@@ -64,17 +67,17 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
 
         Assert.True(preview.CanApply);
         Assert.Equal(3, preview.ImportedSettingCount);
-        Assert.Equal(1, preview.ProviderAccountCount);
-        Assert.Equal(2, preview.ManualCount);
+        Assert.Equal(2, preview.ProviderAccountCount);
+        Assert.Equal(1, preview.ManualCount);
         Assert.Equal(64, preview.SourceSha256.Length);
         Assert.Equal(LegacyEnvParser.ParserVersion, preview.ParserVersion);
         Assert.Equal(64, preview.Revision.Length);
         Assert.True(preview.PreviewToken.Length >= 40);
         var deezer = Assert.Single(preview.Items, item => item.Key == "DEEZER_ARL");
         Assert.Equal(2, deezer.SourceLine);
-        Assert.Equal("configured", deezer.ValuePreview);
+        Assert.Equal("never-return-this-arl", deezer.ValuePreview);
         Assert.Equal("retain_in_deployment", Assert.Single(preview.Items, item => item.Key == "JELLYFIN_API_KEY").Action);
-        Assert.Equal("per_user_manual", Assert.Single(preview.Items, item => item.Key == "SCROBBLING_LASTFM_SESSION_KEY").Action);
+        Assert.Equal("import_for_current_user", Assert.Single(preview.Items, item => item.Key == "SCROBBLING_LASTFM_SESSION_KEY").Action);
         Assert.Contains("duplicate", Assert.Single(preview.Items,
             item => item.Key == "SCROBBLING_LOCAL_TRACKS_ENABLED").Warning, StringComparison.OrdinalIgnoreCase);
         var playlist = Assert.Single(preview.PlaylistHandoffs);
@@ -85,7 +88,8 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         Assert.Equal("import_if_absent", playlistSetting.Action);
 
         var json = JsonSerializer.Serialize(preview);
-        Assert.DoesNotContain("never-return-this", json, StringComparison.Ordinal);
+        Assert.Contains("never-return-this-arl", json, StringComparison.Ordinal);
+        Assert.Contains("never-return-this-session", json, StringComparison.Ordinal);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
@@ -130,7 +134,7 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         Assert.Contains(preview.Warnings, warning => warning.Contains("DEEZER_ARL", StringComparison.Ordinal));
         var serializedPreview = JsonSerializer.Serialize(preview);
         Assert.DoesNotContain("first-private-value", serializedPreview, StringComparison.Ordinal);
-        Assert.DoesNotContain("second-private-value", serializedPreview, StringComparison.Ordinal);
+        Assert.Contains("second-private-value", serializedPreview, StringComparison.Ordinal);
 
         await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
 
@@ -161,9 +165,9 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         Assert.True(result.Success);
         Assert.False(result.AlreadyApplied);
         Assert.Equal(1, result.SettingsImported);
-        Assert.Equal(3, result.ProviderAccountsCreated);
-        Assert.Equal(["deezer", "qobuz", "spotify"], result.CreatedProviders.Order().ToArray());
-        Assert.Equal(1, result.ManualChecklistItems);
+        Assert.Equal(4, result.ProviderAccountsCreated);
+        Assert.Equal(["deezer", "listenbrainz", "qobuz", "spotify"], result.CreatedProviders.Order().ToArray());
+        Assert.Equal(0, result.ManualChecklistItems);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -172,11 +176,16 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
             Assert.Equal("30", setting.ValueJson);
             Assert.Equal("legacy-env-import", setting.Source);
             var accounts = await db.ProviderAccounts.OrderBy(item => item.ProviderId).ToListAsync();
-            Assert.Equal(3, accounts.Count);
-            Assert.All(accounts, account => Assert.False(account.Enabled));
+            Assert.Equal(4, accounts.Count);
+            Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Global), account => Assert.False(account.Enabled));
+            var listenBrainz = Assert.Single(accounts, account => account.ProviderId == "listenbrainz");
+            Assert.True(listenBrainz.Enabled);
+            Assert.Equal(ProviderAccountScope.User, listenBrainz.Scope);
+            Assert.Equal(_tenantId, listenBrainz.TenantId);
+            Assert.Equal(_userId, listenBrainz.OwnerUserId);
             Assert.All(accounts, account => Assert.NotNull(account.SecretReferenceId));
-            Assert.Equal(3, await db.SecretReferences.CountAsync());
-            Assert.Equal(3, await db.SecretVersions.CountAsync());
+            Assert.Equal(4, await db.SecretReferences.CountAsync());
+            Assert.Equal(4, await db.SecretVersions.CountAsync());
             var receipt = Assert.Single(await db.LegacyEnvImports.ToListAsync());
             Assert.Equal(_tenantId, receipt.TenantId);
             Assert.Equal(result.SourceFingerprint, receipt.SourceSha256);
@@ -194,13 +203,53 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
             using var secret = JsonDocument.Parse(lease.Value);
             Assert.Equal("qobuz-token", secret.RootElement.GetProperty("userAuthToken").GetString());
             Assert.Equal("55", secret.RootElement.GetProperty("userId").GetString());
+
+            using var listenBrainzLease = await CreateSecretStore().OpenAsync(
+                listenBrainz.SecretReferenceId!.Value,
+                new SecretAccessContext(_tenantId));
+            using var listenBrainzSecret = JsonDocument.Parse(listenBrainzLease.Value);
+            Assert.Equal("personal-token", listenBrainzSecret.RootElement.GetProperty("token").GetString());
         }
 
         var replay = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
         Assert.True(replay.AlreadyApplied);
         await using var verify = await _factory.CreateDbContextAsync();
-        Assert.Equal(3, await verify.ProviderAccounts.CountAsync());
+        Assert.Equal(4, await verify.ProviderAccounts.CountAsync());
         Assert.Single(await verify.AuditEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Apply_ImportsLastFmBundleIntoCurrentUsersEncryptedAccountOnly()
+    {
+        var service = CreateService();
+        var preview = await service.PreviewAsync(Source("""
+            SCROBBLING_LASTFM_API_KEY=lastfm-api
+            SCROBBLING_LASTFM_SHARED_SECRET=lastfm-secret
+            SCROBBLING_LASTFM_USERNAME=administrator
+            SCROBBLING_LASTFM_PASSWORD=legacy-password
+            SCROBBLING_LASTFM_SESSION_KEY=lastfm-session
+            """), Actor());
+
+        Assert.All(preview.Items, item => Assert.Equal("import_for_current_user", item.Action));
+        var result = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+
+        Assert.Equal(["lastfm"], result.CreatedProviders);
+        Assert.DoesNotContain("lastfm-session", JsonSerializer.Serialize(result), StringComparison.Ordinal);
+        await using var db = await _factory.CreateDbContextAsync();
+        var account = Assert.Single(await db.ProviderAccounts.ToListAsync());
+        Assert.Equal(ProviderAccountScope.User, account.Scope);
+        Assert.Equal(_tenantId, account.TenantId);
+        Assert.Equal(_userId, account.OwnerUserId);
+        Assert.True(account.Enabled);
+        using var lease = await CreateSecretStore().OpenAsync(
+            account.SecretReferenceId!.Value,
+            new SecretAccessContext(_tenantId));
+        using var secret = JsonDocument.Parse(lease.Value);
+        Assert.Equal("lastfm-api", secret.RootElement.GetProperty("apiKey").GetString());
+        Assert.Equal("lastfm-secret", secret.RootElement.GetProperty("sharedSecret").GetString());
+        Assert.Equal("administrator", secret.RootElement.GetProperty("username").GetString());
+        Assert.Equal("legacy-password", secret.RootElement.GetProperty("password").GetString());
+        Assert.Equal("lastfm-session", secret.RootElement.GetProperty("sessionKey").GetString());
     }
 
     [Theory]

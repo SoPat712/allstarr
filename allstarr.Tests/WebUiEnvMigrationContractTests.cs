@@ -91,14 +91,14 @@ public sealed class WebUiEnvMigrationContractTests
         foreach (var label in new[]
                  {
                      "Imported durable settings", "Disabled shared accounts", "Deployment checklist",
-                     "Per-user reconnects", "Conflicts", "Unknown keys", "Playlist ownership handoffs"
+                     "Your personal accounts", "Conflicts", "Unknown keys", "Playlist ownership handoffs"
                  })
         {
             Assert.Contains(label, _script, StringComparison.Ordinal);
         }
 
         Assert.Contains("requires_target_selection", _script, StringComparison.Ordinal);
-        Assert.Contains("Only rows marked for durable import are applied automatically", _script, StringComparison.Ordinal);
+        Assert.Contains("Rows marked for durable import are applied automatically", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("LEGACY_ENV_MIGRATION", _script, StringComparison.Ordinal);
     }
 
@@ -140,13 +140,14 @@ public sealed class WebUiEnvMigrationContractTests
     }
 
     [Fact]
-    public void Preview_RedactsSecretsAndGroupsChangesWithWarnings()
+    public void Preview_AllowsExplicitSharingRedactionAndGroupsChangesWithWarnings()
     {
         Assert.Contains("migrationEntryIsSensitive", _script, StringComparison.Ordinal);
         Assert.Contains("return \"[redacted]\"", _script, StringComparison.Ordinal);
         Assert.Contains("password|secret|token|cookie|api[_-]?key", _script, StringComparison.Ordinal);
         Assert.Contains("migrationCategories", _script, StringComparison.Ordinal);
-        Assert.Contains("Secret values stay redacted", _script, StringComparison.Ordinal);
+        Assert.Contains("Redact for sharing", _script, StringComparison.Ordinal);
+        Assert.Contains("this.redactionMode && this.migrationEntryIsSensitive", _script, StringComparison.Ordinal);
         Assert.Contains("role=\"alert\"", _script, StringComparison.Ordinal);
         Assert.Contains("entry.warning || entry.Warning || entry.reason", _script, StringComparison.Ordinal);
         Assert.Contains("Local scrobbling can duplicate plays", File.ReadAllText(FindRepositoryFile(

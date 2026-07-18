@@ -2,7 +2,7 @@
 
 This document defines the boundary for the pre-overhaul `.env` migration wizard. It does not turn startup into a migration path. Version 3 still starts from a fresh Compose deployment and a fresh durable database, then an administrator can bring forward the safe parts of a 2.x configuration through the WebUI.
 
-The wizard is an explicit, one-shot administrator action. It accepts an uploaded file or pasted contents, produces a redacted preview, requires confirmation, writes through durable services, and leaves the source file unchanged. Startup and normal schema migrations never scan or import a legacy `.env`. The old wholesale `/api/admin/import-env` replacement endpoint is retired.
+The wizard is an explicit, one-shot administrator action. It accepts an uploaded file or pasted contents, produces a short-lived administrator preview, requires confirmation, writes through durable services, and leaves the source file unchanged. Values are visible to the authenticated administrator by default so the import can be verified. Turn on **Redact for sharing** in the sidebar before taking screenshots; operators can make that the initial browser default with `ADMIN_REDACT_SENSITIVE_VALUES=true`. Startup and normal schema migrations never scan or import a legacy `.env`. The old wholesale `/api/admin/import-env` replacement endpoint is retired.
 
 ## Upgrade Procedure
 
@@ -20,14 +20,13 @@ root at the same time. Keep the stopped version 2 deployment and its data for ro
    first administrator login also offers a neutral **Upgrading from Allstarr 2.x?** shortcut. Dismissing that prompt
    does not remove the Settings workflow.
 5. Review every preview category: durable settings ready to add, disabled shared accounts, deployment checklist,
-   per-user reconnects, conflicts, unknown or deprecated keys, and playlist ownership handoffs. Secret values stay
-   redacted. Fix any blocking input error and create a new preview. A preview expires after 15 minutes and belongs
+   personal accounts for the signed-in administrator, conflicts, unknown or deprecated keys, and playlist ownership handoffs. Enable sharing redaction before sharing the screen or taking screenshots. Fix any blocking input error and create a new preview. A preview expires after 15 minutes and belongs
    to the administrator session that created it.
 6. Check the confirmation box and apply. The wizard adds only absent allowlisted settings and absent eligible
    shared accounts. It does not replace existing durable settings or credentials.
 7. Copy reviewed deployment-checklist values into the new Compose or `.env` configuration and recreate the
    affected containers if needed. Review each imported shared account, test its health and permissions, then enable
-   it explicitly. Each user reconnects personal Spotify, Last.fm, and ListenBrainz access.
+   it explicitly. The importer creates encrypted, user-scoped Last.fm and ListenBrainz accounts only for the signed-in administrator when those legacy values are present. Other users connect their own accounts, and Spotify still requires an explicit reconnect.
 8. Recreate each playlist handoff through the provider-neutral playlist workflow. Select its owner, user-scoped
    provider account, backend, library, target playlist, reconcile or recreate mode, and schedule.
 9. Run the readiness and client smoke checks. Take a verified Postgres backup, back up the key ring separately, and
@@ -43,10 +42,10 @@ Every recognized key has exactly one disposition:
 | Deployment only | The operator reviews and copies the value into the new Compose/bootstrap environment. It is never written into a durable setting row by the importer. |
 | Durable setting | A non-secret application preference may be written into the typed, tenant-scoped durable runtime settings store. |
 | Encrypted global provider secret | A legacy shared credential may create one disabled-by-default global provider account and encrypted secret reference after explicit acknowledgement. |
-| Per-user manual | Ownership cannot be inferred safely. The value is never imported; each linked user reconnects the account or recreates the object. |
+| Per-user account | Last.fm and ListenBrainz credentials may be imported into an encrypted account owned by the signed-in administrator. Ambiguous multi-user data is never guessed. |
 | Ignored or deprecated | The value has no target in the new baseline. It is reported and left behind. |
 
-An empty value is `absent`, not an instruction to clear a target. Empty JSON arrays are valid only for keys whose documented value is an array. Secret values must never appear in the report, logs, job payloads, audit metadata, command history, or exception text.
+An empty value is `absent`, not an instruction to clear a target. Empty JSON arrays are valid only for keys whose documented value is an array. Secret values may appear only in the authenticated, short-lived preview unless sharing redaction is enabled. They must never appear in durable reports, logs, job payloads, audit metadata, command history, or exception text.
 
 ## Exact Key Matrix
 
@@ -96,13 +95,13 @@ These are the only legacy shared credential bundles eligible for global-account 
 
 A pre-existing provider account is a conflict even when the display name differs. The importer must not merge secret JSON, compare plaintext values, rotate an existing reference, or attach a new secret to an existing account. An administrator can use the normal credential replacement flow after reviewing the dry run.
 
-### Per-User Or Ownership-Ambiguous: Manual Only
+### Per-User Or Ownership-Ambiguous
 
 | Legacy keys or objects | Reason |
 | --- | --- |
 | `SPOTIFY_API_SESSION_COOKIES`, `SPOTIFY_API_SESSION_COOKIE_SET_DATES` | The JSON keys are legacy backend/user identifiers and cannot be assumed to be current tenant user IDs. Each linked user reconnects Spotify. |
-| `SCROBBLING_LASTFM_API_KEY`, `SCROBBLING_LASTFM_SHARED_SECRET`, `SCROBBLING_LASTFM_USERNAME`, `SCROBBLING_LASTFM_PASSWORD`, `SCROBBLING_LASTFM_SESSION_KEY` | The legacy Last.fm bundle belongs to a personal scrobbling authorization flow. Do not create a global account or guess its Allstarr owner. Each linked user reconnects Last.fm, and the password should not be retained after authentication completes. |
-| `SCROBBLING_LISTENBRAINZ_USER_TOKEN` | A ListenBrainz token is user-owned. Each linked user reconnects it. |
+| `SCROBBLING_LASTFM_API_KEY`, `SCROBBLING_LASTFM_SHARED_SECRET`, `SCROBBLING_LASTFM_USERNAME`, `SCROBBLING_LASTFM_PASSWORD`, `SCROBBLING_LASTFM_SESSION_KEY` | When the administrator session is linked to an Allstarr user, import the bundle into one encrypted, enabled, user-scoped Last.fm account owned by that user. Never create a global account or overwrite an existing personal account. Other users reconnect separately. |
+| `SCROBBLING_LISTENBRAINZ_USER_TOKEN` | When the administrator session is linked to an Allstarr user, import the token into one encrypted, enabled, user-scoped ListenBrainz account owned by that user. Never create a global account or overwrite an existing personal account. |
 | `SPOTIFY_IMPORT_PLAYLISTS` | Legacy rows may omit owner, backend playlist ID, provider account, library, target credential, conflict mode, and durable schedule identity. The importer must parse and preserve every valid source definition in a non-secret handoff artifact/report with its name, Spotify playlist ID, local-track position, source order, and validation result. It must not activate a durable link. An administrator assigns the owner, exact user-scoped Spotify account, backend target, library, mode, and schedule through the provider-neutral playlist workflow. |
 | Legacy favorite settings, Spotify mapping files, playlist cache files, Redis/Valkey keys, extension enable state, job files, and version markers | None carries enough authenticated scope and current schema evidence for safe import. Rebuild or recreate through current APIs. |
 

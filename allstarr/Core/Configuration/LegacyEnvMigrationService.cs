@@ -82,6 +82,7 @@ public sealed class LegacyEnvMigrationException(string code, string message) : E
 public sealed class LegacyEnvMigrationService
 {
     private const string ImportedAccountName = "Legacy .env import";
+    private const string ImportedPersonalAccountName = "Legacy .env import (current user)";
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -130,6 +131,7 @@ public sealed class LegacyEnvMigrationService
         IReadOnlyDictionary<string, EffectiveRuntimeSetting> existingSettings =
             new Dictionary<string, EffectiveRuntimeSetting>(StringComparer.OrdinalIgnoreCase);
         HashSet<string> existingProviders = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> existingUserProviders = new(StringComparer.OrdinalIgnoreCase);
         if (tenantId.HasValue)
         {
             existingSettings = await _settings.GetManyAsync(
@@ -142,6 +144,16 @@ public sealed class LegacyEnvMigrationService
                     .Select(item => item.ProviderId)
                     .ToListAsync(cancellationToken))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (actor.ActorUserId.HasValue)
+            {
+                existingUserProviders = (await db.ProviderAccounts.AsNoTracking()
+                        .Where(item => item.Scope == ProviderAccountScope.User &&
+                                       item.TenantId == tenantId.Value &&
+                                       item.OwnerUserId == actor.ActorUserId.Value)
+                        .Select(item => item.ProviderId)
+                        .ToListAsync(cancellationToken))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
         }
 
         var conflicts = new List<string>();
@@ -181,6 +193,31 @@ public sealed class LegacyEnvMigrationService
                     conflicts.Add($"{entry.Key} already has a durable value and will not be overwritten.");
                 }
             }
+            else if (entry.Disposition == LegacyEnvDisposition.PerUserManual &&
+                     PersonalProviderId(entry.Key) is { } personalProviderId)
+            {
+                if (entry.Value.Length == 0)
+                {
+                    action = "ignore_empty";
+                    reason = "Empty personal credentials are not imported.";
+                }
+                else if (!tenantId.HasValue || !actor.ActorUserId.HasValue)
+                {
+                    action = "conflict_missing_user";
+                    reason = "The administrator session is not linked to an Allstarr user.";
+                    conflicts.Add($"{entry.Key} cannot be imported without a linked administrator user.");
+                }
+                else if (existingUserProviders.Contains(personalProviderId))
+                {
+                    action = "conflict_existing";
+                    reason = $"Your {personalProviderId} account already exists and will not be overwritten.";
+                }
+                else
+                {
+                    action = "import_for_current_user";
+                    reason = $"Import into your encrypted user-owned {personalProviderId} account.";
+                }
+            }
 
             previewItems.Add(new(
                 entry.Key,
@@ -189,20 +226,20 @@ public sealed class LegacyEnvMigrationService
                 action,
                 reason,
                 entry.Sensitive,
-                entry.Sensitive ? "configured" : entry.Value,
+                entry.Value,
                 entry.DurableKey,
-                entry.ProviderId,
+                entry.ProviderId ?? PersonalProviderId(entry.Key),
                 existingRevision,
                 DuplicateScrobbleWarning(entry)));
         }
 
         var accountPreviews = BuildProviderPreviews(document, existingProviders, conflicts);
-        var revision = await ComputeRevisionAsync(document.SourceSha256, tenantId, cancellationToken);
+        var revision = await ComputeRevisionAsync(document.SourceSha256, tenantId, actor.ActorUserId, cancellationToken);
         var rawToken = Base64Url(RandomNumberGenerator.GetBytes(32));
         var tokenHash = HashToken(rawToken);
         var expiresAt = _clock.UtcNow.Add(PreviewLifetime);
         var canApply = tenantId.HasValue &&
-                       !previewItems.Any(item => item.Action is "conflict_missing_tenant" or "conflict_invalid_value") &&
+                       !previewItems.Any(item => item.Action is "conflict_missing_tenant" or "conflict_missing_user" or "conflict_invalid_value") &&
                        !accountPreviews.Any(item => item.Action is "conflict_incomplete" or "conflict_invalid_value");
         var state = new PreviewState(
             document,
@@ -225,7 +262,10 @@ public sealed class LegacyEnvMigrationService
             expiresAt,
             canApply,
             previewItems.Count(item => item.Action == "import_if_absent"),
-            accountPreviews.Count(item => item.Action == "create_disabled_if_missing"),
+            accountPreviews.Count(item => item.Action == "create_disabled_if_missing") +
+            previewItems.Where(item => item.Action == "import_for_current_user")
+                .Select(item => item.ProviderId).Where(item => item != null)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             previewItems.Count(item => item.Action is "retain_in_deployment" or "per_user_manual" or
                 "manual_review" or "deprecated_manual_review" or "requires_target_selection"),
             previewItems,
@@ -314,6 +354,7 @@ public sealed class LegacyEnvMigrationService
                 var currentRevision = await ComputeRevisionAsync(
                     state.Document.SourceSha256,
                     state.TenantId,
+                    state.ActorUserId,
                     cancellationToken);
                 if (!FixedEquals(currentRevision, state.Revision))
                 {
@@ -402,6 +443,64 @@ public sealed class LegacyEnvMigrationService
                     createdProviders.Add(provider.ProviderId);
                 }
 
+                var personalProviders = state.Items
+                    .Where(item => item.Action == "import_for_current_user")
+                    .Select(item => PersonalProviderId(item.Key))
+                    .Where(item => item != null)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Cast<string>()
+                    .ToArray();
+                foreach (var providerId in personalProviders)
+                {
+                    if (!state.ActorUserId.HasValue)
+                    {
+                        throw new LegacyEnvMigrationException(
+                            "user_required",
+                            "The administrator session is not linked to an Allstarr user.");
+                    }
+                    if (await db.ProviderAccounts.AnyAsync(item =>
+                            item.Scope == ProviderAccountScope.User &&
+                            item.TenantId == state.TenantId.Value &&
+                            item.OwnerUserId == state.ActorUserId.Value &&
+                            item.ProviderId == providerId, cancellationToken))
+                    {
+                        throw new LegacyEnvMigrationException(
+                            "provider_account_conflict",
+                            $"Your {providerId} account was created after preview.");
+                    }
+
+                    var account = new ProviderAccountRecord
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = state.TenantId.Value,
+                        OwnerUserId = state.ActorUserId.Value,
+                        ProviderId = providerId,
+                        DisplayName = ImportedPersonalAccountName,
+                        Scope = ProviderAccountScope.User,
+                        Enabled = true,
+                        CreatedAt = _clock.UtcNow,
+                        UpdatedAt = _clock.UtcNow
+                    };
+                    var secretBytes = BuildPersonalProviderSecret(state.Document, providerId);
+                    try
+                    {
+                        var stored = await _secrets.StoreWithinTransactionAsync(
+                            db,
+                            state.TenantId.Value,
+                            $"provider-account:{providerId}:{account.Id:N}",
+                            secretBytes,
+                            cancellationToken: cancellationToken);
+                        account.SecretReferenceId = stored.Id;
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(secretBytes);
+                    }
+
+                    db.ProviderAccounts.Add(account);
+                    createdProviders.Add(providerId);
+                }
+
                 var appliedAt = _clock.UtcNow;
                 var audit = new AuditEventRecord
                 {
@@ -486,6 +585,7 @@ public sealed class LegacyEnvMigrationService
     private async Task<string> ComputeRevisionAsync(
         string sourceSha256,
         Guid? tenantId,
+        Guid? actorUserId,
         CancellationToken cancellationToken)
     {
         var builder = new StringBuilder(sourceSha256).Append('|').Append(tenantId?.ToString("N") ?? "none");
@@ -504,8 +604,12 @@ public sealed class LegacyEnvMigrationService
         }
 
         var accounts = await db.ProviderAccounts.AsNoTracking()
-            .Where(item => item.Scope == ProviderAccountScope.Global && item.TenantId == null &&
-                           (item.ProviderId == "deezer" || item.ProviderId == "qobuz" || item.ProviderId == "spotify"))
+            .Where(item =>
+                item.Scope == ProviderAccountScope.Global && item.TenantId == null &&
+                (item.ProviderId == "deezer" || item.ProviderId == "qobuz" || item.ProviderId == "spotify") ||
+                tenantId.HasValue && actorUserId.HasValue && item.Scope == ProviderAccountScope.User &&
+                item.TenantId == tenantId.Value && item.OwnerUserId == actorUserId.Value &&
+                (item.ProviderId == "lastfm" || item.ProviderId == "listenbrainz"))
             .OrderBy(item => item.ProviderId).ThenBy(item => item.Id)
             .Select(item => new { item.ProviderId, item.Id, item.Revision })
             .ToListAsync(cancellationToken);
@@ -575,6 +679,37 @@ public sealed class LegacyEnvMigrationService
                 sessionCookieSetDate = Value("SPOTIFY_API_SESSION_COOKIE_SET_DATE")
             },
             _ => throw new InvalidOperationException("Unsupported legacy provider account.")
+        };
+        return JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
+    }
+
+    private static string? PersonalProviderId(string key) => key.ToUpperInvariant() switch
+    {
+        "SCROBBLING_LASTFM_API_KEY" or
+        "SCROBBLING_LASTFM_SHARED_SECRET" or
+        "SCROBBLING_LASTFM_USERNAME" or
+        "SCROBBLING_LASTFM_PASSWORD" or
+        "SCROBBLING_LASTFM_SESSION_KEY" => "lastfm",
+        "SCROBBLING_LISTENBRAINZ_USER_TOKEN" => "listenbrainz",
+        _ => null
+    };
+
+    private static byte[] BuildPersonalProviderSecret(LegacyEnvDocument document, string providerId)
+    {
+        string? Value(string key) => document.Entries.SingleOrDefault(item =>
+            item.Key.Equals(key, StringComparison.OrdinalIgnoreCase))?.Value;
+        object payload = providerId switch
+        {
+            "lastfm" => new
+            {
+                apiKey = Value("SCROBBLING_LASTFM_API_KEY"),
+                sharedSecret = Value("SCROBBLING_LASTFM_SHARED_SECRET"),
+                username = Value("SCROBBLING_LASTFM_USERNAME"),
+                password = Value("SCROBBLING_LASTFM_PASSWORD"),
+                sessionKey = Value("SCROBBLING_LASTFM_SESSION_KEY")
+            },
+            "listenbrainz" => new { token = Value("SCROBBLING_LISTENBRAINZ_USER_TOKEN") },
+            _ => throw new InvalidOperationException("Unsupported personal legacy provider account.")
         };
         return JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
     }

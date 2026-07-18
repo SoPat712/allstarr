@@ -207,7 +207,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
     }
 
     [Fact]
-    public async Task MigrationController_RedactsPreviewAndRequiresExplicitConfirmation()
+    public async Task MigrationController_ReturnsNonCachedAdminPreviewAndRequiresExplicitConfirmation()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
         const string source = "CACHE_LYRICS_DAYS=33\nSPOTIFY_API_SESSION_COOKIE=controller-secret";
@@ -217,7 +217,9 @@ public class ConfigControllerAuthorizationTests : IDisposable
         var previewJson = JsonSerializer.Serialize(
             previewResult.Value,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        Assert.DoesNotContain("controller-secret", previewJson, StringComparison.Ordinal);
+        Assert.Contains("controller-secret", previewJson, StringComparison.Ordinal);
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl);
+        Assert.Equal("no-cache", controller.Response.Headers.Pragma);
         using var previewDocument = JsonDocument.Parse(previewJson);
         var token = previewDocument.RootElement.GetProperty("previewToken").GetString();
         var revision = previewDocument.RootElement.GetProperty("revision").GetString();
