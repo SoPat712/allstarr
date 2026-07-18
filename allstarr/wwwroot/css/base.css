@@ -729,8 +729,7 @@ tr:last-child td {
     margin-top: var(--space-3);
 }
 
-.account-meta,
-.account-actions {
+.account-meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -738,8 +737,15 @@ tr:last-child td {
 }
 
 .account-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
     margin-top: auto;
     padding-top: var(--space-2);
+}
+
+.account-actions button {
+    width: 100%;
 }
 
 .account-health-panel {
