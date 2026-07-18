@@ -1377,9 +1377,34 @@ public class SpotifyTrackMatchingService : BackgroundService
         var existingMatched = await _cache.GetAsync<List<Song>>(matchedTracksKey);
         if (existingMatched != null && existingMatched.Count > 0)
         {
-            _logger.LogWarning("Playlist {Playlist} already has {Count} matched tracks cached, skipping",
-                playlistName, existingMatched.Count);
-            return;
+            var playableMatched = existingMatched
+                .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
+                .ToList();
+            var blockedCount = existingMatched.Count - playableMatched.Count;
+
+            if (blockedCount == 0)
+            {
+                _logger.LogWarning("Playlist {Playlist} already has {Count} matched tracks cached, skipping",
+                    playlistName, existingMatched.Count);
+                return;
+            }
+
+            if (playableMatched.Count > 0)
+            {
+                await _cache.SetAsync(
+                    matchedTracksKey,
+                    playableMatched,
+                    CacheExtensions.SpotifyMatchedTracksTTL);
+            }
+            else
+            {
+                await _cache.DeleteAsync(matchedTracksKey);
+            }
+
+            _logger.LogWarning(
+                "Removed {BlockedCount} unavailable cached tracks from {Playlist}; rebuilding legacy matches",
+                blockedCount,
+                playlistName);
         }
 
         // Get missing tracks

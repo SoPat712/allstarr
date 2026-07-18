@@ -1,10 +1,22 @@
 namespace allstarr.Services.Spotify;
 
+using allstarr.Models.Domain;
+
 /// <summary>
 /// Keeps catalog-only providers out of mappings that are expected to stream or download audio.
 /// </summary>
 public static class ExternalTrackPlaybackPolicy
 {
+    public static bool CanUseForPlayback(Song? song)
+    {
+        if (song == null)
+        {
+            return false;
+        }
+
+        return song.IsLocal || CanUseForPlayback(song.ExternalProvider, song.Id);
+    }
+
     public static bool CanUseForPlayback(string? provider, string? trackId = null)
     {
         var normalized = Normalize(provider);
