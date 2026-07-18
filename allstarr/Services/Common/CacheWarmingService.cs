@@ -1,5 +1,7 @@
 using System.Text.Json;
 using allstarr.Models.Domain;
+using allstarr.Models.Admin;
+using allstarr.Models.Spotify;
 using allstarr.Services.Spotify;
 
 namespace allstarr.Services.Common;
@@ -297,6 +299,35 @@ public class CacheWarmingService : IHostedService
 
         var files = Directory.GetFiles(MappingsCacheDirectory, "*_mappings.json");
         var warmedCount = 0;
+        var compatibleMappings = new Dictionary<string, ManualMappingEntry>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in files)
+        {
+            try
+            {
+                var existingJson = await File.ReadAllTextAsync(file, cancellationToken);
+                var existingMappings = JsonSerializer.Deserialize<Dictionary<string, ManualMappingEntry>>(existingJson);
+                if (existingMappings == null)
+                {
+                    continue;
+                }
+
+                foreach (var mapping in existingMappings.Values)
+                {
+                    if (!string.IsNullOrWhiteSpace(mapping.SpotifyId) &&
+                        (!string.IsNullOrWhiteSpace(mapping.JellyfinId) ||
+                         (!string.IsNullOrWhiteSpace(mapping.ExternalId) &&
+                          ExternalTrackPlaybackPolicy.CanUseForPlayback(mapping.ExternalProvider))))
+                    {
+                        compatibleMappings.TryAdd(mapping.SpotifyId, mapping);
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Could not inspect manual mappings for compatible legacy targets: {File}", file);
+            }
+        }
 
         foreach (var file in files)
         {
@@ -314,8 +345,33 @@ public class CacheWarmingService : IHostedService
                     var fileName = Path.GetFileNameWithoutExtension(file);
                     var playlistName = fileName.Replace("_mappings", "");
 
-                    foreach (var mapping in mappings.Values)
+                    var changed = false;
+                    foreach (var pair in mappings.ToList())
                     {
+                        var mapping = pair.Value;
+                        if (!string.IsNullOrWhiteSpace(mapping.ExternalId) &&
+                            !ExternalTrackPlaybackPolicy.CanUseForPlayback(mapping.ExternalProvider))
+                        {
+                            compatibleMappings.TryGetValue(mapping.SpotifyId, out var compatiblePeer);
+                            var canonical = await _cache.GetAsync<SpotifyTrackMapping>(
+                                CacheKeyBuilder.BuildSpotifyGlobalMappingKey(mapping.SpotifyId));
+                            if (LegacyManualMappingRecovery.TryCreateReplacement(
+                                    mapping,
+                                    compatiblePeer,
+                                    canonical,
+                                    out var recovered))
+                            {
+                                mapping = recovered;
+                                mappings[pair.Key] = recovered;
+                                compatibleMappings[mapping.SpotifyId] = recovered;
+                                changed = true;
+                                _logger.LogWarning(
+                                    "Recovered legacy manual mapping for Spotify {SpotifyId} in {Playlist} using an exact playable identity",
+                                    mapping.SpotifyId,
+                                    playlistName);
+                            }
+                        }
+
                         if (!string.IsNullOrEmpty(mapping.JellyfinId))
                         {
                             // Jellyfin mapping
@@ -342,6 +398,11 @@ public class CacheWarmingService : IHostedService
                         }
                     }
 
+                    if (changed)
+                    {
+                        await WriteJsonAtomicallyAsync(file, mappings, cancellationToken);
+                    }
+
                     _logger.LogDebug("🔥 Warmed {Count} manual mappings for {Playlist}",
                         mappings.Count, playlistName);
                 }
@@ -358,6 +419,31 @@ public class CacheWarmingService : IHostedService
         }
 
         return warmedCount;
+    }
+
+    private static async Task WriteJsonAtomicallyAsync<T>(
+        string destination,
+        T value,
+        CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(destination)
+            ?? throw new InvalidOperationException("Mapping cache path has no parent directory.");
+        var temporary = Path.Combine(directory, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await File.WriteAllTextAsync(
+                temporary,
+                JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }),
+                cancellationToken);
+            File.Move(temporary, destination, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+            {
+                File.Delete(temporary);
+            }
+        }
     }
 
     /// <summary>
@@ -449,15 +535,6 @@ public class CacheWarmingService : IHostedService
         public string? Isrc { get; set; }
         public string MatchType { get; set; } = "";
         public Song? MatchedSong { get; set; }
-    }
-
-    private class ManualMappingEntry
-    {
-        public string SpotifyId { get; set; } = "";
-        public string? JellyfinId { get; set; }
-        public string? ExternalProvider { get; set; }
-        public string? ExternalId { get; set; }
-        public DateTime CreatedAt { get; set; }
     }
 
     private class LyricsMappingEntry
