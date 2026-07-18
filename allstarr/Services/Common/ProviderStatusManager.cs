@@ -680,7 +680,9 @@ public class ProviderStatusManager
         using var client = _httpClientFactory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound;
+        return response.IsSuccessStatusCode || response.StatusCode is
+            System.Net.HttpStatusCode.NotFound or
+            System.Net.HttpStatusCode.TooManyRequests;
     }
 
     private async Task<bool> TestLrclibAsync(CancellationToken cancellationToken)
@@ -689,7 +691,9 @@ public class ProviderStatusManager
         using var client = _httpClientFactory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound;
+        return response.IsSuccessStatusCode || response.StatusCode is
+            System.Net.HttpStatusCode.NotFound or
+            System.Net.HttpStatusCode.TooManyRequests;
     }
 
     private async Task<bool> TestSpotifyPlaylistAsync(
