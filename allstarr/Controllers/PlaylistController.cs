@@ -10,6 +10,7 @@ using allstarr.Services;
 using allstarr.Filters;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using allstarr.Core.Settings;
 
 namespace allstarr.Controllers;
 
@@ -61,6 +62,9 @@ public class PlaylistController : ControllerBase
     public async Task<IActionResult> GetPlaylists([FromQuery] bool refresh = false)
     {
         var playlistCacheFile = "/app/cache/admin_playlists_summary.json";
+        // Version 3 owns playlist configuration in the tenant's durable settings.
+        // Reading the store directly also avoids waiting for the in-memory projector.
+        var configuredPlaylists = await GetConfiguredPlaylistsAsync();
 
         // Check file cache first (5 minute TTL) unless refresh is requested
         if (!refresh && System.IO.File.Exists(playlistCacheFile))
@@ -73,9 +77,22 @@ public class PlaylistController : ControllerBase
                 if (age.TotalMinutes < 5)
                 {
                     var cachedJson = await System.IO.File.ReadAllTextAsync(playlistCacheFile);
-                    var cachedData = JsonSerializer.Deserialize<Dictionary<string, object>>(cachedJson);
-                    _logger.LogDebug("📦 Returning cached playlist summary (age: {Age:F1}m)", age.TotalMinutes);
-                    return Ok(cachedData);
+                    using var cachedDocument = JsonDocument.Parse(cachedJson);
+                    var cachedNames = cachedDocument.RootElement.TryGetProperty("playlists", out var cachedPlaylists) &&
+                                      cachedPlaylists.ValueKind == JsonValueKind.Array
+                        ? cachedPlaylists.EnumerateArray()
+                            .Select(item => item.TryGetProperty("name", out var name) ? name.GetString() : null)
+                            .Where(name => !string.IsNullOrWhiteSpace(name))
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                        : [];
+                    if (cachedNames.Count == configuredPlaylists.Count &&
+                        configuredPlaylists.All(item => cachedNames.Contains(item.Name)))
+                    {
+                        var cachedData = JsonSerializer.Deserialize<Dictionary<string, object>>(cachedJson);
+                        _logger.LogDebug("📦 Returning cached playlist summary (age: {Age:F1}m)", age.TotalMinutes);
+                        return Ok(cachedData);
+                    }
+                    _logger.LogDebug("Playlist configuration changed after the summary was cached; rebuilding it");
                 }
                 else
                 {
@@ -93,10 +110,6 @@ public class PlaylistController : ControllerBase
         }
 
         var playlists = new List<object>();
-
-        // Read playlists directly from .env file to get the latest configuration
-        // (IOptions is cached and doesn't reload after .env changes)
-        var configuredPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
 
         foreach (var config in configuredPlaylists)
         {
@@ -1044,7 +1057,7 @@ public class PlaylistController : ControllerBase
         _helperService.InvalidatePlaylistSummaryCache();
 
         // Clear ALL playlist stats caches
-        var configuredPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var configuredPlaylists = await GetConfiguredPlaylistsAsync();
         foreach (var playlist in configuredPlaylists)
         {
             var statsCacheKey = $"spotify:playlist:stats:{playlist.Name}";
@@ -1949,8 +1962,7 @@ public class PlaylistController : ControllerBase
 
         _logger.LogInformation("Adding playlist: {Name} ({SpotifyId})", request.Name, request.SpotifyId);
 
-        // Get current playlists
-        var currentPlaylists = _spotifyImportSettings.Playlists.ToList();
+        var currentPlaylists = await GetConfiguredPlaylistsAsync();
 
         // Check for duplicates
         if (currentPlaylists.Any(p => p.Id == request.SpotifyId || p.Name == request.Name))
@@ -1968,21 +1980,9 @@ public class PlaylistController : ControllerBase
                 : LocalTracksPosition.First
         });
 
-        // Convert to JSON format for env var
-        var playlistsJson = JsonSerializer.Serialize(
-            currentPlaylists.Select(p => new[] { p.Name, p.Id, p.LocalTracksPosition.ToString().ToLower() }).ToArray()
-        );
+        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
 
-        // Update .env file
-        var updateRequest = new ConfigUpdateRequest
-        {
-            Updates = new Dictionary<string, string>
-            {
-                ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
-            }
-        };
-
-        return await _helperService.UpdateEnvConfigAsync(updateRequest.Updates);
+        return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
 
     /// <summary>
@@ -1994,8 +1994,7 @@ public class PlaylistController : ControllerBase
         var decodedName = Uri.UnescapeDataString(name);
         _logger.LogInformation("Removing playlist: {Name}", decodedName);
 
-        // Read current playlists from .env file (not stale in-memory config)
-        var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var currentPlaylists = await GetConfiguredPlaylistsAsync();
         var playlist = currentPlaylists.FirstOrDefault(p => p.Name == decodedName);
 
         if (playlist == null)
@@ -2005,21 +2004,9 @@ public class PlaylistController : ControllerBase
 
         currentPlaylists.Remove(playlist);
 
-        // Convert to JSON format for env var: [["Name","SpotifyId","JellyfinId","first|last"],...]
-        var playlistsJson = JsonSerializer.Serialize(
-            currentPlaylists.Select(p => new[] { p.Name, p.Id, p.JellyfinId, p.LocalTracksPosition.ToString().ToLower() }).ToArray()
-        );
+        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
 
-        // Update .env file
-        var updateRequest = new ConfigUpdateRequest
-        {
-            Updates = new Dictionary<string, string>
-            {
-                ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
-            }
-        };
-
-        return await _helperService.UpdateEnvConfigAsync(updateRequest.Updates);
+        return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
 
     /// <summary>
@@ -2047,7 +2034,7 @@ public class PlaylistController : ControllerBase
             });
         }
 
-        var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var currentPlaylists = await GetConfiguredPlaylistsAsync();
         var playlist = currentPlaylists.FirstOrDefault(item =>
             item.Name.Equals(decodedName, StringComparison.OrdinalIgnoreCase));
         if (playlist == null)
@@ -2057,10 +2044,52 @@ public class PlaylistController : ControllerBase
 
         playlist.SyncSchedule = request.SyncSchedule.Trim();
         var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
-        return await _helperService.UpdateEnvConfigAsync(new Dictionary<string, string>
+        return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
+    }
+
+    private AdminAuthSession? GetAdminSession() =>
+        HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value)
+            ? value as AdminAuthSession
+            : null;
+
+    private async Task<List<SpotifyPlaylistConfig>> GetConfiguredPlaylistsAsync()
+    {
+        var session = GetAdminSession();
+        var settings = HttpContext.RequestServices.GetService<IDurableRuntimeSettings>();
+        if (session?.TenantId is not { } tenantId || settings == null)
         {
-            ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
-        });
+            return _spotifyImportSettings.Playlists.ToList();
+        }
+
+        var current = await settings.GetAsync(tenantId, "SpotifyImport:Playlists", HttpContext.RequestAborted);
+        return SpotifyPlaylistConfigParser.Parse((string)current.Value);
+    }
+
+    private async Task<IActionResult> PersistConfiguredPlaylistsAsync(
+        IReadOnlyList<SpotifyPlaylistConfig> playlists,
+        string playlistsJson)
+    {
+        var session = GetAdminSession();
+        if (session?.TenantId is not { } tenantId)
+        {
+            return BadRequest(new { error = "The administrator session is not linked to an Allstarr tenant." });
+        }
+
+        var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+        var current = await settings.GetAsync(tenantId, "SpotifyImport:Playlists", HttpContext.RequestAborted);
+        var result = await settings.ApplyBatchAsync(
+            tenantId,
+            [new RuntimeSettingWrite(
+                "SpotifyImport:Playlists",
+                playlistsJson,
+                current.Origin == RuntimeSettingOrigin.Durable ? current.Revision : null)],
+            "admin-ui",
+            session.AllstarrUserId,
+            HttpContext.RequestAborted);
+
+        _spotifyImportSettings.Playlists = playlists.ToList();
+        _helperService.InvalidatePlaylistSummaryCache();
+        return Ok(new { message = "Playlist configuration updated.", changeVersion = result.ChangeVersion });
     }
 
 

@@ -3719,9 +3719,9 @@ class AllstarrApp extends LitElement {
       services.push({
         id: "spotify-lyrics",
         title: "Spotify lyrics sidecar",
-        text: "The endpoint URL is imported as a runtime setting, but the WebUI does not start containers or give the sidecar your Spotify cookie. Add the optional Compose overlay on the host.",
+        text: "The endpoint URL is imported as a runtime setting, but the WebUI does not start containers or give the sidecar your Spotify cookie. Put the cookie in the host .env, then enable the saved optional profile with Allstarr's deployment helper.",
         guide: "https://github.com/SoPat712/allstarr/blob/dev/docs/operations/spotify-lyrics-sidecar.md",
-        command: "docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet\ndocker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml up -d\ndocker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml ps",
+        command: "./allstarr.sh enable spotify-lyrics\n./allstarr.sh up\n./allstarr.sh status",
       });
     }
     if (["APPLE_DOWNLOAD_URL", "APPLE_MUSIC_AIO_URL", "APPLE_DOWNLOAD_QUALITY", "APPLE_MUSIC_QUALITY"]
@@ -3729,9 +3729,9 @@ class AllstarrApp extends LitElement {
       services.push({
         id: "apple-download",
         title: "Apple download gateway",
-        text: "The endpoint URL is imported as a runtime setting. Deploy a compatible gateway separately and verify it under Sources > Apple download. Do not point Allstarr directly at wrapper-v2.",
+        text: "The endpoint URL is imported as a runtime setting. Prepare the optional Apple profile with legally obtained Apple Music Android libraries, then verify it under Sources > Apple download. Do not point Allstarr directly at wrapper-v2.",
         guide: "https://github.com/SoPat712/allstarr/blob/dev/docs/operations/apple-download-provider.md",
-        command: "docker compose ps\n# Then open Sources > Apple download and verify the gateway",
+        command: "./allstarr.sh prepare-apple /path/to/apple-music.apkm x86_64\n./allstarr.sh up\n./allstarr.sh status\n# Then open Sources > Apple download and finish login",
       });
     }
     return services;

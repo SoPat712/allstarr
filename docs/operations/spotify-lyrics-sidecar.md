@@ -15,13 +15,15 @@ SPOTIFY_API_SESSION_COOKIE=replace-with-your-sp-dc-cookie
 SPOTIFY_LYRICS_API_URL=http://spotify-lyrics:8080
 ```
 
-Then validate and apply the optional overlay:
+Then save and start the optional profile with the normal deployment helper:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet
-docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml ps
+./allstarr.sh enable spotify-lyrics
+./allstarr.sh up
+./allstarr.sh status
 ```
+
+The helper remembers the profile, validates the merged Compose configuration, and reuses it during later updates.
 
 The `spotify-lyrics` service includes a lightweight local HTTP health check. An unhealthy sidecar removes only
 that lyrics source; it does not prevent Allstarr, Postgres, Valkey, or other providers from starting.
@@ -35,18 +37,17 @@ overlay so Docker creates the service and supplies its cookie.
 
 ## Update or remove it
 
-Normal updates use the same overlay:
+Normal updates use the saved profile:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml pull
-docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml up -d
+./allstarr.sh update
 ```
 
 To remove only the optional service:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml rm -s -f spotify-lyrics
-docker compose -f docker-compose.yml up -d
+./allstarr.sh disable spotify-lyrics
+./allstarr.sh up
 ```
 
 Remove or clear the Spotify lyrics URL in Sources if you do not want Allstarr to probe the absent endpoint. Removing

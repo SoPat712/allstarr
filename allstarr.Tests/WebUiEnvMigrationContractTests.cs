@@ -133,8 +133,9 @@ public sealed class WebUiEnvMigrationContractTests
         Assert.Contains("No URL, login, token, or session value is shown here.", _script, StringComparison.Ordinal);
         Assert.Contains("docs/operations/spotify-lyrics-sidecar.md", _script, StringComparison.Ordinal);
         Assert.Contains("docs/operations/apple-download-provider.md", _script, StringComparison.Ordinal);
-        Assert.Contains("docker compose -f docker-compose.yml", _script, StringComparison.Ordinal);
-        Assert.Contains("docker-compose.spotify-lyrics.yml up -d", _script, StringComparison.Ordinal);
+        Assert.Contains("./allstarr.sh enable spotify-lyrics", _script, StringComparison.Ordinal);
+        Assert.Contains("./allstarr.sh prepare-apple", _script, StringComparison.Ordinal);
+        Assert.Contains("./allstarr.sh status", _script, StringComparison.Ordinal);
         Assert.Contains("target=\"_blank\" rel=\"noopener noreferrer\"", _script, StringComparison.Ordinal);
         Assert.Contains("this.renderMigrationOptionalRuntimeGuidance()", _script, StringComparison.Ordinal);
     }

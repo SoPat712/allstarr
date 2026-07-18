@@ -93,14 +93,15 @@ Finish Apple login or 2FA there; credentials are forwarded only to wrapper-v2 an
 The legacy `APPLE_MUSIC_AIO_URL` name is recognized only by the migration review so an operator can identify the
 old endpoint. New deployments use `APPLE_DOWNLOAD_URL`.
 
-Recreate only the Allstarr container when changing that deployment-owned environment value:
+Apply deployment changes through the saved profile:
 
 ```bash
-docker compose config --quiet
-docker compose up -d --no-deps --force-recreate allstarr
-docker compose ps
-curl --fail http://127.0.0.1:5274/health/ready
+./allstarr.sh up
+./allstarr.sh status
 ```
+
+For later application and gateway updates, use `./allstarr.sh update`. It preserves the Apple profile and its
+session volumes. Run `prepare-apple` again only when the verified wrapper inputs need to change.
 
 Use the dashboard to check the provider state, finish login or 2FA if the compatible gateway supports that flow,
 and test the capabilities you intend to route. A reachable container is not enough. Allstarr should select only the
