@@ -7,11 +7,13 @@ public sealed class WebUiIconContractTests
         "..", "..", "..", "..", "allstarr", "wwwroot", "js", "ui", "icons.js"));
 
     [Fact]
-    public void IconPathsUseTheSvgTemplateNamespace()
+    public void IconsUseTheSameOriginSvgSprite()
     {
-        Assert.Contains("nothing, svg", _icons, StringComparison.Ordinal);
-        Assert.Contains("home: svg`", _icons, StringComparison.Ordinal);
-        Assert.Contains("shield: svg`", _icons, StringComparison.Ordinal);
-        Assert.DoesNotContain("home: html`", _icons, StringComparison.Ordinal);
+        Assert.Contains("/images/ui-icons.svg#", _icons, StringComparison.Ordinal);
+        Assert.Contains("<use href=", _icons, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing, svg", _icons, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..", "allstarr", "wwwroot", "images", "ui-icons.svg")));
     }
 }
