@@ -3,7 +3,8 @@ import { html, nothing } from "/js/lit-3.3.3.js";
 const iconNames = new Set([
   "home", "library", "sources", "activity", "settings", "search", "refresh", "plus",
   "shield", "playlist", "tasks", "server", "clock", "check", "warning", "more",
-  "filter", "logout", "user", "close", "chevronLeft", "chevronRight",
+  "filter", "logout", "user", "close", "chevronLeft", "chevronRight", "extensions",
+  "metadata", "download", "streaming", "lyrics", "externalApi", "edit", "upload", "link",
 ]);
 
 export function icon(name, size = 18) {

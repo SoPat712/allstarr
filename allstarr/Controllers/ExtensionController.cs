@@ -491,6 +491,9 @@ public class ExtensionController : ControllerBase
         ExtensionSdkManifest? manifest = null;
         try { manifest = ExtensionSdkV1.ParseManifest(item.ManifestJson); }
         catch (ExtensionSdkValidationException) { }
+        var hasPackageIcon = !string.IsNullOrWhiteSpace(manifest?.IconPath) ||
+            new[] { "icon.png", "icon.jpg", "icon.jpeg", "icon.webp" }
+                .Any(candidate => System.IO.File.Exists(Path.Combine(item.PackagePath, candidate)));
         return new
         {
             item.Id,
@@ -503,8 +506,12 @@ public class ExtensionController : ControllerBase
             item.Sha256,
             description = manifest?.Description,
             author = manifest?.Author,
-            iconUrl = manifest?.IconPath == null ? null : $"/api/admin/extensions/packages/{item.Id}/icon",
+            iconUrl = hasPackageIcon ? $"/api/admin/extensions/packages/{item.Id}/icon" : null,
             settings = manifest?.Settings,
+            capabilities = manifest?.Capabilities
+                .Select(capability => capability.Kind.ToString().ToLowerInvariant())
+                .Distinct()
+                .ToArray(),
             qualityOptions = manifest?.QualityOptions,
             requiredRuntimeFeatures = manifest?.RequiredRuntimeFeatures,
             usesSignedSession = manifest?.SignedSession != null,

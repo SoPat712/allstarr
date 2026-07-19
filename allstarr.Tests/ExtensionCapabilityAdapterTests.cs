@@ -43,8 +43,10 @@ public sealed class ExtensionCapabilityAdapterTests
             Assert.True(verification?.Contains("VERIFY_REQUIRED", StringComparison.Ordinal) == true, verification);
             Assert.Contains("challenge-1", verification, StringComparison.Ordinal);
 
-            var exchange = JsonSerializer.Serialize(sandbox.CompleteSignedSessionGrant("grant-1"));
+            var exchange = JsonSerializer.Serialize(sandbox.CompleteSignedSessionGrant(
+                "spotiflac://session-grant/?cb_version=v2grant&state=signed-demo&grant=grant-1"));
             Assert.Contains("true", exchange, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("grant-1", handler.ExchangeGrant);
 
             var response = sandbox.InvokeJson("searchTracks", "{}");
             Assert.Contains("catalog ok", response, StringComparison.Ordinal);
@@ -406,6 +408,7 @@ public sealed class ExtensionCapabilityAdapterTests
     private sealed class SignedSessionHandler : HttpMessageHandler
     {
         public HttpRequestMessage? SignedRequest { get; private set; }
+        public string? ExchangeGrant { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -413,7 +416,11 @@ public sealed class ExtensionCapabilityAdapterTests
             if (request.RequestUri!.AbsolutePath.EndsWith("/bootstrap", StringComparison.Ordinal))
                 response = Json("{\"challenge_id\":\"challenge-1\"}");
             else if (request.RequestUri.AbsolutePath.EndsWith("/session/exchange", StringComparison.Ordinal))
+            {
+                var body = request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
+                ExchangeGrant = JsonDocument.Parse(body).RootElement.GetProperty("grant").GetString();
                 response = Json("{\"session_id\":\"session-1\",\"session_secret\":\"secret-1\",\"expires_at\":\"2099-01-01T00:00:00Z\"}");
+            }
             else
             {
                 SignedRequest = request;

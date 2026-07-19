@@ -72,8 +72,8 @@ internal sealed class ExtensionSignedSessionClient
 
     public object CompleteGrant(string? grant)
     {
-        grant = grant?.Trim();
-        if (string.IsNullOrWhiteSpace(grant)) return new { success = false, error = "no pending grant" };
+        var normalized = NormalizeGrant(grant, out var grantError);
+        if (normalized == null) return new { success = false, error = grantError };
         lock (_gate)
         {
             try
@@ -81,7 +81,7 @@ internal sealed class ExtensionSignedSessionClient
                 var record = Load();
                 var payload = JsonSerializer.Serialize(new
                 {
-                    grant,
+                    grant = normalized,
                     install_id = record.InstallId,
                     app_version = _config.AppVersion,
                     platform = _config.Platform
@@ -109,6 +109,45 @@ internal sealed class ExtensionSignedSessionClient
                 return new { success = false, error = exception.Message };
             }
         }
+    }
+
+    private string? NormalizeGrant(string? value, out string error)
+    {
+        error = "A session grant is required.";
+        var candidate = value?.Trim();
+        if (string.IsNullOrWhiteSpace(candidate)) return null;
+
+        if (!candidate.Contains("://", StringComparison.Ordinal)) return candidate;
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var callback))
+        {
+            error = "The session callback URL is invalid.";
+            return null;
+        }
+
+        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var part in callback.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pair = part.Split('=', 2);
+            var key = Uri.UnescapeDataString(pair[0].Replace('+', ' '));
+            if (parameters.ContainsKey(key)) continue;
+            parameters[key] = pair.Length > 1
+                ? Uri.UnescapeDataString(pair[1].Replace('+', ' '))
+                : string.Empty;
+        }
+        if (parameters.TryGetValue("state", out var state) &&
+            !string.IsNullOrWhiteSpace(state) &&
+            !string.Equals(state, _extensionId, StringComparison.OrdinalIgnoreCase))
+        {
+            error = "This session callback belongs to a different extension.";
+            return null;
+        }
+        if (!parameters.TryGetValue("grant", out var parsedGrant) || string.IsNullOrWhiteSpace(parsedGrant))
+        {
+            error = "The session callback URL does not contain a grant.";
+            return null;
+        }
+
+        return parsedGrant.Trim();
     }
 
     public object StartVerification()

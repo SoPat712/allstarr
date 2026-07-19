@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Tidal">
+  <rect width="64" height="64" rx="14" fill="#08090b"/>
+  <g fill="#fff" transform="translate(8 8)">
+    <path d="m8 4 8 8-8 8-8-8z"/><path d="m24 4 8 8-8 8-8-8z"/><path d="m40 4 8 8-8 8-8-8z"/>
+    <path d="m16 20 8 8-8 8-8-8z"/><path d="m32 20 8 8-8 8-8-8z"/><path d="m24 36 8 8-8 8-8-8z"/>
+  </g>
+</svg>

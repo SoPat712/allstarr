@@ -4,6 +4,15 @@
   <symbol id="sources" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 7.5 11 16M16 7.5 13 16M8 6h8"/></symbol>
   <symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
   <symbol id="settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+  <symbol id="extensions" viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4h3a2 2 0 1 1 0 4H3v4a2 2 0 0 0 2 2h4v-3a2 2 0 1 1 4 0v3h4a2 2 0 0 0 2-2v-4h-3a2 2 0 1 1 0-4h3V5a2 2 0 0 0-2-2h-4v3a2 2 0 1 1-4 0z"/></symbol>
+  <symbol id="metadata" viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></symbol>
+  <symbol id="streaming" viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/><path d="M4 5a10 10 0 0 0 0 14M20 5a10 10 0 0 1 0 14"/></symbol>
+  <symbol id="lyrics" viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></symbol>
+  <symbol id="externalApi" viewBox="0 0 24 24"><path d="M10 14 14 10M8 17H6a4 4 0 0 1 0-8h3M16 7h2a4 4 0 0 1 0 8h-3"/></symbol>
+  <symbol id="edit" viewBox="0 0 24 24"><path d="m4 20 4-1 11-11-3-3L5 16zM14 6l3 3"/></symbol>
+  <symbol id="upload" viewBox="0 0 24 24"><path d="M12 21V9m0 0-4 4m4-4 4 4"/><path d="M5 4h14"/></symbol>
+  <symbol id="link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></symbol>
   <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
   <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18 9a7 7 0 0 0-12-3L4 8M6 15a7 7 0 0 0 12 3l2-2"/></symbol>
   <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>

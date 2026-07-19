@@ -320,7 +320,7 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.Contains("await this.loadSchema();", script, StringComparison.Ordinal);
         Assert.Contains("if (this.isAdministrator())", script, StringComparison.Ordinal);
-        Assert.Contains("![\"/sources\", \"/settings\", \"/intelligence\"].includes(route)", script, StringComparison.Ordinal);
+        Assert.Contains("![\"sources\", \"settings\", \"intelligence\"].includes(zone)", script, StringComparison.Ordinal);
         Assert.Contains("if (zone === \"settings\") return this.renderSettings();", script, StringComparison.Ordinal);
         Assert.Contains("Credentials are encrypted and kept separate from the Sources catalog.", script, StringComparison.Ordinal);
         Assert.Contains("Provider accounts are managed by an administrator.", script, StringComparison.Ordinal);
