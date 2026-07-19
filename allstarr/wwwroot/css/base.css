@@ -973,7 +973,7 @@ tbody tr:hover {
 
 .provider-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(520px, 100%), 1fr));
     gap: var(--space-4);
     min-width: 0;
     max-width: 100%;

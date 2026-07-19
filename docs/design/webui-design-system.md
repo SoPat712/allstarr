@@ -149,7 +149,8 @@ meaningless controls.
 
 - Contains service/provider definitions only; connected account credentials live
   in Settings.
-- Desktop uses a two-column provider grid. Each card has provider identity,
+- Desktop uses a responsive provider grid with a `520px` minimum card width;
+  wide screens show two columns and narrower content shows one. Each card has provider identity,
   health, capability tags, a four-cell metric strip, account summary, optional
   warning, one `Manage` action, and an overflow menu.
 - Music providers and metadata/helpers are separate labeled sections.
