@@ -176,30 +176,30 @@ internal sealed class ExtensionSignedSessionClient
     private SignedResponse SendSigned(SessionRecord record, string method, string path, string payload,
         IReadOnlyDictionary<string, string>? extraHeaders)
     {
-            var target = Resolve(path);
-            var requestMethod = method.Trim().ToUpperInvariant();
-            var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
-            var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
-            var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
-            var window = DateTimeOffset.Parse(timestamp).ToUnixTimeSeconds() / _config.TimeWindowSeconds;
-            var rolling = Base64Url(Hmac(Encoding.UTF8.GetBytes(record.SessionSecret!), $"{window}:{record.SessionId}"));
-            var signingInput = string.Join('\n', _config.SchemeLabel, requestMethod, target.AbsolutePath, "", bodyHash,
-                timestamp, nonce, record.SessionId, _config.AppVersion, _config.Platform);
-            var signature = Base64Url(Hmac(Encoding.UTF8.GetBytes(rolling), signingInput));
-            var signedHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                [_config.HeaderPrefix + "Session"] = record.SessionId!,
-                [_config.HeaderPrefix + "Timestamp"] = timestamp,
-                [_config.HeaderPrefix + "Nonce"] = nonce,
-                [_config.HeaderPrefix + "Body-SHA256"] = bodyHash,
-                [_config.HeaderPrefix + "Signature"] = signature,
-                [_config.HeaderPrefix + "App-Version"] = _config.AppVersion,
-                [_config.HeaderPrefix + "Platform"] = _config.Platform
-            };
-            if (extraHeaders != null)
-                foreach (var (key, value) in extraHeaders) signedHeaders[key] = value;
-            var response = Send(requestMethod, target, payload, signedHeaders);
-            return new(target, response);
+        var target = Resolve(path);
+        var requestMethod = method.Trim().ToUpperInvariant();
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
+        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
+        var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+        var window = DateTimeOffset.Parse(timestamp).ToUnixTimeSeconds() / _config.TimeWindowSeconds;
+        var rolling = Base64Url(Hmac(Encoding.UTF8.GetBytes(record.SessionSecret!), $"{window}:{record.SessionId}"));
+        var signingInput = string.Join('\n', _config.SchemeLabel, requestMethod, target.AbsolutePath, "", bodyHash,
+            timestamp, nonce, record.SessionId, _config.AppVersion, _config.Platform);
+        var signature = Base64Url(Hmac(Encoding.UTF8.GetBytes(rolling), signingInput));
+        var signedHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [_config.HeaderPrefix + "Session"] = record.SessionId!,
+            [_config.HeaderPrefix + "Timestamp"] = timestamp,
+            [_config.HeaderPrefix + "Nonce"] = nonce,
+            [_config.HeaderPrefix + "Body-SHA256"] = bodyHash,
+            [_config.HeaderPrefix + "Signature"] = signature,
+            [_config.HeaderPrefix + "App-Version"] = _config.AppVersion,
+            [_config.HeaderPrefix + "Platform"] = _config.Platform
+        };
+        if (extraHeaders != null)
+            foreach (var (key, value) in extraHeaders) signedHeaders[key] = value;
+        var response = Send(requestMethod, target, payload, signedHeaders);
+        return new(target, response);
     }
 
     private SessionRecord TryRefresh(SessionRecord record)
@@ -234,7 +234,11 @@ internal sealed class ExtensionSignedSessionClient
 
     private object VerificationRequired(string authUrl) => new
     {
-        ok = false, needsVerification = true, error = "VERIFY_REQUIRED", open_auth_url = authUrl, auth_url = authUrl
+        ok = false,
+        needsVerification = true,
+        error = "VERIFY_REQUIRED",
+        open_auth_url = authUrl,
+        auth_url = authUrl
     };
 
     private ResponseData SendUnsigned(HttpMethod method, Uri target, string? body) =>
