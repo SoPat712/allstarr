@@ -74,14 +74,15 @@ public static class InjectedPlaylistItemHelper
 
     public static bool LooksLikeUnavailableExternalItem(IReadOnlyDictionary<string, object?> item)
     {
-        if (!string.Equals(GetString(item, "ServerId"), SyntheticServerId, StringComparison.OrdinalIgnoreCase))
+        var id = GetString(item, "Id");
+        var isLegacySynthetic = string.Equals(
+            GetString(item, "ServerId"), SyntheticServerId, StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(id) || (!IsExternalItemId(id) && !isLegacySynthetic))
         {
             return false;
         }
 
-        var id = GetString(item, "Id");
-        if (!string.IsNullOrWhiteSpace(id) &&
-            !ExternalTrackPlaybackPolicy.CanUseForPlayback("unknown", id))
+        if (!ExternalTrackPlaybackPolicy.CanUseForPlayback("unknown", id))
         {
             return true;
         }

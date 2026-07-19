@@ -54,7 +54,7 @@ public class JellyfinResponseStructureTests
         Assert.NotNull(result["Container"]);
         Assert.Equal("flac", result["Container"]);
         Assert.NotNull(result["HasLyrics"]);
-        Assert.False((bool)result["HasLyrics"]!);
+        Assert.True((bool)result["HasLyrics"]!);
 
         // Assert - Genres (must be array, never null)
         Assert.NotNull(result["Genres"]);

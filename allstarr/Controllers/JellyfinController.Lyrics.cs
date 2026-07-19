@@ -92,6 +92,8 @@ public partial class JellyfinController
                         {
                             "deezer" => $"https://www.deezer.com/track/{externalId}",
                             "qobuz" => $"https://www.qobuz.com/us-en/album/-/-/{externalId}",
+                            "applemusic" or "apple-download" =>
+                                $"https://music.apple.com/us/song/{externalId}",
                             _ => null
                         };
 
@@ -247,11 +249,23 @@ public partial class JellyfinController
                 {
                     spotifyTrackId = await FindSpotifyIdForExternalTrackAsync(song);
 
-                    // If no cached Spotify ID, try Odesli conversion
-                    if (string.IsNullOrEmpty(spotifyTrackId) && provider == "squidwtf")
+                    // If no cached Spotify ID, translate the playable provider identity.
+                    if (string.IsNullOrEmpty(spotifyTrackId))
                     {
-                        spotifyTrackId =
-                            await _odesliService.ConvertTidalToSpotifyIdAsync(externalId, cancellationToken);
+                        var sourceUrl = provider.ToLowerInvariant() switch
+                        {
+                            "squidwtf" => $"https://tidal.com/browse/track/{externalId}",
+                            "deezer" => $"https://www.deezer.com/track/{externalId}",
+                            "qobuz" => $"https://www.qobuz.com/us-en/album/-/-/{externalId}",
+                            "applemusic" or "apple-download" =>
+                                $"https://music.apple.com/us/song/{externalId}",
+                            _ => null
+                        };
+                        if (sourceUrl != null)
+                        {
+                            spotifyTrackId = await _odesliService.ConvertUrlToSpotifyIdAsync(
+                                sourceUrl, cancellationToken);
+                        }
                     }
                 }
             }
@@ -390,6 +404,7 @@ public partial class JellyfinController
             .Replace(" [S]", "", StringComparison.Ordinal)
             .Replace(" [D]", "", StringComparison.Ordinal)
             .Replace(" [Q]", "", StringComparison.Ordinal)
+            .Replace(" [AM]", "", StringComparison.Ordinal)
             .Replace(" [E]", "", StringComparison.Ordinal)
             .Trim();
     }

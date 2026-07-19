@@ -206,7 +206,8 @@ public class PlaylistController : ControllerBase
                         foreach (var item in cachedPlaylistItems)
                         {
                             var serverId = ReadCachedString(item, "ServerId");
-                            if (string.Equals(serverId, "allstarr", StringComparison.OrdinalIgnoreCase))
+                            if (string.Equals(serverId, "allstarr", StringComparison.OrdinalIgnoreCase) ||
+                                ReadCachedString(item, "Id")?.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) == true)
                             {
                                 var providerIds = ReadCachedProviderIds(item);
                                 var externalProvider = providerIds == null
@@ -842,7 +843,9 @@ public class PlaylistController : ControllerBase
                 // Check if track is in the playlist cache first
                 if (cachedItem != null)
                 {
-                    // First check ServerId - if it's "allstarr", it's an external track
+                    // Synthetic tracks now use the proxied Jellyfin server identity so clients
+                    // resolve artwork correctly. The ext- item ID is the durable discriminator;
+                    // retain the old ServerId check for caches created by earlier releases.
                     if (cachedItem.TryGetValue("ServerId", out var serverIdObj) && serverIdObj != null)
                     {
                         string? serverId = null;
@@ -855,7 +858,16 @@ public class PlaylistController : ControllerBase
                             serverId = jsonEl.GetString();
                         }
 
-                        if (serverId == "allstarr")
+                        var cachedItemId = cachedItem.TryGetValue("Id", out var idValue)
+                            ? idValue switch
+                            {
+                                string value => value,
+                                JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+                                _ => null
+                            }
+                            : null;
+                        if (serverId == "allstarr" ||
+                            cachedItemId?.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) == true)
                         {
                             // This is an external track stub
                             isLocal = false;
@@ -918,7 +930,7 @@ public class PlaylistController : ControllerBase
                                 externalProvider = ExtractExternalProviderFromItemId(externalItemId);
                             }
 
-                            _logger.LogDebug("✓ Track {Title} identified as EXTERNAL from ServerId=allstarr (provider: {Provider})",
+                            _logger.LogDebug("✓ Track {Title} identified as external synthetic item (provider: {Provider})",
                                 track.Title, externalProvider ?? "unknown");
 
                             // Check if this is a manual mapping

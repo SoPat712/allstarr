@@ -5,6 +5,8 @@ using allstarr.Services.Local;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.AppleDownload;
 using IOFile = System.IO.File;
 
 namespace allstarr.Services.AppleMusic;
@@ -48,19 +50,28 @@ public class AppleMusicDownloadService : BaseDownloadService
 
     protected override async Task<string> DownloadTrackAsync(string trackId, Song song, CancellationToken cancellationToken)
     {
-        var quality = _appleMusicSettings.Quality ?? "alac-16-44";
+        var quality = AppleDownloadCapabilityAdapter.Quality(
+            ProviderAudioQuality.Any,
+            _appleMusicSettings.Quality);
         return await DownloadTrackWithQualityInternalAsync(trackId, song, quality, cancellationToken);
     }
 
     protected override async Task<string> DownloadTrackWithQualityAsync(
         string trackId, Song song, StreamQuality quality, CancellationToken cancellationToken)
     {
-        // Map the client quality tier to the external gateway contract.
+        // Original playback uses the configured quality. Jellyfin bandwidth requests
+        // are translated to an appropriate lower Apple tier when needed.
         var qualityStr = quality switch
         {
-            StreamQuality.High => "aac-320",
-            StreamQuality.Low => "aac-96",
-            _ => _appleMusicSettings.Quality ?? "alac-16-44"
+            StreamQuality.High => AppleDownloadCapabilityAdapter.Quality(
+                ProviderAudioQuality.Lossy,
+                _appleMusicSettings.Quality),
+            StreamQuality.Low => AppleDownloadCapabilityAdapter.ApplyClientQuality(
+                "aac-96",
+                _appleMusicSettings.Quality),
+            _ => AppleDownloadCapabilityAdapter.Quality(
+                ProviderAudioQuality.Any,
+                _appleMusicSettings.Quality)
         };
 
         return await DownloadTrackWithQualityInternalAsync(trackId, song, qualityStr, cancellationToken);

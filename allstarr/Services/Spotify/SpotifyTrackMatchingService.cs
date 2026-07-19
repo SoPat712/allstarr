@@ -1731,9 +1731,14 @@ public class SpotifyTrackMatchingService : BackgroundService
                 {
                     // Ignore synthetic external stubs when building local match candidates.
                     // They belong to allstarr and should not be treated as local Jellyfin tracks.
-                    if (item.TryGetProperty("ServerId", out var serverIdEl) &&
-                        serverIdEl.ValueKind == JsonValueKind.String &&
-                        string.Equals(serverIdEl.GetString(), "allstarr", StringComparison.OrdinalIgnoreCase))
+                    var syntheticItem = item.TryGetProperty("Id", out var itemIdElement) &&
+                                        itemIdElement.ValueKind == JsonValueKind.String &&
+                                        itemIdElement.GetString()?.StartsWith(
+                                            "ext-", StringComparison.OrdinalIgnoreCase) == true;
+                    var legacySyntheticItem = item.TryGetProperty("ServerId", out var serverIdEl) &&
+                                              serverIdEl.ValueKind == JsonValueKind.String &&
+                                              string.Equals(serverIdEl.GetString(), "allstarr", StringComparison.OrdinalIgnoreCase);
+                    if (syntheticItem || legacySyntheticItem)
                     {
                         continue;
                     }

@@ -249,14 +249,43 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             ? delta
             : TimeSpan.FromSeconds(30);
 
-    private static string Quality(ProviderAudioQuality requested, string? configured) => requested switch
+    public static string Quality(ProviderAudioQuality requested, string? configured)
     {
-        ProviderAudioQuality.Lossy => "aac-320",
-        ProviderAudioQuality.Lossless => configured?.StartsWith("alac-", StringComparison.OrdinalIgnoreCase) == true
-            ? configured : "alac-16-44",
-        ProviderAudioQuality.HighResolution => configured is "alac-24-192" or "alac-24-96"
-            ? configured : "alac-24-96",
-        _ => string.IsNullOrWhiteSpace(configured) ? "alac-16-44" : configured.Trim()
+        var configuredQuality = NormalizeQuality(configured);
+
+        var ideal = requested switch
+        {
+            ProviderAudioQuality.HighResolution => "alac-24-96",
+            ProviderAudioQuality.Lossless => "alac-16-44",
+            ProviderAudioQuality.Lossy => "aac-320",
+            _ => configuredQuality
+        };
+        return ApplyClientQuality(ideal, configuredQuality);
+    }
+
+    internal static string ApplyClientQuality(string ideal, string? configured)
+    {
+        var configuredQuality = NormalizeQuality(configured);
+        var requested = NormalizeQuality(ideal);
+        var ranking = new[] { "alac-24-192", "alac-24-96", "alac-24-48", "alac-16-44", "aac-320", "aac-96" };
+        var configuredIndex = Array.IndexOf(ranking, configuredQuality);
+        var requestedIndex = Array.IndexOf(ranking, requested);
+
+        // Original-quality playback uses the value saved in Settings. A Jellyfin
+        // bandwidth request can select a lower Apple tier without silently raising
+        // the configured quality; changing Settings later takes effect normally.
+        return requestedIndex < configuredIndex ? configuredQuality : requested;
+    }
+
+    private static string NormalizeQuality(string? configured) => configured?.Trim().ToLowerInvariant() switch
+    {
+        "alac-24-192" => "alac-24-192",
+        "alac-24-96" => "alac-24-96",
+        "alac-24-48" => "alac-24-48",
+        "alac-16-44" => "alac-16-44",
+        "aac-320" => "aac-320",
+        "aac-96" => "aac-96",
+        _ => "alac-16-44"
     };
 
     private static ProviderMediaFormat? Media(string? mimeType, string quality) => mimeType?.ToLowerInvariant() switch
