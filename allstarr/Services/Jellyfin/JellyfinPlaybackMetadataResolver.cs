@@ -143,6 +143,10 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         var hasAlbumImage = !string.IsNullOrWhiteSpace(albumId) &&
                             TryGetString(root, "AlbumPrimaryImageTag") is { Length: > 0 };
         var artworkItemId = hasPrimaryImage ? itemId : hasAlbumImage ? albumId : null;
+        var durationSeconds = root.TryGetProperty("RunTimeTicks", out var runTimeTicks) &&
+                              runTimeTicks.TryGetInt64(out var ticks) && ticks > 0
+            ? (int)Math.Ceiling(ticks / (double)TimeSpan.TicksPerSecond)
+            : (int?)null;
 
         return new PlaybackTrackMetadata(
             title,
@@ -150,7 +154,8 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             album,
             artworkItemId != null
                 ? $"/api/admin/downloads/artwork/{Uri.EscapeDataString(artworkItemId)}"
-                : null);
+                : null,
+            durationSeconds);
     }
 
     private bool CanQueryBackend() =>

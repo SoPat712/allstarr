@@ -57,7 +57,8 @@ public sealed class ProtocolProviderGateway(
     IProviderRegistry registry,
     IProviderRouteAccountResolver accounts,
     IMusicMetadataService legacyMetadata,
-    IHttpClientFactory httpClientFactory) : IProtocolProviderGateway
+    IHttpClientFactory httpClientFactory,
+    IConfiguration? configuration = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
 
@@ -125,9 +126,9 @@ public sealed class ProtocolProviderGateway(
         var allowedCompatibilityProviders = await ResolveAllowedCompatibilityProvidersAsync(protocol, actor);
         return new SearchResult
         {
-            Songs = Merge(routed.Songs, legacy.Songs.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id)),
-            Albums = Merge(routed.Albums, legacy.Albums.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id)),
-            Artists = Merge(routed.Artists, legacy.Artists.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id))
+            Songs = Merge(routed.Songs, legacy.Songs.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
+            Albums = Merge(routed.Albums, legacy.Albums.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
+            Artists = Merge(routed.Artists, legacy.Artists.Where(item => Allowed(item.ExternalProvider, allowedCompatibilityProviders)), artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
         };
     }
 
@@ -248,7 +249,8 @@ public sealed class ProtocolProviderGateway(
             routed,
             legacy.Where(item => Allowed(item.Provider, allowedCompatibilityProviders)),
             limit,
-            item => Key(item.Provider, item.ExternalId, item.Id));
+            item => Key(item.Provider, item.ExternalId, item.Id),
+            item => item.Provider);
     }
 
     public async Task<ExternalPlaylist?> GetPlaylistAsync(
@@ -591,14 +593,52 @@ public sealed class ProtocolProviderGateway(
         CoverUrl = item.Artwork?.PublicUri?.ToString()
     };
 
-    private static List<T> Merge<T>(
+    private List<T> Merge<T>(
         IEnumerable<T> routed,
         IEnumerable<T> legacy,
         int limit,
-        Func<T, string> key) => routed.Concat(legacy)
-        .DistinctBy(key, StringComparer.Ordinal)
-        .Take(Math.Max(0, limit))
-        .ToList();
+        Func<T, string> key,
+        Func<T, string?> provider)
+    {
+        var items = routed.Concat(legacy)
+            .DistinctBy(key, StringComparer.Ordinal)
+            .ToList();
+        var preferred = (configuration?["MULTI_PROVIDER_METADATA_ORDER"] ??
+                         "apple-download,deezer,qobuz")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeProvider)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var groups = items
+            .GroupBy(item => NormalizeProvider(provider(item)), StringComparer.Ordinal)
+            .OrderBy(group =>
+            {
+                var index = preferred.IndexOf(group.Key);
+                return index < 0 ? int.MaxValue : index;
+            })
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => new Queue<T>(group))
+            .ToList();
+        var merged = new List<T>();
+        while (merged.Count < Math.Max(0, limit) && groups.Any(group => group.Count > 0))
+        {
+            foreach (var group in groups)
+            {
+                if (group.Count > 0 && merged.Count < limit)
+                {
+                    merged.Add(group.Dequeue());
+                }
+            }
+        }
+        return merged;
+    }
+
+    private static string NormalizeProvider(string? provider) => provider?.ToLowerInvariant() switch
+    {
+        "applemusic" => "apple-download",
+        null or "" => "unknown",
+        var value => value
+    };
 
     private static string Key(string? providerId, string? externalId, string fallback) =>
         !string.IsNullOrWhiteSpace(providerId) && !string.IsNullOrWhiteSpace(externalId)

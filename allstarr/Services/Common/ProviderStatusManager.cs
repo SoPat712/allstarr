@@ -980,15 +980,15 @@ public class ProviderStatusManager
     }
 
     private List<string> GetMetadataOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_METADATA_ORDER", "deezer,qobuz");
+        GetProviderOrder("MULTI_PROVIDER_METADATA_ORDER", "apple-download,deezer,qobuz");
 
     private List<string> GetDownloadOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "deezer,qobuz")
+        GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz")
             .Where(provider => provider != "squidwtf")
             .ToList();
 
     private List<string> GetStreamingOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_STREAMING_ORDER", "deezer,qobuz")
+        GetProviderOrder("MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz")
             .Where(provider => provider != "squidwtf")
             .ToList();
 
@@ -1009,7 +1009,7 @@ public class ProviderStatusManager
     }
 
     private HashSet<string> GetEnabledSearchRaw() =>
-        GetProviderSet("MULTI_PROVIDER_ENABLED_SEARCH", "deezer,qobuz");
+        GetProviderSet("MULTI_PROVIDER_ENABLED_SEARCH", "apple-download,deezer,qobuz");
 
     private HashSet<string> GetEnabledPlaylistRaw() =>
         GetProviderSet("MULTI_PROVIDER_ENABLED_PLAYLIST", "spotify");

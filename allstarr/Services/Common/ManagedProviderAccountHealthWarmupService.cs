@@ -19,6 +19,18 @@ public sealed class ManagedProviderAccountHealthWarmupService(
     {
         await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
 
+        await ProbeAllAsync(stoppingToken);
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(15));
+        while (await timer.WaitForNextTickAsync(stoppingToken))
+        {
+            await ProbeAllAsync(stoppingToken);
+        }
+    }
+
+    private async Task ProbeAllAsync(CancellationToken stoppingToken)
+    {
+        await ProbeDeploymentProvidersAsync(stoppingToken);
+
         await using var context = await contextFactory.CreateDbContextAsync(stoppingToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .Where(item => item.Enabled && item.SecretReferenceId != null)
@@ -60,6 +72,44 @@ public sealed class ManagedProviderAccountHealthWarmupService(
                 logger.LogWarning(
                     "Managed provider account startup probe failed for {Provider} ({ExceptionType})",
                     account.ProviderId,
+                    ex.GetType().Name);
+            }
+        }
+    }
+
+    private async Task ProbeDeploymentProvidersAsync(CancellationToken stoppingToken)
+    {
+        var capabilities = statusManager.GetAllStatuses()
+            .Where(item => item.IsSupported &&
+                           item.IsEnabled &&
+                           item.Configuration != ProviderConfigurationState.NeedsConfiguration &&
+                           statusManager.CanTestCapability(item.Provider, item.Capability))
+            .ToArray();
+
+        foreach (var capability in capabilities)
+        {
+            if (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            try
+            {
+                await statusManager.TestProviderCapabilityAsync(
+                    capability.Provider,
+                    capability.Capability,
+                    cancellationToken: stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    "Provider background probe failed for {Provider}/{Capability} ({ExceptionType})",
+                    capability.Provider,
+                    capability.Capability,
                     ex.GetType().Name);
             }
         }

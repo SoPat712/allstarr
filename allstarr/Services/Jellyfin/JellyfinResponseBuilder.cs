@@ -543,8 +543,9 @@ public class JellyfinResponseBuilder
         {
             "deezer" => "D",
             "qobuz" => "Q",
+            "applemusic" or "apple-download" => "AM",
             "squidwtf" => "S",
-            _ => "S"
+            _ => "EXT"
         };
     }
 

@@ -303,8 +303,22 @@ public sealed class DeezerMetadataCapabilityAdapter : IProviderMetadataCapabilit
             throw new InvalidOperationException($"The legacy Deezer {label} has no provider ID.");
         }
 
+        var resourceLabel = kind switch
+        {
+            ProviderResourceKind.Track => "song",
+            ProviderResourceKind.Album => "album",
+            ProviderResourceKind.Artist => "artist",
+            ProviderResourceKind.Playlist => "playlist",
+            _ => string.Empty
+        };
+        var typedCompatibilityPrefix = $"ext-{StableProviderId}-{resourceLabel}-";
         var compatibilityPrefix = $"ext-{StableProviderId}-";
-        if (value.StartsWith(compatibilityPrefix, StringComparison.Ordinal))
+        if (!string.IsNullOrEmpty(resourceLabel) &&
+            value.StartsWith(typedCompatibilityPrefix, StringComparison.Ordinal))
+        {
+            value = value[typedCompatibilityPrefix.Length..];
+        }
+        else if (value.StartsWith(compatibilityPrefix, StringComparison.Ordinal))
         {
             value = value[compatibilityPrefix.Length..];
         }

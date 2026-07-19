@@ -1,4 +1,5 @@
 using allstarr.Core.Jobs;
+using allstarr.Services.Common;
 using allstarr.Services.Scrobbling;
 
 namespace allstarr.Core.Playback;
@@ -7,6 +8,9 @@ public static class PlaybackRegistration
 {
     public static IServiceCollection AddDurablePlaybackSignals(this IServiceCollection services)
     {
+        services.AddSingleton<PlaybackDeliveryActivityStore>();
+        services.AddSingleton<IPlaybackDeliveryActivitySource>(provider =>
+            provider.GetRequiredService<PlaybackDeliveryActivityStore>());
         services.AddSingleton<IPlaybackSignalPipeline, PlaybackSignalPipeline>();
         services.AddSingleton<IPlaybackTrackResolver, PlaybackTrackResolver>();
         services.AddSingleton<IPlaybackLyricsPrefetch, PlaybackLyricsPrefetch>();

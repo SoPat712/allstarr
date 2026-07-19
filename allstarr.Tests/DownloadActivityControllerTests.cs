@@ -47,6 +47,29 @@ public sealed class DownloadActivityControllerTests
     }
 
     [Fact]
+    public async Task Queue_ReportsRealPlaybackProgressDurationSourceAndScrobbleState()
+    {
+        var source = new StubPlaybackSource(
+            new PlaybackActivityState("device-1", "local-item", TimeSpan.FromSeconds(30).Ticks, DateTime.UtcNow));
+        var resolver = new StubMetadataResolver(
+            new PlaybackTrackMetadata("Title", "Artist", "Album", "/art", DurationSeconds: 120));
+        var deliveries = new PlaybackDeliveryActivityStore();
+        deliveries.MarkDelivered("local-item", "device-1");
+        var controller = CreateController([], [source], [resolver], deliveries);
+
+        var result = await controller.GetDownloadQueue();
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var entry = Assert.Single(document.RootElement.EnumerateArray());
+        Assert.Equal("jellyfin", entry.GetProperty("ExternalProvider").GetString());
+        Assert.Equal(30, entry.GetProperty("PlaybackPositionSeconds").GetInt32());
+        Assert.Equal(120, entry.GetProperty("DurationSeconds").GetInt32());
+        Assert.Equal(0.25, entry.GetProperty("PlaybackProgress").GetDouble());
+        Assert.True(entry.GetProperty("Scrobbled").GetBoolean());
+    }
+
+    [Fact]
     public async Task Artwork_IsServedThroughProtectedAdminControllerAdapter()
     {
         var resolver = new StubMetadataResolver(
@@ -64,13 +87,15 @@ public sealed class DownloadActivityControllerTests
     private static DownloadActivityController CreateController(
         IEnumerable<IDownloadService> downloads,
         IEnumerable<IPlaybackActivitySource> playbackSources,
-        IEnumerable<IPlaybackMetadataResolver> metadataResolvers)
+        IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
+        IPlaybackDeliveryActivitySource? playbackDeliveries = null)
     {
         var controller = new DownloadActivityController(
             downloads,
             playbackSources,
             metadataResolvers,
-            NullLogger<DownloadActivityController>.Instance)
+            NullLogger<DownloadActivityController>.Instance,
+            playbackDeliveries)
         {
             ControllerContext = new ControllerContext
             {

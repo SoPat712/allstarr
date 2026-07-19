@@ -25,15 +25,14 @@ public partial class JellyfinController
     {
         try
         {
-            // Only inject tracks if Spotify API is enabled
-            if (_spotifyApiSettings.Enabled && _spotifyPlaylistFetcher != null)
-            {
-                var orderedResult = await GetSpotifyPlaylistTracksOrderedAsync(spotifyPlaylistName, playlistId);
-                if (orderedResult != null) return orderedResult;
-            }
+            // Both the direct Spotify API importer and the Jellyfin Spotify plugin build the
+            // same ordered injected-items cache. Serving that cache must not depend on which
+            // importer populated it.
+            var orderedResult = await GetSpotifyPlaylistTracksOrderedAsync(spotifyPlaylistName, playlistId);
+            if (orderedResult != null) return orderedResult;
 
-            // Spotify API not enabled or no ordered tracks - proxy through without modification
-            _logger.LogDebug("Spotify API not enabled or no tracks found, proxying playlist {PlaylistName} without modification",
+            // No injected cache is ready yet. Preserve the local playlist while matching runs.
+            _logger.LogDebug("No injected tracks are ready, proxying playlist {PlaylistName} without modification",
                 spotifyPlaylistName);
 
             var endpoint = $"Playlists/{playlistId}/Items";
@@ -59,6 +58,7 @@ public partial class JellyfinController
     private async Task<IActionResult?> GetSpotifyPlaylistTracksOrderedAsync(string spotifyPlaylistName,
         string playlistId)
     {
+        var directSpotifyMode = _spotifyApiSettings.Enabled && _spotifyPlaylistFetcher != null;
         // Check if Jellyfin playlist has changed (cheap API call)
         var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{spotifyPlaylistName}";
         var currentJellyfinSignature = await GetJellyfinPlaylistSignatureAsync(playlistId);
@@ -112,7 +112,8 @@ public partial class JellyfinController
             cachedItems = null;
         }
 
-        if (cachedItems != null && cachedItems.Count > 0 && !jellyfinPlaylistChanged)
+        if (cachedItems != null && cachedItems.Count > 0 &&
+            (!jellyfinPlaylistChanged || !directSpotifyMode))
         {
             _logger.LogDebug("✅ Loaded {Count} playlist items from Redis cache for {Playlist} (Jellyfin unchanged)",
                 cachedItems.Count, spotifyPlaylistName);
@@ -170,7 +171,8 @@ public partial class JellyfinController
             fileItems = null;
         }
 
-        if (fileItems != null && fileItems.Count > 0 && !jellyfinPlaylistChanged)
+        if (fileItems != null && fileItems.Count > 0 &&
+            (!jellyfinPlaylistChanged || !directSpotifyMode))
         {
             _logger.LogDebug("✅ Loaded {Count} playlist items from file cache for {Playlist}",
                 fileItems.Count, spotifyPlaylistName);
@@ -184,6 +186,13 @@ public partial class JellyfinController
                 TotalRecordCount = fileItems.Count,
                 StartIndex = 0
             });
+        }
+
+        // Without direct Spotify metadata, the legacy matcher is the cache producer. If its
+        // pre-built items are not ready yet, retain the local Jellyfin playlist for this request.
+        if (!directSpotifyMode)
+        {
+            return null;
         }
 
         // Check for ordered matched tracks from SpotifyTrackMatchingService

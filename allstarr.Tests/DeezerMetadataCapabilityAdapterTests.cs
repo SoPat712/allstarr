@@ -57,6 +57,36 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task SearchTracks_StripsTypedCompatibilityPrefixFromAlbumId()
+    {
+        var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);
+        legacy.Setup(item => item.SearchSongsAsync("track", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    Id = "ext-deezer-song-123",
+                    ExternalId = "123",
+                    ExternalProvider = "deezer",
+                    Title = "Track",
+                    Artist = "Artist",
+                    Artists = ["Artist"],
+                    ArtistIds = ["789"],
+                    Album = "Album",
+                    AlbumId = "ext-deezer-album-456",
+                    Duration = 180
+                }
+            ]);
+        var adapter = new DeezerMetadataCapabilityAdapter(legacy.Object);
+
+        var outcome = await adapter.SearchTracksAsync(
+            Context(),
+            new ProviderMetadataSearchRequest("track", new ProviderPageRequest(1)));
+
+        Assert.Equal("456", Assert.Single(outcome.RequireValue().Items).AlbumId!.Value);
+    }
+
+    [Fact]
     public async Task CursorThatLegacyProviderCannotHonor_ReturnsTypedNotSupported()
     {
         var legacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict);

@@ -37,6 +37,7 @@ public class SpotifyTrackMatchingService : BackgroundService
     private readonly SpotifyMappingValidationService _validationService;
     private readonly ILogger<SpotifyTrackMatchingService> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly PlaylistPlayableSearchService _playableSearch;
     private readonly IConfiguration _configuration;
     private const int DelayBetweenSearchesMs = 150; // 150ms = ~6.6 searches/second to avoid rate limiting
     private const int BatchSize = 11; // Number of parallel searches (matches SquidWTF provider count)
@@ -53,6 +54,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         SpotifyMappingService mappingService,
         SpotifyMappingValidationService validationService,
         IServiceProvider serviceProvider,
+        PlaylistPlayableSearchService playableSearch,
         IConfiguration configuration,
         ILogger<SpotifyTrackMatchingService> logger)
     {
@@ -62,6 +64,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         _mappingService = mappingService;
         _validationService = validationService;
         _serviceProvider = serviceProvider;
+        _playableSearch = playableSearch;
         _configuration = configuration;
         _logger = logger;
     }
@@ -1460,6 +1463,16 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         var matchedSongs = new List<Song>();
         var orderedMatches = new List<MatchedTrack>();
+        var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
+            item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+        var legacySourceTracks = missingTracks.Select((track, position) => new SpotifyPlaylistTrack
+        {
+            SpotifyId = track.SpotifyId,
+            Position = position,
+            Title = track.Title,
+            Album = track.Album,
+            Artists = track.Artists
+        }).ToList();
         var matchCount = 0;
 
         for (var missingPosition = 0; missingPosition < missingTracks.Count; missingPosition++)
@@ -1513,6 +1526,21 @@ public class SpotifyTrackMatchingService : BackgroundService
                         {
                             _logger.LogInformation("Matched {Count}/{Total} tracks for {Playlist}",
                                 matchCount, missingTracks.Count, playlistName);
+                            await _cache.SetAsync(
+                                CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
+                                orderedMatches,
+                                CacheExtensions.SpotifyMatchedTracksTTL);
+                            if (!string.IsNullOrWhiteSpace(playlist?.JellyfinId))
+                            {
+                                await PreBuildPlaylistItemsCacheAsync(
+                                    playlistName,
+                                    playlist.JellyfinId,
+                                    legacySourceTracks,
+                                    orderedMatches,
+                                    TimeSpan.FromHours(24),
+                                    cancellationToken,
+                                    includeUnorderedLocalItems: true);
+                            }
                         }
                     }
                 }
@@ -1534,18 +1562,8 @@ public class SpotifyTrackMatchingService : BackgroundService
             _logger.LogInformation("✓ Cached {Matched}/{Total} matched tracks for {Playlist}",
                 matchedSongs.Count, missingTracks.Count, playlistName);
 
-            var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
-                item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
             if (orderedMatches.Count > 0 && !string.IsNullOrWhiteSpace(playlist?.JellyfinId))
             {
-                var legacySourceTracks = missingTracks.Select((track, position) => new SpotifyPlaylistTrack
-                {
-                    SpotifyId = track.SpotifyId,
-                    Position = position,
-                    Title = track.Title,
-                    Album = track.Album,
-                    Artists = track.Artists
-                }).ToList();
                 await _cache.SetAsync(
                     CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
                     orderedMatches,
@@ -1566,14 +1584,22 @@ public class SpotifyTrackMatchingService : BackgroundService
         }
     }
 
-    private static Task<List<Song>> SearchPlayableSongsAsync(
+    private async Task<List<Song>> SearchPlayableSongsAsync(
         IMusicMetadataService metadataService,
         string query,
         int limit,
-        CancellationToken cancellationToken = default) =>
-        metadataService is MultiProviderMetadataService multiProvider
-            ? multiProvider.SearchPlayableSongsAsync(query, limit, cancellationToken)
-            : SearchAndFilterPlayableSongsAsync(metadataService, query, limit, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var scoped = await _playableSearch.SearchAsync(query, limit, cancellationToken);
+        if (scoped != null)
+        {
+            return scoped.ToList();
+        }
+
+        return metadataService is MultiProviderMetadataService multiProvider
+            ? await multiProvider.SearchPlayableSongsAsync(query, limit, cancellationToken)
+            : await SearchAndFilterPlayableSongsAsync(metadataService, query, limit, cancellationToken);
+    }
 
     private static async Task<List<Song>> SearchAndFilterPlayableSongsAsync(
         IMusicMetadataService metadataService,

@@ -6,6 +6,7 @@ using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
@@ -111,6 +112,46 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EmptyDurableIndex_UsesConfiguredJellyfinLibraryScope()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.LibraryTracks.RemoveRange(db.LibraryTracks);
+            await db.SaveChangesAsync();
+        }
+        var execution = Signal(PlaybackTransition.Start, "backend-track", 0).ExecutionContext;
+        var unscoped = new ProtocolExecutionContext(
+            execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
+            execution.Principal, execution.CorrelationId, execution.Deadline, default);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Jellyfin:LibraryId"] = "configured-music" }).Build();
+
+        var resolved = await new ProtocolLibraryScopeResolver(factory, configuration)
+            .ResolveAsync(unscoped, "backend-track");
+
+        Assert.Equal("configured-music", resolved.LibraryScopeId);
+    }
+
+    [Fact]
+    public async Task EmptyDurableIndex_ResolvesPlaybackTrackFromBackendMetadata()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.LibraryTracks.RemoveRange(db.LibraryTracks);
+            await db.SaveChangesAsync();
+        }
+        var metadata = new BackendMetadataResolver(new(
+            "Backend title", "Backend artist", "Backend album", "/art", 180));
+        var resolver = new PlaybackTrackResolver(factory, [metadata]);
+
+        var resolved = await resolver.ResolveAsync(Payload() with { ItemId = "backend-track" });
+
+        Assert.NotNull(resolved);
+        Assert.Equal("Backend title", resolved.Title);
+        Assert.Equal(180_000, resolved.DurationMilliseconds);
+    }
+
+    [Fact]
     public async Task MissingPlaySession_DedupesRetriesButAllowsALaterOccurrence()
     {
         var pipeline = new PlaybackSignalPipeline(jobs);
@@ -212,6 +253,29 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EligibleProgressScrobblesOnceAndStopDoesNotDuplicateIt()
+    {
+        var target = new Target("lastfm", true);
+        var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        var delivery = new ScopedPlaybackScrobbleDelivery(
+            factory,
+            [target],
+            new Checkpoints(),
+            activity: activity);
+        var progress = Payload() with
+        {
+            Transition = PlaybackTransition.Progress,
+            PositionTicks = TimeSpan.FromSeconds(60).Ticks
+        };
+
+        await delivery.DeliverAsync(progress, default);
+        await delivery.DeliverAsync(progress with { Transition = PlaybackTransition.Stop }, default);
+
+        Assert.Equal(1, target.Successes);
+        Assert.True(activity.WasDelivered(progress.ItemId, progress.DeviceId!));
+    }
+
+    [Fact]
     public async Task ExplicitSubsonicSubmission_BypassesPlaybackThreshold()
     {
         var target = new Target("lastfm", true);
@@ -305,4 +369,13 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     private sealed class Target(string id, bool configured) : IExactScopePlaybackScrobbleTarget { public string ProviderId => id; public int Successes; public bool FailFirst; public bool Reject; public Task<bool> IsConfiguredAsync(IntelligenceScope s, CancellationToken c) => Task.FromResult(configured); public Task DeliverAsync(IntelligenceScope s, PlaybackTransition t, ScopedPlaybackTrack track, long? p, DateTimeOffset o, string key, CancellationToken c) { if (Reject) throw new UnauthorizedAccessException(); if (FailFirst) { FailFirst = false; throw new IOException(); } Successes++; return Task.CompletedTask; } }
     private sealed class Checkpoints : IPlaybackDeliveryCheckpointStore { private readonly HashSet<string> values = []; public Task<bool> IsCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) => Task.FromResult(values.Contains(k + target)); public Task MarkCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) { values.Add(k + target); return Task.CompletedTask; } }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type t) => null; }
+    private sealed class BackendMetadataResolver(allstarr.Services.Common.PlaybackTrackMetadata metadata)
+        : allstarr.Services.Common.IPlaybackMetadataResolver
+    {
+        public Task<allstarr.Services.Common.PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken) =>
+            Task.FromResult<allstarr.Services.Common.PlaybackTrackMetadata?>(metadata);
+
+        public Task<allstarr.Services.Common.PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken) =>
+            Task.FromResult<allstarr.Services.Common.PlaybackArtwork?>(null);
+    }
 }

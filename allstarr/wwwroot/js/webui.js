@@ -77,6 +77,35 @@ function percent(value) {
   return Math.max(0, Math.min(100, numeric * (numeric <= 1 ? 100 : 1)));
 }
 
+function formatDuration(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function configOptionLabel(field, option) {
+  const key = String(field?.key || "").toUpperCase();
+  const labels = {
+    APPLE_DOWNLOAD_QUALITY: {
+      "alac-16-44": "Standard lossless · 16-bit / 44.1 kHz",
+      "alac-24-48": "Enhanced lossless · 24-bit / 48 kHz",
+      "alac-24-96": "High-resolution · 24-bit / 96 kHz (one below maximum)",
+      "alac-24-192": "Maximum · 24-bit / 192 kHz",
+    },
+    DEEZER_QUALITY: {
+      MP3_128: "Data saver · MP3 128 kbps",
+      MP3_320: "High · MP3 320 kbps",
+      FLAC: "Lossless · FLAC (provider maximum)",
+    },
+    QOBUZ_QUALITY: {
+      MP3_320: "High · MP3 320 kbps",
+      FLAC: "Lossless · CD quality",
+      HI_RES: "High-resolution · up to provider maximum",
+    },
+  };
+  return labels[key]?.[option] || option;
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -3220,8 +3249,19 @@ class AllstarrApp extends LitElement {
     if (ACCOUNT_MANAGED_PROVIDERS.has(providerId)) {
       const accounts = asArray(this.providerAccounts).filter((account) =>
         String(account.providerId || account.ProviderId).toLowerCase() === providerId);
-      if (!accounts.some((account) => Boolean(account.enabled ?? account.Enabled))) {
+      const enabled = accounts.filter((account) => Boolean(account.enabled ?? account.Enabled));
+      if (!enabled.length) {
         return "disabled";
+      }
+      const accountIds = new Set(enabled.map((account) => String(account.id || account.Id).toLowerCase()));
+      const health = asArray(this.providerHealth).filter((item) =>
+        accountIds.has(String(item.providerAccountId || item.ProviderAccountId).toLowerCase()) &&
+        Boolean(item.canTest ?? item.CanTest));
+      if (health.some((item) => String(item.health || item.Health).toLowerCase() === "degraded")) {
+        return "degraded";
+      }
+      if (health.length && health.every((item) => String(item.health || item.Health).toLowerCase() === "healthy")) {
+        return "healthy";
       }
     }
     const accountConfigured = asArray(this.providerAccounts).some((account) => {
@@ -3326,8 +3366,9 @@ class AllstarrApp extends LitElement {
           ${asArray(provider.notes).map((note) => html`<span class="chip">${note}</span>`)}
         </div>
         ${accountManaged && !enabledAccount ? html`<p class="muted">Add or enable a provider account above before Allstarr uses this source.</p>` : nothing}
-        ${asArray(provider.runtimeCapabilities).length && !(accountManaged && !enabledAccount) ? html`
-          <div class="chip-list capability-list" aria-label="Runtime capability status">
+        ${asArray(provider.runtimeCapabilities).length && !accountManaged ? html`
+          <div class="runtime-capability-table" role="table" aria-label="Runtime capability status">
+            <div class="runtime-capability-header" role="row"><span>Capability</span><span>Setup</span><span>Last check</span><span></span></div>
             ${asArray(provider.runtimeCapabilities).map((capability) => this.renderRuntimeCapability(provider, capability))}
           </div>
         ` : nothing}
@@ -3359,10 +3400,12 @@ class AllstarrApp extends LitElement {
     const healthLabel = health === "unknown" ? "Not tested" : health === "healthy" ? "Healthy" : health === "degraded" ? "Failed" : titleCase(health);
     const testKey = `global:${providerId}:${capability.id}`;
     const testing = this.providerTests.has(testKey);
-    return html`<span class="runtime-capability">
-      <span class="chip runtime-${health}" title=${capability.reasonCode ? titleCase(capability.reasonCode) : `Last tested ${formatDate(capability.testedAt)}`}>${titleCase(capability.id)}: ${configurationLabel} · ${healthLabel}</span>
+    return html`<div class="runtime-capability" role="row" title=${capability.reasonCode ? titleCase(capability.reasonCode) : `Last tested ${formatDate(capability.testedAt)}`}>
+      <strong>${titleCase(capability.id)}</strong>
+      <span>${configurationLabel}</span>
+      <span class="runtime-health runtime-${health}">${healthLabel}${capability.testedAt ? html`<small>${formatDate(capability.testedAt)}</small>` : nothing}</span>
       ${capability.canTest && capability.canAttempt ? html`<button class="compact" ?disabled=${testing} @click=${() => this.testProviderCapability(providerId, capability.id)}>${testing ? "Testing..." : "Test"}</button>` : nothing}
-    </span>`;
+    </div>`;
   }
 
   async testProviderCapability(provider, capability) {
@@ -4195,7 +4238,7 @@ class AllstarrApp extends LitElement {
         </div>
         ${field.type === "select" ? html`
           <select id=${field.key} .value=${String(value)} @change=${onCommit} ?disabled=${readOnly} aria-describedby=${field.helpText ? `${field.key}-help` : nothing}>
-            ${asArray(field.options).map((option) => html`<option value=${option}>${option}</option>`)}
+            ${asArray(field.options).map((option) => html`<option value=${option}>${configOptionLabel(field, option)}</option>`)}
           </select>
         ` : field.type === "toggle" ? html`
           <label class="inline-check">
@@ -4672,20 +4715,30 @@ class AllstarrApp extends LitElement {
   renderNowPlaying() {
     const current = this.getRecentPlayback();
     if (!current) return nothing;
-    const progress = current ? percent(current.playbackProgress ?? current.PlaybackProgress ?? current.progress ?? current.Progress) : 0;
     const title = current ? display(current.title || current.Title, "Active download") : "No active playback";
     const artist = current ? display(current.artist || current.Artist) : "Queue is idle";
     const coverArtUrl = current?.coverArtUrl || current?.CoverArtUrl || "/placeholder.png";
+    const position = Number(current?.playbackPositionSeconds ?? current?.PlaybackPositionSeconds) || 0;
+    const duration = Number(current?.durationSeconds ?? current?.DurationSeconds) || 0;
+    const playbackProgress = current?.playbackProgress ?? current?.PlaybackProgress;
+    const progress = playbackProgress == null
+      ? (duration > 0 ? percent(position / duration) : 0)
+      : percent(playbackProgress);
+    const source = providerDisplayName(current?.externalProvider || current?.ExternalProvider || "jellyfin", this.schema?.providers);
+    const scrobbled = Boolean(current?.scrobbled ?? current?.Scrobbled);
     return html`
       <footer class="now-playing">
         <div class="now-track">
           <img class="art" src=${coverArtUrl} alt="">
           <div>
             <div class="now-title">${title}</div>
-            <div class="now-meta">${artist}</div>
+            <div class="now-meta">${artist} <span aria-hidden="true">·</span> ${source}${scrobbled ? html` <span class="scrobble-success" title="Scrobble delivered" aria-label="Scrobble delivered">✓</span>` : nothing}</div>
           </div>
         </div>
-        <div class="progress" style=${`--progress:${progress}%`}><span></span></div>
+        <div class="now-progress">
+          <div class="progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(progress)} style=${`--progress:${progress}%`}><span></span></div>
+          <div class="now-time"><span>${formatDuration(position)}</span><span>${duration > 0 ? formatDuration(duration) : "–:––"}</span></div>
+        </div>
       </footer>
     `;
   }

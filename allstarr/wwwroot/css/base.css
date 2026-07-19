@@ -970,7 +970,7 @@ tbody tr:hover {
 
 .provider-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
     min-width: 0;
     max-width: 100%;
@@ -984,13 +984,66 @@ tbody tr:hover {
 
 .provider-cluster {
     display: grid;
+    grid-template-columns: minmax(280px, 0.8fr) minmax(0, 2.2fr);
     align-content: start;
     gap: var(--space-3);
     min-width: 0;
 }
 
 .embedded-accounts {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.runtime-capability-table {
+    display: grid;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.runtime-capability-header,
+.runtime-capability {
+    display: grid;
+    grid-template-columns: minmax(88px, 1fr) minmax(110px, 1.25fr) minmax(120px, 1.35fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+}
+
+.runtime-capability-header {
+    background: var(--surface-elevated);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.runtime-capability + .runtime-capability {
+    border-top: 1px solid var(--border);
+}
+
+.runtime-capability > span {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.runtime-health {
+    display: grid;
+    gap: 2px;
+}
+
+.runtime-health small {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+}
+
+.runtime-health.runtime-healthy {
+    color: var(--success);
+}
+
+.runtime-health.runtime-degraded {
+    color: var(--danger);
 }
 
 .provider-account-card {
@@ -1783,6 +1836,24 @@ fieldset.form-row > label small {
     white-space: nowrap;
 }
 
+.now-progress {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.now-time {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.scrobble-success {
+    color: var(--success);
+    font-weight: 900;
+}
+
 .restart-bar {
     position: fixed;
     right: var(--space-5);
@@ -2259,9 +2330,32 @@ fieldset.form-row > label small {
 }
 
 .runtime-capability {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
+    display: grid;
+}
+
+@media (max-width: 900px) {
+    .provider-cluster {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 640px) {
+    .runtime-capability-header {
+        display: none;
+    }
+
+    .runtime-capability {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .runtime-capability > span {
+        grid-column: 1;
+    }
+
+    .runtime-capability > button {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+    }
 }
 
 .hidden {

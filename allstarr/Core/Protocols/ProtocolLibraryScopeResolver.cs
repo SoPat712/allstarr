@@ -12,7 +12,9 @@ public interface IProtocolLibraryScopeResolver
         CancellationToken cancellationToken = default);
 }
 
-public sealed class ProtocolLibraryScopeResolver(IDbContextFactory<AllstarrDbContext> factory)
+public sealed class ProtocolLibraryScopeResolver(
+    IDbContextFactory<AllstarrDbContext> factory,
+    IConfiguration? configuration = null)
     : IProtocolLibraryScopeResolver
 {
     public async Task<ProtocolExecutionContext> ResolveAsync(
@@ -39,6 +41,12 @@ public sealed class ProtocolLibraryScopeResolver(IDbContextFactory<AllstarrDbCon
         var scopes = matchingScopes.Length > 0
             ? matchingScopes
             : tracks.Select(track => track.LibraryScopeId).Distinct(StringComparer.Ordinal).ToArray();
+        if (scopes.Length == 0 && context.Protocol == ProtocolKind.Jellyfin &&
+            configuration?["Jellyfin:LibraryId"] is { Length: > 0 } configuredLibraryId)
+        {
+            return context.WithLibraryScope(configuredLibraryId);
+        }
+
         return scopes.Length switch
         {
             1 => context.WithLibraryScope(scopes[0]),

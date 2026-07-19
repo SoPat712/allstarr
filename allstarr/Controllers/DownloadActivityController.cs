@@ -16,17 +16,20 @@ public class DownloadActivityController : ControllerBase
     private readonly IReadOnlyList<IPlaybackActivitySource> _playbackSources;
     private readonly IReadOnlyList<IPlaybackMetadataResolver> _metadataResolvers;
     private readonly ILogger<DownloadActivityController> _logger;
+    private readonly IPlaybackDeliveryActivitySource? _playbackDeliveries;
 
     public DownloadActivityController(
         IEnumerable<IDownloadService> downloadServices,
         IEnumerable<IPlaybackActivitySource> playbackSources,
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
-        ILogger<DownloadActivityController> logger)
+        ILogger<DownloadActivityController> logger,
+        IPlaybackDeliveryActivitySource? playbackDeliveries = null)
     {
         _downloadServices = downloadServices;
         _playbackSources = playbackSources.ToList();
         _metadataResolvers = metadataResolvers.ToList();
         _logger = logger;
+        _playbackDeliveries = playbackDeliveries;
     }
 
     /// <summary>
@@ -161,7 +164,10 @@ public class DownloadActivityController : ControllerBase
                     PlaybackPositionSeconds = hasPlayback
                         ? (int)Math.Max(0, playbackState!.PositionTicks / TimeSpan.TicksPerSecond)
                         : null,
-                    PlaybackProgress = playbackProgress
+                    PlaybackProgress = playbackProgress,
+                    Scrobbled = hasPlayback && _playbackDeliveries?.WasDelivered(
+                        normalizedSongId,
+                        playbackState!.DeviceId) == true
                 };
             })
             .ToList();
@@ -194,7 +200,16 @@ public class DownloadActivityController : ControllerBase
                 IsPlaying = true,
                 PlaybackLastActivity = playbackState.LastActivity,
                 CoverArtUrl = localMetadata?.CoverArtUrl,
-                PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond)
+                DurationSeconds = localMetadata?.DurationSeconds,
+                PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond),
+                PlaybackProgress = localMetadata?.DurationSeconds > 0
+                    ? Math.Clamp(
+                        playbackState.PositionTicks / (double)TimeSpan.TicksPerSecond /
+                        localMetadata.DurationSeconds.Value,
+                        0d,
+                        1d)
+                    : null,
+                Scrobbled = _playbackDeliveries?.WasDelivered(itemId, playbackState.DeviceId) == true
             });
         }
 
@@ -296,5 +311,6 @@ public class DownloadActivityController : ControllerBase
         public string? CoverArtUrl { get; init; }
         public int? PlaybackPositionSeconds { get; init; }
         public double? PlaybackProgress { get; init; }
+        public bool Scrobbled { get; init; }
     }
 }

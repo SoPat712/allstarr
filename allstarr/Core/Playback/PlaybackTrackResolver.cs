@@ -1,5 +1,6 @@
 using allstarr.Core.Storage;
 using allstarr.Core.Protocols;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playback;
@@ -19,7 +20,9 @@ public interface IPlaybackTrackResolver
         CancellationToken cancellationToken = default);
 }
 
-public sealed class PlaybackTrackResolver(IDbContextFactory<AllstarrDbContext> factory)
+public sealed class PlaybackTrackResolver(
+    IDbContextFactory<AllstarrDbContext> factory,
+    IEnumerable<IPlaybackMetadataResolver>? metadataResolvers = null)
     : IPlaybackTrackResolver
 {
     public async Task<PlaybackTrackSnapshot?> ResolveAsync(
@@ -38,14 +41,32 @@ public sealed class PlaybackTrackResolver(IDbContextFactory<AllstarrDbContext> f
             track.LibraryScopeId == payload.Scope.LibraryScopeId).ToListAsync(cancellationToken);
         var track = tracks.SingleOrDefault(candidate =>
             ProtocolLibraryScopeResolver.Matches(candidate, itemId));
-        return track == null
-            ? null
-            : new PlaybackTrackSnapshot(
+        if (track != null)
+        {
+            return new PlaybackTrackSnapshot(
                 track.Id,
                 track.BackendItemId,
                 track.Title,
                 track.Artist,
                 track.Album,
                 track.DurationMilliseconds);
+        }
+
+        foreach (var resolver in metadataResolvers ?? [])
+        {
+            var metadata = await resolver.ResolveAsync(itemId, cancellationToken);
+            if (metadata != null && metadata.DurationSeconds > 0)
+            {
+                return new PlaybackTrackSnapshot(
+                    Guid.Empty,
+                    itemId,
+                    metadata.Title,
+                    metadata.Artist,
+                    metadata.Album,
+                    metadata.DurationSeconds.Value * 1000L);
+            }
+        }
+
+        return null;
     }
 }

@@ -12,6 +12,7 @@ using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Scrobbling;
+using allstarr.Services.Spotify;
 using allstarr.Middleware;
 using allstarr.Filters;
 using allstarr.Core.Storage;
@@ -352,6 +353,7 @@ var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
 // Business services - shared across backends
 builder.Services.AddSingleton(squidWtfEndpointCatalog);
 builder.Services.AddSingleton<RedisCacheService>();
+builder.Services.AddSingleton<PlaylistPlayableSearchService>();
 builder.Services.AddSingleton<IRedisConnectionFactory, RedisConnectionFactory>();
 builder.Services.AddSingleton<OdesliService>();
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
