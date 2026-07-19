@@ -1480,6 +1480,8 @@ class AllstarrApp extends LitElement {
       }
       await Promise.all([this.loadExtensionControlPlane(), this.loadSchema()]);
       this.toast(state === "staged" || state === "active" ? "Extension enabled" : "Permission choices saved");
+    } catch (error) {
+      this.toast(error.message || "Extension activation failed", "error");
     } finally {
       const nextActions = { ...this.extensionActions };
       delete nextActions[id];
@@ -1511,6 +1513,8 @@ class AllstarrApp extends LitElement {
       await action();
       await Promise.all([this.loadExtensionControlPlane(), this.loadSchema()]);
       this.toast(message);
+    } catch (error) {
+      this.toast(error.message || `${label} failed`, "error");
     } finally {
       const nextActions = { ...this.extensionActions };
       delete nextActions[id];
