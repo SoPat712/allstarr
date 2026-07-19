@@ -4076,7 +4076,7 @@ class AllstarrApp extends LitElement {
               ${settings.length ? html`
                 <section class="extension-manage-section">
                   <div class="section-heading"><div><h4>Provider configuration</h4><p>${requiredSettings.length ? `${requiredSettings.length} required field${requiredSettings.length === 1 ? "" : "s"}` : "Optional provider preferences"}</p></div><span class="status-chip ${accounts.length ? "configured" : requiredSettings.length ? "warning" : "disabled"}">${accounts.length ? "Account saved" : requiredSettings.length ? "Setup required" : "Optional"}</span></div>
-                  ${accounts.length ? html`
+                  ${state !== "active" ? html`<div class="empty"><strong>Enable this extension first</strong><span>Configuration becomes available after its runtime is loaded.</span></div>` : accounts.length ? html`
                     <div class="extension-account-summary">${accounts.map((account) => html`<div><strong>${account.displayName || account.DisplayName}</strong><span class="muted">${account.enabled ?? account.Enabled ? "Enabled" : "Disabled"}</span></div>`)}</div>
                     <button @click=${() => { close(); location.hash = "#/settings"; this.providerAccountConfigOpen = new Set(accounts.map((account) => account.id || account.Id)); }}>Manage saved account</button>
                   ` : html`
@@ -4093,7 +4093,7 @@ class AllstarrApp extends LitElement {
               ${usesSession ? html`
                 <section class="extension-manage-section">
                   <div class="section-heading"><div><h4>Session authorization</h4><p>Secure sign-in required by this extension’s service.</p></div><span class="status-chip ${sessionAuthenticated ? "configured" : "warning"}">${sessionAuthenticated ? "Authorized" : "Not authorized"}</span></div>
-                  ${sessionAuthenticated ? html`<div class="row-actions"><button class="danger" @click=${async () => { await API.clearExtensionSession(id); this.extensionSession = await API.extensionSession(id); this.toast("Extension session cleared"); }}>Sign out session</button></div>` : html`
+                  ${state !== "active" ? html`<div class="empty"><strong>Enable this extension first</strong><span>Session authorization becomes available after its runtime is loaded.</span></div>` : sessionAuthenticated ? html`<div class="row-actions"><button class="danger" @click=${async () => { await API.clearExtensionSession(id); this.extensionSession = await API.extensionSession(id); this.toast("Extension session cleared"); }}>Sign out session</button></div>` : html`
                     <div class="callout"><strong>Authorize in two steps</strong><p>Open the verification page, finish its challenge, then paste the one-time grant from the result here.</p></div>
                     <div class="row-actions"><button class="primary" @click=${() => this.startExtensionAuthorization(item)}>Open authorization</button></div>
                     <form class="inline-form extension-grant-form" @submit=${(event) => this.completeExtensionAuthorization(event, item)}><input name="grant" required autocomplete="off" placeholder="Paste one-time session grant"><button>Complete sign-in</button></form>
