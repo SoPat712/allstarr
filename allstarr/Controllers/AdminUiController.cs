@@ -373,11 +373,11 @@ public class AdminUiController : ControllerBase
     private List<AdminUiPriorityGroup> BuildPriorityGroups() =>
     [
         Priority("metadata", "Metadata search priority", "MULTI_PROVIDER_METADATA_ORDER", "MULTI_PROVIDER_ENABLED_SEARCH",
-            "deezer,qobuz"),
+            "apple-download,deezer,qobuz"),
         Priority("download", "Download priority", "MULTI_PROVIDER_DOWNLOAD_ORDER", null,
-            "deezer,qobuz"),
+            "apple-download,deezer,qobuz"),
         Priority("streaming", "Streaming priority", "MULTI_PROVIDER_STREAMING_ORDER", null,
-            "deezer,qobuz"),
+            "apple-download,deezer,qobuz"),
         Priority("playlist", "Playlist discovery priority", "MULTI_PROVIDER_PLAYLIST_ORDER", "MULTI_PROVIDER_ENABLED_PLAYLIST",
             "spotify,deezer,qobuz"),
         Priority("lyrics", "Lyrics priority", "MULTI_PROVIDER_LYRICS_ORDER", null,

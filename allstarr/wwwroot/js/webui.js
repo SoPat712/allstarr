@@ -1536,16 +1536,32 @@ class AllstarrApp extends LitElement {
       this.config = nextConfig;
     }
 
-    if (config.group) {
+    const priorityGroup = config.group || this.providerGroup(category);
+    let nextPriorityProviders = config.group ? splitCsv(nextProviders) : null;
+    if (config.valuePath && priorityGroup) {
+      const currentPriorityProviders = asArray(priorityGroup.providers);
+      nextPriorityProviders = enabled
+        ? splitCsv(joinCsv([...currentPriorityProviders, providerId]))
+        : currentPriorityProviders.filter((item) => item !== providerId);
+      if (joinCsv(nextPriorityProviders) !== joinCsv(currentPriorityProviders)) {
+        await API.updateConfig(priorityGroup.envKey, joinCsv(nextPriorityProviders));
+      }
+    }
+
+    if (priorityGroup && nextPriorityProviders) {
       this.schema = {
         ...this.schema,
         priorityGroups: this.schema.priorityGroups.map((group) =>
-          group.id === config.group.id ? { ...group, providers: splitCsv(nextProviders) } : group,
+          group.id === priorityGroup.id ? { ...group, providers: nextPriorityProviders } : group,
         ),
       };
     }
 
-    this.restartKeys = new Set([...this.restartKeys, config.envKey]);
+    this.restartKeys = new Set([
+      ...this.restartKeys,
+      config.envKey,
+      ...(priorityGroup && config.valuePath ? [priorityGroup.envKey] : []),
+    ]);
     this.toast(`${provider.name || provider.Name} ${category} ${enabled ? "enabled" : "disabled"}`);
   }
 
