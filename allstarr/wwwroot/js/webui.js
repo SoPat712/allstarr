@@ -1393,6 +1393,8 @@ class AllstarrApp extends LitElement {
       } else {
         this.toast("Extension installed and enabled");
       }
+    } catch (error) {
+      this.toast(error.message || "Extension installation failed", "error");
     } finally {
       const nextActions = { ...this.extensionActions };
       delete nextActions[key];
