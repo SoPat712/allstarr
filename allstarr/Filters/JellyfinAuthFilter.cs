@@ -132,11 +132,32 @@ public class JellyfinAuthFilter : IAsyncActionFilter
             return true;
         }
 
+        // Jellyfin deliberately serves image resources without a token. Several native
+        // clients (including Finer) omit credentials from image-loader requests even
+        // after an authenticated API session, so mirror the upstream image policy.
+        if ((HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) &&
+            IsPublicImagePath(path) &&
+            !HasClientCredentials(request))
+        {
+            return true;
+        }
+
         // The proxied Jellyfin sign-in page must load before a client has a token.
         return (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) &&
                (string.IsNullOrEmpty(path) ||
                 path.Equals("/web", StringComparison.OrdinalIgnoreCase) ||
                 path.StartsWith("/web/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsPublicImagePath(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 4 &&
+               (segments[0].Equals("Items", StringComparison.OrdinalIgnoreCase) ||
+                segments[0].Equals("Users", StringComparison.OrdinalIgnoreCase)) &&
+               !string.IsNullOrWhiteSpace(segments[1]) &&
+               segments[2].Equals("Images", StringComparison.OrdinalIgnoreCase) &&
+               !string.IsNullOrWhiteSpace(segments[3]);
     }
 
     private static bool HasClientCredentials(HttpRequest request)
