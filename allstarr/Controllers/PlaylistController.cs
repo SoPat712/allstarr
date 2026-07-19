@@ -11,6 +11,7 @@ using allstarr.Filters;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using allstarr.Core.Settings;
+using Cronos;
 
 namespace allstarr.Controllers;
 
@@ -85,7 +86,13 @@ public class PlaylistController : ControllerBase
                             .Where(name => !string.IsNullOrWhiteSpace(name))
                             .ToHashSet(StringComparer.OrdinalIgnoreCase)
                         : [];
-                    if (cachedNames.Count == configuredPlaylists.Count &&
+                    var currentSummaryShape = cachedPlaylists.ValueKind == JsonValueKind.Array &&
+                                              cachedPlaylists.EnumerateArray().All(item =>
+                                                  item.TryGetProperty("artworkUrl", out _) &&
+                                                  item.TryGetProperty("matchedTracks", out _) &&
+                                                  item.TryGetProperty("syncStatus", out _));
+                    if (currentSummaryShape &&
+                        cachedNames.Count == configuredPlaylists.Count &&
                         configuredPlaylists.All(item => cachedNames.Contains(item.Name)))
                     {
                         var cachedData = JsonSerializer.Deserialize<Dictionary<string, object>>(cachedJson);
@@ -124,7 +131,9 @@ public class PlaylistController : ControllerBase
                 ["localTracks"] = 0,
                 ["externalTracks"] = 0,
                 ["lastFetched"] = null as DateTime?,
-                ["cacheAge"] = null as string
+                ["cacheAge"] = null as string,
+                ["artworkUrl"] = null as string,
+                ["sourceProvider"] = "spotify"
             };
 
             // Get Spotify playlist track count from cache OR fetch it fresh
@@ -143,6 +152,15 @@ public class PlaylistController : ControllerBase
                     {
                         spotifyTrackCount = tracks.GetArrayLength();
                         playlistInfo["trackCount"] = spotifyTrackCount;
+                        if (tracks.ValueKind == JsonValueKind.Array && tracks.GetArrayLength() > 0)
+                        {
+                            var firstTrack = tracks[0];
+                            if (firstTrack.TryGetProperty("albumArtUrl", out var artwork) ||
+                                firstTrack.TryGetProperty("AlbumArtUrl", out artwork))
+                            {
+                                playlistInfo["artworkUrl"] = artwork.GetString();
+                            }
+                        }
                     }
 
                     if (root.TryGetProperty("fetchedAt", out var fetchedAt))
@@ -169,6 +187,7 @@ public class PlaylistController : ControllerBase
                     var spotifyTracks = await _playlistFetcher.GetPlaylistTracksAsync(config.Name);
                     spotifyTrackCount = spotifyTracks.Count;
                     playlistInfo["trackCount"] = spotifyTrackCount;
+                    playlistInfo["artworkUrl"] = spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
                     _logger.LogDebug("Fetched {Count} tracks from Spotify for playlist {Name}", spotifyTrackCount, config.Name);
                 }
                 catch (Exception ex)
@@ -657,6 +676,7 @@ public class PlaylistController : ControllerBase
                 }
             }
 
+            EnrichPlaylistSummary(playlistInfo, config.SyncSchedule);
             playlists.Add(playlistInfo);
         }
 
@@ -694,6 +714,66 @@ public class PlaylistController : ControllerBase
         playlistInfo["externalTotal"] = external + missing;
         playlistInfo["totalInJellyfin"] = local + external;
         playlistInfo["totalPlayable"] = local + external;
+    }
+
+    private static void EnrichPlaylistSummary(
+        Dictionary<string, object?> playlistInfo,
+        string? syncSchedule)
+    {
+        var trackCount = ReadSummaryInt(playlistInfo, "trackCount");
+        var matchedTracks = ReadSummaryInt(playlistInfo, "totalPlayable");
+        var unmatchedTracks = Math.Max(0, trackCount - matchedTracks);
+        var matchPercent = trackCount > 0
+            ? Math.Round(matchedTracks * 100d / trackCount, 1)
+            : 0d;
+        var lastSyncAt = playlistInfo.TryGetValue("lastFetched", out var fetched)
+            ? fetched as DateTime?
+            : null;
+
+        DateTime? nextSyncAt = null;
+        if (!string.IsNullOrWhiteSpace(syncSchedule))
+        {
+            try
+            {
+                var cron = CronExpression.Parse(syncSchedule);
+                nextSyncAt = cron.GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc);
+            }
+            catch (CronFormatException)
+            {
+                // The existing configuration validator reports invalid schedules. The summary
+                // remains readable while an operator corrects an older imported value.
+            }
+        }
+
+        playlistInfo["matchedTracks"] = matchedTracks;
+        playlistInfo["unmatchedTracks"] = unmatchedTracks;
+        playlistInfo["matchPercent"] = matchPercent;
+        playlistInfo["syncStatus"] = trackCount <= 0
+            ? "pending"
+            : unmatchedTracks == 0
+                ? "synced"
+                : matchPercent >= 50d
+                    ? "partial"
+                    : "needs_attention";
+        playlistInfo["lastSyncAt"] = lastSyncAt;
+        playlistInfo["nextSyncAt"] = nextSyncAt;
+    }
+
+    private static int ReadSummaryInt(Dictionary<string, object?> values, string key)
+    {
+        if (!values.TryGetValue(key, out var value) || value == null)
+        {
+            return 0;
+        }
+
+        return value switch
+        {
+            int number => number,
+            long number => checked((int)number),
+            JsonElement { ValueKind: JsonValueKind.Number } element when element.TryGetInt32(out var number) => number,
+            _ when int.TryParse(value.ToString(), out var number) => number,
+            _ => 0
+        };
     }
 
     private static string? ReadCachedString(Dictionary<string, object?> item, string key)
@@ -746,6 +826,9 @@ public class PlaylistController : ControllerBase
         var spotifyTracks = await _playlistFetcher.GetPlaylistTracksAsync(decodedName);
 
         var tracksWithStatus = new List<object>();
+        var matchedTrackCount = 0;
+        var playlistArtworkUrl = spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
+        var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);
 
         try
@@ -1078,6 +1161,10 @@ public class PlaylistController : ControllerBase
                 var cacheKey = $"lyrics:{track.PrimaryArtist}:{track.Title}:{track.Album}:{track.DurationMs / 1000}";
                 var existingLyrics = await _cache.GetStringAsync(cacheKey);
                 var hasLyrics = !string.IsNullOrEmpty(existingLyrics);
+                if (isLocal.HasValue)
+                {
+                    matchedTrackCount++;
+                }
 
                 tracksWithStatus.Add(new
                 {
@@ -1091,6 +1178,8 @@ public class PlaylistController : ControllerBase
                     albumArtUrl = track.AlbumArtUrl,
                     isLocal = isLocal,
                     externalProvider = externalProvider,
+                    provider = isLocal == true ? targetBackend : externalProvider,
+                    matchState = isLocal == true ? "local" : isLocal == false ? "external" : "unmatched",
                     searchQuery = isLocal != true ? $"{track.Title} {track.PrimaryArtist}" : null,
                     isManualMapping = isManualMapping,
                     manualMappingType = manualMappingType,
@@ -1103,6 +1192,11 @@ public class PlaylistController : ControllerBase
             {
                 name = decodedName,
                 trackCount = spotifyTracks.Count,
+                artworkUrl = playlistArtworkUrl,
+                sourceProvider = "spotify",
+                targetBackend,
+                matchedTracks = matchedTrackCount,
+                unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
                 tracks = tracksWithStatus
             });
         }
@@ -1192,14 +1286,25 @@ public class PlaylistController : ControllerBase
                 albumArtUrl = track.AlbumArtUrl,
                 isLocal = isLocal,
                 externalProvider = externalProvider,
+                provider = isLocal == true ? targetBackend : externalProvider,
+                matchState = isLocal == true ? "local" : isLocal == false ? "external" : "unmatched",
                 searchQuery = isLocal != true ? $"{track.Title} {track.PrimaryArtist}" : null
             });
+            if (isLocal.HasValue)
+            {
+                matchedTrackCount++;
+            }
         }
 
         return Ok(new
         {
             name = decodedName,
             trackCount = spotifyTracks.Count,
+            artworkUrl = playlistArtworkUrl,
+            sourceProvider = "spotify",
+            targetBackend,
+            matchedTracks = matchedTrackCount,
+            unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
             tracks = tracksWithStatus
         });
     }

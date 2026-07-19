@@ -5,7 +5,9 @@ using allstarr.Models.Admin;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Admin;
+using allstarr.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Controllers;
@@ -131,6 +133,111 @@ public class AdminUiController : ControllerBase
         };
 
         return Ok(schema);
+    }
+
+    [HttpGet("provider-summaries")]
+    public async Task<IActionResult> GetProviderSummaries(CancellationToken cancellationToken = default)
+    {
+        if (!IsAdministratorSession())
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
+        }
+
+        var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var accounts = await context.ProviderAccounts.AsNoTracking().ToListAsync(cancellationToken);
+        var accountIds = accounts.Select(item => item.Id).ToArray();
+        var rollups = await context.ProviderHealthRollups.AsNoTracking()
+            .Where(item => accountIds.Contains(item.ProviderAccountId))
+            .OrderByDescending(item => item.UpdatedAt)
+            .Take(1000)
+            .ToListAsync(cancellationToken);
+
+        var summaries = accounts
+            .GroupBy(item => item.ProviderId, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var ids = group.Select(item => item.Id).ToHashSet();
+                var samples = rollups.Where(item => ids.Contains(item.ProviderAccountId)).ToList();
+                var sampleCount = samples.Sum(item => item.SampleCount);
+                var healthy = samples.Count(item =>
+                    string.Equals(item.LastState.ToString(), "Healthy", StringComparison.OrdinalIgnoreCase));
+                var failed = samples.Count - healthy;
+                return new
+                {
+                    providerId = group.Key,
+                    connectedAccountName = group.Where(item => item.Enabled).Select(item => item.DisplayName).FirstOrDefault(),
+                    enabledAccountCount = group.Count(item => item.Enabled),
+                    capabilityTotal = samples.Select(item => item.Capability).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    healthyCapabilityCount = healthy,
+                    failedCapabilityCount = failed,
+                    lastCheckedAt = samples.Count > 0 ? samples.Max(item => item.UpdatedAt) : (DateTimeOffset?)null,
+                    successRate = sampleCount > 0
+                        ? samples.Sum(item => item.SuccessCount) / (double)sampleCount
+                        : (double?)null,
+                    p95LatencyMilliseconds = samples.Where(item => item.P95LatencyMilliseconds.HasValue)
+                        .Select(item => item.P95LatencyMilliseconds).Max(),
+                    lastFailureCode = samples.OrderByDescending(item => item.UpdatedAt)
+                        .Select(item => item.LastFailureCode).FirstOrDefault(item => !string.IsNullOrWhiteSpace(item))
+                };
+            })
+            .OrderBy(item => item.providerId)
+            .ToList();
+
+        return Ok(new { providers = summaries });
+    }
+
+    [HttpGet("activity")]
+    public async Task<IActionResult> GetDashboardActivity(
+        [FromQuery] int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsAdministratorSession())
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
+        }
+
+        limit = Math.Clamp(limit, 1, 100);
+        var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var accounts = await context.ProviderAccounts.AsNoTracking()
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var jobs = await context.Jobs.AsNoTracking()
+            .OrderByDescending(item => item.UpdatedAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+        var health = await context.ProviderHealthSamples.AsNoTracking()
+            .OrderByDescending(item => item.ObservedAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+
+        var activity = new List<AdminUiActivityItem>();
+        activity.AddRange(jobs.Select(item => new AdminUiActivityItem(
+            item.Id.ToString("N"),
+            "job",
+            item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var account)
+                ? account.ProviderId
+                : "system",
+            item.Type,
+            item.State.ToString().ToLowerInvariant(),
+            item.LastErrorMessage ?? $"{item.AttemptCount} run attempt{(item.AttemptCount == 1 ? "" : "s")}",
+            item.UpdatedAt)));
+        activity.AddRange(health.Select(item =>
+        {
+            var provider = accounts.TryGetValue(item.ProviderAccountId, out var account)
+                ? account.ProviderId
+                : "provider";
+            return new AdminUiActivityItem(
+                item.Id.ToString("N"),
+                "provider_health",
+                provider,
+                $"{item.Capability} check",
+                item.State.ToString().ToLowerInvariant(),
+                item.FailureCode ?? (item.LatencyMilliseconds.HasValue ? $"{item.LatencyMilliseconds} ms" : "Connection checked"),
+                item.ObservedAt);
+        }));
+
+        return Ok(new { items = activity.OrderByDescending(item => item.OccurredAt).Take(limit) });
     }
 
     private bool IsAdministratorSession() =>
@@ -366,12 +473,12 @@ public class AdminUiController : ControllerBase
             return "disabled";
         }
 
-        if (statuses.Any(status => status.Health == ProviderHealthState.Testing))
+        if (statuses.Any(status => status.Health == Services.Common.ProviderHealthState.Testing))
         {
             return "testing";
         }
 
-        if (statuses.Any(status => status.Health == ProviderHealthState.Degraded))
+        if (statuses.Any(status => status.Health == Services.Common.ProviderHealthState.Degraded))
         {
             return "degraded";
         }
@@ -531,3 +638,12 @@ public class AdminUiController : ControllerBase
             readOnly: true,
             helpText: "Edit in Compose/.env and recreate the container to apply this deployment-owned value.");
 }
+
+public sealed record AdminUiActivityItem(
+    string Id,
+    string Kind,
+    string Source,
+    string Label,
+    string State,
+    string Detail,
+    DateTimeOffset OccurredAt);

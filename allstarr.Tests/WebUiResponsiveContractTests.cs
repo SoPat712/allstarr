@@ -59,7 +59,9 @@ public sealed class WebUiResponsiveContractTests
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
-        Assert.Contains("class=\"injected-toolbar\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"playlist-toolbar\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"injected-table-head\"", script, StringComparison.Ordinal);
+        Assert.Contains("Sync ${selected.size ? `${selected.size} selected` : \"all now\"}", script, StringComparison.Ordinal);
         Assert.Contains("return nothing;", script, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Playlist preview\"", script, StringComparison.Ordinal);
         Assert.Contains("Imported legacy decisions", script, StringComparison.Ordinal);
@@ -184,6 +186,26 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void DashboardOverhaul_UsesStructuredReadModelsAndAFlowLayoutPlayer()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
+
+        Assert.Contains("/api/admin/ui/provider-summaries", script, StringComparison.Ordinal);
+        Assert.Contains("/api/admin/ui/activity?limit=", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"global-search\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"overview-grid\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"source-metrics\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"toast-stack operation-center\"", script, StringComparison.Ordinal);
+        Assert.Contains("--progress-scale:${progress / 100}", script, StringComparison.Ordinal);
+        Assert.Contains("[HttpGet(\"provider-summaries\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("[HttpGet(\"activity\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("grid-template-rows: auto minmax(0, 1fr) auto;", css, StringComparison.Ordinal);
+        Assert.Contains("transform: scaleX(var(--progress-scale, 0));", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SmallScreens_UseFullHeightSetupAndCoarsePointerTouchTargets()
     {
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
@@ -203,7 +225,7 @@ public sealed class WebUiResponsiveContractTests
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("class=\"modal-backdrop injected-playlist-backdrop\"", script, StringComparison.Ordinal);
-        Assert.Contains("class=\"panel injected-playlist-dialog\" role=\"dialog\" aria-modal=\"true\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"panel injected-playlist-dialog redesigned-dialog\" role=\"dialog\" aria-modal=\"true\"", script, StringComparison.Ordinal);
         Assert.Contains("if (event.key !== \"Escape\") return;", script, StringComparison.Ordinal);
         Assert.Contains("else if (this.injectedTrackMenuId) this.injectedTrackMenuId = \"\";", script, StringComparison.Ordinal);
         Assert.Contains(".injected-playlist-scroll", css, StringComparison.Ordinal);
@@ -241,7 +263,7 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
-    public void ProviderCards_HideUnwantedMarksAndConfigurationActions()
+    public void ProviderCards_UseUnifiedBrandingAndKeepAccountsInSettings()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
@@ -249,16 +271,14 @@ public sealed class WebUiResponsiveContractTests
             "const providersWithoutCardMark = new Set([\"lyricsplus\", \"squidwtf\", \"lrclib\"]);",
             script,
             StringComparison.Ordinal);
-        Assert.Contains("const showBrandMark = Boolean(logoUrl) || !providersWithoutCardMark.has(providerId);", script, StringComparison.Ordinal);
-        Assert.Contains("${showBrandMark ? html`", script, StringComparison.Ordinal);
-        Assert.Contains("!providersWithoutCardMark.has(normalizedProviderId)", script, StringComparison.Ordinal);
-        Assert.Contains("const hasEditableConfig = asArray(provider.configSchema).length > 0;", script, StringComparison.Ordinal);
-        Assert.Contains("status !== \"disabled\" && hasEditableConfig ? html`", script, StringComparison.Ordinal);
+        Assert.Contains("renderProviderLogo(providerId, \"large\")", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"source-metrics\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"source-card-footer\"", script, StringComparison.Ordinal);
         Assert.Contains(">Add account</button>", script, StringComparison.Ordinal);
         Assert.Contains("provider-account-dialog", script, StringComparison.Ordinal);
         Assert.Contains("this.navigate(\"/settings\")}>Manage accounts", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Add or enable a provider account above", script, StringComparison.Ordinal);
-        Assert.Contains("const open = hasEditableConfig &&", script, StringComparison.Ordinal);
+        Assert.Contains("Accounts are managed separately so Sources stays focused on routing and health.", script, StringComparison.Ordinal);
     }
 
     [Fact]

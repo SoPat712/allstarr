@@ -15,6 +15,18 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.DoesNotContain("UpdateEnvConfigAsync(", Source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void InjectedPlaylistReadModels_ExposeArtworkMatchingAndScheduleState()
+    {
+        Assert.Contains("[\"artworkUrl\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("[\"matchedTracks\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("[\"unmatchedTracks\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("[\"matchPercent\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("[\"syncStatus\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("[\"nextSyncAt\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("currentSummaryShape", Source, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

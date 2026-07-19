@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from "/js/lit-3.3.3.js";
+import { icon } from "/js/ui/icons.js";
 
 const THEME_KEY = "allstarr-theme";
 const DEFAULT_ROUTE = "/home";
@@ -69,6 +70,20 @@ function formatDate(value) {
   return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString();
 }
 
+function formatRelativeTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  const seconds = Math.round((Date.now() - date.getTime()) / 1000);
+  if (Math.abs(seconds) < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) return `${Math.abs(minutes)}m ${minutes < 0 ? "from now" : "ago"}`;
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) return `${Math.abs(hours)}h ${hours < 0 ? "from now" : "ago"}`;
+  const days = Math.round(hours / 24);
+  return `${Math.abs(days)}d ${days < 0 ? "from now" : "ago"}`;
+}
+
 function percent(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -81,6 +96,17 @@ function formatDuration(value) {
   const seconds = Math.max(0, Math.floor(Number(value) || 0));
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function formatSchedule(value) {
+  const parts = String(value || "").trim().split(/\s+/);
+  if (parts.length !== 5) return display(value, "Manual");
+  const [minute, hour, day, month, weekday] = parts;
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && day === "*" && month === "*") {
+    const time = `${String(Number(hour)).padStart(2, "0")}:${String(Number(minute)).padStart(2, "0")}`;
+    return weekday === "*" ? `Every day · ${time}` : `Weekly · ${time}`;
+  }
+  return value;
 }
 
 function configOptionLabel(field, option) {
@@ -290,6 +316,8 @@ const API = {
     requestJson("/api/admin/auth/login", jsonBody({ username, password, rememberMe }), "Authentication failed"),
   logout: () => requestJson("/api/admin/auth/logout", { method: "POST" }, "Logout failed"),
   schema: () => requestJson("/api/admin/ui/schema", { cache: "no-store" }, "Failed to load UI schema"),
+  providerSummaries: () => requestJson("/api/admin/ui/provider-summaries", { cache: "no-store" }, "Failed to load provider summaries"),
+  dashboardActivity: (limit = 20) => requestJson(`/api/admin/ui/activity?limit=${limit}`, { cache: "no-store" }, "Failed to load dashboard activity"),
   status: () => requestJson("/api/admin/status", { cache: "no-store" }, "Failed to load status"),
   mediaProbe: () => requestJson("/api/admin/media-probe", { cache: "no-store" }, "Media pipeline test failed"),
   playlistReadiness: () => requestJson("/api/admin/playlist-readiness", { cache: "no-store" }, "Playlist readiness test failed"),
@@ -548,6 +576,8 @@ class AllstarrApp extends LitElement {
     jobs: { state: true },
     providerAccounts: { state: true },
     providerHealth: { state: true },
+    providerSummaries: { state: true },
+    dashboardActivity: { state: true },
     providerTests: { state: true },
     endpointUsage: { state: true },
     mappings: { state: true },
@@ -582,6 +612,19 @@ class AllstarrApp extends LitElement {
     setupStep: { state: true },
     loadFailures: { state: true },
     redactionMode: { state: true },
+    globalSearchOpen: { state: true },
+    globalSearchQuery: { state: true },
+    selectedProviderId: { state: true },
+    sourceCatalogOpen: { state: true },
+    injectedSearch: { state: true },
+    injectedStatusFilter: { state: true },
+    injectedScheduleFilter: { state: true },
+    injectedPage: { state: true },
+    injectedPageSize: { state: true },
+    injectedTrackFilter: { state: true },
+    injectedTrackPage: { state: true },
+    injectedAddOpen: { state: true },
+    selectedInjectedPlaylists: { state: true },
   };
 
   constructor() {
@@ -612,6 +655,8 @@ class AllstarrApp extends LitElement {
     this.jobs = [];
     this.providerAccounts = [];
     this.providerHealth = [];
+    this.providerSummaries = [];
+    this.dashboardActivity = [];
     this.providerTests = new Set();
     this.endpointUsage = null;
     this.mappings = null;
@@ -648,6 +693,19 @@ class AllstarrApp extends LitElement {
     this.loadFailures = {};
     this.redactionPreferenceSet = localStorage.getItem(REDACTION_MODE_KEY) !== null;
     this.redactionMode = localStorage.getItem(REDACTION_MODE_KEY) === "1";
+    this.globalSearchOpen = false;
+    this.globalSearchQuery = "";
+    this.selectedProviderId = "";
+    this.sourceCatalogOpen = false;
+    this.injectedSearch = "";
+    this.injectedStatusFilter = "";
+    this.injectedScheduleFilter = "";
+    this.injectedPage = 1;
+    this.injectedPageSize = 10;
+    this.injectedTrackFilter = "";
+    this.injectedTrackPage = 1;
+    this.injectedAddOpen = false;
+    this.selectedInjectedPlaylists = new Set();
     this.playlistLinkFilters = { libraryScopeId: "" };
     this.mappingFilters = { page: 1, pageSize: 50, state: "", libraryScopeId: "", search: "" };
     this.externalPlaylistProvider = "deezer";
@@ -695,10 +753,43 @@ class AllstarrApp extends LitElement {
       }
       return;
     }
+    const activeDialog = this.querySelector(
+      ".provider-detail-dialog, .source-catalog-dialog, .compact-dialog, .injected-playlist-dialog",
+    );
+    if (activeDialog && !activeDialog.contains(document.activeElement)) {
+      (activeDialog.querySelector("[autofocus]") || activeDialog).focus();
+      return;
+    }
     if (!this.shouldShowSetupGuide()) return;
     const dialog = this.querySelector(".setup-guide");
     if (dialog && !dialog.contains(document.activeElement)) {
       dialog.querySelector("[autofocus]")?.focus();
+    }
+  }
+
+  handleDialogKeydown(event, close) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const dialog = event.currentTarget.querySelector?.('[role="dialog"]');
+    if (!dialog) return;
+    const focusable = [...dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')];
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
     }
   }
 
@@ -1006,6 +1097,7 @@ class AllstarrApp extends LitElement {
         if (this.isAdministrator()) {
           await Promise.all([
             this.loadProviderAccounts(),
+            this.loadDashboardPresentation(),
             this.loadAppleMusicStatus().catch((error) => {
               this.appleMusicStatus = { error: error.message, logged_in: false };
             }),
@@ -1021,7 +1113,12 @@ class AllstarrApp extends LitElement {
       } else if (zone === "activity") {
         await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs(), this.loadProviderAccounts()]);
       } else if (zone === "home" || !zone) {
-        await this.loadProviderAccounts();
+        await Promise.all([
+          this.loadProviderAccounts(),
+          this.loadPlaylists(),
+          this.loadJobs(),
+          this.loadDashboardPresentation(),
+        ]);
       }
     } catch (error) {
       if (error?.status === 401) {
@@ -1165,6 +1262,15 @@ class AllstarrApp extends LitElement {
 
   async loadPlaylists(refresh = false) {
     this.playlists = await API.playlists(refresh);
+  }
+
+  async loadDashboardPresentation() {
+    const [summaries, activity] = await Promise.all([
+      API.providerSummaries().catch(() => ({ providers: [] })),
+      API.dashboardActivity(24).catch(() => ({ items: [] })),
+    ]);
+    this.providerSummaries = asArray(summaries?.providers || summaries?.Providers);
+    this.dashboardActivity = asArray(activity?.items || activity?.Items);
   }
 
   async loadPlaylistLinks() {
@@ -1749,10 +1855,10 @@ class AllstarrApp extends LitElement {
             ${this.renderLoadFailures()}
             ${this.renderRoute()}
           </main>
+          ${administrator ? this.renderNowPlaying() : nothing}
         </div>
       </div>
       ${administrator ? this.renderRestartBar() : nothing}
-      ${administrator ? this.renderNowPlaying() : nothing}
       ${administrator ? this.renderSetupGuide() : nothing}
       ${this.renderToasts()}
     `;
@@ -1811,7 +1917,7 @@ class AllstarrApp extends LitElement {
     const systemActive = systemRoutes.some((route) => this.isRouteActive(route.path));
     const renderNavLink = (route) => html`
       <a class="nav-link ${this.isRouteActive(route.path) ? "active" : ""}" href=${route.path}>
-        <span>${route.label}</span>
+        ${icon(route.id)}<span>${route.label}</span>
       </a>`;
     return html`
       <aside id="primary-sidebar" class="sidebar ${this.navOpen ? "open" : ""}">
@@ -1852,8 +1958,8 @@ class AllstarrApp extends LitElement {
         </nav>
         <div class="sidebar-footer">
           <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
-          ${administrator ? html`<button class="ghost" aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</button>` : nothing}
-          <button class="ghost" @click=${this.logout}>Logout</button>
+          ${administrator ? html`<button class="ghost" aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
+          <button class="ghost" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
         </div>
       </aside>
     `;
@@ -1894,16 +2000,51 @@ class AllstarrApp extends LitElement {
             <h1>${titleCase(zone || "home")}${sub ? html` <span>/ ${titleCase(sub)}</span>` : nothing}</h1>
           </div>
         </div>
+        ${administrator ? this.renderGlobalSearch() : nothing}
         <div class="actions">
           <select class="theme-select" aria-label="Theme" .value=${this.theme} @change=${(event) => this.setTheme(event.target.value)}>
             <option value="system">System</option>
             <option value="dark">Dark</option>
             <option value="light">Light</option>
           </select>
-          ${administrator ? html`<button class="refresh-button ghost" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus()]); this.toast("Status refreshed"); }}>Refresh</button>` : nothing}
+          ${administrator ? html`<button class="refresh-button icon-button ghost" aria-label="Refresh current status" title="Refresh" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus(), this.loadForRoute(true)]); this.toast("Status refreshed"); }}>${icon("refresh")}</button>` : nothing}
         </div>
       </header>
     `;
+  }
+
+  renderGlobalSearch() {
+    const query = this.globalSearchQuery.trim().toLowerCase();
+    const routes = asArray(this.schema?.routes).map((route) => ({
+      kind: "Page", label: route.label, detail: "Open page", path: route.path,
+    }));
+    const providers = asArray(this.schema?.providers).map((provider) => ({
+      kind: "Source", label: provider.name, detail: titleCase(this.providerStatus(provider)), path: "#/sources",
+    }));
+    const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists).map((playlist) => ({
+      kind: "Playlist", label: playlist.name, detail: `${display(playlist.trackCount, 0)} tracks`, path: "#/library/injected", playlist: playlist.name,
+    }));
+    const results = query
+      ? [...routes, ...providers, ...playlists].filter((item) => `${item.label} ${item.kind} ${item.detail}`.toLowerCase().includes(query)).slice(0, 8)
+      : [];
+    return html`<div class="global-search">
+      ${icon("search")}
+      <input aria-label="Search Allstarr" placeholder="Search pages, sources, playlists…" .value=${this.globalSearchQuery}
+        @focus=${() => { this.globalSearchOpen = true; }}
+        @input=${(event) => { this.globalSearchQuery = event.target.value; this.globalSearchOpen = true; }}
+        @keydown=${(event) => { if (event.key === "Escape") { this.globalSearchOpen = false; event.target.blur(); } }}>
+      ${this.globalSearchOpen && query ? html`<div class="global-search-results" role="listbox">
+        ${results.length ? results.map((item) => html`<button role="option" @click=${async () => {
+          this.globalSearchOpen = false;
+          this.globalSearchQuery = "";
+          window.location.hash = item.path;
+          if (item.playlist) {
+            await this.loadPlaylists();
+            await this.openInjectedPlaylist(item.playlist);
+          }
+        }}><span>${item.label}</span><small>${item.kind} · ${item.detail}</small></button>`) : html`<div class="global-search-empty">No matching pages, sources, or playlists.</div>`}
+      </div>` : nothing}
+    </div>`;
   }
 
   renderRoute() {
@@ -1981,9 +2122,6 @@ class AllstarrApp extends LitElement {
   renderHome() {
     const spotify = this.status?.spotify || this.status?.Spotify || {};
     const spotifyImport = this.status?.spotifyImport || this.status?.SpotifyImport || {};
-    const providerCards = asArray(this.schema?.providers).filter((provider) =>
-      ["squidwtf", "apple-download", "deezer", "qobuz"].includes(provider.id),
-    );
     const downloadCanAttempt = asArray(this.schema?.providers).some((provider) =>
       asArray(provider.runtimeCapabilities).some((capability) =>
         capability.id === "download" && capability.canAttempt),
@@ -1993,36 +2131,42 @@ class AllstarrApp extends LitElement {
       String(item.capability || item.Capability || "").toLowerCase() === "playlist");
     const spotifyRefreshState = String(spotifyPlaylistHealth?.health || spotifyPlaylistHealth?.Health || "unknown").toLowerCase();
     const readiness = this.serviceResults.readiness;
+    const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
+    const activeJobs = asArray(this.jobs).filter((job) => !["Succeeded", "Failed", "Cancelled"].includes(job.state || job.State)).length;
+    const providerSummaries = asArray(this.providerSummaries);
 
     return html`
-      <section class="view-stack">
+      <section class="view-stack home-view">
         <div class="view-header">
           <div>
             <h2>Home</h2>
             <p>Runtime state, provider readiness, and current activity.</p>
           </div>
           <div class="actions">
-            <button @click=${() => this.navigate("/sources")}>Manage sources</button>
-            <button class="primary" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${readiness?.state === "running" ? "Running checks..." : "Run readiness check"}</button>
+            <button class="primary icon-label" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${icon("shield")}${readiness?.state === "running" ? "Running checks…" : "Run readiness check"}</button>
           </div>
         </div>
 
-        <div class="grid">
-          <div class="card metric">
-            <span class="metric-label">Backend</span>
-            <span class="metric-value">${display(this.status?.backendType || this.config?.backendType)}</span>
+        <div class="overview-grid">
+          <div class="card overview-card">
+            <span class="overview-icon backend">${icon("server", 22)}</span>
+            <div><span class="metric-label">Backend</span><span class="metric-value">${display(this.status?.backendType || this.config?.backendType)}</span></div>
+            <small class="health-line healthy"><span></span>Running</small>
           </div>
-          <div class="card metric">
-            <span class="metric-label">Spotify refresh</span>
-            <span class="metric-value">${spotifyRefreshState === "unknown" ? titleCase(spotify.authStatus || "unknown") : titleCase(spotifyRefreshState)}</span>
+          <div class="card overview-card">
+            <span class="overview-icon provider">${this.renderProviderLogo("spotify", "mini")}</span>
+            <div><span class="metric-label">Spotify refresh</span><span class="metric-value">${spotifyRefreshState === "unknown" ? titleCase(spotify.authStatus || "unknown") : titleCase(spotifyRefreshState)}</span></div>
+            <small class="health-line ${spotifyRefreshState === "healthy" ? "healthy" : "warning"}"><span></span>${spotifyPlaylistHealth?.testedAt ? `Last check ${formatRelativeTime(spotifyPlaylistHealth.testedAt)}` : "Awaiting check"}</small>
           </div>
-          <div class="card metric">
-            <span class="metric-label">Injected playlists</span>
-            <span class="metric-value">${display(spotifyImport.playlistCount ?? this.config?.spotifyImport?.playlists?.length ?? 0)}</span>
+          <div class="card overview-card">
+            <span class="overview-icon playlists">${icon("playlist", 22)}</span>
+            <div><span class="metric-label">Injected playlists</span><span class="metric-value">${display(playlists.length || spotifyImport.playlistCount || 0)}</span></div>
+            <small class="health-line info"><span></span>Total in library</small>
           </div>
-          <div class="card metric">
-            <span class="metric-label">Active tasks</span>
-            <span class="metric-value">${this.activity.length}</span>
+          <div class="card overview-card">
+            <span class="overview-icon tasks">${icon("tasks", 22)}</span>
+            <div><span class="metric-label">Active tasks</span><span class="metric-value">${activeJobs + this.activity.filter((item) => String(item.status || item.Status).toLowerCase().includes("progress")).length}</span></div>
+            <small class="health-line ${activeJobs ? "warning" : "healthy"}"><span></span>${activeJobs ? `${activeJobs} running` : "No active tasks"}</small>
           </div>
         </div>
 
@@ -2038,14 +2182,14 @@ class AllstarrApp extends LitElement {
               ${this.renderReadinessCheck("Restored playlists", readiness.playlistsReady, readiness.playlistMessage)}
               ${this.renderReadinessCheck("Spotify refresh", readiness.spotifyReady, readiness.spotifyReady ? "Spotify playlist access is healthy." : "Reconnect Spotify to resume playlist refreshes.")}
             </div>` : nothing}
-          ` : html`<div class="empty compact">Run the check after an update, provider change, or player problem.</div>`}
+          ` : html`<div class="readiness-empty">${icon("shield", 24)}<span>Run the check after an update, provider change, or player problem.</span><button class="primary" @click=${this.runCoreReadiness}>Run readiness check</button></div>`}
           ${readiness?.state === "warning" ? html`<div class="actions">
             ${readiness.affectedPlaylists?.length ? html`<button class="primary" ?disabled=${readiness.rematching} @click=${this.rematchUnavailablePlaylists}>${readiness.rematching ? "Starting rematch..." : "Rematch with available providers"}</button><button @click=${() => this.navigate("/library/injected")}>Review affected playlists</button>` : html`<button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button>`}
             <button @click=${() => this.navigate("/settings")}>Open detailed diagnostics</button>
           </div>` : nothing}
         </div>
 
-        <div class="setup-launcher">
+        <div class="setup-launcher premium-callout">
           <div>
             <h3>Need a hand getting everything connected?</h3>
             <p>Open the setup guide again at any time. It will walk through your media server, sources, and the optional Allstarr 2.x import.</p>
@@ -2053,7 +2197,7 @@ class AllstarrApp extends LitElement {
           <button @click=${() => this.openSetupGuide()}>Open setup guide</button>
         </div>
 
-        <div class="wide-grid">
+        <div class="wide-grid home-detail-grid">
           <div class="panel">
             <h3>Setup</h3>
             <div class="stat-list">
@@ -2066,22 +2210,62 @@ class AllstarrApp extends LitElement {
           <div class="panel">
             <h3>Provider health</h3>
             <div class="stat-list">
-              ${providerCards.map((provider) => html`
+              ${asArray(this.schema?.providers).filter((provider) => !["disabled"].includes(this.providerStatus(provider))).slice(0, 6).map((provider) => {
+                const summary = providerSummaries.find((item) => String(item.providerId).toLowerCase() === String(provider.id).toLowerCase());
+                const status = this.providerStatus(provider);
+                return html`
                 <div class="stat-row">
-                  <span>${provider.name}</span>
-                  <span class="status-chip ${provider.status}">${titleCase(provider.status)}</span>
-                </div>
-              `)}
+                  <span class="provider-row-label">${this.renderProviderLogo(provider.id, "tiny")}<span>${provider.name}</span></span>
+                  <span class="status-chip ${status}" title=${summary?.lastCheckedAt ? `Checked ${formatDate(summary.lastCheckedAt)}` : "No recent check"}>${this.providerStatusLabel(status)}</span>
+                </div>`;
+              })}
             </div>
           </div>
         </div>
 
-        <div class="panel">
-          <h3>Activity feed</h3>
-          ${this.renderActivityList(this.activity.slice(0, 8))}
-        </div>
+        ${this.renderDashboardActivity()}
+        ${this.renderHomeLibraryOverview(playlists)}
       </section>
     `;
+  }
+
+  renderDashboardActivity() {
+    const items = asArray(this.dashboardActivity).slice(0, 8);
+    return html`<div class="panel dashboard-activity">
+      <div class="section-heading"><div><h3>Activity feed</h3><p>Recent provider checks and background work.</p></div><button class="ghost" @click=${() => this.navigate("/activity")}>View activity</button></div>
+      ${items.length ? html`<div class="activity-table" role="table" aria-label="Recent activity">
+        <div class="activity-table-head" role="row"><span>Time</span><span>Source</span><span>Event</span><span>Details</span></div>
+        ${items.map((item) => html`<div class="activity-table-row" role="row">
+          <time>${formatRelativeTime(item.occurredAt)}</time>
+          <span class="provider-row-label">${this.renderProviderLogo(item.source, "tiny")}<span>${providerDisplayName(item.source, this.schema?.providers)}</span></span>
+          <span class="activity-event ${item.state}">${["healthy", "succeeded"].includes(item.state) ? icon("check", 15) : ["failed", "degraded", "unavailable"].includes(item.state) ? icon("warning", 15) : icon("clock", 15)}${titleCase(item.label)}</span>
+          <span class="muted">${display(item.detail)}</span>
+        </div>`)}
+      </div>` : html`<div class="empty compact">No recent provider checks or background jobs.</div>`}
+    </div>`;
+  }
+
+  renderHomeLibraryOverview(playlists) {
+    return html`<div class="panel home-library-overview">
+      <div class="section-heading"><div><h3>Library overview</h3><p>Your recently synchronized injected playlists.</p></div><button @click=${() => this.navigate("/library/injected")}>View all playlists ${icon("chevronRight", 16)}</button></div>
+      ${playlists.length ? html`<div class="compact-playlist-table">
+        <div class="compact-playlist-head"><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Provider</span><span>Last sync</span><span>Status</span></div>
+        ${playlists.slice(0, 6).map((playlist) => html`<button class="compact-playlist-row" @click=${() => { this.navigate("/library/injected"); window.setTimeout(() => this.openInjectedPlaylist(playlist.name), 0); }}>
+          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span>
+          <span>${display(playlist.trackCount, 0)}</span>
+          <span>${display(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0), 0)} <small>${display(playlist.matchPercent, 0)}%</small></span>
+          <span class="provider-row-label">${this.renderProviderLogo(playlist.sourceProvider || "spotify", "tiny")}<span>${providerDisplayName(playlist.sourceProvider || "spotify", this.schema?.providers)}</span></span>
+          <span>${formatRelativeTime(playlist.lastSyncAt || playlist.lastFetched)}</span>
+          <span><span class="status-chip ${playlist.syncStatus || "unknown"}">${titleCase(playlist.syncStatus || "pending")}</span></span>
+        </button>`)}
+      </div>` : html`<div class="empty compact">No injected playlists configured yet.</div>`}
+    </div>`;
+  }
+
+  renderProviderLogo(providerId, size = "default") {
+    const provider = asArray(this.schema?.providers).find((item) => String(item.id || item.Id).toLowerCase() === String(providerId).toLowerCase()) || { id: providerId, name: providerDisplayName(providerId, this.schema?.providers) };
+    const logoUrl = providerLogoUrl(provider);
+    return html`<span class="provider-logo provider-${String(providerId).toLowerCase()} logo-${size}">${logoUrl ? html`<img src=${logoUrl} alt="">` : html`<span>${providerMark(provider).slice(0, 2)}</span>`}</span>`;
   }
 
   renderReadinessCheck(label, ready, detail) {
@@ -2201,15 +2385,15 @@ class AllstarrApp extends LitElement {
 
   renderLibraryNav(active) {
     const items = [
-      ["link", "Playlist links"],
-      ["injected", "Injected"],
-      ["mappings", "Mappings"],
-      ["external", "External playlists"],
-      ["kept", "Kept"],
+      ["link", "Playlist links", "playlist"],
+      ["injected", "Injected", "library"],
+      ["mappings", "Mappings", "sources"],
+      ["external", "External playlists", "playlist"],
+      ["kept", "Kept", "check"],
     ];
     return html`
       <nav class="subnav">
-        ${items.map(([id, label]) => html`<a class=${active === id ? "active" : ""} href="#/library/${id}">${label}</a>`)}
+        ${items.map(([id, label, iconName]) => html`<a class=${active === id ? "active" : ""} href="#/library/${id}">${icon(iconName, 16)}<span>${label}</span></a>`)}
       </nav>
     `;
   }
@@ -2394,51 +2578,74 @@ class AllstarrApp extends LitElement {
 
   renderInjectedPlaylists() {
     const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
+    const query = this.injectedSearch.trim().toLowerCase();
+    const filtered = playlists.filter((playlist) => {
+      const status = String(playlist.syncStatus || "pending").toLowerCase();
+      const scheduled = Boolean(playlist.syncSchedule);
+      return (!query || `${playlist.name} ${playlist.id}`.toLowerCase().includes(query)) &&
+        (!this.injectedStatusFilter || status === this.injectedStatusFilter) &&
+        (!this.injectedScheduleFilter || (this.injectedScheduleFilter === "scheduled" ? scheduled : !scheduled));
+    });
+    const pageCount = Math.max(1, Math.ceil(filtered.length / this.injectedPageSize));
+    const page = Math.min(this.injectedPage, pageCount);
+    const visible = filtered.slice((page - 1) * this.injectedPageSize, page * this.injectedPageSize);
+    const selected = this.selectedInjectedPlaylists;
+    const updateSelection = (name, checked) => {
+      const next = new Set(selected);
+      checked ? next.add(name) : next.delete(name);
+      this.selectedInjectedPlaylists = next;
+    };
     return html`
-      <div class="panel injected-controls">
-        <div class="section-heading"><div><h3>Injected playlists</h3><p class="muted">Refresh existing playlists or add another Spotify playlist.</p></div></div>
-        <form class="injected-toolbar" @submit=${this.addInjectedPlaylist}>
-          <div class="actions injected-refresh-actions">
-            <button type="button" class="primary" @click=${async () => { await this.loadPlaylists(true); this.toast("Playlists refreshed"); }}>Refresh</button>
-            <button type="button" @click=${async () => { await API.refreshPlaylists(); this.toast("Refresh requested"); }}>Refresh all</button>
-          </div>
-          <div class="injected-add-fields">
-            <div class="form-row">
-              <label>Name</label>
-              <input name="name" required>
-            </div>
-            <div class="form-row">
-              <label>Spotify ID</label>
-              <input name="spotifyId" required>
-            </div>
-            <button>Add</button>
-          </div>
-        </form>
+      <div class="injected-page-heading">
+        <div><h3>Injected playlists</h3><p>Playlists that Allstarr has injected into your media server.</p></div>
+        <div class="actions"><button @click=${() => { this.injectedAddOpen = true; }}>${icon("plus")}Add playlist</button><button class="primary" @click=${async () => {
+          const names = selected.size ? [...selected] : playlists.map((item) => item.name);
+          if (selected.size) await Promise.all(names.map((name) => API.refreshPlaylist(name)));
+          else await API.refreshPlaylists();
+          this.toast(`Sync started for ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
+        }}>${icon("refresh")}Sync ${selected.size ? `${selected.size} selected` : "all now"}</button></div>
+      </div>
+      <div class="playlist-toolbar">
+        <label class="search-control">${icon("search")}<input aria-label="Search playlists" placeholder="Search playlists…" .value=${this.injectedSearch} @input=${(event) => { this.injectedSearch = event.target.value; this.injectedPage = 1; }}></label>
+        <select aria-label="Filter by status" .value=${this.injectedStatusFilter} @change=${(event) => { this.injectedStatusFilter = event.target.value; this.injectedPage = 1; }}><option value="">All statuses</option><option value="synced">Synced</option><option value="partial">Partial</option><option value="needs_attention">Needs attention</option><option value="pending">Pending</option></select>
+        <select aria-label="Filter by schedule" .value=${this.injectedScheduleFilter} @change=${(event) => { this.injectedScheduleFilter = event.target.value; this.injectedPage = 1; }}><option value="">All schedules</option><option value="scheduled">Scheduled</option><option value="manual">Manual</option></select>
       </div>
       ${this.renderInjectedPlaylistDetails()}
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Name</th><th>Tracks</th><th>Local</th><th>External</th><th>Schedule</th><th></th></tr></thead>
-          <tbody>
-            ${playlists.length ? playlists.map((playlist) => html`
-              <tr>
-                <td><button class="playlist-name-button" @click=${() => this.openInjectedPlaylist(playlist.name)}>${playlist.name}</button><div class="muted mono">${playlist.id}</div></td>
-                <td>${display(playlist.trackCount)}</td>
-                <td>${display(playlist.localTracks)}</td>
-                <td>${display(playlist.externalTracks)}</td>
-                <td><span class="mono">${display(playlist.syncSchedule)}</span></td>
-                <td class="row-actions">
-                  <button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Playlist refresh requested"); }}>Refresh</button>
-                  <button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Matching requested"); }}>Match</button>
-                  <button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear</button>
-                  <button class="danger" @click=${async () => { await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button>
-                </td>
-              </tr>
-            `) : html`<tr><td colspan="6"><div class="empty">No injected playlists loaded.</div></td></tr>`}
-          </tbody>
-        </table>
+      <div class="table-wrap injected-playlist-table">
+        <div class="injected-table-head"><span><input type="checkbox" aria-label="Select visible playlists" .checked=${visible.length > 0 && visible.every((item) => selected.has(item.name))} @change=${(event) => { const next = new Set(selected); visible.forEach((item) => event.target.checked ? next.add(item.name) : next.delete(item.name)); this.selectedInjectedPlaylists = next; }}></span><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Unmatched</span><span>Schedule</span><span>Status</span><span>Last sync</span><span>Actions</span></div>
+        ${visible.length ? visible.map((playlist) => {
+          const matched = Number(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0));
+          const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
+          const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
+          const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matchPercent >= 50 ? "partial" : "needs_attention");
+          return html`<div class="injected-table-row">
+            <span><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></span>
+            <button class="playlist-cell playlist-name-button" @click=${() => this.openInjectedPlaylist(playlist.name)}><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></button>
+            <span>${display(playlist.trackCount, 0)}</span>
+            <span><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></span>
+            <span><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></span>
+            <span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span>
+            <span><span class="status-chip ${status}">${titleCase(status)}</span></span>
+            <span>${formatRelativeTime(playlist.lastSyncAt || playlist.lastFetched)}</span>
+            <span class="row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></span>
+          </div>`;
+        }) : html`<div class="empty">No playlists match these filters.</div>`}
+        <div class="table-pagination"><span>Showing ${filtered.length ? (page - 1) * this.injectedPageSize + 1 : 0}–${Math.min(page * this.injectedPageSize, filtered.length)} of ${filtered.length} playlists</span><div><button class="icon-button" ?disabled=${page <= 1} @click=${() => { this.injectedPage = page - 1; }}>${icon("chevronLeft")}</button><span class="page-number">${page}</span><button class="icon-button" ?disabled=${page >= pageCount} @click=${() => { this.injectedPage = page + 1; }}>${icon("chevronRight")}</button></div></div>
       </div>
+      ${this.renderInjectedAddModal()}
     `;
+  }
+
+  async syncInjectedPlaylist(name) {
+    await API.refreshPlaylist(name);
+    await API.matchPlaylist(name);
+    this.toast(`Sync started for ${name}`);
+  }
+
+  renderInjectedAddModal() {
+    if (!this.injectedAddOpen) return nothing;
+    const close = () => { this.injectedAddOpen = false; };
+    return html`<div class="modal-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}><section class="panel compact-dialog" role="dialog" aria-modal="true" aria-labelledby="add-injected-title" tabindex="-1"><div class="dialog-header"><div><h3 id="add-injected-title">Add an injected playlist</h3><p>Connect a Spotify playlist to your media server.</p></div><button class="icon-button ghost" @click=${close} aria-label="Close">${icon("close")}</button></div><form class="form-stack" @submit=${async (event) => { await this.addInjectedPlaylist(event); close(); }}><div class="form-row"><label>Name</label><input name="name" required autofocus></div><div class="form-row"><label>Spotify ID</label><input name="spotifyId" required></div><div class="actions dialog-actions"><button type="button" @click=${close}>Cancel</button><button class="primary">Add playlist</button></div></form></section></div>`;
   }
 
   async openInjectedPlaylist(name) {
@@ -2446,6 +2653,8 @@ class AllstarrApp extends LitElement {
     this.injectedPlaylistDetails = null;
     this.injectedTrackMenuId = "";
     this.injectedTrackEditor = null;
+    this.injectedTrackFilter = "";
+    this.injectedTrackPage = 1;
     await this.updateComplete;
     this.renderRoot.querySelector(".injected-playlist-dialog")?.focus();
     try {
@@ -2460,6 +2669,15 @@ class AllstarrApp extends LitElement {
     if (!this.selectedInjectedPlaylist) return nothing;
     const details = this.injectedPlaylistDetails;
     const tracks = asArray(details?.tracks || details?.Tracks);
+    const query = this.injectedTrackFilter.trim().toLowerCase();
+    const filtered = tracks.filter((track) => !query || `${track.title} ${asArray(track.artists).join(" ")} ${track.album || ""}`.toLowerCase().includes(query));
+    const pageSize = 10;
+    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const page = Math.min(this.injectedTrackPage, pageCount);
+    const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+    const matched = Number(details?.matchedTracks ?? tracks.filter((track) => track.isLocal != null).length);
+    const sourceProvider = details?.sourceProvider || "spotify";
+    const targetBackend = details?.targetBackend || String(this.status?.backendType || this.config?.backendType || "jellyfin").toLowerCase();
     const close = () => {
       this.selectedInjectedPlaylist = "";
       this.injectedPlaylistDetails = null;
@@ -2469,27 +2687,44 @@ class AllstarrApp extends LitElement {
     return html`<div class="modal-backdrop injected-playlist-backdrop"
       @click=${(event) => { if (event.target === event.currentTarget) close(); }}
       @keydown=${(event) => {
+        if (event.key === "Tab") {
+          this.handleDialogKeydown(event, close);
+          return;
+        }
         if (event.key !== "Escape") return;
         if (this.injectedTrackEditor) this.injectedTrackEditor = null;
         else if (this.injectedTrackMenuId) this.injectedTrackMenuId = "";
         else close();
       }}>
-      <section class="panel injected-playlist-dialog" role="dialog" aria-modal="true"
+      <section class="panel injected-playlist-dialog redesigned-dialog" role="dialog" aria-modal="true"
         aria-labelledby="injected-playlist-title" tabindex="-1">
-        <div class="section-heading injected-playlist-heading">
-          <div><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks..."}</p></div>
-          <button class="ghost" @click=${close} aria-label="Close playlist tracks">Close</button>
+        <div class="playlist-dialog-hero">
+          <img class="playlist-hero-art" src=${details?.artworkUrl || tracks[0]?.albumArtUrl || "/placeholder.png"} alt="">
+          <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
+            <div class="playlist-hero-stats">
+              <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
+              <div><span class="hero-stat-icon">${icon("check")}</span><span><small>Matched</small><strong>${matched} / ${tracks.length}</strong></span></div>
+              <div><span class="hero-stat-icon">${icon("library")}</span><span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
+            </div>
+          </div>
+          <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
         </div>
         <div class="injected-playlist-scroll">
           ${this.renderInjectedTrackEditor()}
-          ${details ? html`<ol class="playlist-preview-list">
-            ${tracks.length ? tracks.map((track, index) => html`<li class="playlist-preview-entry injected-track-row">
-              <span class="track-position">${display(track.position ?? index + 1)}</span>
-              <div><strong>${display(track.title)}</strong><div class="muted">${asArray(track.artists).join(", ") || "Unknown artist"}${track.album ? ` · ${track.album}` : ""}</div></div>
-              <span class="status-chip ${track.isLocal === true ? "configured" : track.isLocal === false ? "unknown" : "needs_config"}">${track.isLocal === true ? "Local" : track.isLocal === false ? display(track.externalProvider, "External") : "Missing"}</span>
-              ${this.renderInjectedTrackMenu(track)}
-            </li>`) : html`<li class="empty">This playlist has no tracks.</li>`}
-          </ol>` : html`<div class="empty">Loading playlist tracks...</div>`}
+          ${details ? html`<label class="search-control playlist-track-search">${icon("search")}<input aria-label="Filter playlist tracks" placeholder="Filter tracks…" .value=${this.injectedTrackFilter} @input=${(event) => { this.injectedTrackFilter = event.target.value; this.injectedTrackPage = 1; }}></label>
+            <div class="playlist-track-table">
+              <div class="playlist-track-head"><span>#</span><span>Track</span><span>Artist</span><span>Album</span><span>Provider</span><span></span></div>
+              ${visible.length ? visible.map((track, index) => html`<div class="playlist-track-row">
+                <span class="track-position">${display(track.position ?? (page - 1) * pageSize + index + 1)}</span>
+                <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt=""><strong>${display(track.title)}</strong></span>
+                <span>${asArray(track.artists).join(", ") || "Unknown artist"}</span>
+                <span>${display(track.album)}</span>
+                <span><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
+                <span>${this.renderInjectedTrackMenu(track)}</span>
+              </div>`) : html`<div class="empty compact">No tracks match this filter.</div>`}
+            </div>
+            <div class="table-pagination"><span>Showing ${filtered.length ? (page - 1) * pageSize + 1 : 0}–${Math.min(page * pageSize, filtered.length)} of ${filtered.length} tracks</span><div><button class="icon-button" ?disabled=${page <= 1} @click=${() => { this.injectedTrackPage = page - 1; }}>${icon("chevronLeft")}</button><span class="page-number">${page}</span><button class="icon-button" ?disabled=${page >= pageCount} @click=${() => { this.injectedTrackPage = page + 1; }}>${icon("chevronRight")}</button></div></div>
+          ` : html`<div class="empty">Loading playlist tracks…</div>`}
         </div>
       </section>
     </div>`;
@@ -2948,16 +3183,23 @@ class AllstarrApp extends LitElement {
     const orderedProviders = [...providers].sort((left, right) =>
       (statusOrder[this.providerStatus(left)] ?? 2) - (statusOrder[this.providerStatus(right)] ?? 2) ||
       String(left.name).localeCompare(String(right.name)));
+    const musicProviders = orderedProviders.filter((provider) =>
+      asArray(provider.categories).some((category) => ["streaming", "download", "playlist"].includes(String(category).toLowerCase())));
+    const helperProviders = orderedProviders.filter((provider) => !musicProviders.includes(provider));
     return html`
-      <section class="view-stack">
+      <section class="view-stack sources-view">
         <div class="view-header">
           <div>
             <h2>Sources</h2>
-            <p>Music providers, artwork, metadata, lyrics, and download helpers available to Allstarr.</p>
+            <p>Connect and manage music providers, download helpers, metadata, and lyrics services.</p>
           </div>
-          ${canManageAccounts ? html`<div class="actions"><button @click=${() => this.navigate("/settings")}>Manage accounts</button></div>` : nothing}
+          <div class="actions">
+            ${canManageAccounts ? html`<button @click=${() => this.navigate("/settings")}>Manage accounts</button>` : nothing}
+            <button class="primary icon-label" @click=${() => { this.sourceCatalogOpen = true; }}>${icon("plus")}Add source</button>
+          </div>
         </div>
-        ${this.renderProviderSection("all", "Providers", orderedProviders)}
+        ${this.renderProviderSection("music", "Music providers", musicProviders)}
+        ${this.renderProviderSection("helpers", "Metadata & helpers", helperProviders)}
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
         }}>
@@ -2968,6 +3210,8 @@ class AllstarrApp extends LitElement {
             ${this.renderProviderSupportMatrix()}
           </div>
         </details>
+        ${this.renderProviderDetailModal()}
+        ${this.renderSourceCatalogModal()}
       </section>
     `;
   }
@@ -3437,17 +3681,13 @@ class AllstarrApp extends LitElement {
   }
 
   renderProviderSection(id, label, providers) {
+    const connected = providers.filter((provider) => ["healthy", "configured"].includes(this.providerStatus(provider))).length;
     return html`
       <div class="provider-section provider-section-${id}">
-        <h3>${label}</h3>
+        <div class="provider-section-heading"><h3>${label}</h3><span class="chip">${connected} connected</span></div>
         ${providers.length ? html`
           <div class="provider-grid">
-            ${providers.map((provider) => {
-              const providerId = String(provider.id || provider.Id || "").toLowerCase();
-              return html`<section class="provider-cluster" aria-label="${provider.name}">
-                ${this.renderProviderCard(provider)}
-              </section>`;
-            })}
+            ${providers.map((provider) => this.renderProviderCard(provider))}
           </div>
         ` : html`<div class="empty">No providers in this section.</div>`}
       </div>
@@ -3458,66 +3698,82 @@ class AllstarrApp extends LitElement {
     const status = this.providerStatus(provider);
     const providerId = String(provider.id || provider.Id || "").toLowerCase();
     const accountManaged = ACCOUNT_MANAGED_PROVIDERS.has(providerId);
-    const enabledAccount = asArray(this.providerAccounts).some((account) =>
-      String(account.providerId || account.ProviderId).toLowerCase() === providerId && Boolean(account.enabled ?? account.Enabled));
-    const logoUrl = providerLogoUrl(provider);
-    const showBrandMark = Boolean(logoUrl) || !providersWithoutCardMark.has(providerId);
-    const hasEditableConfig = asArray(provider.configSchema).length > 0;
-    const open = hasEditableConfig &&
-      (this.providerConfigOpen.has(providerId) || ["needs_config", "needs_login"].includes(status));
+    const account = asArray(this.providerAccounts).find((item) =>
+      String(item.providerId || item.ProviderId).toLowerCase() === providerId && Boolean(item.enabled ?? item.Enabled));
+    const summary = asArray(this.providerSummaries).find((item) => String(item.providerId).toLowerCase() === providerId);
+    const healthRows = asArray(this.providerHealth).filter((item) => String(item.provider || item.Provider).toLowerCase() === providerId);
+    const runtimeRows = asArray(provider.runtimeCapabilities);
+    const totalChecks = Number(summary?.capabilityTotal ?? healthRows.filter((item) => item.canTest ?? item.CanTest).length ?? runtimeRows.length);
+    const healthyChecks = Number(summary?.healthyCapabilityCount ?? healthRows.filter((item) => String(item.health || item.Health).toLowerCase() === "healthy").length ?? 0);
+    const lastChecked = summary?.lastCheckedAt || [...healthRows, ...runtimeRows].map((item) => item.testedAt || item.TestedAt).filter(Boolean).sort().at(-1);
     return html`
-      <div class="card provider-card">
-        <div class="provider-overview">
-          <div class="provider-head"><div class="provider-brand">
-            ${showBrandMark ? html`
-              <span class="provider-logo provider-${providerId}">
-                ${logoUrl
-                  ? html`<img src="${logoUrl}" alt="${provider.name} logo">`
-                  : providerMark(provider)}
-              </span>
-            ` : nothing}
-            <div class="provider-title">
-              <strong>${provider.name}</strong>
-              <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
-            </div>
-          </div>
-          </div>
-          <div class="provider-state-actions"><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>
-            <div class="row-actions provider-actions">
-              ${!accountManaged && status !== "disabled" && hasEditableConfig ? html`
-                <button @click=${() => {
-                  const next = new Set(this.providerConfigOpen);
-                  next.has(providerId) ? next.delete(providerId) : next.add(providerId);
-                  this.providerConfigOpen = next;
-                }}>${open ? "Hide config" : "Configure"}</button>
-              ` : nothing}
-              ${accountManaged ? nothing : status === "disabled" ? html`
-                <button class="primary" @click=${() => this.setProviderDisabled(provider, false)}>Enable</button>
-              ` : html`
-                <button class="danger" @click=${() => this.setProviderDisabled(provider, true)}>Disable</button>
-              `}
-            </div>
+      <article class="card source-card ${status}">
+        <div class="source-card-head">
+          <div class="provider-brand">${this.renderProviderLogo(providerId, "large")}<div class="provider-title"><strong>${provider.name}</strong><span>${provider.id === "musicbrainz" ? "Enrichment service" : asArray(provider.categories).includes("lyrics") && asArray(provider.categories).length === 1 ? "Lyrics service" : "Provider"}</span></div></div>
+          <div class="source-card-actions">
+            <span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>
+            <button @click=${() => { this.selectedProviderId = providerId; }}>Manage</button>
+            <details class="action-menu"><summary class="icon-button" aria-label="More ${provider.name} actions">${icon("more")}</summary><div>
+              ${accountManaged ? html`<button @click=${() => this.navigate("/settings")}>Manage account</button>` : status === "disabled" ? html`<button @click=${() => this.setProviderDisabled(provider, false)}>Enable source</button>` : html`<button class="danger-text" @click=${() => this.setProviderDisabled(provider, true)}>Disable source</button>`}
+            </div></details>
           </div>
         </div>
         <div class="chip-list capability-list">
-          ${asArray(provider.categories).map((category) => this.renderCapabilityPill(provider, category))}
+          ${asArray(provider.categories).map((category) => html`<span class="chip ${this.providerCapabilityEnabled(provider, category) ? "success" : "muted-chip"}">${titleCase(category)}</span>`)}
           ${asArray(provider.notes).map((note) => html`<span class="chip">${note}</span>`)}
         </div>
-        ${accountManaged && !enabledAccount ? html`<p class="provider-empty-state">No enabled account. <button class="inline-button" @click=${() => this.navigate("/settings")}>Connect one in Settings</button>.</p>` : nothing}
-        ${asArray(provider.runtimeCapabilities).length && !accountManaged ? html`
-          <div class="runtime-capability-table" role="table" aria-label="Runtime capability status">
-            <div class="runtime-capability-header" role="row"><span>Capability</span><span>Setup</span><span>Last check</span><span></span></div>
-            ${asArray(provider.runtimeCapabilities).map((capability) => this.renderRuntimeCapability(provider, capability))}
-          </div>
-        ` : nothing}
-        ${open ? html`
-          <div class="config-grid">
-            ${asArray(provider.configSchema).map((field) => this.renderConfigField(field))}
-          </div>
-          ${provider.id === "apple-download" ? this.renderAppleMusicManager() : nothing}
-        ` : nothing}
-      </div>
+        <div class="source-metrics">
+          <div><span>Capabilities</span><strong>${asArray(provider.categories).length}</strong></div>
+          <div><span>Passing checks</span><strong>${totalChecks ? `${healthyChecks}/${totalChecks}` : "—"}</strong></div>
+          <div><span>Last check</span><strong>${lastChecked ? formatRelativeTime(lastChecked) : "—"}</strong></div>
+          <div><span>Failures</span><strong class=${Number(summary?.failedCapabilityCount || 0) ? "warning-text" : ""}>${summary?.failedCapabilityCount ?? "—"}</strong></div>
+        </div>
+        <div class="source-card-footer"><span>Connected as</span><strong>${display(account?.displayName || account?.DisplayName || summary?.connectedAccountName, accountManaged ? "Not connected" : "System")}</strong></div>
+        ${status === "degraded" ? html`<div class="source-warning">${icon("warning", 16)}<span>${titleCase(summary?.lastFailureCode || "Connection needs attention")}</span><button @click=${() => { this.selectedProviderId = providerId; }}>View details</button></div>` : nothing}
+      </article>
     `;
+  }
+
+  renderProviderDetailModal() {
+    if (!this.selectedProviderId) return nothing;
+    const provider = asArray(this.schema?.providers).find((item) => String(item.id || item.Id).toLowerCase() === this.selectedProviderId);
+    if (!provider) return nothing;
+    const providerId = String(provider.id || provider.Id).toLowerCase();
+    const status = this.providerStatus(provider);
+    const accountManaged = ACCOUNT_MANAGED_PROVIDERS.has(providerId);
+    const capabilities = accountManaged
+      ? asArray(this.providerHealth).filter((item) => String(item.provider || item.Provider).toLowerCase() === providerId)
+      : asArray(provider.runtimeCapabilities);
+    const close = () => { this.selectedProviderId = ""; };
+    return html`<div class="modal-backdrop provider-detail-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
+      <section class="panel provider-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-detail-title" tabindex="-1">
+        <div class="dialog-header"><div class="provider-brand">${this.renderProviderLogo(providerId, "hero")}<div><h3 id="provider-detail-title">${provider.name}</h3><p>Configure this source and verify each supported capability.</p></div></div><button class="icon-button ghost" aria-label="Close provider details" @click=${close}>${icon("close")}</button></div>
+        <div class="provider-detail-summary"><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>${asArray(provider.categories).map((category) => html`<span class="chip">${titleCase(category)}</span>`)}</div>
+        ${capabilities.length ? html`<div class="runtime-capability-table" role="table" aria-label="Runtime capability status">
+          <div class="runtime-capability-header" role="row"><span>Capability</span><span>Setup</span><span>Last check</span><span></span></div>
+          ${accountManaged ? capabilities.map((capability) => html`<div class="runtime-capability" role="row"><strong>${titleCase(capability.capability || capability.Capability)}</strong><span>${String(capability.configuration || capability.Configuration) === "configured" ? "Configured" : "Needs setup"}</span><span class="runtime-health runtime-${capability.health || capability.Health}">${titleCase(capability.health || capability.Health || "unknown")}<small>${formatDate(capability.testedAt || capability.TestedAt)}</small></span>${capability.canTest ?? capability.CanTest ? html`<button class="compact" @click=${() => this.testProviderAccountCapability(capability.providerAccountId || capability.ProviderAccountId, providerId, capability.capability || capability.Capability)}>Test</button>` : html`<span></span>`}</div>`) : capabilities.map((capability) => this.renderRuntimeCapability(provider, capability))}
+        </div>` : html`<div class="empty compact">No automatic capability probes are available.</div>`}
+        ${accountManaged ? html`<div class="provider-detail-cta"><div><strong>Account and credentials</strong><p>Accounts are managed separately so Sources stays focused on routing and health.</p></div><button class="primary" @click=${() => this.navigate("/settings")}>Open account settings</button></div>` : html`<div class="config-grid">${asArray(provider.configSchema).map((field) => this.renderConfigField(field))}</div>`}
+        ${providerId === "apple-download" ? this.renderAppleMusicManager() : nothing}
+      </section>
+    </div>`;
+  }
+
+  renderSourceCatalogModal() {
+    if (!this.sourceCatalogOpen) return nothing;
+    const providers = asArray(this.schema?.providers);
+    const close = () => { this.sourceCatalogOpen = false; };
+    return html`<div class="modal-backdrop source-catalog-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
+      <section class="panel source-catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="source-catalog-title" tabindex="-1">
+        <div class="dialog-header"><div><h3 id="source-catalog-title">Add a source</h3><p>Enable a built-in source or connect its account in Settings.</p></div><button class="icon-button ghost" aria-label="Close source catalog" @click=${close}>${icon("close")}</button></div>
+        <div class="source-catalog-grid">${providers.map((provider) => {
+          const providerId = String(provider.id || provider.Id).toLowerCase();
+          const accountManaged = ACCOUNT_MANAGED_PROVIDERS.has(providerId);
+          const status = this.providerStatus(provider);
+          return html`<article class="source-catalog-item">${this.renderProviderLogo(providerId, "large")}<div><strong>${provider.name}</strong><small>${asArray(provider.categories).map(titleCase).join(" · ") || "Extension provider"}</small></div><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span><button @click=${async () => { close(); if (accountManaged) this.navigate("/settings"); else if (status === "disabled") await this.setProviderDisabled(provider, false); else this.selectedProviderId = providerId; }}>${accountManaged ? "Connect" : status === "disabled" ? "Enable" : "Manage"}</button></article>`;
+        })}</div>
+      </section>
+    </div>`;
   }
 
   providerStatusLabel(status) {
@@ -4907,7 +5163,10 @@ class AllstarrApp extends LitElement {
     const visualPosition = duration > 0 ? Math.min(duration, position + interpolationSeconds) : position;
     const progress = duration > 0 ? percent(visualPosition / duration) : percent(playbackProgress);
     const source = providerDisplayName(current?.externalProvider || current?.ExternalProvider || "jellyfin", this.schema?.providers);
+    const sourceId = current?.externalProvider || current?.ExternalProvider || "jellyfin";
     const scrobbled = Boolean(current?.scrobbled ?? current?.Scrobbled);
+    const scrobbleError = current?.scrobbleError || current?.ScrobbleError || current?.scrobbleFailure || current?.ScrobbleFailure;
+    const scrobbleState = scrobbleError ? "failed" : scrobbled ? "delivered" : "pending";
     return html`
       <footer class="now-playing">
         <div class="now-track">
@@ -4918,21 +5177,27 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
         <div class="now-progress">
-          <div class="progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(progress)} style=${`--progress:${progress}%`}><span></span></div>
-          <div class="now-time"><span>${formatDuration(visualPosition)}</span><span>${duration > 0 ? formatDuration(duration) : "–:––"}</span></div>
+          <div class="now-progress-labels"><span>${formatDuration(visualPosition)}</span><strong>Now playing</strong><span>${duration > 0 ? formatDuration(duration) : "–:––"}</span></div>
+          <div class="progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(progress)} style=${`--progress-scale:${progress / 100}`}><span></span></div>
         </div>
         <div class="now-status" aria-label="Playback source and scrobbling status">
-          <span class="playback-source">${source}</span>
-          <span class="scrobble-status ${scrobbled ? "delivered" : "pending"}" title=${scrobbled ? "Listening history delivered" : "Waiting for the scrobble threshold"}>${scrobbled ? html`<span aria-hidden="true">✓</span> Scrobbled` : "Scrobble pending"}</span>
+          <span class="playback-source">${this.renderProviderLogo(sourceId, "tiny")}${source}</span>
+          <span class="scrobble-status ${scrobbleState}" title=${scrobbleError || (scrobbled ? "Listening history delivered" : "Waiting for the scrobble threshold")}>${scrobbleState === "delivered" ? html`${icon("check", 15)} Scrobbled` : scrobbleState === "failed" ? html`${icon("warning", 15)} Scrobble failed` : html`${icon("clock", 15)} Scrobble pending`}</span>
         </div>
       </footer>
     `;
   }
 
   renderToasts() {
+    const activeJobs = asArray(this.jobs).filter((job) => !["Succeeded", "Failed", "Cancelled"].includes(job.state || job.State)).slice(0, 3);
+    const activeDownloads = asArray(this.activity).filter((item) => String(item.status || item.Status).toLowerCase().includes("progress")).slice(0, 3);
+    if (!this.toasts.length && !activeJobs.length && !activeDownloads.length) return nothing;
     return html`
-      <div class="toast-stack">
-        ${this.toasts.map((toast) => html`<div class="toast ${toast.type}">${toast.message}</div>`)}
+      <div class="toast-stack operation-center" aria-live="polite">
+        ${activeJobs.length || activeDownloads.length ? html`<div class="operation-heading"><span>${icon("activity", 16)}<strong>Working</strong></span><small>${activeJobs.length + activeDownloads.length} active</small></div>` : nothing}
+        ${activeJobs.map((job) => html`<div class="operation-item"><span><strong>${titleCase(job.type || job.Type)}</strong><small>${titleCase(job.state || job.State)}</small></span><div class="progress indeterminate"><span></span></div></div>`)}
+        ${activeDownloads.map((item) => html`<div class="operation-item"><span><strong>${display(item.title || item.Title)}</strong><small>${display(item.status || item.Status)}</small></span><div class="progress" style=${`--progress:${percent(item.progress ?? item.Progress)}%`}><span></span></div></div>`)}
+        ${this.toasts.map((toast) => html`<div class="toast ${toast.type}">${toast.type === "error" ? icon("warning", 16) : icon("check", 16)}<span>${toast.message}</span></div>`)}
       </div>
     `;
   }
