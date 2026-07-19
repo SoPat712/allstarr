@@ -159,16 +159,20 @@ public class AdminUiController : ControllerBase
             {
                 var ids = group.Select(item => item.Id).ToHashSet();
                 var samples = rollups.Where(item => ids.Contains(item.ProviderAccountId)).ToList();
+                var latestSamples = samples
+                    .GroupBy(item => new { item.ProviderAccountId, item.Capability })
+                    .Select(capability => capability.OrderByDescending(item => item.UpdatedAt).First())
+                    .ToList();
                 var sampleCount = samples.Sum(item => item.SampleCount);
-                var healthy = samples.Count(item =>
+                var healthy = latestSamples.Count(item =>
                     string.Equals(item.LastState.ToString(), "Healthy", StringComparison.OrdinalIgnoreCase));
-                var failed = samples.Count - healthy;
+                var failed = latestSamples.Count - healthy;
                 return new
                 {
                     providerId = group.Key,
                     connectedAccountName = group.Where(item => item.Enabled).Select(item => item.DisplayName).FirstOrDefault(),
                     enabledAccountCount = group.Count(item => item.Enabled),
-                    capabilityTotal = samples.Select(item => item.Capability).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    capabilityTotal = latestSamples.Count,
                     healthyCapabilityCount = healthy,
                     failedCapabilityCount = failed,
                     lastCheckedAt = samples.Count > 0 ? samples.Max(item => item.UpdatedAt) : (DateTimeOffset?)null,

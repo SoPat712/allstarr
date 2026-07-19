@@ -172,6 +172,10 @@ public class PlaylistController : ControllerBase
                             ? $"{age.TotalMinutes:F0}m"
                             : $"{age.TotalHours:F1}h";
                     }
+                    else
+                    {
+                        playlistInfo["lastFetched"] = System.IO.File.GetLastWriteTimeUtc(cacheFilePath);
+                    }
                 }
                 catch (Exception ex)
                 {

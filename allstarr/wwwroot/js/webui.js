@@ -109,6 +109,11 @@ function formatSchedule(value) {
   return value;
 }
 
+function providerAccountDisplayName(value) {
+  const name = String(value || "").trim().replace(/^shared\s+/i, "");
+  return name || "Not connected";
+}
+
 function configOptionLabel(field, option) {
   const key = String(field?.key || "").toUpperCase();
   const labels = {
@@ -2236,10 +2241,10 @@ class AllstarrApp extends LitElement {
       ${items.length ? html`<div class="activity-table" role="table" aria-label="Recent activity">
         <div class="activity-table-head" role="row"><span>Time</span><span>Source</span><span>Event</span><span>Details</span></div>
         ${items.map((item) => html`<div class="activity-table-row" role="row">
-          <time>${formatRelativeTime(item.occurredAt)}</time>
-          <span class="provider-row-label">${this.renderProviderLogo(item.source, "tiny")}<span>${providerDisplayName(item.source, this.schema?.providers)}</span></span>
-          <span class="activity-event ${item.state}">${["healthy", "succeeded"].includes(item.state) ? icon("check", 15) : ["failed", "degraded", "unavailable"].includes(item.state) ? icon("warning", 15) : icon("clock", 15)}${titleCase(item.label)}</span>
-          <span class="muted">${display(item.detail)}</span>
+          <time>${formatRelativeTime(item.occurredAt || item.OccurredAt)}</time>
+          <span class="provider-row-label">${this.renderProviderLogo(item.source || item.Source, "tiny")}<span>${providerDisplayName(item.source || item.Source, this.schema?.providers)}</span></span>
+          <span class="activity-event ${item.state || item.State}">${["healthy", "succeeded"].includes(String(item.state || item.State).toLowerCase()) ? icon("check", 15) : ["failed", "degraded", "unavailable"].includes(String(item.state || item.State).toLowerCase()) ? icon("warning", 15) : icon("clock", 15)}${titleCase(item.label || item.Label)}</span>
+          <span class="muted">${display(item.detail || item.Detail)}</span>
         </div>`)}
       </div>` : html`<div class="empty compact">No recent provider checks or background jobs.</div>`}
     </div>`;
@@ -3728,7 +3733,7 @@ class AllstarrApp extends LitElement {
           <div><span>Last check</span><strong>${lastChecked ? formatRelativeTime(lastChecked) : "—"}</strong></div>
           <div><span>Failures</span><strong class=${Number(summary?.failedCapabilityCount || 0) ? "warning-text" : ""}>${summary?.failedCapabilityCount ?? "—"}</strong></div>
         </div>
-        <div class="source-card-footer"><span>Connected as</span><strong>${display(account?.displayName || account?.DisplayName || summary?.connectedAccountName, accountManaged ? "Not connected" : "System")}</strong></div>
+        <div class="source-card-footer"><span>Connected as</span><strong>${accountManaged ? providerAccountDisplayName(account?.displayName || account?.DisplayName || summary?.connectedAccountName) : "System"}</strong></div>
         ${status === "degraded" ? html`<div class="source-warning">${icon("warning", 16)}<span>${titleCase(summary?.lastFailureCode || "Connection needs attention")}</span><button @click=${() => { this.selectedProviderId = providerId; }}>View details</button></div>` : nothing}
       </article>
     `;
