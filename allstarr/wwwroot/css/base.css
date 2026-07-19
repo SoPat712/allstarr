@@ -453,7 +453,7 @@ a {
     width: 32px;
     height: 32px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--surface-elevated);
     color: var(--accent-strong);
     font-weight: 800;
@@ -468,9 +468,10 @@ a {
     height: 100%;
     max-width: 100%;
     max-height: 100%;
-    object-fit: contain;
+    object-fit: cover;
     object-position: center;
-    border-radius: 7px;
+    border-radius: inherit;
+    clip-path: inset(0 round 9px);
 }
 
 .main-shell {
@@ -1907,10 +1908,8 @@ fieldset.form-row > label small {
 }
 
 .extension-permission-review {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-elevated);
-    padding: var(--space-3);
+    display: grid;
+    gap: var(--space-4);
 }
 
 .extension-permission-row {
@@ -3739,6 +3738,14 @@ button.setup-choice {
 .provider-logo.logo-tiny { width: 22px; height: 22px; flex-basis: 22px; border: 0; border-radius: 6px; }
 .provider-logo.logo-tiny span { font-size: .56rem; }
 
+.provider-logo.logo-hero img { width: 48px; height: 48px; max-width: 48px; max-height: 48px; }
+.provider-logo.logo-large img { width: 34px; height: 34px; max-width: 34px; max-height: 34px; }
+.provider-logo.logo-small img { width: 28px; height: 28px; max-width: 28px; max-height: 28px; }
+.provider-logo.logo-mini img { width: 22px; height: 22px; max-width: 22px; max-height: 22px; }
+.provider-logo.logo-overview img { width: 30px; height: 30px; max-width: 30px; max-height: 30px; }
+.provider-logo.logo-tiny { width: 26px; height: 26px; flex-basis: 26px; border-radius: 7px; }
+.provider-logo.logo-tiny img { width: 20px; height: 20px; max-width: 20px; max-height: 20px; }
+
 .provider-logo.provider-qobuz {
     background: #f7f8fa;
 }
@@ -3747,6 +3754,12 @@ button.setup-choice {
     color: #9f7cff;
     background: rgba(124, 83, 214, .18);
 }
+
+.provider-logo.provider-soundcloud { background: rgba(255, 85, 0, .1); border-color: rgba(255, 85, 0, .28); }
+.provider-logo.provider-youtubemusic,
+.provider-logo.provider-youtube-music { background: rgba(255, 0, 51, .1); border-color: rgba(255, 0, 51, .28); }
+.provider-logo.provider-lastfm { background: rgba(239, 51, 64, .1); border-color: rgba(239, 51, 64, .28); }
+.provider-logo.provider-listenbrainz { background: rgba(235, 116, 59, .1); border-color: rgba(235, 116, 59, .28); }
 
 .activity-table,
 .compact-playlist-table {
@@ -3991,6 +4004,20 @@ button.setup-choice {
     max-height: min(820px, calc(100dvh - 40px));
     overflow: auto;
     box-shadow: var(--shadow-modal);
+}
+
+.extension-permission-dialog {
+    width: min(680px, calc(100vw - 40px));
+    max-height: min(760px, calc(100dvh - 40px));
+    overflow: auto;
+    border-color: color-mix(in srgb, var(--accent), var(--border) 60%);
+    box-shadow: var(--shadow-modal);
+}
+
+.extension-permission-dialog .extension-permission-list {
+    max-height: min(390px, 48dvh);
+    overflow: auto;
+    padding-right: var(--space-2);
 }
 
 .dialog-header {

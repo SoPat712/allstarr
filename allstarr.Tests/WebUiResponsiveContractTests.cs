@@ -50,7 +50,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains(".user-avatar img", css, StringComparison.Ordinal);
         Assert.Contains("object-fit: cover;", css, StringComparison.Ordinal);
         Assert.Contains("object-position: center;", css, StringComparison.Ordinal);
-        Assert.Contains("border-radius: 8px;", css, StringComparison.Ordinal);
+        Assert.Contains("clip-path: inset(0 round 9px);", css, StringComparison.Ordinal);
     }
 
     [Fact]

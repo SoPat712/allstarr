@@ -28,6 +28,8 @@ public sealed class WebUiExtensionControlPlaneContractTests
         Assert.Contains("Extension installed and enabled", _script, StringComparison.Ordinal);
         Assert.Contains("Review and enable", _script, StringComparison.Ordinal);
         Assert.Contains("Allow required access and enable", _script, StringComparison.Ordinal);
+        Assert.Contains("class=\"panel extension-permission-dialog\"", _script, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Close permission review\"", _script, StringComparison.Ordinal);
         Assert.Contains("Advanced settings", _script, StringComparison.Ordinal);
         Assert.Contains("Verify and install", _script, StringComparison.Ordinal);
         Assert.Contains("expectedRevision", _script, StringComparison.Ordinal);

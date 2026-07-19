@@ -194,8 +194,15 @@ function providerLogoUrl(provider) {
   const supplied = provider?.logoUrl || provider?.LogoUrl || provider?.branding?.logoReference || provider?.Branding?.LogoReference;
   if (supplied) return String(supplied);
   const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
-  const logoId = id === "apple-download" ? "applemusic" : id;
-  const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz", "jellyfin"]);
+  const logoAliases = {
+    "apple-download": "applemusic",
+    "youtube-music": "youtubemusic",
+    youtube_music: "youtubemusic",
+    "last.fm": "lastfm",
+    "listen-brainz": "listenbrainz",
+  };
+  const logoId = logoAliases[id] || id;
+  const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz", "jellyfin", "soundcloud", "youtubemusic", "lastfm", "listenbrainz"]);
   return logos.has(logoId) ? `/images/providers/${logoId}.svg` : "";
 }
 
@@ -594,6 +601,7 @@ class AllstarrApp extends LitElement {
     extensionRegistries: { state: true },
     extensionPackages: { state: true },
     extensionPermissions: { state: true },
+    extensionPermissionPackageId: { state: true },
     extensionLogs: { state: true },
     selectedExtensionPackageId: { state: true },
     scrobbling: { state: true },
@@ -673,6 +681,7 @@ class AllstarrApp extends LitElement {
     this.extensionRegistries = [];
     this.extensionPackages = [];
     this.extensionPermissions = new Map();
+    this.extensionPermissionPackageId = "";
     this.extensionLogs = [];
     this.selectedExtensionPackageId = "";
     this.scrobbling = null;
@@ -1574,11 +1583,11 @@ class AllstarrApp extends LitElement {
 
   async loadExtensionPermissions(item) {
     const id = item.id || item.Id;
-    this.selectedExtensionPackageId = id;
     const response = await API.extensionPermissions(id);
     const next = new Map(this.extensionPermissions);
     next.set(id, asArray(response?.items || response?.Items || response));
     this.extensionPermissions = next;
+    this.extensionPermissionPackageId = id;
   }
 
   async reviewExtensionPermissions(item) {
@@ -1603,7 +1612,7 @@ class AllstarrApp extends LitElement {
       const nextPermissions = new Map(this.extensionPermissions);
       nextPermissions.delete(id);
       this.extensionPermissions = nextPermissions;
-      this.selectedExtensionPackageId = null;
+      this.extensionPermissionPackageId = "";
       this.toast(state === "staged" || state === "active" ? "Extension enabled" : "Permission choices saved");
     } catch (error) {
       await this.loadExtensionControlPlane().catch(() => {});
@@ -4003,16 +4012,22 @@ class AllstarrApp extends LitElement {
       }
     }
     const installedPackages = [...installedByExtension.values()];
+    const permissionPackage = installedPackages.find((item) =>
+      String(item.id || item.Id) === String(this.extensionPermissionPackageId));
     const renderPermissionReview = (item, action) => {
+      if (!item) return nothing;
       const id = item.id || item.Id;
       if (packageState(item) !== "reviewrequired") return nothing;
       const permissions = this.extensionPermissions.get(id);
       if (!permissions) return nothing;
       const allDecided = permissions.length > 0 && permissions.every((review) => review.uiDecision === "approved" || review.uiDecision === "denied");
+      const close = () => { this.extensionPermissionPackageId = ""; };
+      const extensionName = item.displayName || item.DisplayName || item.extensionId || item.ExtensionId;
       return html`
-        <div class="extension-permission-review">
-          <strong>Choose what this extension may access</strong>
-          <p class="muted">Every requested permission needs a decision before the extension can be enabled.</p>
+        <div class="modal-backdrop extension-permission-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
+        <section class="panel extension-permission-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-permission-title" tabindex="-1">
+          <div class="dialog-header"><div><h3 id="extension-permission-title">Review ${extensionName} access</h3><p>Choose what this extension may use before it is enabled.</p></div><button class="icon-button ghost" aria-label="Close permission review" @click=${close}>${icon("close")}</button></div>
+          <div class="extension-permission-review">
           <div class="row-actions"><button class="primary" ?disabled=${Boolean(action)} @click=${() => this.approveAllExtensionPermissions(item)}>Allow required access and enable</button></div>
           <details>
             <summary>Review ${permissions.length} permission${permissions.length === 1 ? "" : "s"} individually</summary>
@@ -4031,6 +4046,8 @@ class AllstarrApp extends LitElement {
           })}</div>
           </details>
           ${allDecided ? html`<div class="row-actions"><button ?disabled=${Boolean(action)} @click=${() => this.reviewExtensionPermissions(item)}>Save individual choices and enable</button></div>` : nothing}
+          </div>
+        </section>
         </div>
       `;
     };
@@ -4097,7 +4114,6 @@ class AllstarrApp extends LitElement {
                     ${rawState === "active" ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Disabling", () => API.disableExtensionPackage(id, revision), "Extension disabled")}>Disable</button>` : nothing}
                   </div>
                   ${rawState === "failed" && (item.failureCode || item.FailureCode) ? html`<div class="error-text">${titleCase(item.failureCode || item.FailureCode)}</div>` : nothing}
-                  ${renderPermissionReview(item, action)}
                   <details class="extension-package-manage">
                     <summary>Manage</summary>
                     <div class="row-actions">
@@ -4113,6 +4129,7 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
       ` : nothing}
+      ${renderPermissionReview(permissionPackage, permissionPackage ? this.extensionActions[permissionPackage.id || permissionPackage.Id] : "")}
       <details class="content-disclosure extension-advanced">
         <summary><span><strong>Advanced settings</strong><small>Catalogs, direct installs, activity, and recovery</small></span></summary>
         <div class="disclosure-body">
