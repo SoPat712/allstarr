@@ -355,6 +355,52 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinExternalSongImage_WithoutPlayerToken_UsesMetadataFallback()
+    {
+        var artworkBytes = new byte[] { 0xFF, 0xD8, 0x01, 0x02, 0xFF, 0xD9 };
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.GetSongAsync(
+                "applemusic",
+                "6768469976",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Song
+            {
+                Id = "ext-applemusic-song-6768469976",
+                ExternalProvider = "applemusic",
+                ExternalId = "6768469976",
+                Title = "Artwork Track",
+                CoverArtUrl = "https://is1-ssl.mzstatic.com/image/thumb/song/1024x1024bb.jpg",
+                IsLocal = false
+            });
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.Host == "is1-ssl.mzstatic.com"
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(artworkBytes)
+                    {
+                        Headers = { ContentType = new("image/jpeg") }
+                    }
+                }
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<ParallelMetadataService>();
+                services.RemoveAll<IMusicMetadataService>();
+                services.AddSingleton(metadata.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-applemusic-song-6768469976/Images/Primary?fillHeight=600&fillWidth=600");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(artworkBytes, await response.Content.ReadAsByteArrayAsync());
+        metadata.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinLocalImage_ForwardsPlayerTokenAndReturnsArtwork()
     {
         var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };

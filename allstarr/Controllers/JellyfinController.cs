@@ -170,6 +170,39 @@ public partial class JellyfinController : ControllerBase
         ? _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId)
         : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
 
+    private Task<Song?> GetProviderSongForImageAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default)
+    {
+        var protocol = HttpContext.GetProtocolExecutionContext();
+        return _providerGateway != null && protocol != null
+            ? _providerGateway.GetSongAsync(protocol, provider, externalId)
+            : _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+    }
+
+    private Task<Album?> GetProviderAlbumForImageAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default)
+    {
+        var protocol = HttpContext.GetProtocolExecutionContext();
+        return _providerGateway != null && protocol != null
+            ? _providerGateway.GetAlbumAsync(protocol, provider, externalId)
+            : _metadataService.GetAlbumAsync(provider, externalId, cancellationToken);
+    }
+
+    private Task<Artist?> GetProviderArtistForImageAsync(
+        string provider,
+        string externalId,
+        CancellationToken cancellationToken = default)
+    {
+        var protocol = HttpContext.GetProtocolExecutionContext();
+        return _providerGateway != null && protocol != null
+            ? _providerGateway.GetArtistAsync(protocol, provider, externalId)
+            : _metadataService.GetArtistAsync(provider, externalId, cancellationToken);
+    }
+
     #region Items
 
     /// <summary>
@@ -770,9 +803,12 @@ public partial class JellyfinController : ControllerBase
         // Get external cover art URL
         string? coverUrl = type switch
         {
-            "artist" => (await GetProviderArtistAsync(provider!, externalId!))?.ImageUrl,
-            "album" => (await GetProviderAlbumAsync(provider!, externalId!))?.CoverArtUrl,
-            "song" => (await GetProviderSongAsync(provider!, externalId!))?.CoverArtUrl,
+            "artist" => (await GetProviderArtistForImageAsync(
+                provider!, externalId!, HttpContext.RequestAborted))?.ImageUrl,
+            "album" => (await GetProviderAlbumForImageAsync(
+                provider!, externalId!, HttpContext.RequestAborted))?.CoverArtUrl,
+            "song" => (await GetProviderSongForImageAsync(
+                provider!, externalId!, HttpContext.RequestAborted))?.CoverArtUrl,
             _ => null
         };
 
