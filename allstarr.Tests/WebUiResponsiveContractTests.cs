@@ -298,6 +298,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("renderNewProviderCredentialFields", script, StringComparison.Ordinal);
         Assert.Contains("this.providerAccountChoices().map((provider)", script, StringComparison.Ordinal);
         Assert.Contains("asArray(provider.accountSettings)", script, StringComparison.Ordinal);
+        Assert.Contains("replace(/^shared\\s+/i, \"\")", script, StringComparison.Ordinal);
+        Assert.Contains("providerAccountDisplayName(account.DisplayName || account.displayName", script, StringComparison.Ordinal);
         Assert.DoesNotContain("textarea name=\"secret\"", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Replace credential", script, StringComparison.Ordinal);
         Assert.Contains("account-health-panel", styles, StringComparison.Ordinal);

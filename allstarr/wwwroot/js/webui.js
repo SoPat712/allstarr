@@ -109,9 +109,10 @@ function formatSchedule(value) {
   return value;
 }
 
-function providerAccountDisplayName(value) {
+function providerAccountDisplayName(value, providerName = "") {
+  const provider = String(providerName || "").trim();
   const name = String(value || "").trim().replace(/^shared\s+/i, "");
-  return name || "Not connected";
+  return name || (provider ? `${provider} account` : "Not connected");
 }
 
 function configOptionLabel(field, option) {
@@ -3456,7 +3457,7 @@ class AllstarrApp extends LitElement {
     const capabilities = this.providerHealth.filter((item) => String(item.providerAccountId || item.ProviderAccountId).toLowerCase() === String(id).toLowerCase());
     return html`<article class="card provider-account-card">
       <div class="provider-head">
-        <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="">` : providerMark(provider)}</span><div class="provider-title"><strong>${display(account.DisplayName || account.displayName)}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
+        <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="">` : providerMark(provider)}</span><div class="provider-title"><strong>${providerAccountDisplayName(account.DisplayName || account.displayName, provider.name || titleCase(providerId))}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
         <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
       </div>
       <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Account details stored" : "Account setup needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
@@ -4127,7 +4128,7 @@ class AllstarrApp extends LitElement {
                 <section class="extension-manage-section">
                   <div class="section-heading"><div><h4>Provider configuration</h4><p>${requiredSettings.length ? `${requiredSettings.length} required field${requiredSettings.length === 1 ? "" : "s"}` : "Optional provider preferences"}</p></div><span class="status-chip ${accounts.length ? "configured" : requiredSettings.length ? "warning" : "disabled"}">${accounts.length ? "Account saved" : requiredSettings.length ? "Setup required" : "Optional"}</span></div>
                   ${state !== "active" ? html`<div class="empty"><strong>Enable this extension first</strong><span>Configuration becomes available after its runtime is loaded.</span></div>` : accounts.length ? html`
-                    <div class="extension-account-summary">${accounts.map((account) => html`<div><strong>${account.displayName || account.DisplayName}</strong><span class="muted">${account.enabled ?? account.Enabled ? "Enabled" : "Disabled"}</span></div>`)}</div>
+                    <div class="extension-account-summary">${accounts.map((account) => html`<div><strong>${providerAccountDisplayName(account.displayName || account.DisplayName, name)}</strong><span class="muted">${account.enabled ?? account.Enabled ? "Enabled" : "Disabled"}</span></div>`)}</div>
                     <button @click=${() => { close(); location.hash = "#/settings"; this.providerAccountConfigOpen = new Set(accounts.map((account) => account.id || account.Id)); }}>Manage saved account</button>
                   ` : html`
                     <form class="config-grid extension-config-form" @submit=${this.createProviderAccount}>
