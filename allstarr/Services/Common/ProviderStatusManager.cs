@@ -1018,7 +1018,7 @@ public class ProviderStatusManager
         GetProviderOrder(key, fallback).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private HashSet<string> GetDisabledProviders() =>
-        GetProviderSet("MULTI_PROVIDER_DISABLED_PROVIDERS", "squidwtf");
+        GetProviderSet("MULTI_PROVIDER_DISABLED_PROVIDERS", string.Empty);
 
     private static string? GetCompatibilityCapability(string provider) => provider switch
     {

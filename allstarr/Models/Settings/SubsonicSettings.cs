@@ -79,6 +79,11 @@ public enum StorageMode
 public enum MusicService
 {
     /// <summary>
+    /// No legacy provider override. Provider-account capability routing decides what can run.
+    /// </summary>
+    None,
+
+    /// <summary>
     /// Deezer music service
     /// </summary>
     Deezer,
@@ -125,12 +130,12 @@ public class SubsonicSettings
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
 
     /// <summary>
-    /// Music service to use (default: Deezer)
+    /// Optional legacy music-service override. Modern provider routing uses configured accounts.
     /// Environment variable: MUSIC_SERVICE
     /// Values: "Deezer", "Qobuz", "SquidWTF"
     /// </summary>
 
-    public MusicService MusicService { get; set; } = MusicService.Deezer;
+    public MusicService MusicService { get; set; } = MusicService.None;
 
     /// <summary>
     /// Storage mode for downloaded files (default: Permanent)

@@ -408,7 +408,7 @@ public class AdminUiController : ControllerBase
 
     private string ProviderStatus(string id, string configuredStatus)
     {
-        var disabled = (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? "squidwtf")
+        var disabled = (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(p => p.Equals(id, StringComparison.OrdinalIgnoreCase));
         return disabled ? "disabled" : configuredStatus;
