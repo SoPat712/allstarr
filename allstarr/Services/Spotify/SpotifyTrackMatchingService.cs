@@ -106,8 +106,10 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         _logger.LogInformation("========================================");
 
-        // Wait a bit for the fetcher to run first
-        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken);
+        // The matching path resolves SpotifyPlaylistFetcher directly and can fetch on demand,
+        // so a long fixed startup delay only leaves freshly refreshed playlists looking empty.
+        // Keep a brief grace period for host initialization, then begin matching immediately.
+        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
         // Run once on startup to match any existing missing tracks
         try

@@ -1340,6 +1340,11 @@ tbody tr:hover {
     object-fit: contain;
 }
 
+.provider-logo.provider-spotify img {
+    width: 86%;
+    height: 86%;
+}
+
 .provider-spotify {
     background: #0d1f15;
     border-color: rgba(30, 215, 96, 0.35);
