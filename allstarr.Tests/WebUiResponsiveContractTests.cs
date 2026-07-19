@@ -43,6 +43,17 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void SidebarAvatar_PreservesTheWholeProfilePhoto()
+    {
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains(".user-avatar img", css, StringComparison.Ordinal);
+        Assert.Contains("object-fit: contain;", css, StringComparison.Ordinal);
+        Assert.Contains("object-position: center;", css, StringComparison.Ordinal);
+        Assert.Contains("border-radius: 8px;", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LibraryWorkflows_UseCompactControlsModalPreviewAndScrollableShell()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));

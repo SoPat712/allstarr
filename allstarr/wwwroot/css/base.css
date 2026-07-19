@@ -452,7 +452,8 @@ a {
     flex: 0 0 32px;
     width: 32px;
     height: 32px;
-    border-radius: 50%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
     background: var(--surface-elevated);
     color: var(--accent-strong);
     font-weight: 800;
@@ -469,6 +470,7 @@ a {
     max-height: 100%;
     object-fit: contain;
     object-position: center;
+    border-radius: 7px;
 }
 
 .main-shell {
