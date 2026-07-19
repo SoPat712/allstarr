@@ -8,6 +8,26 @@ namespace allstarr.Tests;
 
 public sealed class ExtensionSdkV1Tests : IDisposable
 {
+    [Fact]
+    public void ParseManifest_ValidatesSignedSessionConfiguration()
+    {
+        var manifest = ExtensionSdkV1.ParseManifest("""
+            {
+              "id":"signed-demo","displayName":"Signed demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+              "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],
+              "permissions":[{"kind":"Network","value":"https://api.example.test/","required":true}],
+              "requiredRuntimeFeatures":["signedSession@1","sessionGrant@1"],
+              "signedSession":{"namespace":"demo-v1","baseUrl":"https://api.example.test/v1","appVersion":"demo@1.0.0","headerPrefix":"X-Demo-","endpoints":{"refresh":"/session/refresh"}}
+            }
+            """);
+
+        Assert.NotNull(manifest.SignedSession);
+        Assert.Equal("demo-v1", manifest.SignedSession.Namespace);
+        Assert.Equal("X-Demo-", manifest.SignedSession.HeaderPrefix);
+        Assert.Equal("/session/refresh", manifest.SignedSession.Endpoints.Refresh);
+        Assert.Equal(300, manifest.SignedSession.TimeWindowSeconds);
+    }
+
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-sdk", Guid.NewGuid().ToString("N"));
 
     [Fact]
@@ -127,7 +147,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.Equal("spotiflac-demo", verified.Manifest.Id);
         Assert.All(verified.Manifest.Capabilities, capability =>
         {
-            Assert.False(capability.AccountRequired);
+            Assert.True(capability.AccountRequired);
             Assert.Contains(ProviderAccountScope.User, capability.AccountScopes);
         });
         Assert.Equal("icon.jpg", verified.Manifest.IconPath);

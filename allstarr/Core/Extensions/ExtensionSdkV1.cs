@@ -40,6 +40,23 @@ public sealed record ExtensionSdkQualityOption(
     string Label,
     string? Description);
 
+public sealed record ExtensionSignedSessionEndpoints(
+    string Bootstrap,
+    string Challenge,
+    string Exchange,
+    string? Refresh);
+
+public sealed record ExtensionSignedSessionConfig(
+    string Namespace,
+    Uri BaseUrl,
+    string AppVersion,
+    string Platform,
+    string CallbackUrl,
+    string SchemeLabel,
+    string HeaderPrefix,
+    int TimeWindowSeconds,
+    ExtensionSignedSessionEndpoints Endpoints);
+
 public sealed record ExtensionSdkManifest(
     string Id,
     string DisplayName,
@@ -54,7 +71,8 @@ public sealed record ExtensionSdkManifest(
     IReadOnlyList<ExtensionSdkSetting>? Settings = null,
     IReadOnlyList<ExtensionSdkQualityOption>? QualityOptions = null,
     IReadOnlyList<string>? RequiredRuntimeFeatures = null,
-    string? Compatibility = null);
+    string? Compatibility = null,
+    ExtensionSignedSessionConfig? SignedSession = null);
 
 public sealed record VerifiedExtensionPackage(
     ExtensionSdkManifest Manifest,
@@ -110,8 +128,51 @@ public static partial class ExtensionSdkV1
             var runtimeFeatures = OptionalStringArray(root, "requiredRuntimeFeatures", 64, 100);
             return new(id, displayName, version, sdk, entryPoint, capabilities, permissions,
                 description, author, iconPath, settings, qualityOptions, runtimeFeatures,
-                Optional(root, "compatibility"));
+                Optional(root, "compatibility"), ParseSignedSession(root));
         }
+    }
+
+    private static ExtensionSignedSessionConfig? ParseSignedSession(JsonElement root)
+    {
+        if ((!root.TryGetProperty("signedSession", out var value) || value.ValueKind == JsonValueKind.Null) &&
+            root.TryGetProperty("spotiflacManifest", out var original) && original.ValueKind == JsonValueKind.Object)
+            original.TryGetProperty("signedSession", out value);
+        if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new ExtensionSdkValidationException("signedSession must be an object.");
+        var ns = Required(value, "namespace");
+        if (!Regex.IsMatch(ns, "^[a-zA-Z0-9._-]{1,100}$", RegexOptions.CultureInvariant))
+            throw new ExtensionSdkValidationException("signedSession namespace is invalid.");
+        var baseUrlText = Required(value, "baseUrl");
+        if (!Uri.TryCreate(baseUrlText, UriKind.Absolute, out var baseUrl) ||
+            baseUrl.Scheme != Uri.UriSchemeHttps || string.IsNullOrWhiteSpace(baseUrl.Host))
+            throw new ExtensionSdkValidationException("signedSession baseUrl must be an absolute HTTPS URL.");
+        var appVersion = Optional(value, "appVersion") ?? "ext-1.0";
+        var platform = Optional(value, "platform") ?? "extension";
+        var callbackUrl = Optional(value, "callbackUrl") ?? "spotiflac://session-grant";
+        var schemeLabel = Optional(value, "schemeLabel") ?? "SPOTIFLAC-HMAC-V1";
+        var headerPrefix = Optional(value, "headerPrefix") ?? "X-Sig-";
+        var window = value.TryGetProperty("timeWindowSeconds", out var windowValue) && windowValue.TryGetInt32(out var parsedWindow)
+            ? parsedWindow : 300;
+        if (window is < 30 or > 3600)
+            throw new ExtensionSdkValidationException("signedSession timeWindowSeconds must be between 30 and 3600.");
+        var endpointsValue = value.TryGetProperty("endpoints", out var endpoints) && endpoints.ValueKind == JsonValueKind.Object
+            ? endpoints : default;
+        string Endpoint(string name, string fallback) => endpointsValue.ValueKind == JsonValueKind.Object
+            ? Optional(endpointsValue, name) ?? fallback : fallback;
+        var resolvedEndpoints = new ExtensionSignedSessionEndpoints(
+            Endpoint("bootstrap", "/bootstrap"),
+            Endpoint("challenge", "/challenge"),
+            Endpoint("exchange", "/session/exchange"),
+            Endpoint("refresh", string.Empty) is { Length: > 0 } refresh ? refresh : null);
+        foreach (var endpoint in new[] { resolvedEndpoints.Bootstrap, resolvedEndpoints.Challenge, resolvedEndpoints.Exchange, resolvedEndpoints.Refresh })
+        {
+            if (endpoint == null) continue;
+            if (endpoint.Contains("://", StringComparison.Ordinal) &&
+                Uri.TryCreate(endpoint, UriKind.Absolute, out var absolute) && absolute.Scheme != Uri.UriSchemeHttps)
+                throw new ExtensionSdkValidationException("signedSession endpoints must use HTTPS.");
+        }
+        return new(ns, baseUrl, appVersion, platform, callbackUrl, schemeLabel, headerPrefix, window, resolvedEndpoints);
     }
 
     public static VerifiedExtensionPackage VerifyArchive(

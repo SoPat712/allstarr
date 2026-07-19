@@ -14,6 +14,7 @@ using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Core.Storage;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace allstarr.Services.Common;
 
@@ -926,6 +927,7 @@ public class ExtensionSandbox
     private readonly JsValue _extensionObj;
     private readonly ILogger _logger;
     private readonly object _engineLock = new();
+    private readonly ExtensionHostBridge _hostBridge;
 
     public ExtensionSandbox(
         string folderPath,
@@ -934,7 +936,8 @@ public class ExtensionSandbox
         IHttpClientFactory httpClientFactory,
         ILogger logger,
         ExtensionRuntimePermissionSet? permissions = null,
-        string? runtimeStateDirectory = null)
+        string? runtimeStateDirectory = null,
+        IDataProtector? sessionProtector = null)
     {
         _logger = logger;
 
@@ -982,15 +985,18 @@ public class ExtensionSandbox
             options.TimeoutInterval(TimeSpan.FromSeconds(12));
         });
 
-        var hostBridge = new ExtensionHostBridge(
+        var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
+        var manifest = root.TryGetProperty("sdkVersion", out _) ? ExtensionSdkV1.ParseManifest(manifestJson) : null;
+        _hostBridge = new ExtensionHostBridge(
             runtimeStateDirectory ?? Path.Combine(Path.GetTempPath(), "allstarr-extension-runtime", Id),
             httpClientFactory,
             logger,
-            permissions ?? ExtensionRuntimePermissionSet.None);
-        _engine.SetValue("host", hostBridge);
+            permissions ?? ExtensionRuntimePermissionSet.None,
+            manifest?.SignedSession,
+            sessionProtector,
+            Id);
+        _engine.SetValue("host", _hostBridge);
 
-        var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
-        var manifest = isSpotiFlac ? ExtensionSdkV1.ParseManifest(manifestJson) : null;
         var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
         _engine.SetValue("_allstarrSettingsJson", settingsJson);
         _engine.SetValue("_allstarrSettingKeysJson", JsonSerializer.Serialize(
@@ -1001,6 +1007,7 @@ public class ExtensionSandbox
         _engine.Execute("const log = { info: function(...args) { host.Log('info', args.join(' ')); }, warn: function(...args) { host.Log('warn', args.join(' ')); }, error: function(...args) { host.Log('error', args.join(' ')); }, debug: function(...args) { host.Log('debug', args.join(' ')); } };");
         _engine.Execute("const storage = { get: function(key) { return host.StorageGet(key); }, set: function(key, val) { host.StorageSet(key, String(val)); }, remove: function(key) { return host.StorageRemove(key); } };");
         _engine.Execute("const secrets = { get: function(key) { return host.SecretGet(key); } };");
+        _engine.Execute("const session = { signedFetch: function(method, path, body, headers) { return host.SessionSignedFetch(String(method || 'GET'), String(path || ''), body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body)), headers || {}); }, completeGrant: function(grant) { return host.SessionCompleteGrant(grant == null ? null : String(grant)); }, status: function() { return host.SessionStatus(); }, clear: function() { return host.SessionClear(); } };");
         _engine.Execute("""
             function _allstarrResponse(raw) {
               raw = raw || {};
@@ -1158,6 +1165,12 @@ public class ExtensionSandbox
 
     public bool HasCallableHook(string hook) =>
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
+
+    public bool HasSignedSession => _hostBridge.HasSignedSession;
+    public object SignedSessionStatus() => _hostBridge.SessionStatus();
+    public object StartSignedSessionVerification() => _hostBridge.SessionStartVerification();
+    public object CompleteSignedSessionGrant(string grant) => _hostBridge.SessionCompleteGrant(grant);
+    public object ClearSignedSession() => _hostBridge.SessionClear();
 
     private bool IsCallable(string hook)
     {
@@ -1388,13 +1401,17 @@ public class ExtensionHostBridge
     private readonly Dictionary<string, string> _storage = new();
     private readonly string _storageFile;
     private readonly ExtensionRuntimePermissionSet _permissions;
+    private readonly ExtensionSignedSessionClient? _signedSession;
     private int _logEvents;
 
     public ExtensionHostBridge(
         string runtimeStateDirectory,
         IHttpClientFactory httpClientFactory,
         ILogger logger,
-        ExtensionRuntimePermissionSet permissions)
+        ExtensionRuntimePermissionSet permissions,
+        ExtensionSignedSessionConfig? signedSession = null,
+        IDataProtector? sessionProtector = null,
+        string? extensionId = null)
     {
         _folderPath = Path.GetFullPath(runtimeStateDirectory);
         Directory.CreateDirectory(_folderPath);
@@ -1402,8 +1419,27 @@ public class ExtensionHostBridge
         _logger = logger;
         _permissions = permissions;
         _storageFile = Path.Combine(_folderPath, "storage.json");
+        if (signedSession != null)
+        {
+            if (sessionProtector == null)
+                throw new InvalidOperationException("Signed-session extensions require protected runtime storage.");
+            _signedSession = new ExtensionSignedSessionClient(
+                signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins, _folderPath,
+                extensionId ?? signedSession.Namespace);
+        }
         LoadStorage();
     }
+
+    public bool HasSignedSession => _signedSession != null;
+    public object SessionStatus() => RequireSignedSession().Status();
+    public object SessionStartVerification() => RequireSignedSession().StartVerification();
+    public object SessionCompleteGrant(string? grant) => RequireSignedSession().CompleteGrant(grant);
+    public object SessionClear() => RequireSignedSession().Clear();
+    public object SessionSignedFetch(string method, string path, string? body, object? headers) =>
+        RequireSignedSession().SignedFetch(method, path, body, headers);
+
+    private ExtensionSignedSessionClient RequireSignedSession() => _signedSession ??
+        throw new InvalidOperationException("This extension does not declare a signed session.");
 
     public void Log(string level, string message)
     {

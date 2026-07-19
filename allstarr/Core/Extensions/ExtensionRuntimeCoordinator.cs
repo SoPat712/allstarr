@@ -4,6 +4,8 @@ using allstarr.Core.Storage;
 using allstarr.Core.Downloads;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.DataProtection;
+using System.Collections.Concurrent;
 
 namespace allstarr.Core.Extensions;
 
@@ -21,6 +23,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly ProviderDownloadWorkspaceOptions _downloadOptions;
     private readonly string _runtimeRoot;
     private readonly string _packageRoot;
+    private readonly IDataProtector _sessionProtector;
+    private readonly ConcurrentDictionary<Guid, ExtensionSandbox> _sandboxes = new();
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -33,7 +37,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         ProviderDownloadArtifactResolver downloadArtifacts,
         ProviderDownloadWorkspaceOptions downloadOptions,
         IConfiguration configuration,
-        ILogger<ExtensionRuntimeCoordinator> logger)
+        ILogger<ExtensionRuntimeCoordinator> logger,
+        IDataProtectionProvider? dataProtectionProvider = null)
     {
         _factory = factory;
         _controlPlane = controlPlane;
@@ -45,6 +50,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         _downloadArtifacts = downloadArtifacts;
         _downloadOptions = downloadOptions;
         _logger = logger;
+        _sessionProtector = (dataProtectionProvider ?? new EphemeralDataProtectionProvider())
+            .CreateProtector("allstarr.extensions.signed-session.v1");
         _packageRoot = Path.GetFullPath(configuration["Extensions:Directory"] ??
                                         Path.Combine(Directory.GetCurrentDirectory(), "extensions"));
         _runtimeRoot = Path.Combine(_packageRoot, ".runtime");
@@ -105,6 +112,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var package = await GetPackageAsync(packageId, cancellationToken);
         await _controlPlane.DisableAsync(packageId, expectedRevision, cancellationToken);
         _registry.RemoveExtension(package.ExtensionId);
+        _sandboxes.TryRemove(packageId, out _);
     }
 
     public async Task<ExtensionPackageRecord> UninstallAsync(
@@ -117,6 +125,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var package = await GetPackageAsync(packageId, cancellationToken);
         var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
         _registry.RemoveExtension(package.ExtensionId);
+        _sandboxes.TryRemove(packageId, out _);
         try
         {
             var packagePath = Path.GetFullPath(package.PackagePath);
@@ -182,7 +191,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             (manifest.Settings ?? []).Select(setting => setting.Key).ToHashSet(StringComparer.Ordinal));
         var sandbox = new ExtensionSandbox(package.PackagePath, package.ManifestJson,
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
-            _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id, package.Id.ToString("N")));
+            _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
+            _sessionProtector);
+        _sandboxes[package.Id] = sandbox;
         if (manifest.Capabilities.SelectMany(item => item.Hooks).Any(hook => !sandbox.HasCallableHook(hook)))
             throw new ExtensionSdkValidationException("The extension does not implement every declared SDK hook.");
         var implementations = manifest.Capabilities.Select(capability => (IProviderCapability)(capability.Kind switch
@@ -237,8 +248,24 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     {
         "fetch@1",
         "file@1",
-        "storage@1"
+        "storage@1",
+        "signedSession@1",
+        "sessionGrant@1"
     };
+
+    public object SignedSessionStatus(Guid packageId) => RequireSandbox(packageId).SignedSessionStatus();
+    public object StartSignedSessionVerification(Guid packageId) => RequireSandbox(packageId).StartSignedSessionVerification();
+    public object CompleteSignedSessionGrant(Guid packageId, string grant) => RequireSandbox(packageId).CompleteSignedSessionGrant(grant);
+    public object ClearSignedSession(Guid packageId) => RequireSandbox(packageId).ClearSignedSession();
+
+    private ExtensionSandbox RequireSandbox(Guid packageId)
+    {
+        if (!_sandboxes.TryGetValue(packageId, out var sandbox))
+            throw new KeyNotFoundException("The extension is not active in the runtime.");
+        if (!sandbox.HasSignedSession)
+            throw new InvalidOperationException("This extension does not use session authorization.");
+        return sandbox;
+    }
 
     private static ProviderSettingValueKind SettingKind(ExtensionSdkSetting setting)
     {

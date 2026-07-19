@@ -34,18 +34,20 @@ public static class SpotiFlacExtensionCompatibility
         var extensionId = $"spotiflac-{id}";
         var types = original["type"]?.AsArray().Select(item => item?.GetValue<string>() ?? "").ToHashSet(StringComparer.Ordinal) ?? [];
         var hasSettings = original["settings"] is JsonArray { Count: > 0 };
+        var requiresSettings = original["settings"] is JsonArray declaredSettings &&
+                               declaredSettings.OfType<JsonObject>().Any(item => item["required"]?.GetValue<bool>() == true);
         var capabilities = new JsonArray();
 
         if (types.Contains("metadata_provider"))
         {
-            capabilities.Add(Capability("Metadata", hasSettings,
+            capabilities.Add(Capability("Metadata", hasSettings, requiresSettings,
                 "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"));
         }
         if (types.Contains("lyrics_provider"))
-            capabilities.Add(Capability("Lyrics", hasSettings, "fetchLyrics"));
+            capabilities.Add(Capability("Lyrics", hasSettings, requiresSettings, "fetchLyrics"));
         if (types.Contains("download_provider") &&
             indexJs.Contains("download", StringComparison.Ordinal))
-            capabilities.Add(Capability("Download", hasSettings, "checkAvailability", "download"));
+            capabilities.Add(Capability("Download", hasSettings, requiresSettings, "checkAvailability", "download"));
 
         if (capabilities.Count == 0)
             throw new ExtensionSdkValidationException("SpotiFLAC extension does not expose a capability Allstarr can run yet.");
@@ -102,6 +104,7 @@ public static class SpotiFlacExtensionCompatibility
             ["settings"] = original["settings"]?.DeepClone() ?? new JsonArray(),
             ["qualityOptions"] = original["qualityOptions"]?.DeepClone() ?? new JsonArray(),
             ["requiredRuntimeFeatures"] = original["requiredRuntimeFeatures"]?.DeepClone() ?? new JsonArray(),
+            ["signedSession"] = original["signedSession"]?.DeepClone(),
             ["compatibility"] = Marker,
             ["spotiflacManifest"] = original.DeepClone()
         };
@@ -132,14 +135,14 @@ public static class SpotiFlacExtensionCompatibility
         return JsonSerializer.Serialize(values);
     }
 
-    private static JsonObject Capability(string kind, bool settingsAvailable, params string[] hooks) => new()
+    private static JsonObject Capability(string kind, bool settingsAvailable, bool settingsRequired, params string[] hooks) => new()
     {
         ["kind"] = kind,
         ["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray()),
         ["accountScopes"] = settingsAvailable
             ? new JsonArray("Global", "User", "Library")
             : new JsonArray(),
-        ["accountRequired"] = false
+        ["accountRequired"] = settingsRequired
     };
 
     private static JsonObject Permission(string kind, string value) => new()

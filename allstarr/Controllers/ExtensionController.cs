@@ -204,6 +204,43 @@ public class ExtensionController : ControllerBase
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
+    [HttpGet("packages/{packageId:guid}/session")]
+    public IActionResult SignedSessionStatus(Guid packageId)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
+        try { return Ok(_runtime.SignedSessionStatus(packageId)); }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
+    [HttpPost("packages/{packageId:guid}/session/start")]
+    public IActionResult StartSignedSession(Guid packageId)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
+        try { return Ok(_runtime.StartSignedSessionVerification(packageId)); }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
+    [HttpPost("packages/{packageId:guid}/session/grant")]
+    public IActionResult CompleteSignedSession(Guid packageId, [FromBody] SignedSessionGrantRequest request)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
+        if (string.IsNullOrWhiteSpace(request.Grant)) return BadRequest(new { error = "A session grant is required." });
+        try { return Ok(_runtime.CompleteSignedSessionGrant(packageId, request.Grant)); }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
+    [HttpDelete("packages/{packageId:guid}/session")]
+    public IActionResult ClearSignedSession(Guid packageId)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
+        try { return Ok(_runtime.ClearSignedSession(packageId)); }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
     [HttpPost("packages/{packageId:guid}/rollback")]
     public async Task<IActionResult> Rollback(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
@@ -470,6 +507,7 @@ public class ExtensionController : ControllerBase
             settings = manifest?.Settings,
             qualityOptions = manifest?.QualityOptions,
             requiredRuntimeFeatures = manifest?.RequiredRuntimeFeatures,
+            usesSignedSession = manifest?.SignedSession != null,
             state = item.State.ToString().ToLowerInvariant(),
             item.FailureCode,
             item.StagedAt,
@@ -487,6 +525,11 @@ public class InstallRequest
     public string DownloadUrl { get; set; } = "";
     public string Sha256 { get; set; } = "";
     public Guid? RegistryId { get; set; }
+}
+
+public sealed class SignedSessionGrantRequest
+{
+    public string Grant { get; set; } = "";
 }
 
 public sealed class RegistryRequest

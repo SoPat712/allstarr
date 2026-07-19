@@ -526,6 +526,14 @@ const API = {
     if (packageId) query.set("packageId", packageId);
     return requestJson(`/api/admin/extensions/logs?${query}`, { cache: "no-store" }, "Failed to load extension logs");
   },
+  extensionSession: (packageId) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/session`, { cache: "no-store" }, "Failed to load extension session"),
+  startExtensionSession: (packageId) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/session/start`, { method: "POST" }, "Failed to start extension authorization"),
+  completeExtensionSession: (packageId, grant) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/session/grant`, jsonBody({ grant }), "Failed to complete extension authorization"),
+  clearExtensionSession: (packageId) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/session`, { method: "DELETE" }, "Failed to clear extension authorization"),
   installExtension: (item) =>
     requestJson("/api/admin/extensions/install", jsonBody({ id: item.id || item.Id, downloadUrl: item.downloadUrl || item.DownloadUrl || "", sha256: item.sha256 || item.Sha256 || "", registryId: item.registryId || item.RegistryId || null }), "Failed to install extension"),
   scrobblingStatus: () => requestJson("/api/admin/scrobbling/status", {}, "Failed to load scrobbling"),
@@ -605,6 +613,7 @@ class AllstarrApp extends LitElement {
     extensionPermissionPackageId: { state: true },
     extensionLogs: { state: true },
     selectedExtensionPackageId: { state: true },
+    extensionSession: { state: true },
     scrobbling: { state: true },
     appleMusicStatus: { state: true },
     serviceResults: { state: true },
@@ -685,6 +694,7 @@ class AllstarrApp extends LitElement {
     this.extensionPermissionPackageId = "";
     this.extensionLogs = [];
     this.selectedExtensionPackageId = "";
+    this.extensionSession = null;
     this.scrobbling = null;
     this.appleMusicStatus = null;
     this.appleUpload = null;
@@ -1656,6 +1666,45 @@ class AllstarrApp extends LitElement {
       delete nextActions[id];
       this.extensionActions = nextActions;
     }
+  }
+
+  async openExtensionManager(item) {
+    const id = item.id || item.Id;
+    this.selectedExtensionPackageId = id;
+    this.extensionSession = null;
+    const requests = [API.extensionLogs(id)];
+    if (item.usesSignedSession || item.UsesSignedSession) requests.push(API.extensionSession(id));
+    const results = await Promise.allSettled(requests);
+    if (results[0].status === "fulfilled") this.extensionLogs = asArray(results[0].value?.items || results[0].value?.Items || results[0].value);
+    if (results[1]?.status === "fulfilled") this.extensionSession = results[1].value;
+  }
+
+  closeExtensionManager() {
+    this.selectedExtensionPackageId = "";
+    this.extensionSession = null;
+  }
+
+  async startExtensionAuthorization(item) {
+    const id = item.id || item.Id;
+    try {
+      const result = await API.startExtensionSession(id);
+      this.extensionSession = { ...(this.extensionSession || {}), ...result };
+      const authUrl = result.auth_url || result.open_auth_url || result.authUrl || result.openAuthUrl;
+      if (authUrl) window.open(authUrl, "_blank", "noopener,noreferrer");
+      this.toast(authUrl ? "Authorization opened in a new tab" : "Extension session is ready");
+    } catch (error) { this.toast(error.message, "error"); }
+  }
+
+  async completeExtensionAuthorization(event, item) {
+    event.preventDefault();
+    const grant = String(new FormData(event.currentTarget).get("grant") || "").trim();
+    try {
+      const result = await API.completeExtensionSession(item.id || item.Id, grant);
+      if (result.success === false) throw new Error(result.error || "The grant was rejected");
+      this.extensionSession = await API.extensionSession(item.id || item.Id);
+      event.currentTarget.reset();
+      this.toast("Extension account authorized");
+    } catch (error) { this.toast(error.message, "error"); }
   }
 
   async runServiceAction(key, action) {
@@ -3332,7 +3381,7 @@ class AllstarrApp extends LitElement {
       ? html`<select name=${field.key} ?required=${field.required}>${asArray(field.options).map((option) => html`<option value=${option}>${qualityLabel(providerId, option)}</option>`)}</select>`
       : field.type === "toggle"
         ? html`<input name=${field.key} type="checkbox">`
-        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}</div>`)
+        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}${field.description ? html`<small>${field.description}</small>` : nothing}</div>`)
       : html`<div class="empty full-span">This provider does not require account details.</div>`;
   }
 
@@ -3994,6 +4043,84 @@ class AllstarrApp extends LitElement {
     await this.savePriority(group, providers);
   }
 
+  renderExtensionManager(item, packageState) {
+    if (!item) return nothing;
+    const close = () => this.closeExtensionManager();
+    const id = item.id || item.Id;
+    const extensionId = item.extensionId || item.ExtensionId;
+    const name = item.displayName || item.DisplayName || extensionId;
+    const state = packageState(item);
+    const revision = item.revision ?? item.Revision ?? 0;
+    const previousPackageId = item.previousPackageId || item.PreviousPackageId;
+    const settings = asArray(item.settings || item.Settings);
+    const requiredSettings = settings.filter((setting) => setting.required ?? setting.Required);
+    const accounts = asArray(this.providerAccounts).filter((account) =>
+      String(account.providerId || account.ProviderId).toLowerCase() === String(extensionId).toLowerCase());
+    const usesSession = item.usesSignedSession || item.UsesSignedSession;
+    const sessionAuthenticated = this.extensionSession?.authenticated ?? this.extensionSession?.Authenticated;
+    const action = this.extensionActions[id];
+    return html`
+      <div class="modal-backdrop extension-manage-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
+        <section class="panel extension-manage-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-manage-title" tabindex="-1">
+          <div class="dialog-header extension-manage-hero">
+            <div class="provider-brand">
+              ${item.iconUrl || item.IconUrl ? html`<span class="provider-logo extension-manage-logo"><img src=${item.iconUrl || item.IconUrl} alt=""></span>` : html`<span class="provider-logo extension-manage-logo">${String(name).slice(0, 2)}</span>`}
+              <div><h3 id="extension-manage-title">${name}</h3><span class="muted">Version ${item.version || item.Version}${item.author || item.Author ? ` · ${item.author || item.Author}` : ""}</span></div>
+            </div>
+            <div class="row-actions"><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : "warning"}">${state === "active" ? "Enabled" : titleCase(state)}</span><button class="icon-button ghost" aria-label="Close extension manager" @click=${close}>${icon("close")}</button></div>
+          </div>
+          <p class="muted extension-manage-description">${display(item.description || item.Description, "No description supplied by this extension.")}</p>
+
+          <div class="extension-manage-grid">
+            <div class="extension-manage-main">
+              ${settings.length ? html`
+                <section class="extension-manage-section">
+                  <div class="section-heading"><div><h4>Provider configuration</h4><p>${requiredSettings.length ? `${requiredSettings.length} required field${requiredSettings.length === 1 ? "" : "s"}` : "Optional provider preferences"}</p></div><span class="status-chip ${accounts.length ? "configured" : requiredSettings.length ? "warning" : "disabled"}">${accounts.length ? "Account saved" : requiredSettings.length ? "Setup required" : "Optional"}</span></div>
+                  ${accounts.length ? html`
+                    <div class="extension-account-summary">${accounts.map((account) => html`<div><strong>${account.displayName || account.DisplayName}</strong><span class="muted">${account.enabled ?? account.Enabled ? "Enabled" : "Disabled"}</span></div>`)}</div>
+                    <button @click=${() => { close(); location.hash = "#/settings"; this.providerAccountConfigOpen = new Set(accounts.map((account) => account.id || account.Id)); }}>Manage saved account</button>
+                  ` : html`
+                    <form class="config-grid extension-config-form" @submit=${this.createProviderAccount}>
+                      <input type="hidden" name="providerId" value=${extensionId}>
+                      <input type="hidden" name="scope" value="User">
+                      <div class="form-row full-span"><label>Account name</label><input name="displayName" value=${name} required></div>
+                      ${this.renderNewProviderCredentialFields(extensionId)}
+                      <div class="actions full-span"><button class="primary">Save and test</button></div>
+                    </form>
+                  `}
+                </section>` : nothing}
+
+              ${usesSession ? html`
+                <section class="extension-manage-section">
+                  <div class="section-heading"><div><h4>Session authorization</h4><p>Secure sign-in required by this extension’s service.</p></div><span class="status-chip ${sessionAuthenticated ? "configured" : "warning"}">${sessionAuthenticated ? "Authorized" : "Not authorized"}</span></div>
+                  ${sessionAuthenticated ? html`<div class="row-actions"><button class="danger" @click=${async () => { await API.clearExtensionSession(id); this.extensionSession = await API.extensionSession(id); this.toast("Extension session cleared"); }}>Sign out session</button></div>` : html`
+                    <div class="callout"><strong>Authorize in two steps</strong><p>Open the verification page, finish its challenge, then paste the one-time grant from the result here.</p></div>
+                    <div class="row-actions"><button class="primary" @click=${() => this.startExtensionAuthorization(item)}>Open authorization</button></div>
+                    <form class="inline-form extension-grant-form" @submit=${(event) => this.completeExtensionAuthorization(event, item)}><input name="grant" required autocomplete="off" placeholder="Paste one-time session grant"><button>Complete sign-in</button></form>
+                  `}
+                </section>` : nothing}
+
+              <section class="extension-manage-section">
+                <h4>Capabilities and runtime</h4>
+                <div class="row-actions">${asArray(item.requiredRuntimeFeatures || item.RequiredRuntimeFeatures).map((feature) => html`<span class="chip">${feature}</span>`)}</div>
+                ${state === "failed" && (item.failureCode || item.FailureCode) ? html`<div class="error-text">${titleCase(item.failureCode || item.FailureCode)}</div>` : nothing}
+              </section>
+            </div>
+            <aside class="extension-manage-side">
+              <section class="extension-manage-section"><h4>Quick actions</h4><div class="extension-action-stack">
+                ${state === "reviewrequired" ? html`<button class="primary" @click=${() => this.loadExtensionPermissions(item)}>Review permissions</button>` : nothing}
+                ${["staged", "disabled"].includes(state) ? html`<button class="primary" ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Enabling", () => API.activateExtensionPackage(id, revision), "Extension enabled")}>${action || "Enable extension"}</button>` : nothing}
+                ${state === "active" ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Disabling", () => API.disableExtensionPackage(id, revision), "Extension disabled")}>${action || "Disable extension"}</button>` : nothing}
+                ${state === "active" && previousPackageId ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Restoring", () => API.rollbackExtensionPackage(id, revision), "Previous extension version restored")}>Restore previous version</button>` : nothing}
+                ${state !== "active" ? html`<button class="danger" ?disabled=${Boolean(action)} @click=${() => { if (window.confirm("Remove this extension? Provider accounts and saved credentials will be retained.")) return this.runExtensionAction(item, "Removing", () => API.uninstallExtensionPackage(id, revision), "Extension removed; provider accounts retained"); }}>Remove extension</button>` : nothing}
+              </div></section>
+              <section class="extension-manage-section"><h4>Recent activity</h4><div class="extension-mini-log">${asArray(this.extensionLogs).slice(0, 5).map((entry) => html`<div><strong>${titleCase(entry.eventCode || entry.EventCode)}</strong><small>${formatDate(entry.createdAt || entry.CreatedAt)}</small></div>`)}</div></section>
+            </aside>
+          </div>
+        </section>
+      </div>`;
+  }
+
   renderExtensions() {
     const registries = asArray(this.extensionRegistries);
     const packages = asArray(this.extensionPackages);
@@ -4013,6 +4140,8 @@ class AllstarrApp extends LitElement {
       }
     }
     const installedPackages = [...installedByExtension.values()];
+    const availableStoreItems = storeItems.filter((item) => !installedByExtension.has(String(item.id || item.Id || "").toLowerCase()));
+    const managedPackage = installedPackages.find((item) => String(item.id || item.Id) === String(this.selectedExtensionPackageId));
     const permissionPackage = installedPackages.find((item) =>
       String(item.id || item.Id) === String(this.extensionPermissionPackageId));
     const renderPermissionReview = (item, action) => {
@@ -4056,16 +4185,16 @@ class AllstarrApp extends LitElement {
       <div class="panel">
         <div class="view-header">
           <div>
-            <h3>Extension store</h3>
-            <p>Add optional providers and features. Allstarr verifies every download before enabling it.</p>
+            <h3>Available extensions</h3>
+            <p>Choose a package to install. Download verification and permission review happen before it is enabled.</p>
           </div>
           <div class="actions">
             <button @click=${async () => { await Promise.all([this.loadExtensionControlPlane(), this.loadExtensionStore()]); this.toast("Extension store refreshed"); }}>Refresh</button>
           </div>
         </div>
         ${errors.length ? html`<div class="extension-store-errors">${errors.map((error) => html`<div class="error-text">${error.Repository || error.repository}: ${error.Message || error.message}</div>`)}</div>` : nothing}
-        <div class="extension-store-grid">
-          ${storeItems.length ? storeItems.map((item) => {
+        <div class="extension-store-grid extension-available-grid">
+          ${availableStoreItems.length ? availableStoreItems.map((item) => {
             const key = item.id || item.Id || item.displayName || item.DisplayName;
             const extensionId = String(item.id || item.Id || "").toLowerCase();
             const installed = installedByExtension.get(extensionId);
@@ -4089,47 +4218,33 @@ class AllstarrApp extends LitElement {
                 ${action ? html`<div class="progress indeterminate"><span></span></div>` : nothing}
               </article>
             `;
-          }) : html`<div class="empty extension-store-empty"><strong>No extensions available</strong><span>Add a compatible catalog under Advanced settings, then refresh the store.</span></div>`}
+          }) : html`<div class="empty extension-store-empty"><strong>Everything available is installed</strong><span>Refresh the catalog to check for new extensions.</span></div>`}
         </div>
       </div>
       ${installedPackages.length ? html`
         <div class="panel">
           <div class="view-header"><div><h3>Installed extensions</h3><p>Enable, disable, or remove extensions already added to Allstarr.</p></div></div>
-          <div class="activity-list">
+          <div class="extension-installed-list">
             ${installedPackages.map((item) => {
               const id = item.id || item.Id;
               const action = this.extensionActions[id];
               const rawState = packageState(item);
               const label = ({ active: "Enabled", reviewrequired: "Permission review needed", staged: "Ready to enable", disabled: "Disabled", failed: "Needs attention" })[rawState] || titleCase(rawState);
-              const revision = item.revision ?? item.Revision ?? 0;
-              const previousPackageId = item.previousPackageId || item.PreviousPackageId;
               return html`
-                <div class="activity-item extension-package">
+                <button class="extension-installed-row" @click=${() => this.openExtensionManager(item)}>
                   <div class="extension-package-heading">
-                    <div class="provider-brand">${item.iconUrl || item.IconUrl ? html`<span class="provider-logo"><img src=${item.iconUrl || item.IconUrl} alt=""></span>` : nothing}<div><strong>${item.displayName || item.DisplayName || item.extensionId || item.ExtensionId}</strong><span class="muted">Version ${item.version || item.Version}</span></div></div>
+                    <div class="provider-brand">${item.iconUrl || item.IconUrl ? html`<span class="provider-logo"><img src=${item.iconUrl || item.IconUrl} alt=""></span>` : html`<span class="provider-logo">${String(item.displayName || item.DisplayName || "Ex").slice(0, 2)}</span>`}<div><strong>${item.displayName || item.DisplayName || item.extensionId || item.ExtensionId}</strong><span class="muted">Version ${item.version || item.Version}</span></div></div>
                     <span class="status-chip ${rawState === "active" ? "configured" : rawState === "failed" ? "error" : rawState === "disabled" ? "disabled" : "warning"}">${label}</span>
                   </div>
-                  <div class="row-actions">
-                    ${rawState === "reviewrequired" ? html`<button class="primary" ?disabled=${Boolean(action)} @click=${() => this.loadExtensionPermissions(item)}>Review and enable</button>` : nothing}
-                    ${["staged", "disabled"].includes(rawState) ? html`<button class="primary" ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Enabling", () => API.activateExtensionPackage(id, revision), "Extension enabled")}>Enable</button>` : nothing}
-                    ${rawState === "active" ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Disabling", () => API.disableExtensionPackage(id, revision), "Extension disabled")}>Disable</button>` : nothing}
-                  </div>
-                  ${rawState === "failed" && (item.failureCode || item.FailureCode) ? html`<div class="error-text">${titleCase(item.failureCode || item.FailureCode)}</div>` : nothing}
-                  <details class="extension-package-manage">
-                    <summary>Manage</summary>
-                    <div class="row-actions">
-                      ${rawState === "active" && previousPackageId ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Restoring", () => API.rollbackExtensionPackage(id, revision), "Previous extension version restored")}>Restore previous version</button>` : nothing}
-                      <button @click=${async () => { this.selectedExtensionPackageId = id; const response = await API.extensionLogs(id); this.extensionLogs = asArray(response?.items || response?.Items || response); }}>View activity</button>
-                      ${rawState !== "active" ? html`<button class="danger" ?disabled=${Boolean(action)} @click=${() => { if (window.confirm("Remove this extension? Provider accounts and saved credentials will be retained.")) return this.runExtensionAction(item, "Removing", () => API.uninstallExtensionPackage(id, revision), "Extension removed; provider accounts retained"); }}>Remove</button>` : nothing}
-                    </div>
-                  </details>
                   ${action ? html`<div class="progress indeterminate"><span></span></div>` : nothing}
-                </div>
+                  <span class="extension-row-chevron" aria-hidden="true">›</span>
+                </button>
               `;
             })}
           </div>
         </div>
       ` : nothing}
+      ${this.renderExtensionManager(managedPackage, packageState)}
       ${renderPermissionReview(permissionPackage, permissionPackage ? this.extensionActions[permissionPackage.id || permissionPackage.Id] : "")}
       <details class="content-disclosure extension-advanced">
         <summary><span><strong>Advanced settings</strong><small>Catalogs, direct installs, activity, and recovery</small></span></summary>
@@ -4392,7 +4507,7 @@ class AllstarrApp extends LitElement {
         </div>
         ${this.renderProviderAccountModal()}
         ${this.isAdministrator() ? html`<details class="content-disclosure panel">
-          <summary><span><strong>Extension store</strong><small>Install and manage optional provider packages</small></span></summary>
+          <summary><span><strong>Extensions</strong><small>Install and manage optional provider packages</small></span></summary>
           <div class="disclosure-body">${this.renderExtensions()}</div>
         </details>` : nothing}
         ${asArray(this.schema?.configSections).map((section) => html`

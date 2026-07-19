@@ -1800,11 +1800,20 @@ fieldset.form-row > label small {
     align-content: start;
     gap: var(--space-3);
     min-width: 0;
-    min-height: 190px;
+    min-height: 168px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-elevated);
     padding: var(--space-4);
+}
+
+.extension-available-grid .extension-store-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.extension-available-grid .extension-store-card-heading,
+.extension-available-grid .row-actions {
+    grid-column: 1 / -1;
 }
 
 .extension-store-card-heading {
@@ -1875,6 +1884,142 @@ fieldset.form-row > label small {
 .extension-permission-review,
 .extension-log-list {
     min-width: 0;
+}
+
+.extension-installed-list {
+    display: grid;
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--border);
+}
+
+.extension-installed-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    min-height: 76px;
+    border: 0;
+    border-radius: 0;
+    background: var(--surface-elevated);
+    padding: var(--space-3) var(--space-4);
+    color: var(--text);
+    text-align: left;
+}
+
+.extension-installed-row:hover {
+    background: color-mix(in srgb, var(--surface-elevated), var(--accent) 5%);
+}
+
+.extension-installed-row .extension-package-heading {
+    align-items: center;
+}
+
+.extension-row-chevron {
+    color: var(--text-muted);
+    font-size: 1.6rem;
+}
+
+.extension-manage-backdrop {
+    z-index: 26;
+}
+
+.extension-manage-dialog {
+    display: grid;
+    width: min(980px, calc(100vw - 40px));
+    max-height: min(850px, calc(100dvh - 40px));
+    overflow: auto;
+    border-color: color-mix(in srgb, var(--accent), var(--border) 58%);
+    box-shadow: var(--shadow-modal);
+}
+
+.extension-manage-hero {
+    align-items: center;
+}
+
+.extension-manage-logo {
+    width: 64px;
+    height: 64px;
+    font-size: 1rem;
+}
+
+.extension-manage-description {
+    margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+}
+
+.extension-manage-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(240px, 0.8fr);
+    gap: var(--space-4);
+}
+
+.extension-manage-main,
+.extension-manage-side {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+}
+
+.extension-manage-section {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+    padding: var(--space-4);
+}
+
+.extension-manage-section h4,
+.extension-manage-section p {
+    margin: 0;
+}
+
+.extension-account-summary,
+.extension-mini-log,
+.extension-action-stack {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.extension-account-summary > div,
+.extension-mini-log > div {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-2);
+}
+
+.extension-action-stack button {
+    width: 100%;
+}
+
+.extension-grant-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+@media (max-width: 760px) {
+    .extension-manage-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .extension-installed-row,
+    .extension-grant-form {
+        grid-template-columns: 1fr;
+    }
+
+    .extension-installed-row .extension-package-heading {
+        align-items: flex-start;
+    }
+
+    .extension-row-chevron {
+        display: none;
+    }
 }
 
 .extension-package-heading,

@@ -7,11 +7,57 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace allstarr.Tests;
 
 public sealed class ExtensionCapabilityAdapterTests
 {
+    [Fact]
+    public void SignedSessionRuntime_BootstrapsExchangesAndSignsRequests()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-signed-session", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string manifest = """
+                {"id":"signed-demo","displayName":"Signed demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+                 "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],
+                 "permissions":[{"kind":"Network","value":"https://api.example.test/","required":true}],
+                 "requiredRuntimeFeatures":["signedSession@1","sessionGrant@1"],
+                 "signedSession":{"namespace":"demo-v1","baseUrl":"https://api.example.test/v1","appVersion":"demo@1.0.0"}}
+                """;
+            const string script = """
+                registerExtension({
+                  searchTracks:function(){return session.signedFetch('GET','/catalog',null,{});},
+                  authorize:function(){return session.signedFetch('GET','/catalog',null,{});}
+                });
+                """;
+            var handler = new SignedSessionHandler();
+            var permissions = new ExtensionRuntimePermissionSet(
+                new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>());
+            var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(handler), NullLogger.Instance,
+                permissions, Path.Combine(root, "runtime"), new EphemeralDataProtectionProvider().CreateProtector("test"));
+
+            var verification = sandbox.InvokeJson("authorize", "{}");
+            Assert.True(verification?.Contains("VERIFY_REQUIRED", StringComparison.Ordinal) == true, verification);
+            Assert.Contains("challenge-1", verification, StringComparison.Ordinal);
+
+            var exchange = JsonSerializer.Serialize(sandbox.CompleteSignedSessionGrant("grant-1"));
+            Assert.Contains("true", exchange, StringComparison.OrdinalIgnoreCase);
+
+            var response = sandbox.InvokeJson("searchTracks", "{}");
+            Assert.Contains("catalog ok", response, StringComparison.Ordinal);
+            Assert.NotNull(handler.SignedRequest);
+            Assert.Equal("session-1", handler.SignedRequest!.Headers.GetValues("X-Sig-Session").Single());
+            Assert.True(handler.SignedRequest.Headers.Contains("X-Sig-Signature"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     [Fact]
     public void SpotiFlacRuntimeAdapter_MapsLegacySearchAndArtwork()
     {
@@ -355,6 +401,32 @@ public sealed class ExtensionCapabilityAdapterTests
             response.RequestMessage = request;
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class SignedSessionHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? SignedRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            HttpResponseMessage response;
+            if (request.RequestUri!.AbsolutePath.EndsWith("/bootstrap", StringComparison.Ordinal))
+                response = Json("{\"challenge_id\":\"challenge-1\"}");
+            else if (request.RequestUri.AbsolutePath.EndsWith("/session/exchange", StringComparison.Ordinal))
+                response = Json("{\"session_id\":\"session-1\",\"session_secret\":\"secret-1\",\"expires_at\":\"2099-01-01T00:00:00Z\"}");
+            else
+            {
+                SignedRequest = request;
+                response = Json("{\"message\":\"catalog ok\"}");
+            }
+            response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
+
+        private static HttpResponseMessage Json(string value) => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(value, Encoding.UTF8, "application/json")
+        };
     }
 
     private sealed record DownloadFixtureState(string Root, MemoryArtifactStore Store,
