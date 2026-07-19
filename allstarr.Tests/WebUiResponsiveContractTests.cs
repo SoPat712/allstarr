@@ -243,7 +243,10 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("!providersWithoutCardMark.has(normalizedProviderId)", script, StringComparison.Ordinal);
         Assert.Contains("const hasEditableConfig = asArray(provider.configSchema).length > 0;", script, StringComparison.Ordinal);
         Assert.Contains("status !== \"disabled\" && hasEditableConfig ? html`", script, StringComparison.Ordinal);
-        Assert.Contains("Manage accounts", script, StringComparison.Ordinal);
+        Assert.Contains(">Add account</button>", script, StringComparison.Ordinal);
+        Assert.Contains("provider-account-dialog", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Manage accounts", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Add or enable a provider account above", script, StringComparison.Ordinal);
         Assert.Contains("const open = hasEditableConfig &&", script, StringComparison.Ordinal);
     }
 
@@ -254,6 +257,9 @@ public sealed class WebUiResponsiveContractTests
         var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("provider-account-grid", script, StringComparison.Ordinal);
+        Assert.Contains("providerAccountModalOpen", script, StringComparison.Ordinal);
+        Assert.Contains("event.target === event.currentTarget", script, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"Escape\"", script, StringComparison.Ordinal);
         Assert.Contains("<button @click=${() => this.toggleProviderAccountConfiguration(id)}", script, StringComparison.Ordinal);
         Assert.Contains(": \"Configure\"}</button>", script, StringComparison.Ordinal);
         Assert.Contains("Save and test", script, StringComparison.Ordinal);

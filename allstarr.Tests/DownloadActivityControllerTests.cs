@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Models.Download;
 using allstarr.Services;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
@@ -67,6 +68,36 @@ public sealed class DownloadActivityControllerTests
         Assert.Equal(120, entry.GetProperty("DurationSeconds").GetInt32());
         Assert.Equal(0.25, entry.GetProperty("PlaybackProgress").GetDouble());
         Assert.True(entry.GetProperty("Scrobbled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Queue_PreservesArtworkFromAnActiveExternalDownload()
+    {
+        var download = new DownloadInfo
+        {
+            SongId = "ext-apple-download-song-123",
+            ExternalId = "123",
+            ExternalProvider = "apple-download",
+            Title = "External title",
+            Artist = "External artist",
+            CoverArtUrl = "https://artwork.example/cover.jpg",
+            DurationSeconds = 180,
+            Status = DownloadStatus.Completed,
+            StartedAt = DateTime.UtcNow
+        };
+        var service = new Moq.Mock<IDownloadService>();
+        service.Setup(item => item.GetActiveDownloads()).Returns([download]);
+        var source = new StubPlaybackSource(
+            new PlaybackActivityState("device-1", download.SongId, TimeSpan.FromSeconds(20).Ticks, DateTime.UtcNow));
+        var controller = CreateController([service.Object], [source], []);
+
+        var result = await controller.GetDownloadQueue();
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var entry = Assert.Single(document.RootElement.EnumerateArray());
+        Assert.Equal("https://artwork.example/cover.jpg", entry.GetProperty("CoverArtUrl").GetString());
+        Assert.True(entry.GetProperty("IsPlaying").GetBoolean());
     }
 
     [Fact]

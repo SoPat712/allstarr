@@ -84,6 +84,12 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     /// </summary>
     protected abstract string ProviderName { get; }
 
+    /// <summary>
+    /// Provider identifier used for metadata lookup when the download capability has a
+    /// different runtime identifier (for example apple-download versus applemusic).
+    /// </summary>
+    protected virtual string MetadataProviderName => ProviderName;
+
     protected BaseDownloadService(
         IConfiguration configuration,
         ILocalLibraryService localLibraryService,
@@ -227,7 +233,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         try
         {
             // Get metadata for the track
-            var song = await MetadataService.GetSongAsync(externalProvider, externalId);
+            var song = await MetadataService.GetSongAsync(MetadataProviderName, externalId);
             if (song == null)
             {
                 throw new Exception("Song not found");
@@ -531,14 +537,14 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             if (CurrentDownloadMode == DownloadMode.Album)
             {
                 // First try to get the song to extract album ID
-                var tempSong = await MetadataService.GetSongAsync(externalProvider, externalId);
+                var tempSong = await MetadataService.GetSongAsync(MetadataProviderName, externalId);
                 if (tempSong != null && !string.IsNullOrEmpty(tempSong.AlbumId))
                 {
                     var albumExternalId = ExtractExternalIdFromAlbumId(tempSong.AlbumId);
                     if (!string.IsNullOrEmpty(albumExternalId))
                     {
                         // Get full album with correct AlbumArtist
-                        var album = await MetadataService.GetAlbumAsync(externalProvider, albumExternalId);
+                        var album = await MetadataService.GetAlbumAsync(MetadataProviderName, albumExternalId);
                         if (album != null)
                         {
                             // Find the track in the album
@@ -551,7 +557,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             // Fallback to individual song fetch if not in Album mode or album fetch failed
             if (song == null)
             {
-                song = await MetadataService.GetSongAsync(externalProvider, externalId);
+                song = await MetadataService.GetSongAsync(MetadataProviderName, externalId);
             }
 
             if (song == null)
@@ -565,6 +571,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
                 info.Title = song.Title ?? "Unknown Title";
                 info.Artist = song.Artist ?? "Unknown Artist";
                 info.DurationSeconds = song.Duration;
+                info.CoverArtUrl = song.CoverArtUrlLarge ?? song.CoverArtUrl;
             }
 
             var localPath = await DownloadTrackAsync(externalId, song, cancellationToken);
@@ -682,7 +689,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         Logger.LogInformation("Starting background download for album {AlbumId} (excluding track {TrackId})",
             albumExternalId, excludeTrackExternalId);
 
-        var album = await MetadataService.GetAlbumAsync(ProviderName, albumExternalId);
+        var album = await MetadataService.GetAlbumAsync(MetadataProviderName, albumExternalId);
         if (album == null)
         {
             Logger.LogWarning("Album {AlbumId} not found, cannot download remaining tracks", albumExternalId);

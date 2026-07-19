@@ -16,6 +16,7 @@ public class AppleMusicDownloadService : BaseDownloadService
     private readonly IAppleDownloadEndpointDiscovery _endpointDiscovery;
 
     protected override string ProviderName => "apple-download";
+    protected override string MetadataProviderName => "applemusic";
 
     public AppleMusicDownloadService(
         IHttpClientFactory httpClientFactory,

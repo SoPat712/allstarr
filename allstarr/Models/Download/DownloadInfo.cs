@@ -14,6 +14,7 @@ public class DownloadInfo
     public double Progress { get; set; } // 0.0 to 1.0
     public bool RequestedForStreaming { get; set; }
     public int? DurationSeconds { get; set; }
+    public string? CoverArtUrl { get; set; }
     public string? LocalPath { get; set; }
     public string? ErrorMessage { get; set; }
     public DateTime StartedAt { get; set; }

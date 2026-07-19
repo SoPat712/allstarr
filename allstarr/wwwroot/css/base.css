@@ -984,7 +984,6 @@ tbody tr:hover {
 
 .provider-cluster {
     display: grid;
-    grid-template-columns: minmax(280px, 0.8fr) minmax(0, 2.2fr);
     align-content: start;
     gap: var(--space-3);
     min-width: 0;
@@ -1004,7 +1003,7 @@ tbody tr:hover {
 .runtime-capability-header,
 .runtime-capability {
     display: grid;
-    grid-template-columns: minmax(88px, 1fr) minmax(110px, 1.25fr) minmax(120px, 1.35fr) auto;
+    grid-template-columns: minmax(130px, 0.9fr) minmax(170px, 1fr) minmax(230px, 1.6fr) minmax(76px, auto);
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
@@ -1051,6 +1050,21 @@ tbody tr:hover {
     align-content: start;
     gap: var(--space-4);
     min-width: 0;
+}
+
+.provider-account-group {
+    display: grid;
+    gap: var(--space-3);
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
+}
+
+.provider-account-group > h4 {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
 }
 
 .account-create-disclosure {
@@ -1200,6 +1214,28 @@ tbody tr:hover {
     overflow: hidden;
 }
 
+.provider-overview {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-5);
+}
+
+.provider-state-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+}
+
+.provider-empty-state {
+    margin: 0;
+    border-left: 3px solid var(--text-muted);
+    color: var(--text-secondary);
+    padding: var(--space-2) var(--space-3);
+}
+
 .provider-head {
     display: flex;
     justify-content: space-between;
@@ -1223,7 +1259,33 @@ tbody tr:hover {
 }
 
 .provider-actions {
-    justify-content: flex-start;
+    justify-content: flex-end;
+}
+
+.provider-account-dialog {
+    display: grid;
+    gap: var(--space-4);
+    width: min(760px, 100%);
+    max-height: min(820px, calc(100dvh - (2 * var(--space-5))));
+    overflow: auto;
+    box-shadow: var(--shadow-modal);
+}
+
+.provider-account-backdrop {
+    z-index: 24;
+}
+
+.provider-account-dialog-heading {
+    margin-bottom: 0;
+}
+
+.provider-account-dialog-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-4);
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-4);
 }
 
 .provider-brand {
@@ -1778,6 +1840,7 @@ fieldset.form-row > label small {
     height: 100%;
     width: var(--progress, 0%);
     background: var(--accent);
+    transition: width 850ms linear;
 }
 
 .progress.indeterminate span {
@@ -1802,7 +1865,7 @@ fieldset.form-row > label small {
     left: calc(var(--rail-width) + var(--space-5));
     z-index: 5;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+    grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.8fr) minmax(170px, 0.6fr);
     align-items: center;
     gap: var(--space-4);
     min-height: var(--now-playing-height);
@@ -1819,6 +1882,14 @@ fieldset.form-row > label small {
     align-items: center;
     gap: var(--space-3);
     min-width: 0;
+}
+
+.now-track .art {
+    width: 52px;
+    height: 52px;
+    border-radius: calc(var(--radius) - 2px);
+    object-fit: cover;
+    background: var(--surface-elevated);
 }
 
 .now-title {
@@ -1839,6 +1910,41 @@ fieldset.form-row > label small {
 .now-progress {
     display: grid;
     gap: var(--space-2);
+}
+
+.now-progress .progress {
+    height: 6px;
+    background: color-mix(in srgb, var(--text-muted), transparent 72%);
+}
+
+.now-status {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.playback-source,
+.scrobble-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-elevated);
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 750;
+    padding: 4px 9px;
+    white-space: nowrap;
+}
+
+.scrobble-status.delivered {
+    border-color: color-mix(in srgb, var(--success), var(--border) 48%);
+    background: color-mix(in srgb, var(--success) 12%, var(--surface-elevated));
+    color: var(--success);
 }
 
 .now-time {
@@ -2337,6 +2443,17 @@ fieldset.form-row > label small {
     .provider-cluster {
         grid-template-columns: minmax(0, 1fr);
     }
+
+    .provider-overview,
+    .provider-state-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .provider-state-actions,
+    .provider-actions {
+        justify-content: flex-start;
+    }
 }
 
 @media (max-width: 640px) {
@@ -2355,6 +2472,11 @@ fieldset.form-row > label small {
     .runtime-capability > button {
         grid-column: 2;
         grid-row: 1 / span 2;
+    }
+
+    .provider-account-dialog-footer {
+        align-items: stretch;
+        flex-direction: column;
     }
 }
 

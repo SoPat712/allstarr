@@ -565,7 +565,9 @@ class AllstarrApp extends LitElement {
     extensionRegistryError: { state: true },
     providerConfigOpen: { state: true },
     providerAccountConfigOpen: { state: true },
+    providerAccountModalOpen: { state: true },
     newProviderAccountId: { state: true },
+    nowPlayingClock: { state: true },
     favoritePolicy: { state: true },
     intelligence: { state: true },
     intelligenceLoading: { state: true },
@@ -628,7 +630,9 @@ class AllstarrApp extends LitElement {
     this.extensionRegistryError = "";
     this.providerConfigOpen = new Set();
     this.providerAccountConfigOpen = new Set();
+    this.providerAccountModalOpen = false;
     this.newProviderAccountId = "spotify";
+    this.nowPlayingClock = Date.now();
     this.favoritePolicy = null;
     this.intelligence = null;
     this.intelligenceLoading = false;
@@ -669,17 +673,26 @@ class AllstarrApp extends LitElement {
       this.loadForRoute();
     };
     window.addEventListener("hashchange", this.onHashChange);
+    this.nowPlayingTimer = window.setInterval(() => { this.nowPlayingClock = Date.now(); }, 500);
     this.bootstrap();
   }
 
   disconnectedCallback() {
     window.removeEventListener("hashchange", this.onHashChange);
+    clearInterval(this.nowPlayingTimer);
     this.stopActivityStream();
     clearTimeout(this.envMigrationExpiryTimer);
     super.disconnectedCallback();
   }
 
   updated() {
+    if (this.providerAccountModalOpen) {
+      const dialog = this.querySelector(".provider-account-dialog");
+      if (dialog && !dialog.contains(document.activeElement)) {
+        dialog.querySelector("[autofocus]")?.focus();
+      }
+      return;
+    }
     if (!this.shouldShowSetupGuide()) return;
     const dialog = this.querySelector(".setup-guide");
     if (dialog && !dialog.contains(document.activeElement)) {
@@ -2860,6 +2873,7 @@ class AllstarrApp extends LitElement {
   }
 
   renderSources() {
+    const canManageAccounts = this.canManageProviderAccounts();
     if (!this.isAdministrator()) {
       return html`
         <section class="view-stack">
@@ -2868,9 +2882,11 @@ class AllstarrApp extends LitElement {
               <h2>Provider accounts</h2>
               <p>Manage credentials for your own music provider accounts.</p>
             </div>
+            ${canManageAccounts ? html`<div class="actions"><button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button></div>` : nothing}
           </div>
           ${this.renderFavoritePolicy()}
           ${this.renderProviderAccounts()}
+          ${this.renderProviderAccountModal()}
         </section>
       `;
     }
@@ -2887,8 +2903,8 @@ class AllstarrApp extends LitElement {
             <h2>Services and sources</h2>
             <p>Connect an account once, test it here, then choose how Allstarr may use it.</p>
           </div>
+          ${canManageAccounts ? html`<div class="actions"><button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button></div>` : nothing}
         </div>
-        ${this.renderProviderAccounts(false)}
         ${this.renderProviderSection("all", "Providers", orderedProviders)}
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
@@ -2904,6 +2920,7 @@ class AllstarrApp extends LitElement {
           <summary><span><strong>Extension marketplace</strong><small>Add registries and manage optional provider extensions</small></span></summary>
           <div class="disclosure-body">${this.renderExtensions()}</div>
         </details>
+        ${this.renderProviderAccountModal()}
       </section>
     `;
   }
@@ -2937,34 +2954,56 @@ class AllstarrApp extends LitElement {
     </div>`;
   }
 
-  renderProviderAccounts(showCards = true) {
-    const accounts = asArray(this.providerAccounts);
+  providerAccountPermissions() {
     const administrator = Boolean(this.session?.isAdministrator || this.session?.IsAdministrator);
     const managementMode = String(this.schema?.providerAccountManagementMode || "Hybrid");
     const canManageAll = administrator && managementMode !== "UserManaged";
-    const canManage = canManageAll || managementMode !== "AdminManaged";
+    return { administrator, managementMode, canManageAll, canManage: canManageAll || managementMode !== "AdminManaged" };
+  }
+
+  canManageProviderAccounts() {
+    return this.providerAccountPermissions().canManage;
+  }
+
+  openProviderAccountModal(providerId = "spotify") {
+    this.newProviderAccountId = providerId;
+    this.providerAccountModalOpen = true;
+  }
+
+  closeProviderAccountModal() {
+    this.providerAccountModalOpen = false;
+  }
+
+  renderProviderAccounts() {
+    const accounts = asArray(this.providerAccounts);
+    const { administrator, canManage } = this.providerAccountPermissions();
+    if (!canManage) return html`<div class="empty">Provider accounts are managed by an administrator.</div>`;
+    return html`<div class="provider-account-grid">${accounts.length ? accounts.map((account) => this.renderProviderAccountCard(account, administrator)) : html`<div class="empty">No provider accounts yet. Use Add account to connect one.</div>`}</div>`;
+  }
+
+  renderProviderAccountModal() {
+    if (!this.providerAccountModalOpen) return nothing;
+    const { canManageAll, canManage, managementMode } = this.providerAccountPermissions();
+    if (!canManage) return nothing;
     return html`
-      <div class="panel" id="provider-accounts" tabindex="-1">
-        <div class="section-heading">
-          <div>
-            <h3>Add an account</h3>
-            <p>Add a personal or shared account. Existing accounts appear inside their provider below.</p>
+      <div class="modal-backdrop provider-account-backdrop"
+        @click=${(event) => { if (event.target === event.currentTarget) this.closeProviderAccountModal(); }}
+        @keydown=${(event) => { if (event.key === "Escape") this.closeProviderAccountModal(); }}>
+        <section class="panel provider-account-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-account-dialog-title">
+          <div class="section-heading provider-account-dialog-heading">
+            <div><h3 id="provider-account-dialog-title">Add an account</h3><p>Connect one provider account. Allstarr saves it encrypted and checks the connection immediately.</p></div>
+            <button class="ghost" type="button" @click=${() => this.closeProviderAccountModal()} aria-label="Close add account dialog">Close</button>
           </div>
-          <span class="status-chip configured">${managementMode}</span>
-        </div>
-        ${canManage ? html`<details class="content-disclosure account-create-disclosure">
-          <summary><span><strong>Add provider account</strong><small>Spotify, Deezer, Qobuz, Last.fm, ListenBrainz, or another supported provider</small></span></summary>
-          <form class="config-grid disclosure-body" @submit=${this.createProviderAccount}>
-            <div class="form-row"><label>Provider</label><select name="providerId" .value=${this.newProviderAccountId} @change=${(event) => { this.newProviderAccountId = event.target.value; }}><option value="spotify">Spotify</option><option value="deezer">Deezer</option><option value="qobuz">Qobuz</option><option value="lastfm">Last.fm</option><option value="listenbrainz">ListenBrainz</option></select></div>
+          <form class="config-grid" @submit=${this.createProviderAccount}>
+            <div class="form-row"><label>Provider</label><select name="providerId" autofocus .value=${this.newProviderAccountId} @change=${(event) => { this.newProviderAccountId = event.target.value; }}><option value="spotify">Spotify</option><option value="deezer">Deezer</option><option value="qobuz">Qobuz</option><option value="lastfm">Last.fm</option><option value="listenbrainz">ListenBrainz</option></select></div>
             <div class="form-row"><label>Account name</label><input name="displayName" placeholder=${`My ${providerDisplayName(this.newProviderAccountId, this.schema?.providers)} account`}></div>
             <div class="form-row"><label>Who can use it?</label><select name="scope"><option value="User">Only me</option>${canManageAll ? html`<option value="Global">Everyone</option><option value="Library">One library</option>` : nothing}</select></div>
             ${canManageAll ? html`<div class="form-row"><label>Library ID (only for one library)</label><input name="libraryScopeId"></div>` : nothing}
             ${this.renderNewProviderCredentialFields(this.newProviderAccountId)}
-            <div class="actions full-span"><button class="primary">Save and test account</button></div>
+            <div class="provider-account-dialog-footer full-span"><span class="status-chip configured">${managementMode}</span><div class="actions"><button type="button" @click=${() => this.closeProviderAccountModal()}>Cancel</button><button class="primary">Save and test</button></div></div>
           </form>
-        </details>` : html`<div class="empty">Provider accounts are managed by an administrator.</div>`}
+        </section>
       </div>
-      ${showCards && canManage ? html`<div class="provider-account-grid">${accounts.length ? accounts.map((account) => this.renderProviderAccountCard(account, administrator)) : html`<div class="empty">No provider accounts yet.</div>`}</div>` : nothing}
     `;
   }
 
@@ -3095,6 +3134,7 @@ class AllstarrApp extends LitElement {
     form.reset();
     this.newProviderAccountId = "spotify";
     await this.loadProviderAccounts();
+    this.closeProviderAccountModal();
     if (tested) this.toast("Encrypted provider account added and connection verified");
   };
 
@@ -3321,10 +3361,10 @@ class AllstarrApp extends LitElement {
               const providerId = String(provider.id || provider.Id || "").toLowerCase();
               const accounts = asArray(this.providerAccounts).filter((account) =>
                 String(account.providerId || account.ProviderId).toLowerCase() === providerId);
-              return html`<div class="provider-cluster">
+              return html`<section class="provider-cluster" aria-label="${provider.name}">
                 ${this.renderProviderCard(provider)}
-                ${accounts.length ? html`<div class="provider-account-grid embedded-accounts">${accounts.map((account) => this.renderProviderAccountCard(account, administrator))}</div>` : nothing}
-              </div>`;
+                ${accounts.length ? html`<div class="provider-account-group"><h4>Connected accounts</h4><div class="provider-account-grid embedded-accounts">${accounts.map((account) => this.renderProviderAccountCard(account, administrator))}</div></div>` : nothing}
+              </section>`;
             })}
           </div>
         ` : html`<div class="empty">No providers in this section.</div>`}
@@ -3345,8 +3385,8 @@ class AllstarrApp extends LitElement {
       (this.providerConfigOpen.has(providerId) || ["needs_config", "needs_login"].includes(status));
     return html`
       <div class="card provider-card">
-        <div class="provider-head">
-          <div class="provider-brand">
+        <div class="provider-overview">
+          <div class="provider-head"><div class="provider-brand">
             ${showBrandMark ? html`
               <span class="provider-logo provider-${providerId}">
                 ${logoUrl
@@ -3359,29 +3399,29 @@ class AllstarrApp extends LitElement {
               <span>${provider.id === "musicbrainz" ? "Genre enrichment" : "Provider"}</span>
             </div>
           </div>
-          <span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>
-        </div>
-        <div class="row-actions provider-actions">
-          ${accountManaged && !enabledAccount ? html`
-            <button @click=${() => this.revealRouteTarget("/sources", "#provider-accounts")}>Manage accounts</button>
-          ` : status !== "disabled" && hasEditableConfig ? html`
-            <button @click=${() => {
-              const next = new Set(this.providerConfigOpen);
-              next.has(providerId) ? next.delete(providerId) : next.add(providerId);
-              this.providerConfigOpen = next;
-            }}>${open ? "Hide config" : "Configure"}</button>
-          ` : nothing}
-          ${accountManaged && !enabledAccount ? nothing : status === "disabled" ? html`
-            <button class="primary" @click=${() => this.setProviderDisabled(provider, false)}>Enable</button>
-          ` : html`
-            <button class="danger" @click=${() => this.setProviderDisabled(provider, true)}>Disable</button>
-          `}
+          </div>
+          <div class="provider-state-actions"><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>
+            <div class="row-actions provider-actions">
+              ${!accountManaged && status !== "disabled" && hasEditableConfig ? html`
+                <button @click=${() => {
+                  const next = new Set(this.providerConfigOpen);
+                  next.has(providerId) ? next.delete(providerId) : next.add(providerId);
+                  this.providerConfigOpen = next;
+                }}>${open ? "Hide config" : "Configure"}</button>
+              ` : nothing}
+              ${accountManaged ? nothing : status === "disabled" ? html`
+                <button class="primary" @click=${() => this.setProviderDisabled(provider, false)}>Enable</button>
+              ` : html`
+                <button class="danger" @click=${() => this.setProviderDisabled(provider, true)}>Disable</button>
+              `}
+            </div>
+          </div>
         </div>
         <div class="chip-list capability-list">
           ${asArray(provider.categories).map((category) => this.renderCapabilityPill(provider, category))}
           ${asArray(provider.notes).map((note) => html`<span class="chip">${note}</span>`)}
         </div>
-        ${accountManaged && !enabledAccount ? html`<p class="muted">Add or enable a provider account above before Allstarr uses this source.</p>` : nothing}
+        ${accountManaged && !enabledAccount ? html`<p class="provider-empty-state">No enabled account. Use the Add account button at the top of this page, or enable an existing account below.</p>` : nothing}
         ${asArray(provider.runtimeCapabilities).length && !accountManaged ? html`
           <div class="runtime-capability-table" role="table" aria-label="Runtime capability status">
             <div class="runtime-capability-header" role="row"><span>Capability</span><span>Setup</span><span>Last check</span><span></span></div>
@@ -4739,9 +4779,12 @@ class AllstarrApp extends LitElement {
     const position = Number(current?.playbackPositionSeconds ?? current?.PlaybackPositionSeconds) || 0;
     const duration = Number(current?.durationSeconds ?? current?.DurationSeconds) || 0;
     const playbackProgress = current?.playbackProgress ?? current?.PlaybackProgress;
-    const progress = playbackProgress == null
-      ? (duration > 0 ? percent(position / duration) : 0)
-      : percent(playbackProgress);
+    const lastActivity = Date.parse(current?.playbackLastActivity || current?.PlaybackLastActivity || "");
+    const interpolationSeconds = Number.isFinite(lastActivity)
+      ? Math.max(0, Math.min(5, (this.nowPlayingClock - lastActivity) / 1000))
+      : 0;
+    const visualPosition = duration > 0 ? Math.min(duration, position + interpolationSeconds) : position;
+    const progress = duration > 0 ? percent(visualPosition / duration) : percent(playbackProgress);
     const source = providerDisplayName(current?.externalProvider || current?.ExternalProvider || "jellyfin", this.schema?.providers);
     const scrobbled = Boolean(current?.scrobbled ?? current?.Scrobbled);
     return html`
@@ -4750,12 +4793,16 @@ class AllstarrApp extends LitElement {
           <img class="art" src=${coverArtUrl} alt="">
           <div>
             <div class="now-title">${title}</div>
-            <div class="now-meta">${artist} <span aria-hidden="true">·</span> ${source}${scrobbled ? html` <span class="scrobble-success" title="Scrobble delivered" aria-label="Scrobble delivered">✓</span>` : nothing}</div>
+            <div class="now-meta">${artist}</div>
           </div>
         </div>
         <div class="now-progress">
           <div class="progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(progress)} style=${`--progress:${progress}%`}><span></span></div>
-          <div class="now-time"><span>${formatDuration(position)}</span><span>${duration > 0 ? formatDuration(duration) : "–:––"}</span></div>
+          <div class="now-time"><span>${formatDuration(visualPosition)}</span><span>${duration > 0 ? formatDuration(duration) : "–:––"}</span></div>
+        </div>
+        <div class="now-status" aria-label="Playback source and scrobbling status">
+          <span class="playback-source">${source}</span>
+          <span class="scrobble-status ${scrobbled ? "delivered" : "pending"}" title=${scrobbled ? "Listening history delivered" : "Waiting for the scrobble threshold"}>${scrobbled ? html`<span aria-hidden="true">✓</span> Scrobbled` : "Scrobble pending"}</span>
         </div>
       </footer>
     `;

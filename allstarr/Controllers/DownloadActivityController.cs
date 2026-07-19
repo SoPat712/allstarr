@@ -154,6 +154,7 @@ public class DownloadActivityController : ControllerBase
                     Status = download.Status,
                     Progress = download.Progress,
                     RequestedForStreaming = download.RequestedForStreaming,
+                    CoverArtUrl = download.CoverArtUrl,
                     DurationSeconds = download.DurationSeconds,
                     LocalPath = download.LocalPath,
                     ErrorMessage = download.ErrorMessage,
@@ -308,7 +309,6 @@ public class DownloadActivityController : ControllerBase
     {
         public bool IsPlaying { get; init; }
         public DateTime? PlaybackLastActivity { get; init; }
-        public string? CoverArtUrl { get; init; }
         public int? PlaybackPositionSeconds { get; init; }
         public double? PlaybackProgress { get; init; }
         public bool Scrobbled { get; init; }
