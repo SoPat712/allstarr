@@ -278,6 +278,23 @@ public partial class JellyfinController
                 _logger.LogDebug("Jellyfin browse result preview: {Result}", preview);
             }
 
+            if (_configuration.GetValue<bool>("Debug:LogAllRequests") &&
+                browseResult.RootElement.TryGetProperty("Items", out var tracedItems) &&
+                tracedItems.ValueKind == JsonValueKind.Array)
+            {
+                var itemCount = tracedItems.GetArrayLength();
+                var primaryImageCount = tracedItems.EnumerateArray().Count(item =>
+                    item.TryGetProperty("ImageTags", out var imageTags) &&
+                    imageTags.ValueKind == JsonValueKind.Object &&
+                    imageTags.TryGetProperty("Primary", out var primaryTag) &&
+                    !string.IsNullOrWhiteSpace(primaryTag.GetString()));
+                _logger.LogInformation(
+                    "BROWSE RESPONSE TRACE: path={RequestPath}, items={ItemCount}, primary images advertised={PrimaryImageCount}",
+                    Request.Path.Value,
+                    itemCount,
+                    primaryImageCount);
+            }
+
             return new JsonResult(result);
         }
 

@@ -42,6 +42,15 @@ public partial class JellyfinController
                 if (statusCode == 200)
                 {
                     _logger.LogInformation("Authentication successful");
+                    if (_configuration.GetValue<bool>("Debug:LogAllRequests"))
+                    {
+                        var userHasPrimaryImage = result.RootElement.TryGetProperty("User", out var user) &&
+                                                  user.TryGetProperty("PrimaryImageTag", out var primaryImageTag) &&
+                                                  !string.IsNullOrWhiteSpace(primaryImageTag.GetString());
+                        _logger.LogInformation(
+                            "AUTH RESPONSE TRACE: user profile image advertised={UserHasPrimaryImage}",
+                            userHasPrimaryImage);
+                    }
                 }
                 else
                 {
