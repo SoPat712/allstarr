@@ -1415,12 +1415,13 @@ class AllstarrApp extends LitElement {
 
   async createExtensionRegistry(event) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     this.extensionRegistryError = "";
     this.extensionActions = { ...this.extensionActions, registry: "Adding" };
     try {
       await API.createExtensionRegistry({ name: form.get("name"), registryUrl: form.get("registryUrl"), enabled: true });
-      event.currentTarget.reset();
+      formElement.reset();
       await this.loadExtensionControlPlane();
       this.toast("Extension registry validated and added");
     } catch (error) {
@@ -3803,10 +3804,10 @@ class AllstarrApp extends LitElement {
           <div class="extension-control-grid">
             <div class="panel">
               <h3>Extension catalogs</h3>
-              <p class="muted">Catalogs are trusted lists of extensions built specifically for Allstarr.</p>
+              <p class="muted">Add an Allstarr catalog or a compatible SpotiFLAC extension catalog.</p>
               <form class="config-grid" @submit=${(event) => this.createExtensionRegistry(event)}>
                 <label class="config-field"><span>Name</span><input name="name" required maxlength="200" autocomplete="off" placeholder="Community catalog"></label>
-                <label class="config-field"><span>Catalog URL</span><input name="registryUrl" type="url" required pattern="https://.*" autocomplete="off" aria-describedby="extension-registry-help" placeholder="https://example.org/allstarr/registry.json"><small id="extension-registry-help">Use the direct URL to an Allstarr catalog, not a GitHub repository or another app's catalog.</small></label>
+                <label class="config-field"><span>Catalog URL</span><input name="registryUrl" type="url" required pattern="https://.*" autocomplete="off" aria-describedby="extension-registry-help" placeholder="https://example.org/allstarr/registry.json"><small id="extension-registry-help">Use the direct registry JSON URL. Allstarr and SpotiFLAC extension catalogs are supported.</small></label>
                 <div class="config-field extension-form-action"><span>&nbsp;</span><button class="primary" type="submit" ?disabled=${Boolean(this.extensionActions.registry)}>${this.extensionActions.registry || "Add catalog"}</button></div>
               </form>
               ${this.extensionRegistryError ? html`<div class="error-text" role="alert">${this.extensionRegistryError}</div>` : nothing}
