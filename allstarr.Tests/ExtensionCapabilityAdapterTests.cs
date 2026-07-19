@@ -20,9 +20,11 @@ public sealed class ExtensionCapabilityAdapterTests
              "type":["metadata_provider"],"permissions":{"storage":true}}
             """;
         const string script = """
-            registerExtension({customSearch:function(){return [{id:'track-1',name:'Song',artists:['Artist'],album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}];}});
+            registerExtension({customSearch:function(){return [{id:'track-1',name:'Song',artists:['Artist'],album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}];},getPlaylist:function(){return {tracks:[]};}});
             """;
         var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        Assert.DoesNotContain(ExtensionSdkV1.ParseManifest(manifest).Capabilities,
+            capability => capability.Kind == ProviderCapabilityKind.Playlist);
         var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(), new HashSet<string>(["*"]), new HashSet<string>());
         var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
             new HttpClientFactory(), NullLogger.Instance, permissions);

@@ -39,8 +39,6 @@ public static class SpotiFlacExtensionCompatibility
         {
             capabilities.Add(Capability("Metadata",
                 "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"));
-            if (indexJs.Contains("getPlaylist", StringComparison.Ordinal))
-                capabilities.Add(Capability("Playlist", "getUserPlaylists", "getPlaylistTracks", "searchPlaylists"));
         }
         if (types.Contains("lyrics_provider"))
             capabilities.Add(Capability("Lyrics", "fetchLyrics"));
