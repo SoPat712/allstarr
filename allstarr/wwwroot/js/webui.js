@@ -4254,7 +4254,9 @@ class AllstarrApp extends LitElement {
         </div>
         ${field.type === "select" ? html`
           <select id=${field.key} .value=${String(value)} @change=${onCommit} ?disabled=${readOnly} aria-describedby=${field.helpText ? `${field.key}-help` : nothing}>
-            ${asArray(field.options).map((option) => html`<option value=${option}>${configOptionLabel(field, option)}</option>`)}
+            ${asArray(field.options).map((option) => html`
+              <option value=${option} ?selected=${String(option) === String(value)}>${configOptionLabel(field, option)}</option>
+            `)}
           </select>
         ` : field.type === "toggle" ? html`
           <label class="inline-check">
