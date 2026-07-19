@@ -3730,6 +3730,7 @@ button.setup-choice {
 .provider-logo.logo-large { width: 50px; height: 50px; flex-basis: 50px; }
 .provider-logo.logo-small { width: 38px; height: 38px; flex-basis: 38px; border-radius: 10px; }
 .provider-logo.logo-mini { width: 30px; height: 30px; flex-basis: 30px; border: 0; border-radius: 8px; }
+.provider-logo.logo-overview { width: 44px; height: 44px; flex-basis: 44px; border-radius: 12px; }
 .provider-logo.logo-tiny { width: 22px; height: 22px; flex-basis: 22px; border: 0; border-radius: 6px; }
 .provider-logo.logo-tiny span { font-size: .56rem; }
 

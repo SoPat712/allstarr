@@ -962,11 +962,11 @@ class AllstarrApp extends LitElement {
     const playlistsReady = Boolean(playlists?.success ?? playlists?.Success);
     const affectedPlaylists = asArray(playlists?.affectedPlaylists ?? playlists?.AffectedPlaylists);
     const failedRequests = [mediaOutcome, playlistOutcome, providerOutcome].filter((item) => item.status === "rejected");
-    const spotifyPlaylist = this.providerHealth.find((item) =>
-      String(item.provider || item.Provider || "").toLowerCase() === "spotify" &&
+    const playlistSources = this.providerHealth.filter((item) =>
       String(item.capability || item.Capability || "").toLowerCase() === "playlist");
-    const spotifyReady = String(spotifyPlaylist?.health || spotifyPlaylist?.Health || "unknown").toLowerCase() === "healthy";
-    const state = !failedRequests.length && mediaReady && playlistsReady && spotifyReady ? "success" : "warning";
+    const playlistSourceReady = playlistSources.some((item) =>
+      String(item.health || item.Health || "unknown").toLowerCase() === "healthy");
+    const state = !failedRequests.length && mediaReady && playlistsReady && playlistSourceReady ? "success" : "warning";
     this.serviceResults = {
       ...this.serviceResults,
       readiness: {
@@ -976,7 +976,7 @@ class AllstarrApp extends LitElement {
           : "Your playable library is available, but one or more refresh or connection checks need attention.",
         mediaReady,
         playlistsReady,
-        spotifyReady,
+        playlistSourceReady,
         failedRequests: failedRequests.length,
         playlistCode: playlists?.code || playlists?.Code || "",
         playlistMessage: playlists?.message || playlists?.Message || "Playlist check unavailable.",
@@ -2126,16 +2126,22 @@ class AllstarrApp extends LitElement {
   }
 
   renderHome() {
-    const spotify = this.status?.spotify || this.status?.Spotify || {};
     const spotifyImport = this.status?.spotifyImport || this.status?.SpotifyImport || {};
     const downloadCanAttempt = asArray(this.schema?.providers).some((provider) =>
       asArray(provider.runtimeCapabilities).some((capability) =>
         capability.id === "download" && capability.canAttempt),
     );
-    const spotifyPlaylistHealth = this.providerHealth.find((item) =>
-      String(item.provider || item.Provider || "").toLowerCase() === "spotify" &&
+    const playlistHealthRows = this.providerHealth.filter((item) =>
       String(item.capability || item.Capability || "").toLowerCase() === "playlist");
-    const spotifyRefreshState = String(spotifyPlaylistHealth?.health || spotifyPlaylistHealth?.Health || "unknown").toLowerCase();
+    const playlistHealth = [...playlistHealthRows].sort((left, right) => {
+      const leftHealthy = String(left.health || left.Health || "").toLowerCase() === "healthy" ? 1 : 0;
+      const rightHealthy = String(right.health || right.Health || "").toLowerCase() === "healthy" ? 1 : 0;
+      if (leftHealthy !== rightHealthy) return rightHealthy - leftHealthy;
+      return new Date(right.testedAt || right.TestedAt || 0).getTime() - new Date(left.testedAt || left.TestedAt || 0).getTime();
+    })[0];
+    const playlistProviderId = String(playlistHealth?.provider || playlistHealth?.Provider || "").toLowerCase();
+    const playlistRefreshState = String(playlistHealth?.health || playlistHealth?.Health || "unknown").toLowerCase();
+    const playlistProviderName = playlistProviderId ? providerDisplayName(playlistProviderId, this.schema?.providers) : "No source";
     const readiness = this.serviceResults.readiness;
     const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
     const activeJobs = asArray(this.jobs).filter((job) => !["Succeeded", "Failed", "Cancelled"].includes(job.state || job.State)).length;
@@ -2160,9 +2166,9 @@ class AllstarrApp extends LitElement {
             <small class="health-line healthy"><span></span>Running</small>
           </div>
           <div class="card overview-card">
-            <span class="overview-icon provider">${this.renderProviderLogo("spotify", "mini")}</span>
-            <div><span class="metric-label">Spotify refresh</span><span class="metric-value">${spotifyRefreshState === "unknown" ? titleCase(spotify.authStatus || "unknown") : titleCase(spotifyRefreshState)}</span></div>
-            <small class="health-line ${spotifyRefreshState === "healthy" ? "healthy" : "warning"}"><span></span>${spotifyPlaylistHealth?.testedAt ? `Last check ${formatRelativeTime(spotifyPlaylistHealth.testedAt)}` : "Awaiting check"}</small>
+            ${playlistProviderId ? this.renderProviderLogo(playlistProviderId, "overview") : html`<span class="overview-icon provider">${icon("refresh", 22)}</span>`}
+            <div><span class="metric-label">Playlist refresh</span><span class="metric-value">${titleCase(playlistRefreshState)}</span></div>
+            <small class="health-line ${playlistRefreshState === "healthy" ? "healthy" : "warning"}"><span></span>${playlistHealth?.testedAt || playlistHealth?.TestedAt ? `${playlistProviderName} · ${formatRelativeTime(playlistHealth.testedAt || playlistHealth.TestedAt)}` : `${playlistProviderName} · Awaiting check`}</small>
           </div>
           <div class="card overview-card">
             <span class="overview-icon playlists">${icon("playlist", 22)}</span>
@@ -2186,7 +2192,7 @@ class AllstarrApp extends LitElement {
             ${readiness.state !== "running" ? html`<div class="readiness-checks">
               ${this.renderReadinessCheck("Player artwork", readiness.mediaReady, "Authenticated Jellyfin artwork route")}
               ${this.renderReadinessCheck("Restored playlists", readiness.playlistsReady, readiness.playlistMessage)}
-              ${this.renderReadinessCheck("Spotify refresh", readiness.spotifyReady, readiness.spotifyReady ? "Spotify playlist access is healthy." : "Reconnect Spotify to resume playlist refreshes.")}
+              ${this.renderReadinessCheck("Playlist source", readiness.playlistSourceReady, readiness.playlistSourceReady ? "At least one playlist provider is healthy." : "Connect or repair a playlist-capable source.")}
             </div>` : nothing}
           ` : html`<div class="readiness-empty">${icon("shield", 24)}<span>Run the check after an update, provider change, or player problem.</span><button class="primary" @click=${this.runCoreReadiness}>Run readiness check</button></div>`}
           ${readiness?.state === "warning" ? html`<div class="actions">
@@ -2208,7 +2214,7 @@ class AllstarrApp extends LitElement {
             <h3>Setup</h3>
             <div class="stat-list">
               ${this.renderSetupStep("Backend URL configured", Boolean(this.config?.jellyfin?.url || this.config?.subsonic?.url))}
-              ${this.renderSetupStep("Spotify cookie present", Boolean(spotify.hasCookie || spotify.HasCookie))}
+              ${this.renderSetupStep("Playlist source connected", playlistRefreshState === "healthy")}
               ${this.renderSetupStep("Download capability configured", downloadCanAttempt)}
               ${this.renderSetupStep("Playlist sync enabled", Boolean(this.config?.spotifyImport?.enabled))}
             </div>
@@ -2260,7 +2266,7 @@ class AllstarrApp extends LitElement {
           <span class="playlist-cell"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span>
           <span>${display(playlist.trackCount, 0)}</span>
           <span>${display(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0), 0)} <small>${display(playlist.matchPercent, 0)}%</small></span>
-          <span class="provider-row-label">${this.renderProviderLogo(playlist.sourceProvider || "spotify", "tiny")}<span>${providerDisplayName(playlist.sourceProvider || "spotify", this.schema?.providers)}</span></span>
+          <span class="provider-row-label">${playlist.sourceProvider ? this.renderProviderLogo(playlist.sourceProvider, "tiny") : icon("warning", 15)}<span>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Unknown source"}</span></span>
           <span>${formatRelativeTime(playlist.lastSyncAt || playlist.lastFetched)}</span>
           <span><span class="status-chip ${playlist.syncStatus || "unknown"}">${titleCase(playlist.syncStatus || "pending")}</span></span>
         </button>`)}
@@ -2682,8 +2688,8 @@ class AllstarrApp extends LitElement {
     const page = Math.min(this.injectedTrackPage, pageCount);
     const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
     const matched = Number(details?.matchedTracks ?? tracks.filter((track) => track.isLocal != null).length);
-    const sourceProvider = details?.sourceProvider || "spotify";
-    const targetBackend = details?.targetBackend || String(this.status?.backendType || this.config?.backendType || "jellyfin").toLowerCase();
+    const sourceProvider = details?.sourceProvider || "unknown";
+    const targetBackend = details?.targetBackend || String(this.status?.backendType || this.config?.backendType || "unknown").toLowerCase();
     const close = () => {
       this.selectedInjectedPlaylist = "";
       this.injectedPlaylistDetails = null;
@@ -2705,7 +2711,7 @@ class AllstarrApp extends LitElement {
       <section class="panel injected-playlist-dialog redesigned-dialog" role="dialog" aria-modal="true"
         aria-labelledby="injected-playlist-title" tabindex="-1">
         <div class="playlist-dialog-hero">
-          <img class="playlist-hero-art" src=${details?.artworkUrl || tracks[0]?.albumArtUrl || "/placeholder.png"} alt="">
+          <img class="playlist-hero-art" src=${details?.artworkUrl || "/placeholder.png"} alt="">
           <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
             <div class="playlist-hero-stats">
               <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
