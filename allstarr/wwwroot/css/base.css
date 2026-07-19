@@ -1003,7 +1003,7 @@ tbody tr:hover {
 .runtime-capability-header,
 .runtime-capability {
     display: grid;
-    grid-template-columns: minmax(130px, 0.9fr) minmax(170px, 1fr) minmax(230px, 1.6fr) minmax(76px, auto);
+    grid-template-columns: minmax(100px, 0.9fr) minmax(115px, 1fr) minmax(160px, 1.6fr) minmax(64px, auto);
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
@@ -1286,6 +1286,10 @@ tbody tr:hover {
     gap: var(--space-4);
     border-top: 1px solid var(--border);
     padding-top: var(--space-4);
+}
+
+.view-header > .actions button {
+    white-space: nowrap;
 }
 
 .provider-brand {
