@@ -89,6 +89,7 @@ public class PlaylistController : ControllerBase
                     var currentSummaryShape = cachedPlaylists.ValueKind == JsonValueKind.Array &&
                                               cachedPlaylists.EnumerateArray().All(item =>
                                                   item.TryGetProperty("artworkUrl", out _) &&
+                                                  item.TryGetProperty("artworkSource", out _) &&
                                                   item.TryGetProperty("matchedTracks", out _) &&
                                                   item.TryGetProperty("syncStatus", out _));
                     if (currentSummaryShape &&
@@ -689,6 +690,46 @@ public class PlaylistController : ControllerBase
             else
             {
                 playlistInfo["artworkSource"] = "track_fallback";
+            }
+
+            // A materialized Jellyfin item list can outlive a changing Spotify playlist and
+            // cannot always be joined back to Spotify IDs. Base the displayed match total on
+            // current Spotify IDs intersected with the ordered match records instead of counting
+            // unrelated stale items from the previous playlist snapshot.
+            if (playlistMetadata?.Tracks.Count > 0)
+            {
+                try
+                {
+                    var currentSpotifyIds = playlistMetadata.Tracks
+                        .Select(track => track.SpotifyId)
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var orderedMatches = await _cache.GetAsync<List<MatchedTrack>>(
+                        CacheKeyBuilder.BuildSpotifyMatchedTracksKey(config.Name));
+                    if (orderedMatches != null)
+                    {
+                        var currentMatches = orderedMatches
+                            .Where(match => currentSpotifyIds.Contains(match.SpotifyId) && match.MatchedSong != null)
+                            .GroupBy(match => match.SpotifyId, StringComparer.OrdinalIgnoreCase)
+                            .Select(group => group.First())
+                            .ToList();
+                        var currentLocal = currentMatches.Count(match => match.MatchedSong.IsLocal);
+                        var currentExternal = currentMatches.Count(match =>
+                            !match.MatchedSong.IsLocal &&
+                            ExternalTrackPlaybackPolicy.CanUseForPlayback(
+                                match.MatchedSong.ExternalProvider,
+                                match.MatchedSong.Id));
+                        ApplyPlaylistStats(
+                            playlistInfo,
+                            currentLocal,
+                            currentExternal,
+                            Math.Max(0, playlistMetadata.Tracks.Count - currentLocal - currentExternal));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to align current playlist match stats for {Playlist}", config.Name);
+                }
             }
 
             EnrichPlaylistSummary(playlistInfo, config.SyncSchedule);
