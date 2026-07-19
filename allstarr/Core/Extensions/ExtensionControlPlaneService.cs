@@ -309,8 +309,8 @@ public sealed partial class ExtensionControlPlaneService
         }
         else
         {
-            if (package.State != ExtensionPackageState.Staged)
-                throw new InvalidOperationException("Only a reviewed staged package can be activated.");
+            if (package.State is not (ExtensionPackageState.Staged or ExtensionPackageState.Disabled))
+                throw new InvalidOperationException("Only a reviewed or previously disabled package can be activated.");
             target = package;
         }
         VerifyStagedContents(target);

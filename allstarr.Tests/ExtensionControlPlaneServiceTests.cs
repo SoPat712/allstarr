@@ -93,6 +93,25 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DisabledPackageCanBeEnabledAgain()
+    {
+        var package = await _service.StageAsync(Package("1.0.0", "reenable"));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
+        package = await _service.ActivateAsync(package.Id, package.Revision);
+
+        await _service.DisableAsync(package.Id, package.Revision);
+        package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
+        Assert.Equal(ExtensionPackageState.Disabled, package.State);
+
+        package = await _service.ActivateAsync(package.Id, package.Revision);
+        Assert.Equal(ExtensionPackageState.Active, package.State);
+    }
+
+    [Fact]
     public async Task RegistryRequiresExplicitHttpsConfiguration()
     {
         await Assert.ThrowsAsync<ArgumentException>(() => _service.AddRegistryAsync(new("Bad", "http://registry.example.test/index.json")));

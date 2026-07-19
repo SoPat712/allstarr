@@ -1763,6 +1763,79 @@ fieldset.form-row > label small {
     gap: var(--space-4);
 }
 
+.extension-store-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+}
+
+.extension-store-card {
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
+    min-width: 0;
+    min-height: 190px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+    padding: var(--space-4);
+}
+
+.extension-store-card-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.extension-store-card-heading > div {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.extension-store-card-action {
+    display: flex;
+    align-items: center;
+    margin-top: auto;
+}
+
+.extension-store-empty {
+    grid-column: 1 / -1;
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6);
+    text-align: center;
+}
+
+.extension-store-errors {
+    display: grid;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.extension-package-manage {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
+}
+
+.extension-package-manage summary {
+    width: max-content;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.extension-package-manage[open] .row-actions {
+    margin-top: var(--space-3);
+}
+
+.extension-advanced > .disclosure-body {
+    display: grid;
+    gap: var(--space-4);
+}
+
 .extension-safety-note {
     border-left: 3px solid var(--warning);
     color: var(--text-secondary);

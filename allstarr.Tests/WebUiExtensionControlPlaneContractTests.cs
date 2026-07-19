@@ -22,19 +22,22 @@ public sealed class WebUiExtensionControlPlaneContractTests
     }
 
     [Fact]
-    public void Extensions_RequireChecksumReviewAndRevisionedLifecycleActions()
+    public void Extensions_PresentAStoreWhileKeepingSafetyChecksAdvanced()
     {
-        Assert.Contains("Checksum published", _script, StringComparison.Ordinal);
-        Assert.Contains("Verify and stage", _script, StringComparison.Ordinal);
-        Assert.Contains("Every permission needs an explicit choice.", _script, StringComparison.Ordinal);
+        Assert.Contains("Extension store", _script, StringComparison.Ordinal);
+        Assert.Contains("Extension installed and enabled", _script, StringComparison.Ordinal);
+        Assert.Contains("Review and enable", _script, StringComparison.Ordinal);
+        Assert.Contains("Save permissions and enable", _script, StringComparison.Ordinal);
+        Assert.Contains("Advanced settings", _script, StringComparison.Ordinal);
+        Assert.Contains("Verify and install", _script, StringComparison.Ordinal);
         Assert.Contains("expectedRevision", _script, StringComparison.Ordinal);
-        Assert.Contains("Submit every decision", _script, StringComparison.Ordinal);
         Assert.Contains("Previous extension version restored", _script, StringComparison.Ordinal);
-        Assert.Contains("Allstarr does not add one automatically.", _script, StringComparison.Ordinal);
-        Assert.Contains("direct URL to an Allstarr registry JSON document", _script, StringComparison.Ordinal);
+        Assert.Contains("direct URL to an Allstarr catalog", _script, StringComparison.Ordinal);
         Assert.Contains("this.extensionRegistryError = error.message", _script, StringComparison.Ordinal);
         Assert.Contains("role=\"alert\"", _script, StringComparison.Ordinal);
         Assert.Contains("Extension registry validated and added", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Extension control plane", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Stage a package", _script, StringComparison.Ordinal);
     }
 
     [Fact]
