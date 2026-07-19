@@ -49,6 +49,7 @@ public sealed class WebUiExtensionControlPlaneContractTests
 
         Assert.Contains(".extension-control-grid", css, StringComparison.Ordinal);
         Assert.Contains(".extension-value", css, StringComparison.Ordinal);
+        Assert.Contains(".extension-package-heading .provider-brand > div", css, StringComparison.Ordinal);
         Assert.Contains("overflow-wrap: anywhere;", css, StringComparison.Ordinal);
         Assert.Contains(
             ".provider-grid,\n    .provider-account-grid,\n    .extension-control-grid",
