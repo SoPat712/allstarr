@@ -137,7 +137,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.Equal(["us", "ca"], verified.Manifest.Settings.Single(item => item.Key == "storefront").Choices);
         Assert.Equal("lossless", Assert.Single(verified.Manifest.QualityOptions!).Id);
         Assert.Contains(verified.Manifest.Permissions, item => item is
-            { Kind: ExtensionPermissionKind.Secret, Value: "mediaUserToken", Required: true });
+        { Kind: ExtensionPermissionKind.Secret, Value: "mediaUserToken", Required: true });
         Assert.Contains(verified.Manifest.Permissions, item => item is { Kind: ExtensionPermissionKind.Cache, Value: "*" });
         Assert.Contains(verified.Manifest.Permissions, item => item.Value == "https://*.example.test/");
         Assert.True(SpotiFlacExtensionCompatibility.IsNormalizedManifest(
