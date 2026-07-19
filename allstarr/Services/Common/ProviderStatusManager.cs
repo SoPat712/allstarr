@@ -980,7 +980,7 @@ public class ProviderStatusManager
     }
 
     private List<string> GetMetadataOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_METADATA_ORDER", "deezer,qobuz,squidwtf");
+        GetProviderOrder("MULTI_PROVIDER_METADATA_ORDER", "deezer,qobuz");
 
     private List<string> GetDownloadOrder() =>
         GetProviderOrder("MULTI_PROVIDER_DOWNLOAD_ORDER", "deezer,qobuz")
@@ -1009,7 +1009,7 @@ public class ProviderStatusManager
     }
 
     private HashSet<string> GetEnabledSearchRaw() =>
-        GetProviderSet("MULTI_PROVIDER_ENABLED_SEARCH", "deezer,qobuz,squidwtf");
+        GetProviderSet("MULTI_PROVIDER_ENABLED_SEARCH", "deezer,qobuz");
 
     private HashSet<string> GetEnabledPlaylistRaw() =>
         GetProviderSet("MULTI_PROVIDER_ENABLED_PLAYLIST", "spotify");
@@ -1018,7 +1018,7 @@ public class ProviderStatusManager
         GetProviderOrder(key, fallback).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private HashSet<string> GetDisabledProviders() =>
-        GetProviderSet("MULTI_PROVIDER_DISABLED_PROVIDERS", string.Empty);
+        GetProviderSet("MULTI_PROVIDER_DISABLED_PROVIDERS", "squidwtf");
 
     private static string? GetCompatibilityCapability(string provider) => provider switch
     {

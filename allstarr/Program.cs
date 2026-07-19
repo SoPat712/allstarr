@@ -472,7 +472,7 @@ if (probeOptionalProvidersAtStartup)
     var disabledProviders = ParseCsv(builder.Configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"])
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
     var enabledMetadataProviders = ParseCsv(
-        builder.Configuration["MULTI_PROVIDER_ENABLED_SEARCH"] ?? "deezer,qobuz,squidwtf");
+        builder.Configuration["MULTI_PROVIDER_ENABLED_SEARCH"] ?? "deezer,qobuz");
     if (!disabledProviders.Contains("squidwtf") &&
         enabledMetadataProviders.Contains("squidwtf", StringComparer.OrdinalIgnoreCase))
     {

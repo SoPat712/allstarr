@@ -163,12 +163,12 @@ public class ConfigController : ControllerBase
             redisEnabled = GetEnvBool(envVars, "REDIS_ENABLED", _configuration.GetValue<bool>("Redis:Enabled", false)),
             providers = new
             {
-                metadataOrder = RuntimeString("Providers:MetadataOrder", "deezer,qobuz,squidwtf"),
+                metadataOrder = RuntimeString("Providers:MetadataOrder", "deezer,qobuz"),
                 downloadOrder = RuntimeString("Providers:DownloadOrder", "deezer,qobuz"),
                 streamingOrder = RuntimeString("Providers:StreamingOrder", "deezer,qobuz"),
                 playlistOrder = RuntimeString("Providers:PlaylistOrder", "spotify,deezer,qobuz"),
                 lyricsOrder = RuntimeString("Providers:LyricsOrder", "spotify,lyricsplus,lrclib"),
-                enabledSearch = RuntimeString("Providers:EnabledSearch", "deezer,qobuz,squidwtf"),
+                enabledSearch = RuntimeString("Providers:EnabledSearch", "deezer,qobuz"),
                 enabledPlaylist = RuntimeString("Providers:EnabledPlaylist", "spotify"),
                 disabledProviders = RuntimeString("Providers:Disabled", string.Empty),
             },

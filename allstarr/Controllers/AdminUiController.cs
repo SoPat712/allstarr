@@ -373,7 +373,7 @@ public class AdminUiController : ControllerBase
     private List<AdminUiPriorityGroup> BuildPriorityGroups() =>
     [
         Priority("metadata", "Metadata search priority", "MULTI_PROVIDER_METADATA_ORDER", "MULTI_PROVIDER_ENABLED_SEARCH",
-            "deezer,qobuz,squidwtf"),
+            "deezer,qobuz"),
         Priority("download", "Download priority", "MULTI_PROVIDER_DOWNLOAD_ORDER", null,
             "deezer,qobuz"),
         Priority("streaming", "Streaming priority", "MULTI_PROVIDER_STREAMING_ORDER", null,
@@ -408,7 +408,7 @@ public class AdminUiController : ControllerBase
 
     private string ProviderStatus(string id, string configuredStatus)
     {
-        var disabled = (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? string.Empty)
+        var disabled = (_configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] ?? "squidwtf")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(p => p.Equals(id, StringComparison.OrdinalIgnoreCase));
         return disabled ? "disabled" : configuredStatus;

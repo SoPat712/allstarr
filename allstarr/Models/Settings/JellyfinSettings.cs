@@ -59,7 +59,7 @@ public class JellyfinSettings
 
     public ExplicitFilter ExplicitFilter { get; set; } = ExplicitFilter.All;
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
-    public MusicService MusicService { get; set; } = MusicService.SquidWTF;
+    public MusicService MusicService { get; set; } = MusicService.Deezer;
     public StorageMode StorageMode { get; set; } = StorageMode.Permanent;
     public int CacheDurationHours { get; set; } = 1;
     public bool EnableExternalPlaylists { get; set; } = true;

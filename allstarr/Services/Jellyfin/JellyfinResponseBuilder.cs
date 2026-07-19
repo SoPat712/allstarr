@@ -376,6 +376,7 @@ public class JellyfinResponseBuilder
             ["Album"] = albumName,
             ["AlbumId"] = song.AlbumId ?? song.Id,
             ["AlbumPrimaryImageTag"] = song.AlbumId ?? song.Id,
+            ["PrimaryImageAspectRatio"] = 1.0,
             ["AlbumArtist"] = song.AlbumArtist ?? artistName,
             ["AlbumArtists"] = new[]
             {

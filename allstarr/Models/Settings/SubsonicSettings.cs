@@ -130,7 +130,7 @@ public class SubsonicSettings
     /// Values: "Deezer", "Qobuz", "SquidWTF"
     /// </summary>
 
-    public MusicService MusicService { get; set; } = MusicService.SquidWTF;
+    public MusicService MusicService { get; set; } = MusicService.Deezer;
 
     /// <summary>
     /// Storage mode for downloaded files (default: Permanent)
