@@ -4226,7 +4226,23 @@ button.setup-choice {
 
 .playlist-hero-stats > div > span:last-child { display: grid; }
 .playlist-hero-stats small { color: var(--text-muted); }
-.hero-stat-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; color: var(--accent-strong); background: var(--accent-soft); }
+.hero-stat-icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border: 1px solid color-mix(in srgb, var(--accent-strong), transparent 48%);
+    border-radius: 50%;
+    color: #fff;
+    background: color-mix(in srgb, var(--accent) 54%, var(--surface-elevated));
+}
+
+.hero-stat-icon .ui-icon {
+    width: 17px;
+    height: 17px;
+    stroke-width: 2.4;
+}
 
 .injected-playlist-scroll {
     display: grid;

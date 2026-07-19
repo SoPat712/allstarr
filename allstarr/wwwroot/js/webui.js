@@ -184,6 +184,7 @@ function providerMark(provider) {
     musicbrainz: "MusicBrainz",
     lyricsplus: "Lyrics+",
     lrclib: "LRCLib",
+    jellyfin: "Jellyfin",
     extensions: "Extensions",
   };
   return marks[id] || titleCase(provider?.name || provider?.Name || id);
@@ -194,7 +195,7 @@ function providerLogoUrl(provider) {
   if (supplied) return String(supplied);
   const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
   const logoId = id === "apple-download" ? "applemusic" : id;
-  const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz"]);
+  const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz", "jellyfin"]);
   return logos.has(logoId) ? `/images/providers/${logoId}.svg` : "";
 }
 

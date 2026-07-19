@@ -207,6 +207,14 @@ public class SpotifyPlaylistFetcher : BackgroundService
     }
 
     /// <summary>
+    /// Returns the cached Spotify playlist metadata, including Spotify's playlist-level cover.
+    /// Track artwork is deliberately not substituted here so callers can distinguish a real
+    /// playlist image from an album-cover fallback.
+    /// </summary>
+    public Task<SpotifyPlaylist?> GetPlaylistMetadataAsync(string playlistName) =>
+        _cache.GetAsync<SpotifyPlaylist>(CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
+
+    /// <summary>
     /// Gets missing tracks for a playlist (tracks not found in Jellyfin library).
     /// This provides compatibility with the existing SpotifyMissingTracksFetcher interface.
     /// </summary>

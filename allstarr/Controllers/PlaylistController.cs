@@ -680,6 +680,17 @@ public class PlaylistController : ControllerBase
                 }
             }
 
+            var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(config.Name);
+            if (!string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl))
+            {
+                playlistInfo["artworkUrl"] = playlistMetadata.ImageUrl;
+                playlistInfo["artworkSource"] = "playlist";
+            }
+            else
+            {
+                playlistInfo["artworkSource"] = "track_fallback";
+            }
+
             EnrichPlaylistSummary(playlistInfo, config.SyncSchedule);
             playlists.Add(playlistInfo);
         }
@@ -837,7 +848,11 @@ public class PlaylistController : ControllerBase
 
         var tracksWithStatus = new List<object>();
         var matchedTrackCount = 0;
-        var playlistArtworkUrl = spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
+        var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(decodedName);
+        var playlistArtworkUrl = playlistMetadata?.ImageUrl ?? spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
+        var playlistArtworkSource = !string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl)
+            ? "playlist"
+            : "track_fallback";
         var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);
 
@@ -1150,6 +1165,7 @@ public class PlaylistController : ControllerBase
                 name = decodedName,
                 trackCount = spotifyTracks.Count,
                 artworkUrl = playlistArtworkUrl,
+                artworkSource = playlistArtworkSource,
                 sourceProvider = "spotify",
                 targetBackend,
                 matchedTracks = matchedTrackCount,
@@ -1258,6 +1274,7 @@ public class PlaylistController : ControllerBase
             name = decodedName,
             trackCount = spotifyTracks.Count,
             artworkUrl = playlistArtworkUrl,
+            artworkSource = playlistArtworkSource,
             sourceProvider = "spotify",
             targetBackend,
             matchedTracks = matchedTrackCount,
