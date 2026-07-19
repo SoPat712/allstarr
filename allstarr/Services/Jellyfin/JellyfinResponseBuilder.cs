@@ -322,6 +322,8 @@ public class JellyfinResponseBuilder
                 .ToList();
         }
 
+        var primaryImageTag = song.IsLocal ? song.Id : $"{song.Id}-art-v2";
+
         var item = new Dictionary<string, object?>
         {
             ["Name"] = songTitle,
@@ -401,7 +403,7 @@ public class JellyfinResponseBuilder
             },
             ["ImageTags"] = new Dictionary<string, string>
             {
-                ["Primary"] = song.Id
+                ["Primary"] = primaryImageTag
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = song.AlbumId ?? song.Id,

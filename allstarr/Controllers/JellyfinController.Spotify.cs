@@ -530,6 +530,10 @@ public partial class JellyfinController
             // Repair older caches at the serving boundary so upgrades do not require a rematch.
             item["ServerId"] = _settings.DeviceId;
             item["HasLyrics"] = true;
+            item["ImageTags"] = new Dictionary<string, string>
+            {
+                ["Primary"] = $"{id}-art-v2"
+            };
         }
     }
 
