@@ -33,19 +33,19 @@ public static class SpotiFlacExtensionCompatibility
             throw new ExtensionSdkValidationException("SpotiFLAC manifest requires a name.");
         var extensionId = $"spotiflac-{id}";
         var types = original["type"]?.AsArray().Select(item => item?.GetValue<string>() ?? "").ToHashSet(StringComparer.Ordinal) ?? [];
+        var hasSettings = original["settings"] is JsonArray { Count: > 0 };
         var capabilities = new JsonArray();
 
         if (types.Contains("metadata_provider"))
         {
-            capabilities.Add(Capability("Metadata",
+            capabilities.Add(Capability("Metadata", hasSettings,
                 "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist"));
         }
         if (types.Contains("lyrics_provider"))
-            capabilities.Add(Capability("Lyrics", "fetchLyrics"));
-        var needsUnsupportedRuntime = original["requiredRuntimeFeatures"] is JsonArray runtimeFeatures && runtimeFeatures.Count > 0;
-        if (types.Contains("download_provider") && !needsUnsupportedRuntime &&
+            capabilities.Add(Capability("Lyrics", hasSettings, "fetchLyrics"));
+        if (types.Contains("download_provider") &&
             indexJs.Contains("download", StringComparison.Ordinal))
-            capabilities.Add(Capability("Download", "checkAvailability", "download"));
+            capabilities.Add(Capability("Download", hasSettings, "checkAvailability", "download"));
 
         if (capabilities.Count == 0)
             throw new ExtensionSdkValidationException("SpotiFLAC extension does not expose a capability Allstarr can run yet.");
@@ -68,6 +68,24 @@ public static class SpotiFlacExtensionCompatibility
             if (permissionObject["storage"]?.GetValue<bool>() == true)
                 permissions.Add(Permission("Cache", "*"));
         }
+        if (original["settings"] is JsonArray settings)
+        {
+            foreach (var setting in settings.OfType<JsonObject>())
+            {
+                var key = Text(setting, "key").Trim();
+                var type = Text(setting, "type").Trim();
+                var explicitlySecret = setting["secret"]?.GetValue<bool>() == true;
+                var inferredSecret = key.EndsWith("token", StringComparison.OrdinalIgnoreCase) ||
+                                     key.EndsWith("password", StringComparison.OrdinalIgnoreCase) ||
+                                     key.EndsWith("secret", StringComparison.OrdinalIgnoreCase) ||
+                                     key.EndsWith("cookie", StringComparison.OrdinalIgnoreCase) ||
+                                     type.Equals("password", StringComparison.OrdinalIgnoreCase) ||
+                                     type.Equals("secret", StringComparison.OrdinalIgnoreCase) ||
+                                     type.Equals("token", StringComparison.OrdinalIgnoreCase);
+                if (key.Length > 0 && (explicitlySecret || inferredSecret))
+                    permissions.Add(Permission("Secret", key));
+            }
+        }
 
         var normalized = new JsonObject
         {
@@ -78,6 +96,12 @@ public static class SpotiFlacExtensionCompatibility
             ["entryPoint"] = "index.js",
             ["capabilities"] = capabilities,
             ["permissions"] = permissions,
+            ["description"] = original["description"]?.DeepClone(),
+            ["author"] = original["author"]?.DeepClone(),
+            ["icon"] = original["icon"]?.DeepClone(),
+            ["settings"] = original["settings"]?.DeepClone() ?? new JsonArray(),
+            ["qualityOptions"] = original["qualityOptions"]?.DeepClone() ?? new JsonArray(),
+            ["requiredRuntimeFeatures"] = original["requiredRuntimeFeatures"]?.DeepClone() ?? new JsonArray(),
             ["compatibility"] = Marker,
             ["spotiflacManifest"] = original.DeepClone()
         };
@@ -108,11 +132,13 @@ public static class SpotiFlacExtensionCompatibility
         return JsonSerializer.Serialize(values);
     }
 
-    private static JsonObject Capability(string kind, params string[] hooks) => new()
+    private static JsonObject Capability(string kind, bool settingsAvailable, params string[] hooks) => new()
     {
         ["kind"] = kind,
         ["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray()),
-        ["accountScopes"] = new JsonArray(),
+        ["accountScopes"] = settingsAvailable
+            ? new JsonArray("Global", "User", "Library")
+            : new JsonArray(),
         ["accountRequired"] = false
     };
 
@@ -128,6 +154,20 @@ public static class SpotiFlacExtensionCompatibility
 
     public const string RuntimeAdapterScript = """
         var _spotiflacExtension = _registeredExtension;
+        function _allstarrPrepareInvocation() {
+          if (!_spotiflacExtension || typeof _spotiflacExtension.initialize !== 'function') return;
+          var settings = {};
+          var defaults = _allstarrDefaultSettings || {};
+          for (var defaultKey in defaults) if (Object.prototype.hasOwnProperty.call(defaults, defaultKey)) settings[defaultKey] = defaults[defaultKey];
+          var keys = _allstarrSettingKeys || [];
+          for (var i = 0; i < keys.length; i++) {
+            var value = host.SettingGet(keys[i]);
+            if (value === null || value === undefined) continue;
+            try { settings[keys[i]] = JSON.parse(String(value)); }
+            catch (_) { settings[keys[i]] = String(value); }
+          }
+          _spotiflacExtension.initialize(settings);
+        }
         function _sfArray(value) {
           if (Array.isArray(value)) return value;
           if (!value) return [];

@@ -105,6 +105,7 @@ public class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         return await _lyricsProtocolAdapter.GetLyricsBySongIdAsync(
             parameters,
+            HttpContext.RequireProtocolExecutionContext(),
             HttpContext.RequestAborted);
     }
 

@@ -115,6 +115,9 @@ public sealed class AdminUiProvider
     [JsonPropertyName("icon")]
     public string Icon { get; set; } = string.Empty;
 
+    [JsonPropertyName("logoUrl")]
+    public string? LogoUrl { get; set; }
+
     [JsonPropertyName("status")]
     public string Status { get; set; } = "unknown";
 
@@ -123,6 +126,9 @@ public sealed class AdminUiProvider
 
     [JsonPropertyName("configSchema")]
     public List<AdminUiConfigField> ConfigSchema { get; set; } = [];
+
+    [JsonPropertyName("accountSettings")]
+    public List<AdminUiConfigField> AccountSettings { get; set; } = [];
 
     [JsonPropertyName("notes")]
     public List<string> Notes { get; set; } = [];
@@ -213,6 +219,9 @@ public sealed class AdminUiConfigField
 
     [JsonPropertyName("sensitive")]
     public bool Sensitive { get; set; }
+
+    [JsonPropertyName("required")]
+    public bool Required { get; set; }
 
     [JsonPropertyName("ownership")]
     public string Ownership { get; set; } = "durable";

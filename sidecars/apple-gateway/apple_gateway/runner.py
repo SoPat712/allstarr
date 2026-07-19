@@ -92,7 +92,8 @@ class BoundedProcessRunner:
             return source
         result = await self.execute([
             self._settings.ffmpeg_path, "-nostdin", "-v", "error", "-y",
-            "-i", str(source), "-map", "0:a:0", "-c:a", "flac", str(target),
+            "-i", str(source), "-map", "0:a:0", "-map_metadata", "-1",
+            "-c:a", "flac", "-compression_level", "0", str(target),
         ], target.parent)
         if result.return_code != 0 or not target.is_file():
             raise ProcessFailure("transcode_failed")

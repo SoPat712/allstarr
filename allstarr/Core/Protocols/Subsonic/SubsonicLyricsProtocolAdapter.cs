@@ -8,12 +8,14 @@ using allstarr.Services;
 using allstarr.Services.Local;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Subsonic;
+using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Protocols.Subsonic;
 
 public interface ISubsonicLyricsLookup
 {
     Task<SubsonicStructuredLyrics?> FindAsync(
+        ProtocolExecutionContext protocol,
         string provider,
         string externalId,
         CancellationToken cancellationToken);
@@ -23,21 +25,26 @@ public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
 {
     private readonly IMusicMetadataService _metadataService;
     private readonly LyricsOrchestrator _lyricsOrchestrator;
+    private readonly IProtocolProviderGateway _providerGateway;
 
     public SubsonicLyricsLookup(
         IMusicMetadataService metadataService,
-        LyricsOrchestrator lyricsOrchestrator)
+        LyricsOrchestrator lyricsOrchestrator,
+        IProtocolProviderGateway providerGateway)
     {
         _metadataService = metadataService;
         _lyricsOrchestrator = lyricsOrchestrator;
+        _providerGateway = providerGateway;
     }
 
     public async Task<SubsonicStructuredLyrics?> FindAsync(
+        ProtocolExecutionContext protocol,
         string provider,
         string externalId,
         CancellationToken cancellationToken)
     {
-        var song = await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
+        var song = await _providerGateway.GetSongAsync(protocol, provider, externalId) ??
+                   await _metadataService.GetSongAsync(provider, externalId, cancellationToken);
         if (song == null)
         {
             return null;
@@ -46,7 +53,22 @@ public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
         var artists = song.Artists.Count > 0
             ? song.Artists.ToArray()
             : [song.Artist];
-        var lyrics = await _lyricsOrchestrator.GetLyricsAsync(
+        LyricsInfo? lyrics = null;
+        var providerLyrics = await _providerGateway.GetLyricsAsync(
+            protocol, provider, externalId, ProviderLyricsFormat.LineTimed);
+        if (!string.IsNullOrWhiteSpace(providerLyrics?.Content))
+        {
+            lyrics = new LyricsInfo
+            {
+                TrackName = song.Title,
+                ArtistName = song.Artist,
+                AlbumName = song.Album,
+                Duration = song.Duration ?? 0,
+                PlainLyrics = providerLyrics.Format == ProviderLyricsFormat.PlainText ? providerLyrics.Content : null,
+                SyncedLyrics = providerLyrics.Format != ProviderLyricsFormat.PlainText ? providerLyrics.Content : null
+            };
+        }
+        lyrics ??= await _lyricsOrchestrator.GetLyricsAsync(
             song.Title,
             artists,
             song.Album,
@@ -152,6 +174,7 @@ public sealed class SubsonicLyricsProtocolAdapter
 
     public async Task<IActionResult> GetLyricsBySongIdAsync(
         SubsonicRequestParameters parameters,
+        ProtocolExecutionContext protocol,
         CancellationToken cancellationToken)
     {
         var id = parameters.GetValueOrDefault("id", string.Empty);
@@ -174,7 +197,7 @@ public sealed class SubsonicLyricsProtocolAdapter
                 (int)result.StatusCode);
         }
 
-        var lyrics = await _lyricsLookup.FindAsync(provider!, externalId!, cancellationToken);
+        var lyrics = await _lyricsLookup.FindAsync(protocol, provider!, externalId!, cancellationToken);
         return _responseBuilder.CreateLyricsBySongIdResponse(format, lyrics);
     }
 

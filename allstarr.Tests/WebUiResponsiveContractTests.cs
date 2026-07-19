@@ -256,7 +256,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("status !== \"disabled\" && hasEditableConfig ? html`", script, StringComparison.Ordinal);
         Assert.Contains(">Add account</button>", script, StringComparison.Ordinal);
         Assert.Contains("provider-account-dialog", script, StringComparison.Ordinal);
-        Assert.DoesNotContain("Manage accounts", script, StringComparison.Ordinal);
+        Assert.Contains("this.navigate(\"/settings\")}>Manage accounts", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Add or enable a provider account above", script, StringComparison.Ordinal);
         Assert.Contains("const open = hasEditableConfig &&", script, StringComparison.Ordinal);
     }
@@ -276,7 +276,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("Save and test", script, StringComparison.Ordinal);
         Assert.Contains("Test connection", script, StringComparison.Ordinal);
         Assert.Contains("renderNewProviderCredentialFields", script, StringComparison.Ordinal);
-        Assert.Contains("<option value=\"spotify\">Spotify</option>", script, StringComparison.Ordinal);
+        Assert.Contains("this.providerAccountChoices().map((provider)", script, StringComparison.Ordinal);
+        Assert.Contains("asArray(provider.accountSettings)", script, StringComparison.Ordinal);
         Assert.DoesNotContain("textarea name=\"secret\"", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Replace credential", script, StringComparison.Ordinal);
         Assert.Contains("account-health-panel", styles, StringComparison.Ordinal);
@@ -299,8 +300,9 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.Contains("await this.loadSchema();", script, StringComparison.Ordinal);
         Assert.Contains("if (this.isAdministrator())", script, StringComparison.Ordinal);
-        Assert.Contains("return this.authenticated && !this.isAdministrator() && route !== \"/intelligence\" ? \"/sources\" : route;", script, StringComparison.Ordinal);
-        Assert.Contains("Manage credentials for your own music provider accounts.", script, StringComparison.Ordinal);
+        Assert.Contains("![\"/sources\", \"/settings\", \"/intelligence\"].includes(route)", script, StringComparison.Ordinal);
+        Assert.Contains("if (zone === \"settings\") return this.renderSettings();", script, StringComparison.Ordinal);
+        Assert.Contains("Credentials are encrypted and kept separate from the Sources catalog.", script, StringComparison.Ordinal);
         Assert.Contains("Provider accounts are managed by an administrator.", script, StringComparison.Ordinal);
     }
 

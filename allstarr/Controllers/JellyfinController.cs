@@ -797,7 +797,7 @@ public partial class JellyfinController : ControllerBase
         if (cachedImageBytes != null)
         {
             _logger.LogDebug("Cache hit for external {Type} image: {Provider}/{ExternalId}", type, provider, externalId);
-            return CreateConditionalImageResponse(cachedImageBytes, "image/jpeg");
+            return CreateConditionalImageResponse(cachedImageBytes, DetectImageContentType(cachedImageBytes));
         }
 
         // Get external cover art URL
@@ -858,7 +858,13 @@ public partial class JellyfinController : ControllerBase
                     return null;
                 }
 
-                return await response.Content.ReadAsByteArrayAsync();
+                if (response.Content.Headers.ContentLength is > 10 * 1024 * 1024)
+                {
+                    _logger.LogWarning("External image from host {Host} exceeded the size limit", safeCoverUri.Host);
+                    return null;
+                }
+                var bytes = await response.Content.ReadAsByteArrayAsync(HttpContext.RequestAborted);
+                return bytes.Length <= 10 * 1024 * 1024 ? bytes : null;
             }, _logger, maxRetries: 3, initialDelayMs: 500);
 
             if (imageBytes == null)
@@ -871,7 +877,7 @@ public partial class JellyfinController : ControllerBase
 
             _logger.LogDebug("Successfully fetched and cached external image from host {Host}, size: {Size} bytes",
                 safeCoverUri.Host, imageBytes.Length);
-            return CreateConditionalImageResponse(imageBytes, "image/jpeg");
+            return CreateConditionalImageResponse(imageBytes, DetectImageContentType(imageBytes));
         }
         catch (Exception ex)
         {
@@ -879,6 +885,19 @@ public partial class JellyfinController : ControllerBase
             // Return placeholder on exception
             return await GetPlaceholderImageAsync();
         }
+    }
+
+    private static string DetectImageContentType(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length >= 8 && bytes[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }))
+            return "image/png";
+        if (bytes.Length >= 12 && bytes[..4].SequenceEqual("RIFF"u8) && bytes.Slice(8, 4).SequenceEqual("WEBP"u8))
+            return "image/webp";
+        if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return "image/jpeg";
+        // Extension and legacy metadata fixtures may not expose a reliable upstream
+        // content type. JPEG remains the compatibility fallback used by Jellyfin.
+        return "image/jpeg";
     }
 
     /// <summary>

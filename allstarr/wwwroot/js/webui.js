@@ -159,6 +159,8 @@ function providerMark(provider) {
 }
 
 function providerLogoUrl(provider) {
+  const supplied = provider?.logoUrl || provider?.LogoUrl || provider?.branding?.logoReference || provider?.Branding?.LogoReference;
+  if (supplied) return String(supplied);
   const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
   const logoId = id === "apple-download" ? "applemusic" : id;
   const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz"]);
@@ -963,7 +965,9 @@ class AllstarrApp extends LitElement {
   }
 
   routeForSession(route) {
-    return this.authenticated && !this.isAdministrator() && route !== "/intelligence" ? "/sources" : route;
+    return this.authenticated && !this.isAdministrator() && !["/sources", "/settings", "/intelligence"].includes(route)
+      ? "/sources"
+      : route;
   }
 
   async loadForRoute(force = false, authenticationRetry = false) {
@@ -971,7 +975,7 @@ class AllstarrApp extends LitElement {
       return;
     }
 
-    if (!this.isAdministrator() && this.route !== "/sources" && this.route !== "/intelligence") {
+    if (!this.isAdministrator() && !["/sources", "/settings", "/intelligence"].includes(this.route)) {
       this.route = "/sources";
       window.history.replaceState(null, "", "#/sources");
     }
@@ -1008,6 +1012,11 @@ class AllstarrApp extends LitElement {
           ]);
         } else {
           await this.loadProviderAccounts();
+        }
+      } else if (zone === "settings") {
+        await this.loadProviderAccounts();
+        if (this.isAdministrator()) {
+          await Promise.all([this.loadExtensionControlPlane(), this.loadExtensionStore()]);
         }
       } else if (zone === "activity") {
         await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs(), this.loadProviderAccounts()]);
@@ -1479,8 +1488,13 @@ class AllstarrApp extends LitElement {
         await API.activateExtensionPackage(id, reviewed.revision ?? reviewed.Revision ?? 0);
       }
       await Promise.all([this.loadExtensionControlPlane(), this.loadSchema()]);
+      const nextPermissions = new Map(this.extensionPermissions);
+      nextPermissions.delete(id);
+      this.extensionPermissions = nextPermissions;
+      this.selectedExtensionPackageId = null;
       this.toast(state === "staged" || state === "active" ? "Extension enabled" : "Permission choices saved");
     } catch (error) {
+      await this.loadExtensionControlPlane().catch(() => {});
       this.toast(error.message || "Extension activation failed", "error");
     } finally {
       const nextActions = { ...this.extensionActions };
@@ -1894,7 +1908,10 @@ class AllstarrApp extends LitElement {
 
   renderRoute() {
     if (!this.isAdministrator()) {
-      return routeParts(this.route)[0] === "intelligence" ? this.renderIntelligence() : this.renderSources();
+      const [zone] = routeParts(this.route);
+      if (zone === "intelligence") return this.renderIntelligence();
+      if (zone === "settings") return this.renderSettings();
+      return this.renderSources();
     }
 
     const [zone] = routeParts(this.route);
@@ -2918,15 +2935,10 @@ class AllstarrApp extends LitElement {
       return html`
         <section class="view-stack">
           <div class="view-header">
-            <div>
-              <h2>Provider accounts</h2>
-              <p>Manage credentials for your own music provider accounts.</p>
-            </div>
-            ${canManageAccounts ? html`<div class="actions"><button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button></div>` : nothing}
+          <div><h2>Sources</h2><p>See which music and metadata services are available to Allstarr.</p></div>
+          ${canManageAccounts ? html`<div class="actions"><button class="primary" @click=${() => this.navigate("/settings")}>Manage accounts</button></div>` : nothing}
           </div>
-          ${this.renderFavoritePolicy()}
-          ${this.renderProviderAccounts()}
-          ${this.renderProviderAccountModal()}
+          <div class="empty">Provider configuration is managed from Settings.</div>
         </section>
       `;
     }
@@ -2940,10 +2952,10 @@ class AllstarrApp extends LitElement {
       <section class="view-stack">
         <div class="view-header">
           <div>
-            <h2>Services and sources</h2>
-            <p>Connect an account once, test it here, then choose how Allstarr may use it.</p>
+            <h2>Sources</h2>
+            <p>Music providers, artwork, metadata, lyrics, and download helpers available to Allstarr.</p>
           </div>
-          ${canManageAccounts ? html`<div class="actions"><button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button></div>` : nothing}
+          ${canManageAccounts ? html`<div class="actions"><button @click=${() => this.navigate("/settings")}>Manage accounts</button></div>` : nothing}
         </div>
         ${this.renderProviderSection("all", "Providers", orderedProviders)}
         <details class="content-disclosure" @toggle=${(event) => {
@@ -2956,13 +2968,6 @@ class AllstarrApp extends LitElement {
             ${this.renderProviderSupportMatrix()}
           </div>
         </details>
-        <details class="content-disclosure" @toggle=${(event) => {
-          if (event.currentTarget.open) void Promise.all([this.loadExtensionControlPlane(), this.loadExtensionStore()]);
-        }}>
-          <summary><span><strong>Extensions</strong><small>Browse and install optional providers</small></span></summary>
-          <div class="disclosure-body">${this.renderExtensions()}</div>
-        </details>
-        ${this.renderProviderAccountModal()}
       </section>
     `;
   }
@@ -3037,7 +3042,7 @@ class AllstarrApp extends LitElement {
             <button class="ghost" type="button" @click=${() => this.closeProviderAccountModal()} aria-label="Close add account dialog">Close</button>
           </div>
           <form class="config-grid" @submit=${this.createProviderAccount}>
-            <div class="form-row"><label>Provider</label><select name="providerId" autofocus .value=${this.newProviderAccountId} @change=${(event) => { this.newProviderAccountId = event.target.value; }}><option value="spotify">Spotify</option><option value="deezer">Deezer</option><option value="qobuz">Qobuz</option><option value="lastfm">Last.fm</option><option value="listenbrainz">ListenBrainz</option></select></div>
+            <div class="form-row"><label>Provider</label><select name="providerId" autofocus .value=${this.newProviderAccountId} @change=${(event) => { this.newProviderAccountId = event.target.value; }}>${this.providerAccountChoices().map((provider) => html`<option value=${provider.id}>${provider.name}</option>`)}</select></div>
             <div class="form-row"><label>Account name</label><input name="displayName" placeholder=${`My ${providerDisplayName(this.newProviderAccountId, this.schema?.providers)} account`}></div>
             <div class="form-row"><label>Who can use it?</label><select name="scope"><option value="User">Only me</option>${canManageAll ? html`<option value="Global">Everyone</option><option value="Library">One library</option>` : nothing}</select></div>
             ${canManageAll ? html`<div class="form-row"><label>Library ID (only for one library)</label><input name="libraryScopeId"></div>` : nothing}
@@ -3054,7 +3059,27 @@ class AllstarrApp extends LitElement {
     if (providerId === "deezer") return html`<div class="form-row full-span"><label>ARL cookie</label><input name="arl" type="password" autocomplete="off" required></div>`;
     if (providerId === "qobuz") return html`<div class="form-row"><label>User auth token</label><input name="userAuthToken" type="password" autocomplete="off" required></div><div class="form-row"><label>User ID</label><input name="userId" required></div>`;
     if (providerId === "lastfm") return html`<div class="form-row full-span"><div class="callout"><strong>One-time Last.fm application setup</strong><p>Last.fm no longer accepts the shared Jellyfin plugin key. Create a free API application, paste its key and shared secret below, then sign in normally. Allstarr exchanges the password for a session and does not save the password.</p><a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener noreferrer">Create a Last.fm API application</a></div></div><div class="form-row"><label>Application API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Application shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Last.fm username</label><input name="username" autocomplete="username" required></div><div class="form-row"><label>Last.fm password</label><input name="password" type="password" autocomplete="current-password" required><small>Used once to request a Last.fm session; never stored by Allstarr.</small></div>`;
-    return html`<div class="form-row full-span"><label>ListenBrainz user token</label><input name="token" type="password" autocomplete="off" required></div>`;
+    if (providerId === "listenbrainz") return html`<div class="form-row full-span"><label>ListenBrainz user token</label><input name="token" type="password" autocomplete="off" required></div>`;
+    const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === String(providerId).toLowerCase());
+    const fields = asArray(provider?.accountSettings);
+    return fields.length ? fields.map((field) => html`<div class="form-row"><label>${field.label}</label>${field.type === "select"
+      ? html`<select name=${field.key} ?required=${field.required}>${asArray(field.options).map((option) => html`<option value=${option}>${qualityLabel(providerId, option)}</option>`)}</select>`
+      : field.type === "toggle"
+        ? html`<input name=${field.key} type="checkbox">`
+        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}</div>`)
+      : html`<div class="empty full-span">This provider does not require account details.</div>`;
+  }
+
+  providerAccountChoices() {
+    const builtIns = [
+      { id: "spotify", name: "Spotify" }, { id: "deezer", name: "Deezer" },
+      { id: "qobuz", name: "Qobuz" }, { id: "lastfm", name: "Last.fm" },
+      { id: "listenbrainz", name: "ListenBrainz" },
+    ];
+    const extensions = asArray(this.schema?.providers)
+      .filter((provider) => asArray(provider.accountSettings).length)
+      .map((provider) => ({ id: provider.id, name: provider.name }));
+    return [...builtIns, ...extensions.filter((provider) => !builtIns.some((item) => item.id === provider.id))];
   }
 
   renderProviderAccountCard(account, administrator) {
@@ -3150,7 +3175,9 @@ class AllstarrApp extends LitElement {
       : providerId === "deezer" ? { arl: String(data.get("arl") || "") }
       : providerId === "qobuz" ? { userAuthToken: String(data.get("userAuthToken") || ""), userId: String(data.get("userId") || "") }
       : providerId === "lastfm" ? { apiKey: String(data.get("apiKey") || ""), sharedSecret: String(data.get("sharedSecret") || ""), username: String(data.get("username") || "") }
-      : { token: String(data.get("token") || "") };
+      : providerId === "listenbrainz" ? { token: String(data.get("token") || "") }
+      : Object.fromEntries(asArray(asArray(this.schema?.providers).find((provider) => String(provider.id).toLowerCase() === providerId.toLowerCase())?.accountSettings)
+          .map((field) => [field.key, field.type === "toggle" ? data.get(field.key) === "on" : String(data.get(field.key) || "")]));
     const created = await API.createProviderAccount({
       providerId,
       displayName: String(data.get("displayName") || "").trim() || `My ${providerDisplayName(providerId, this.schema?.providers)} account`,
@@ -3168,7 +3195,9 @@ class AllstarrApp extends LitElement {
           password: String(data.get("password") || ""),
         });
       }
-      await API.testProviderAccount(created.id || created.Id, providerId);
+      const hasConnectionProbe = ["spotify", "deezer", "qobuz", "lastfm", "listenbrainz"].includes(providerId) ||
+        this.providerHealth.some((item) => String(item.provider || item.Provider).toLowerCase() === providerId && Boolean(item.canTest ?? item.CanTest));
+      if (hasConnectionProbe) await API.testProviderAccount(created.id || created.Id, providerId);
     } catch (error) {
       tested = false;
       this.toast(`Account saved, but the connection test failed: ${error.message}`, "error");
@@ -3189,10 +3218,21 @@ class AllstarrApp extends LitElement {
         ${providerId === "qobuz" ? html`<label>User auth token<input name="userAuthToken" type="password" autocomplete="off" required></label><label>User ID<input name="userId" required></label>` : nothing}
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "lastfm" ? html`<div class="callout"><strong>Reconnect Last.fm</strong><p>Usually only your password is needed. It is used once to request a new session and is never stored.</p></div><label>Username (optional)<input name="username" autocomplete="username"><small>Leave blank to keep the saved username.</small></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><details><summary>Replace Last.fm application credentials</summary><p class="muted">Required if this account used the suspended Jellyfin plugin key.</p><label>New application API key<input name="apiKey" type="password" autocomplete="off"></label><label>New application shared secret<input name="sharedSecret" type="password" autocomplete="off"></label></details>` : nothing}
-        ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? html`<label>Credential JSON<textarea name="secretJson" rows="3" required></textarea></label>` : nothing}
+        ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? this.renderExtensionCredentialEditor(providerId) : nothing}
         <div class="actions"><button class="primary">Save and test</button><button type="button" @click=${() => this.toggleProviderAccountConfiguration(account.id || account.Id)}>Cancel</button></div>
       </form>
     </div>`;
+  }
+
+  renderExtensionCredentialEditor(providerId) {
+    const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === providerId);
+    const fields = asArray(provider?.accountSettings);
+    return fields.length ? fields.map((field) => html`<label>${field.label}${field.type === "select"
+      ? html`<select name=${field.key} ?required=${field.required}>${asArray(field.options).map((option) => html`<option value=${option}>${qualityLabel(providerId, option)}</option>`)}</select>`
+      : field.type === "toggle"
+        ? html`<input name=${field.key} type="checkbox">`
+        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}</label>`)
+      : html`<p class="muted">This extension has no account settings to replace.</p>`;
   }
 
   async replaceProviderAccountCredential(event, account) {
@@ -3217,7 +3257,11 @@ class AllstarrApp extends LitElement {
         replaceSecret = Boolean(apiKey);
         secret = { apiKey, sharedSecret, username: String(data.get("username") || "").trim() };
       }
-      else secret = JSON.parse(String(data.get("secretJson") || "{}"));
+      else {
+        const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === providerId);
+        secret = Object.fromEntries(asArray(provider?.accountSettings).map((field) =>
+          [field.key, field.type === "toggle" ? data.get(field.key) === "on" : String(data.get(field.key) || "")]));
+      }
     } catch {
       this.toast("Credential JSON is invalid", "error");
       return;
@@ -3393,7 +3437,6 @@ class AllstarrApp extends LitElement {
   }
 
   renderProviderSection(id, label, providers) {
-    const administrator = Boolean(this.session?.isAdministrator || this.session?.IsAdministrator);
     return html`
       <div class="provider-section provider-section-${id}">
         <h3>${label}</h3>
@@ -3401,11 +3444,8 @@ class AllstarrApp extends LitElement {
           <div class="provider-grid">
             ${providers.map((provider) => {
               const providerId = String(provider.id || provider.Id || "").toLowerCase();
-              const accounts = asArray(this.providerAccounts).filter((account) =>
-                String(account.providerId || account.ProviderId).toLowerCase() === providerId);
               return html`<section class="provider-cluster" aria-label="${provider.name}">
                 ${this.renderProviderCard(provider)}
-                ${accounts.length ? html`<div class="provider-account-group"><h4>Connected accounts</h4><div class="provider-account-grid embedded-accounts">${accounts.map((account) => this.renderProviderAccountCard(account, administrator))}</div></div>` : nothing}
               </section>`;
             })}
           </div>
@@ -3463,7 +3503,7 @@ class AllstarrApp extends LitElement {
           ${asArray(provider.categories).map((category) => this.renderCapabilityPill(provider, category))}
           ${asArray(provider.notes).map((note) => html`<span class="chip">${note}</span>`)}
         </div>
-        ${accountManaged && !enabledAccount ? html`<p class="provider-empty-state">No enabled account. Use the Add account button at the top of this page, or enable an existing account below.</p>` : nothing}
+        ${accountManaged && !enabledAccount ? html`<p class="provider-empty-state">No enabled account. <button class="inline-button" @click=${() => this.navigate("/settings")}>Connect one in Settings</button>.</p>` : nothing}
         ${asArray(provider.runtimeCapabilities).length && !accountManaged ? html`
           <div class="runtime-capability-table" role="table" aria-label="Runtime capability status">
             <div class="runtime-capability-header" role="row"><span>Capability</span><span>Setup</span><span>Last check</span><span></span></div>
@@ -3697,6 +3737,7 @@ class AllstarrApp extends LitElement {
     const installedPackages = [...installedByExtension.values()];
     const renderPermissionReview = (item, action) => {
       const id = item.id || item.Id;
+      if (packageState(item) !== "reviewrequired") return nothing;
       const permissions = this.extensionPermissions.get(id);
       if (!permissions) return nothing;
       const allDecided = permissions.length > 0 && permissions.every((review) => review.uiDecision === "approved" || review.uiDecision === "denied");
@@ -3749,7 +3790,7 @@ class AllstarrApp extends LitElement {
             return html`
               <article class="extension-store-card">
                 <div class="extension-store-card-heading">
-                  <div><strong>${item.displayName || item.DisplayName || item.name || item.Name}</strong><span class="muted">${display(item.description || item.Description)}</span></div>
+                  <div class="provider-brand">${item.iconUrl || item.IconUrl ? html`<span class="provider-logo"><img src=${item.iconUrl || item.IconUrl} alt=""></span>` : nothing}<div><strong>${item.displayName || item.DisplayName || item.name || item.Name}</strong><span class="muted">${display(item.description || item.Description)}</span></div></div>
                   <span class="chip">v${display(item.version || item.Version)}</span>
                 </div>
                 ${types.length ? html`<div class="row-actions">${types.map((type) => html`<span class="chip">${titleCase(type)}</span>`)}</div>` : nothing}
@@ -3779,7 +3820,7 @@ class AllstarrApp extends LitElement {
               return html`
                 <div class="activity-item extension-package">
                   <div class="extension-package-heading">
-                    <div><strong>${item.displayName || item.DisplayName || item.extensionId || item.ExtensionId}</strong><span class="muted">Version ${item.version || item.Version}</span></div>
+                    <div class="provider-brand">${item.iconUrl || item.IconUrl ? html`<span class="provider-logo"><img src=${item.iconUrl || item.IconUrl} alt=""></span>` : nothing}<div><strong>${item.displayName || item.DisplayName || item.extensionId || item.ExtensionId}</strong><span class="muted">Version ${item.version || item.Version}</span></div></div>
                     <span class="status-chip ${rawState === "active" ? "configured" : rawState === "failed" ? "error" : rawState === "disabled" ? "disabled" : "warning"}">${label}</span>
                   </div>
                   <div class="row-actions">
@@ -4040,14 +4081,34 @@ class AllstarrApp extends LitElement {
   }
 
   renderSettings() {
+    if (!this.isAdministrator()) {
+      return html`
+        <section class="view-stack">
+          <div class="view-header"><div><h2>Settings</h2><p>Manage your own connected provider accounts.</p></div></div>
+          <div class="panel">
+            <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
+            ${this.renderProviderAccounts()}
+          </div>
+          ${this.renderProviderAccountModal()}
+        </section>`;
+    }
     return html`
       <section class="view-stack">
         <div class="view-header">
           <div>
             <h2>Settings</h2>
-            <p>Configuration changes are saved on blur and marked when a restart is needed.</p>
+            <p>Accounts, extensions, application preferences, and maintenance.</p>
           </div>
         </div>
+        <div class="panel">
+          <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
+          ${this.renderProviderAccounts()}
+        </div>
+        ${this.renderProviderAccountModal()}
+        ${this.isAdministrator() ? html`<details class="content-disclosure panel">
+          <summary><span><strong>Extension store</strong><small>Install and manage optional provider packages</small></span></summary>
+          <div class="disclosure-body">${this.renderExtensions()}</div>
+        </details>` : nothing}
         ${asArray(this.schema?.configSections).map((section) => html`
           <details class="content-disclosure panel">
             <summary><span><strong>${section.label}</strong><small>Show configuration</small></span></summary>

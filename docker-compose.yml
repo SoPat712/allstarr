@@ -24,6 +24,7 @@ services:
       - no-new-privileges:true
 
   valkey:
+    profiles: ["cache"]
     image: valkey/valkey:8.1.8-alpine3.23@sha256:cfe71288f087704b06be45e270afa7a2abbf820093d6b11a23762081f5ff321d
     restart: unless-stopped
     command:
@@ -56,8 +57,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      valkey:
-        condition: service_healthy
     ports:
       - ${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_PORT:-5274}:8080
       - ${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-5275}:5275
@@ -88,7 +87,7 @@ services:
       Readiness__RequiredDirectories__2: /app/kept
 
       Redis__ConnectionString: valkey:6379
-      Redis__Enabled: ${REDIS_ENABLED:-true}
+      Redis__Enabled: ${REDIS_ENABLED:-false}
       Subsonic__Url: ${SUBSONIC_URL:-http://host.docker.internal:4533}
       Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-true}
       Jellyfin__Url: ${JELLYFIN_URL:-http://host.docker.internal:8096}

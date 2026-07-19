@@ -25,6 +25,21 @@ public sealed record ExtensionSdkCapability(
     IReadOnlyList<ProviderAccountScope> AccountScopes,
     bool AccountRequired = true);
 
+public sealed record ExtensionSdkSetting(
+    string Key,
+    string Label,
+    string InputType,
+    string? Description,
+    bool Required,
+    bool Sensitive,
+    string? DefaultJson,
+    IReadOnlyList<string>? Choices = null);
+
+public sealed record ExtensionSdkQualityOption(
+    string Id,
+    string Label,
+    string? Description);
+
 public sealed record ExtensionSdkManifest(
     string Id,
     string DisplayName,
@@ -32,7 +47,14 @@ public sealed record ExtensionSdkManifest(
     string SdkVersion,
     string EntryPoint,
     IReadOnlyList<ExtensionSdkCapability> Capabilities,
-    IReadOnlyList<ExtensionPermissionRequest> Permissions);
+    IReadOnlyList<ExtensionPermissionRequest> Permissions,
+    string? Description = null,
+    string? Author = null,
+    string? IconPath = null,
+    IReadOnlyList<ExtensionSdkSetting>? Settings = null,
+    IReadOnlyList<ExtensionSdkQualityOption>? QualityOptions = null,
+    IReadOnlyList<string>? RequiredRuntimeFeatures = null,
+    string? Compatibility = null);
 
 public sealed record VerifiedExtensionPackage(
     ExtensionSdkManifest Manifest,
@@ -78,7 +100,17 @@ public static partial class ExtensionSdkV1
             var capabilities = ParseCapabilities(root);
             if (capabilities.Count == 0) throw new ExtensionSdkValidationException("At least one typed capability is required.");
             var permissions = ParsePermissions(root);
-            return new(id, displayName, version, sdk, entryPoint, capabilities, permissions);
+            var description = Optional(root, "description");
+            if (description?.Length > 500) throw new ExtensionSdkValidationException("Extension description is limited to 500 characters.");
+            var author = Optional(root, "author");
+            if (author?.Length > 200) throw new ExtensionSdkValidationException("Extension author is limited to 200 characters.");
+            var iconPath = ParseIconPath(root);
+            var settings = ParseSettings(root);
+            var qualityOptions = ParseQualityOptions(root);
+            var runtimeFeatures = OptionalStringArray(root, "requiredRuntimeFeatures", 64, 100);
+            return new(id, displayName, version, sdk, entryPoint, capabilities, permissions,
+                description, author, iconPath, settings, qualityOptions, runtimeFeatures,
+                Optional(root, "compatibility"));
         }
     }
 
@@ -211,13 +243,103 @@ public static partial class ExtensionSdkV1
                 JsonValueKind.False => false,
                 _ => throw new ExtensionSdkValidationException("Capability accountRequired must be a boolean.")
             };
-            if (scopes.Distinct().Count() != scopes.Length || accountRequired != (scopes.Length > 0))
+            if (scopes.Distinct().Count() != scopes.Length || accountRequired && scopes.Length == 0)
                 throw new ExtensionSdkValidationException(
-                    "Capability accountScopes must be unique, non-empty when an account is required, and empty otherwise.");
+                    "Capability accountScopes must be unique and non-empty when an account is required.");
             result.Add(new(kind, hooks, scopes, accountRequired));
         }
         if (result.Select(item => item.Kind).Distinct().Count() != result.Count)
             throw new ExtensionSdkValidationException("Each capability kind may be declared once.");
+        return result;
+    }
+
+    private static string? ParseIconPath(JsonElement root)
+    {
+        var icon = Optional(root, "icon");
+        if (icon == null) return null;
+        var normalized = icon.Replace('\\', '/');
+        if (normalized.Length > 300 || Path.IsPathRooted(normalized) || normalized.Contains(':') ||
+            normalized.Split('/').Any(segment => segment is "" or "." or "..") ||
+            !new[] { ".png", ".jpg", ".jpeg", ".webp" }.Contains(
+                Path.GetExtension(normalized), StringComparer.OrdinalIgnoreCase))
+            throw new ExtensionSdkValidationException("Extension icon must be a safe PNG, JPEG, or WebP package path.");
+        return normalized;
+    }
+
+    private static IReadOnlyList<ExtensionSdkSetting> ParseSettings(JsonElement root)
+    {
+        if (!root.TryGetProperty("settings", out var values)) return [];
+        if (values.ValueKind != JsonValueKind.Array)
+            throw new ExtensionSdkValidationException("Extension settings must be an array.");
+        var result = new List<ExtensionSdkSetting>();
+        foreach (var value in values.EnumerateArray())
+        {
+            if (value.ValueKind != JsonValueKind.Object)
+                throw new ExtensionSdkValidationException("Extension settings must contain objects.");
+            var key = Required(value, "key");
+            if (!SettingKeyPattern().IsMatch(key))
+                throw new ExtensionSdkValidationException("Extension setting keys must use lower camel-case.");
+            var inputType = Optional(value, "type")?.ToLowerInvariant() ?? "text";
+            if (inputType.Length > 50)
+                throw new ExtensionSdkValidationException("Extension setting type is too long.");
+            var label = Optional(value, "label") ?? key;
+            var description = Optional(value, "description") ?? Optional(value, "helpText");
+            var required = value.TryGetProperty("required", out var requiredValue) && requiredValue.ValueKind == JsonValueKind.True;
+            var sensitive = value.TryGetProperty("secret", out var secretValue) && secretValue.ValueKind == JsonValueKind.True ||
+                            inputType is "password" or "secret" or "token" ||
+                            SensitiveSettingKeyPattern().IsMatch(key);
+            var defaultJson = value.TryGetProperty("default", out var defaultValue)
+                ? defaultValue.GetRawText()
+                : null;
+            var choices = OptionalStringArray(value, "options", 64, 100);
+            result.Add(new(key, label, inputType, description, required, sensitive, defaultJson, choices));
+        }
+        if (result.Count > 64 || result.Select(item => item.Key).Distinct(StringComparer.Ordinal).Count() != result.Count)
+            throw new ExtensionSdkValidationException("Extension settings must be unique and are limited to 64 entries.");
+        return result;
+    }
+
+    private static IReadOnlyList<ExtensionSdkQualityOption> ParseQualityOptions(JsonElement root)
+    {
+        if (!root.TryGetProperty("qualityOptions", out var values)) return [];
+        if (values.ValueKind != JsonValueKind.Array)
+            throw new ExtensionSdkValidationException("Extension qualityOptions must be an array.");
+        var result = new List<ExtensionSdkQualityOption>();
+        foreach (var value in values.EnumerateArray())
+        {
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                var id = value.GetString()!;
+                result.Add(new(id, id, null));
+                continue;
+            }
+            if (value.ValueKind != JsonValueKind.Object)
+                throw new ExtensionSdkValidationException("Extension quality options must be strings or objects.");
+            var idValue = Optional(value, "id") ?? Optional(value, "value") ?? Required(value, "name");
+            result.Add(new(idValue, Optional(value, "label") ?? Optional(value, "displayName") ?? idValue,
+                Optional(value, "description")));
+        }
+        if (result.Count > 32 || result.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != result.Count)
+            throw new ExtensionSdkValidationException("Extension quality options must be unique and are limited to 32 entries.");
+        return result;
+    }
+
+    private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name, int maximumItems, int maximumLength)
+    {
+        if (!root.TryGetProperty(name, out var value)) return [];
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new ExtensionSdkValidationException($"Manifest field '{name}' must be an array of strings.");
+        var result = value.EnumerateArray().Select(item =>
+        {
+            if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+                throw new ExtensionSdkValidationException($"Manifest field '{name}' must contain non-empty strings.");
+            var text = item.GetString()!.Trim();
+            if (text.Length > maximumLength)
+                throw new ExtensionSdkValidationException($"Manifest field '{name}' contains an overlong value.");
+            return text;
+        }).ToArray();
+        if (result.Length > maximumItems || result.Distinct(StringComparer.Ordinal).Count() != result.Length)
+            throw new ExtensionSdkValidationException($"Manifest field '{name}' contains too many or duplicate values.");
         return result;
     }
 
@@ -289,4 +411,6 @@ public static partial class ExtensionSdkV1
     private static partial Regex WildcardOriginPattern();
     [GeneratedRegex("^[a-z][A-Za-z0-9]*$", RegexOptions.CultureInvariant)]
     private static partial Regex SettingKeyPattern();
+    [GeneratedRegex("(?i)(password|secret|token|cookie|apiKey|mediaUserToken)$", RegexOptions.CultureInvariant)]
+    private static partial Regex SensitiveSettingKeyPattern();
 }

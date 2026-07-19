@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Extensions;
+using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
 
@@ -110,7 +111,11 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         {
             Write(archive, "manifest.json", """
                 {"name":"demo","displayName":"Demo","version":"1.2.3","description":"Fixture",
-                 "type":["metadata_provider"],"permissions":{"network":["api.example.test","*.example.test"],"storage":true}}
+                 "author":"Example","icon":"icon.jpg","type":["metadata_provider"],
+                 "settings":[{"key":"mediaUserToken","label":"Media user token","type":"password","required":true},
+                             {"key":"storefront","label":"Storefront","type":"select","options":["us","ca"],"default":"us"}],
+                 "qualityOptions":[{"id":"lossless","label":"Lossless"}],
+                 "permissions":{"network":["api.example.test","*.example.test"],"storage":true}}
                 """);
             Write(archive, "index.js", "registerExtension({customSearch:function(){return [];},getTrack:function(id){return {id:id,name:'Demo',artists:['Artist']};}});");
             Write(archive, "icon.jpg", "image");
@@ -123,8 +128,16 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.All(verified.Manifest.Capabilities, capability =>
         {
             Assert.False(capability.AccountRequired);
-            Assert.Empty(capability.AccountScopes);
+            Assert.Contains(ProviderAccountScope.User, capability.AccountScopes);
         });
+        Assert.Equal("icon.jpg", verified.Manifest.IconPath);
+        Assert.Equal("Example", verified.Manifest.Author);
+        Assert.Equal(2, verified.Manifest.Settings!.Count);
+        Assert.True(verified.Manifest.Settings.Single(item => item.Key == "mediaUserToken").Sensitive);
+        Assert.Equal(["us", "ca"], verified.Manifest.Settings.Single(item => item.Key == "storefront").Choices);
+        Assert.Equal("lossless", Assert.Single(verified.Manifest.QualityOptions!).Id);
+        Assert.Contains(verified.Manifest.Permissions, item => item is
+            { Kind: ExtensionPermissionKind.Secret, Value: "mediaUserToken", Required: true });
         Assert.Contains(verified.Manifest.Permissions, item => item is { Kind: ExtensionPermissionKind.Cache, Value: "*" });
         Assert.Contains(verified.Manifest.Permissions, item => item.Value == "https://*.example.test/");
         Assert.True(SpotiFlacExtensionCompatibility.IsNormalizedManifest(

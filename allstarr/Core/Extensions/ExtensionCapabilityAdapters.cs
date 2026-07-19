@@ -13,6 +13,7 @@ public abstract class ExtensionCapabilityAdapterBase
     private readonly ExtensionSandbox _sandbox;
     private readonly IProviderAccountSecretAccessor? _secrets;
     private readonly IReadOnlySet<string> _secretKeys;
+    private readonly IReadOnlySet<string> _accountValueKeys;
 
     protected ExtensionCapabilityAdapterBase(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
         ProviderCapabilityKind capability, IProviderAccountSecretAccessor? secrets)
@@ -23,6 +24,9 @@ public abstract class ExtensionCapabilityAdapterBase
         Hooks = manifest.Capabilities.Single(item => item.Kind == capability).Hooks.ToHashSet(StringComparer.Ordinal);
         _secretKeys = manifest.Permissions.Where(item => item.Kind == ExtensionPermissionKind.Secret)
             .Select(item => item.Value).ToHashSet(StringComparer.Ordinal);
+        _accountValueKeys = _secretKeys
+            .Concat(manifest.Settings?.Select(item => item.Key) ?? [])
+            .ToHashSet(StringComparer.Ordinal);
     }
 
     public string ProviderId { get; }
@@ -52,11 +56,11 @@ public abstract class ExtensionCapabilityAdapterBase
                 return ProviderOutcome<T>.Success(map(document.RootElement));
             }
 
-            if (_secretKeys.Count == 0) return Run();
-            if (context.Account == null || _secrets == null) return Failure<T>(ProviderErrorKind.AccountNeedsConfiguration);
+            if (_accountValueKeys.Count == 0 || context.Account == null) return Run();
+            if (_secrets == null) return Failure<T>(ProviderErrorKind.AccountNeedsConfiguration);
             return await _secrets.UseAsync(context.Account, value =>
             {
-                using var scope = ExtensionInvocationSecretScope.Open(ParseSecrets(value));
+                using var scope = ExtensionInvocationSecretScope.Open(ParseAccountValues(value));
                 return Task.FromResult(Run());
             }, context.CancellationToken);
         }
@@ -64,14 +68,15 @@ public abstract class ExtensionCapabilityAdapterBase
         catch { return Failure<T>(ProviderErrorKind.TransientFailure); }
     }
 
-    private IReadOnlyDictionary<string, string> ParseSecrets(ReadOnlyMemory<byte> json)
+    private IReadOnlyDictionary<string, string> ParseAccountValues(ReadOnlyMemory<byte> json)
     {
         using var document = JsonDocument.Parse(json);
         if (document.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidOperationException();
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var key in _secretKeys)
-            if (document.RootElement.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
-                values[key] = value.GetString()!;
+        foreach (var key in _accountValueKeys)
+            if (document.RootElement.TryGetProperty(key, out var value) &&
+                value.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined or JsonValueKind.Object or JsonValueKind.Array))
+                values[key] = value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
         return values;
     }
 

@@ -50,6 +50,9 @@ first-party package bundle, but it does not force optional provider sidecars on 
 docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 ```
 
+Valkey is an optional cache. The default deployment runs without it. To enable it, set
+`REDIS_ENABLED=true` and add `--profile cache` to the Compose command.
+
 The bundle lock is still authoritative. A bundled package marked blocked is not staged or activated merely because
 the AIO files are mounted.
 

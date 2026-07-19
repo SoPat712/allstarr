@@ -468,7 +468,7 @@ a {
     height: 100%;
     max-width: 100%;
     max-height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     object-position: center;
     border-radius: 7px;
 }
@@ -972,10 +972,27 @@ tbody tr:hover {
 
 .provider-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-4);
     min-width: 0;
     max-width: 100%;
+}
+
+@media (max-width: 1180px) {
+    .provider-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.inline-button {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--accent-text);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
 }
 
 .provider-account-grid {
@@ -2002,6 +2019,10 @@ fieldset.form-row > label small {
     background: color-mix(in srgb, var(--text-muted), transparent 72%);
 }
 
+.now-progress .progress span {
+    transition-duration: 240ms;
+}
+
 .now-status {
     display: flex;
     justify-content: flex-end;
@@ -2062,12 +2083,16 @@ fieldset.form-row > label small {
 
 .toast-stack {
     position: fixed;
-    right: var(--space-5);
-    top: var(--space-5);
+    left: calc(var(--rail-width) + var(--space-5));
+    bottom: var(--space-5);
     z-index: 10;
     display: grid;
     gap: var(--space-2);
     width: min(420px, calc(100vw - 32px));
+}
+
+.app-shell:has(.now-playing) .toast-stack {
+    bottom: calc(var(--now-playing-height) + var(--space-7));
 }
 
 .inline-panel {
@@ -3116,6 +3141,17 @@ button.setup-choice {
         right: var(--space-3);
         bottom: var(--space-3);
         grid-template-columns: 1fr;
+    }
+
+    .toast-stack {
+        left: var(--space-3);
+        right: var(--space-3);
+        bottom: var(--space-3);
+        width: auto;
+    }
+
+    .app-shell:has(.now-playing) .toast-stack {
+        bottom: calc(var(--now-playing-height) + 28px);
     }
 
     .restart-bar {

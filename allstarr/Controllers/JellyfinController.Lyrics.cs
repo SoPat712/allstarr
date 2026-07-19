@@ -1,6 +1,8 @@
 using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -161,7 +163,43 @@ public partial class JellyfinController
         // Use orchestrator for clean, modular lyrics fetching
         LyricsInfo? lyrics = null;
 
-        if (_lyricsOrchestrator != null)
+        // Ask the track's own provider first. Extensions such as Apple Music can use
+        // their configured account token without coupling Jellyfin to that provider.
+        if (isExternal && _providerGateway != null && HttpContext.GetProtocolExecutionContext() is { } protocol)
+        {
+            try
+            {
+                var providerLyrics = await _providerGateway.GetLyricsAsync(
+                    protocol,
+                    provider!,
+                    externalId!,
+                    ProviderLyricsFormat.LineTimed);
+                if (!string.IsNullOrWhiteSpace(providerLyrics?.Content))
+                {
+                    lyrics = new LyricsInfo
+                    {
+                        TrackName = searchTitle,
+                        ArtistName = string.Join(", ", searchArtists),
+                        AlbumName = searchAlbum,
+                        Duration = song.Duration ?? 0,
+                        PlainLyrics = providerLyrics.Format == ProviderLyricsFormat.PlainText
+                            ? providerLyrics.Content
+                            : null,
+                        SyncedLyrics = providerLyrics.Format != ProviderLyricsFormat.PlainText
+                            ? providerLyrics.Content
+                            : null
+                    };
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogWarning(exception,
+                    "Provider lyrics failed for {Provider}/{ExternalId}; continuing through configured fallbacks",
+                    provider, externalId);
+            }
+        }
+
+        if (lyrics == null && _lyricsOrchestrator != null)
         {
             lyrics = await _lyricsOrchestrator.GetLyricsAsync(
                 trackName: searchTitle,

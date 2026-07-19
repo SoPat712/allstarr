@@ -32,7 +32,7 @@ public sealed class WebUiExtensionControlPlaneContractTests
         Assert.Contains("Verify and install", _script, StringComparison.Ordinal);
         Assert.Contains("expectedRevision", _script, StringComparison.Ordinal);
         Assert.Contains("Previous extension version restored", _script, StringComparison.Ordinal);
-        Assert.Contains("direct URL to an Allstarr catalog", _script, StringComparison.Ordinal);
+        Assert.Contains("direct registry JSON URL", _script, StringComparison.Ordinal);
         Assert.Contains("this.extensionRegistryError = error.message", _script, StringComparison.Ordinal);
         Assert.Contains("role=\"alert\"", _script, StringComparison.Ordinal);
         Assert.Contains("Extension registry validated and added", _script, StringComparison.Ordinal);

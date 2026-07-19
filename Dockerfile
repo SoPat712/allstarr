@@ -6,14 +6,12 @@ COPY allstarr.sln .
 COPY Directory.Build.props .
 COPY allstarr/allstarr.csproj allstarr/
 COPY allstarr/AppVersion.cs allstarr/
-COPY allstarr.Tests/allstarr.Tests.csproj allstarr.Tests/
 
-RUN dotnet restore
+RUN dotnet restore allstarr/allstarr.csproj
 
 COPY allstarr/ allstarr/
-COPY allstarr.Tests/ allstarr.Tests/
 
-RUN dotnet publish allstarr/allstarr.csproj -c Release -o /app/publish
+RUN dotnet publish allstarr/allstarr.csproj -c Release --no-restore -o /app/publish
 COPY .env.example /app/publish/
 
 # Runtime stage
@@ -41,7 +39,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-18 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /app/downloads /app/kept /app/cache /app/state/backups
+RUN install -d /app/downloads /app/kept /app/cache /app/state/backups
 
 COPY --from=build /app/publish .
 

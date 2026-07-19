@@ -118,6 +118,56 @@ public class ExtensionController : ControllerBase
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
+    [HttpGet("packages/{packageId:guid}/icon")]
+    public async Task<IActionResult> PackageIcon(Guid packageId, CancellationToken cancellationToken)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        var package = (await _controlPlane.ListPackagesAsync(cancellationToken: cancellationToken))
+            .SingleOrDefault(item => item.Id == packageId);
+        return package == null ? NotFound() : ServePackageIcon(package);
+    }
+
+    [HttpGet("providers/{extensionId}/icon")]
+    public async Task<IActionResult> ProviderIcon(string extensionId, CancellationToken cancellationToken)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession)
+            return Unauthorized(new { error = "Authentication required" });
+        var package = (await _controlPlane.ListPackagesAsync(extensionId, cancellationToken))
+            .FirstOrDefault(item => item.State == ExtensionPackageState.Active);
+        return package == null ? NotFound() : ServePackageIcon(package);
+    }
+
+    private IActionResult ServePackageIcon(ExtensionPackageRecord package)
+    {
+        try
+        {
+            var manifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
+            var icon = manifest.IconPath;
+            if (string.IsNullOrWhiteSpace(icon))
+                icon = new[] { "icon.png", "icon.jpg", "icon.jpeg", "icon.webp" }
+                    .FirstOrDefault(candidate => System.IO.File.Exists(Path.Combine(package.PackagePath, candidate)));
+            if (string.IsNullOrWhiteSpace(icon)) return NotFound();
+            var root = Path.GetFullPath(package.PackagePath);
+            var path = Path.GetFullPath(Path.Combine(root, icon));
+            if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                !System.IO.File.Exists(path))
+                return NotFound();
+            var contentType = Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                _ => null
+            };
+            return contentType == null ? NotFound() : PhysicalFile(path, contentType);
+        }
+        catch (ExtensionSdkValidationException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpPost("packages/{packageId:guid}/review")]
     public async Task<IActionResult> ReviewPermissions(
         Guid packageId,
@@ -399,24 +449,36 @@ public class ExtensionController : ControllerBase
         item.Revision
     };
 
-    private static object PackageResponse(ExtensionPackageRecord item) => new
+    private static object PackageResponse(ExtensionPackageRecord item)
     {
-        item.Id,
-        item.RegistryId,
-        item.PreviousPackageId,
-        item.ExtensionId,
-        item.DisplayName,
-        item.Version,
-        item.SdkVersion,
-        item.Sha256,
-        state = item.State.ToString().ToLowerInvariant(),
-        item.FailureCode,
-        item.StagedAt,
-        item.ReviewedAt,
-        item.ActivatedAt,
-        item.DisabledAt,
-        item.Revision
-    };
+        ExtensionSdkManifest? manifest = null;
+        try { manifest = ExtensionSdkV1.ParseManifest(item.ManifestJson); }
+        catch (ExtensionSdkValidationException) { }
+        return new
+        {
+            item.Id,
+            item.RegistryId,
+            item.PreviousPackageId,
+            item.ExtensionId,
+            item.DisplayName,
+            item.Version,
+            item.SdkVersion,
+            item.Sha256,
+            description = manifest?.Description,
+            author = manifest?.Author,
+            iconUrl = manifest?.IconPath == null ? null : $"/api/admin/extensions/packages/{item.Id}/icon",
+            settings = manifest?.Settings,
+            qualityOptions = manifest?.QualityOptions,
+            requiredRuntimeFeatures = manifest?.RequiredRuntimeFeatures,
+            state = item.State.ToString().ToLowerInvariant(),
+            item.FailureCode,
+            item.StagedAt,
+            item.ReviewedAt,
+            item.ActivatedAt,
+            item.DisabledAt,
+            item.Revision
+        };
+    }
 }
 
 public class InstallRequest

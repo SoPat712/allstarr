@@ -1,4 +1,6 @@
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Routing;
 using allstarr.Models.Domain;
@@ -48,6 +50,12 @@ public interface IProtocolProviderGateway
         string externalId,
         ProviderAudioQuality quality,
         string? rangeHeader);
+
+    Task<ProviderLyricsResult?> GetLyricsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        ProviderLyricsFormat? preferredFormat = null);
 }
 
 public sealed record ProtocolProviderStream(HttpResponseMessage Response, ProviderStreamLease Lease);
@@ -83,12 +91,13 @@ public sealed class ProtocolProviderGateway(
         }
         var actor = protocol.RequireActor();
         var fetchLimit = Math.Clamp(Math.Max(songLimit, Math.Max(albumLimit, artistLimit)), 1, 200);
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Metadata);
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             protocol,
             actor,
             ProviderCapabilityKind.Metadata,
             "protocol-metadata-search",
-            providerIds: [],
+            providerIds: providerOrder,
             sourceTrackId: null));
 
         var routed = new SearchResult();
@@ -219,12 +228,13 @@ public sealed class ProtocolProviderGateway(
         if (protocol.Actor is null) return [];
 
         var actor = protocol.RequireActor();
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Playlist);
         var plan = await router.PlanAsync<IProviderPlaylistCapability>(Request(
             protocol,
             actor,
             ProviderCapabilityKind.Playlist,
             "protocol-playlist-search",
-            providerIds: [],
+            providerIds: providerOrder,
             sourceTrackId: null));
         var routed = new List<ExternalPlaylist>();
         foreach (var candidate in plan.Candidates)
@@ -354,6 +364,36 @@ public sealed class ProtocolProviderGateway(
         return new ProtocolProviderStream(response, lease);
     }
 
+    public async Task<ProviderLyricsResult?> GetLyricsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        ProviderLyricsFormat? preferredFormat = null)
+    {
+        var trackId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
+        var routed = await PlanExactAsync<IProviderLyricsCapability>(
+            protocol,
+            providerId,
+            ProviderCapabilityKind.Lyrics,
+            "protocol-lyrics-get",
+            trackId);
+        if (routed.Candidate == null) return null;
+        var canonicalBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{providerId}\n{externalId}"));
+        var canonicalId = new Guid(canonicalBytes.AsSpan(0, 16));
+        var outcome = await routed.Candidate.Implementation.FetchLyricsAsync(
+            routed.Candidate.Context,
+            new ProviderLyricsRequest(canonicalId, routed.Candidate.TrackId ?? trackId, preferredFormat: preferredFormat));
+        if (outcome.IsSuccess)
+        {
+            var result = outcome.RequireValue();
+            return result.Availability == ProviderLyricsAvailabilityState.Available ? result : null;
+        }
+        if (outcome.Error!.Kind is ProviderErrorKind.NotFound or ProviderErrorKind.CapabilityUnavailable or ProviderErrorKind.NotSupported)
+            return null;
+        ThrowRouteFailure(outcome.Error);
+        return null;
+    }
+
     private async Task<(ProviderRouteCandidate<TCapability>? Candidate, ProviderRoutePlan<TCapability> Plan)>
         PlanExactAsync<TCapability>(
             ProtocolExecutionContext protocol,
@@ -452,6 +492,31 @@ public sealed class ProtocolProviderGateway(
             .Any(descriptor => descriptor.Id.Equals(providerId, StringComparison.Ordinal) &&
                                descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Metadata)
                                    .AccountRequirement == ProviderAccountRequirement.None);
+    }
+
+    private IReadOnlyList<string> ResolveProviderOrder(ProviderCapabilityKind capability)
+    {
+        var (settingKey, environmentKey, fallback) = capability switch
+        {
+            ProviderCapabilityKind.Metadata => ("Providers:MetadataOrder", "MULTI_PROVIDER_METADATA_ORDER", "apple-download,deezer,qobuz"),
+            ProviderCapabilityKind.Playlist => ("Providers:PlaylistOrder", "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,apple-download,deezer,qobuz"),
+            ProviderCapabilityKind.Lyrics => ("Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lyricsplus,lrclib"),
+            ProviderCapabilityKind.Streaming => ("Providers:StreamingOrder", "MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz"),
+            ProviderCapabilityKind.Download => ("Providers:DownloadOrder", "MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz"),
+            _ => (string.Empty, string.Empty, string.Empty)
+        };
+        var configured = configuration?[settingKey] ?? configuration?[environmentKey] ?? fallback;
+        var ordered = configured.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeProvider)
+            .Where(providerId => registry.FindByCapability(capability, includeNonOperational: true)
+                .Any(provider => provider.Id.Equals(providerId, StringComparison.Ordinal)))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        ordered.AddRange(registry.FindByCapability(capability, includeNonOperational: true)
+            .Select(provider => provider.Id)
+            .Where(providerId => !ordered.Contains(providerId, StringComparer.Ordinal))
+            .OrderBy(providerId => providerId, StringComparer.Ordinal));
+        return ordered;
     }
 
     private static ProviderRouteRequest Request(
@@ -603,7 +668,8 @@ public sealed class ProtocolProviderGateway(
         var items = routed.Concat(legacy)
             .DistinctBy(key, StringComparer.Ordinal)
             .ToList();
-        var preferred = (configuration?["MULTI_PROVIDER_METADATA_ORDER"] ??
+        var preferred = (configuration?["Providers:MetadataOrder"] ??
+                         configuration?["MULTI_PROVIDER_METADATA_ORDER"] ??
                          "apple-download,deezer,qobuz")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(NormalizeProvider)

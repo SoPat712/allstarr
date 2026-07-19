@@ -146,6 +146,12 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var actualHash = ExtensionSdkV1.ComputePackageContentSha256(package.PackagePath);
         if (!actualHash.Equals(package.ContentSha256, StringComparison.OrdinalIgnoreCase))
             throw new ExtensionSdkValidationException("Extension package contents changed after staging.");
+        var unsupportedRuntimeFeatures = (manifest.RequiredRuntimeFeatures ?? [])
+            .Where(feature => !SupportedRuntimeFeatures.Contains(feature))
+            .ToArray();
+        if (unsupportedRuntimeFeatures.Length != 0)
+            throw new ExtensionSdkValidationException(
+                $"This extension requires runtime features that Allstarr does not support yet: {string.Join(", ", unsupportedRuntimeFeatures)}.");
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var reviews = await db.ExtensionPermissionReviews.AsNoTracking()
             .Where(item => item.ExtensionPackageId == package.Id)
@@ -172,7 +178,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             networkPermissions,
             cacheKeys, secretKeys, ExtensionInvocationSecretScope.Resolve,
             (level, message) => _controlPlane.WriteLogAsync(package.Id, level, "runtime.log", message,
-                "extension-runtime", CancellationToken.None).GetAwaiter().GetResult());
+                "extension-runtime", CancellationToken.None).GetAwaiter().GetResult(),
+            (manifest.Settings ?? []).Select(setting => setting.Key).ToHashSet(StringComparer.Ordinal));
         var sandbox = new ExtensionSandbox(package.PackagePath, package.ManifestJson,
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id, package.Id.ToString("N")));
@@ -189,18 +196,61 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             ProviderCapabilityKind.Health => new ExtensionHealthCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             _ => throw new ExtensionSdkValidationException("Unsupported extension capability.")
         })).ToArray();
+        var declaredSettings = manifest.Settings ?? [];
+        var settings = declaredSettings.Select(setting => new ProviderSettingDescriptor(
+            setting.Key,
+            SettingKind(setting),
+            ProviderSettingScope.ProviderAccount,
+            setting.Label,
+            setting.Required,
+            SettingKind(setting) == ProviderSettingValueKind.Choice ? setting.Choices : null))
+            .Concat(secretKeys
+                .Where(key => declaredSettings.All(setting => !setting.Key.Equals(key, StringComparison.Ordinal)))
+                .Select(key => new ProviderSettingDescriptor(
+                    key,
+                    ProviderSettingValueKind.Secret,
+                    ProviderSettingScope.ProviderAccount,
+                    key,
+                    approved.Any(item => item.PermissionKind == "secret" &&
+                                         item.PermissionValue == key && item.Required))))
+            .ToArray();
+        var branding = manifest.IconPath == null ? null : new ProviderBrandingDescriptor(manifest.IconPath, manifest.Author);
         var descriptor = new ProviderDescriptor(manifest.Id, manifest.DisplayName,
-            $"{manifest.DisplayName} extension provider", ProviderOrigin.Extension, manifest.SdkVersion, "1.0",
+            manifest.Description ?? $"{manifest.DisplayName} extension provider", ProviderOrigin.Extension, manifest.SdkVersion, "1.0",
             manifest.Capabilities.Select(item => new ProviderCapabilityDescriptor(item.Kind,
                 ProviderCapabilitySupportState.Supported,
-                item.AccountRequired ? ProviderAccountRequirement.Required : ProviderAccountRequirement.None,
+                item.AccountRequired
+                    ? ProviderAccountRequirement.Required
+                    : item.AccountScopes.Count > 0
+                        ? ProviderAccountRequirement.Optional
+                        : ProviderAccountRequirement.None,
                 "1.0", item.Hooks, item.AccountScopes)),
             new ProviderPermissionDescriptor(origins, cacheKeys.Count != 0, secretKeys),
-            secretKeys.Select(key => new ProviderSettingDescriptor(key, ProviderSettingValueKind.Secret,
-                ProviderSettingScope.ProviderAccount, key, approved.Any(item => item.PermissionValue == key && item.Required))),
+            settings,
+            branding,
             entryPoint: manifest.EntryPoint,
             healthProbe: manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Health && item.Hooks.Count > 0));
         return new ProviderRegistration(descriptor, implementations);
+    }
+
+    private static readonly HashSet<string> SupportedRuntimeFeatures = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "fetch@1",
+        "file@1",
+        "storage@1"
+    };
+
+    private static ProviderSettingValueKind SettingKind(ExtensionSdkSetting setting)
+    {
+        if (setting.Sensitive) return ProviderSettingValueKind.Secret;
+        if ((setting.Choices?.Count ?? 0) > 0 || setting.InputType is "select" or "choice")
+            return ProviderSettingValueKind.Choice;
+        return setting.InputType switch
+        {
+            "boolean" or "bool" or "toggle" or "checkbox" => ProviderSettingValueKind.Boolean,
+            "integer" or "int" or "number" => ProviderSettingValueKind.Integer,
+            _ => ProviderSettingValueKind.Text
+        };
     }
 
     private async Task<ExtensionPackageRecord> GetPackageAsync(Guid packageId, CancellationToken cancellationToken)

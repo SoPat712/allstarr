@@ -1003,6 +1003,7 @@ public sealed class ProtocolRouteFixtureTests
             {
                 var expectedLookup = fixture.GetProperty("lookup");
                 lookup.Setup(service => service.FindAsync(
+                        It.IsAny<ProtocolExecutionContext>(),
                         expectedLookup.GetProperty("provider").GetString()!,
                         expectedLookup.GetProperty("externalId").GetString()!,
                         It.IsAny<CancellationToken>()))

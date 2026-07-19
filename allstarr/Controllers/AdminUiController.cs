@@ -63,9 +63,18 @@ public class AdminUiController : ControllerBase
             {
                 ActiveBackend = activeBackend,
                 ProviderAccountManagementMode = _providerAccountManagementMode.ToString(),
+                Providers = BuildProviders().Select(item => new AdminUiProvider
+                {
+                    Id = item.Id,
+                    Name = item.Name,
+                    Icon = item.Icon,
+                    LogoUrl = item.LogoUrl,
+                    AccountSettings = item.AccountSettings
+                }).ToList(),
                 Routes =
                 [
-                    Route("sources", "#/sources", "Provider accounts", "sources")
+                    Route("sources", "#/sources", "Sources", "sources"),
+                    Route("settings", "#/settings", "Settings", "system")
                 ]
             });
         }
@@ -285,10 +294,28 @@ public class AdminUiController : ControllerBase
                     Id = item.Id,
                     Name = item.DisplayName,
                     Icon = "extension",
+                    LogoUrl = item.Branding == null ? null : $"/api/admin/extensions/providers/{Uri.EscapeDataString(item.Id)}/icon",
                     Status = "unknown",
                     Categories = item.Capabilities.Where(capability => capability.HasUsableImplementation)
                         .Select(capability => capability.Capability.ToString().ToLowerInvariant()).ToList(),
-                    Notes = [$"Extension SDK {item.SdkVersion}"]
+                    Notes = [$"Extension SDK {item.SdkVersion}"],
+                    AccountSettings = item.Settings.Select(setting => new AdminUiConfigField
+                    {
+                        Key = setting.Key,
+                        Label = setting.Label,
+                        Type = setting.ValueKind switch
+                        {
+                            ProviderSettingValueKind.Secret => "password",
+                            ProviderSettingValueKind.Boolean => "toggle",
+                            ProviderSettingValueKind.Integer => "number",
+                            ProviderSettingValueKind.Choice => "select",
+                            _ => "text"
+                        },
+                        Sensitive = setting.ValueKind == ProviderSettingValueKind.Secret,
+                        Required = setting.Required,
+                        Options = setting.Choices.ToList(),
+                        Ownership = "provider-account"
+                    }).ToList()
                 }));
         }
         foreach (var provider in providers)

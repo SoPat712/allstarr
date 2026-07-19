@@ -120,8 +120,12 @@ public sealed class HostCompositionTests
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
 
         Assert.Equal(managementMode, schema.ProviderAccountManagementMode);
-        Assert.Equal(["sources"], schema.Routes.Select(route => route.Id));
-        Assert.Empty(schema.Providers);
+        Assert.Equal(["sources", "settings"], schema.Routes.Select(route => route.Id));
+        Assert.All(schema.Providers, provider =>
+        {
+            Assert.Empty(provider.ConfigSchema);
+            Assert.Empty(provider.RuntimeCapabilities);
+        });
         Assert.Empty(schema.ProviderSupportMatrix);
         Assert.Empty(schema.ConfigSections);
         Assert.Empty(schema.ExtensionStore.Repositories);

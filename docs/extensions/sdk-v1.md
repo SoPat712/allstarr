@@ -104,6 +104,14 @@ Disable an active version before uninstalling it. Uninstall removes that verifie
 
 Direct URL staging is an administrator-only development path and still requires a checksum. It should not be presented as a signed or trusted registry release.
 
+### SpotiFLAC packages
+
+Allstarr can install the SpotiFLAC registry format and `.sflx` packages through the same store. It normalizes provider manifests into SDK v1, preserves package/store icons, presents declared settings as encrypted provider-account fields, and adapts metadata, artwork, lyrics, and managed downloads to Allstarr's typed capabilities. The compatibility runtime includes the bounded `fetch`, URL, text encoding, storage, and file bridges used by ordinary provider packages.
+
+Packages that declare runtime features Allstarr cannot safely provide are rejected with the missing feature names instead of appearing installed but failing later. In particular, packages that require SpotiFLAC's signed-session or session-grant host flow remain unavailable until Allstarr implements that protocol. A registry entry still goes through download, checksum verification, permission review, and activation; the **Install** action drives that workflow without requiring users to understand internal staging states.
+
+Extension accounts live under **Settings → Connected accounts**. For the SpotiFLAC Apple Music extension, add an Apple Music account there and enter `mediaUserToken` to enable its lyrics capability. Catalog metadata does not require that token; Apple subscription lyrics do. Source routing and health remain on **Sources**, separate from credentials.
+
 ## Testing an extension
 
 Test at least these cases before publishing:

@@ -608,6 +608,11 @@ public class ExtensionManager
             }
 
             var version = ReadString(ext, "version");
+            var iconUrl = ReadString(ext, "iconUrl", "icon_url", "icon");
+            if (!string.IsNullOrWhiteSpace(iconUrl) &&
+                (!OutboundRequestGuard.TryCreateSafeHttpUri(iconUrl, out var parsedIcon, out _) ||
+                 parsedIcon!.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(parsedIcon.Fragment)))
+                iconUrl = string.Empty;
             items.Add(new StoreExtensionItem
             {
                 Id = isSpotiFlacPackage ? $"spotiflac-{id}" : id,
@@ -620,6 +625,7 @@ public class ExtensionManager
                 Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
                 RepoUrl = repoUrl,
                 HomepageUrl = ReadString(ext, "homepage", "homepageUrl", "homepage_url", "repository", "repoUrl", "repo_url"),
+                IconUrl = iconUrl,
                 Types = ReadStringList(ext, "types", "type", "capabilities", "capability")
             });
         }
@@ -877,6 +883,7 @@ public class StoreExtensionItem
     public bool IsEnabled { get; set; }
     public string RepoUrl { get; set; } = "";
     public string HomepageUrl { get; set; } = "";
+    public string IconUrl { get; set; } = "";
     public List<string> Types { get; set; } = [];
 }
 
@@ -896,7 +903,8 @@ public sealed record ExtensionRuntimePermissionSet(
     IReadOnlySet<string> CacheKeys,
     IReadOnlySet<string> SecretKeys,
     Func<string, string?>? SecretResolver = null,
-    Action<string, string>? LogSink = null)
+    Action<string, string>? LogSink = null,
+    IReadOnlySet<string>? SettingKeys = null)
 {
     public static ExtensionRuntimePermissionSet None { get; } = new(
         new HashSet<string>(StringComparer.Ordinal),
@@ -981,18 +989,78 @@ public class ExtensionSandbox
             permissions ?? ExtensionRuntimePermissionSet.None);
         _engine.SetValue("host", hostBridge);
 
+        var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
+        var manifest = isSpotiFlac ? ExtensionSdkV1.ParseManifest(manifestJson) : null;
+        var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
+        _engine.SetValue("_allstarrSettingsJson", settingsJson);
+        _engine.SetValue("_allstarrSettingKeysJson", JsonSerializer.Serialize(
+            manifest?.Settings?.Select(item => item.Key) ?? []));
+        _engine.Execute("var _allstarrDefaultSettings = JSON.parse(_allstarrSettingsJson); var _allstarrSettingKeys = JSON.parse(_allstarrSettingKeysJson);");
+
         _engine.Execute("var _registeredExtension = null; function registerExtension(obj) { _registeredExtension = obj; }");
         _engine.Execute("const log = { info: function(...args) { host.Log('info', args.join(' ')); }, warn: function(...args) { host.Log('warn', args.join(' ')); }, error: function(...args) { host.Log('error', args.join(' ')); }, debug: function(...args) { host.Log('debug', args.join(' ')); } };");
-        _engine.Execute("const storage = { get: function(key) { return host.StorageGet(key); }, set: function(key, val) { host.StorageSet(key, val); } };");
+        _engine.Execute("const storage = { get: function(key) { return host.StorageGet(key); }, set: function(key, val) { host.StorageSet(key, String(val)); }, remove: function(key) { return host.StorageRemove(key); } };");
         _engine.Execute("const secrets = { get: function(key) { return host.SecretGet(key); } };");
-        _engine.Execute("const http = { get: function(url, headers) { return host.HttpGet(url, headers); }, post: function(url, body, headers) { return host.HttpPost(url, body, headers); } };");
+        _engine.Execute("""
+            function _allstarrResponse(raw) {
+              raw = raw || {};
+              var headerValues = raw.headers || {};
+              var headers = {
+                get: function(name) { var wanted = String(name || '').toLowerCase(); for (var key in headerValues) if (String(key).toLowerCase() === wanted) return String(headerValues[key]); return null; },
+                has: function(name) { return this.get(name) !== null; },
+                forEach: function(callback) { for (var key in headerValues) callback(String(headerValues[key]), key, this); }
+              };
+              return {
+                ok: Number(raw.statusCode || 0) >= 200 && Number(raw.statusCode || 0) < 300,
+                status: Number(raw.statusCode || 0), statusCode: Number(raw.statusCode || 0),
+                statusText: String(raw.statusText || ''), url: String(raw.url || ''),
+                headers: headers, body: String(raw.body || ''), error: raw.error || null,
+                text: function() { return String(raw.body || ''); },
+                json: function() { return JSON.parse(String(raw.body || 'null')); },
+                arrayBuffer: function() { return host.Base64Decode(raw.bodyBase64 || ''); }
+              };
+            }
+            const http = {
+              get: function(url, headers) { return host.HttpGet(url, headers); },
+              post: function(url, body, headers) { return host.HttpPost(url, body, headers); },
+              put: function(url, body, headers) { return host.HttpPut(url, body, headers); },
+              delete: function(url, headers) { return host.HttpDelete(url, headers); },
+              patch: function(url, body, headers) { return host.HttpPatch(url, body, headers); },
+              request: function(method, url, body, headers) { return host.HttpRequest(String(method || 'GET'), url, body == null ? null : String(body), headers); }
+            };
+            function fetch(url, options) {
+              options = options || {};
+              var raw = host.HttpRequest(String(options.method || 'GET'), String(url), options.body == null ? null : String(options.body), options.headers || {});
+              return _allstarrResponse(raw);
+            }
+            function atob(value) { return host.Base64DecodeString(String(value || '')); }
+            function btoa(value) { return host.Base64EncodeString(String(value || '')); }
+            class TextEncoder { encode(value) { return host.Utf8Encode(String(value == null ? '' : value)); } }
+            class TextDecoder { decode(value) { return host.Utf8Decode(value); } }
+            class URLSearchParams {
+              constructor(value, owner) { this._owner = owner || null; this._pairs = []; var raw = String(value || '').replace(/^\?/, ''); if (raw) { var parts = raw.split('&'); for (var i = 0; i < parts.length; i++) { var pair = parts[i].split('='); this._pairs.push([decodeURIComponent(pair.shift() || ''), decodeURIComponent(pair.join('=') || '')]); } } }
+              _changed() { if (this._owner) this._owner.search = this.toString() ? '?' + this.toString() : ''; }
+              append(key, value) { this._pairs.push([String(key), String(value)]); this._changed(); }
+              set(key, value) { this.delete(key); this._pairs.push([String(key), String(value)]); this._changed(); }
+              get(key) { key = String(key); for (var i = 0; i < this._pairs.length; i++) if (this._pairs[i][0] === key) return this._pairs[i][1]; return null; }
+              getAll(key) { key = String(key); return this._pairs.filter(function(x) { return x[0] === key; }).map(function(x) { return x[1]; }); }
+              has(key) { return this.get(key) !== null; }
+              delete(key) { key = String(key); this._pairs = this._pairs.filter(function(x) { return x[0] !== key; }); this._changed(); }
+              toString() { return this._pairs.map(function(x) { return encodeURIComponent(x[0]) + '=' + encodeURIComponent(x[1]); }).join('&'); }
+            }
+            class URL {
+              constructor(value, base) { var parsed = host.ParseUrl(String(value), base == null ? null : String(base)); if (!parsed || !parsed.href) throw new TypeError('Invalid URL'); this.protocol = parsed.protocol; this.hostname = parsed.hostname; this.host = parsed.host; this.port = parsed.port; this.pathname = parsed.pathname; this.search = parsed.search; this.hash = parsed.hash; this.searchParams = new URLSearchParams(this.search, this); }
+              toString() { return host.ComposeUrl(this.protocol, this.hostname, this.port, this.pathname, this.search, this.hash); }
+              get href() { return this.toString(); }
+              set href(value) { var next = new URL(value); this.protocol = next.protocol; this.hostname = next.hostname; this.host = next.host; this.port = next.port; this.pathname = next.pathname; this.search = next.search; this.hash = next.hash; this.searchParams = next.searchParams; this.searchParams._owner = this; }
+            }
+            """);
         _engine.Execute("const artifacts = { download: function(url, artifactId, headers) { return host.ArtifactDownload(url, artifactId, headers); } };");
-        _engine.Execute("const file = { download: function(url, path, options) { return host.FileDownload(url, path, options); }, exists: function(path) { return host.FileExists(path); }, delete: function(path) { return host.FileDelete(path); }, getSize: function(path) { return host.FileSize(path); } };");
+        _engine.Execute("const file = { download: function(url, path, options) { return host.FileDownload(url, path, options); }, exists: function(path) { return host.FileExists(path); }, delete: function(path) { return host.FileDelete(path); }, getSize: function(path) { return host.FileSize(path); }, readBytes: function(path, options) { return host.FileReadBytes(path, options); }, writeBytes: function(path, data, options) { return host.FileWriteBytes(path, data, options); } };");
         _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, appUserAgent: function() { return host.AppUserAgent(); }, appVersion: function() { return '4.7.0'; }, sleep: function(ms) { host.Sleep(ms); }, sha256: function(value) { return host.Sha256(value); }, md5: function(value) { return host.Md5(value); }, base64Decode: function(value) { return host.Base64Decode(value); }, isDownloadCancelled: function() { return false; }, isRequestCancelled: function() { return false; }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
 
         _engine.Execute(indexJs);
 
-        var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
         if (isSpotiFlac) _engine.Execute(SpotiFlacExtensionCompatibility.RuntimeAdapterScript);
 
         _extensionObj = _engine.GetValue("_registeredExtension");
@@ -1004,7 +1072,6 @@ public class ExtensionSandbox
         var initFn = _extensionObj.Get("initialize");
         if (initFn.IsCallable())
         {
-            var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
             var configObj = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), settingsJson);
             _engine.Invoke(initFn, configObj);
         }
@@ -1075,6 +1142,9 @@ public class ExtensionSandbox
         {
             var function = _extensionObj.Get(hook);
             if (!function.IsCallable()) return null;
+
+            var prepare = _engine.GetValue("_allstarrPrepareInvocation");
+            if (prepare.IsCallable()) _engine.Invoke(prepare);
 
             var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
             var result = _engine.Invoke(function, request);
@@ -1371,6 +1441,14 @@ public class ExtensionHostBridge
         SaveStorage();
     }
 
+    public bool StorageRemove(string key)
+    {
+        EnsureCachePermission(key);
+        var removed = _storage.Remove(key);
+        if (removed) SaveStorage();
+        return removed;
+    }
+
     public string? SecretGet(string key)
     {
         if (!_permissions.SecretKeys.Contains(key) || _permissions.SecretResolver == null)
@@ -1378,9 +1456,25 @@ public class ExtensionHostBridge
         return $"{{{{allstarr-secret:{key}}}}}";
     }
 
+    public string? SettingGet(string key)
+    {
+        if (_permissions.SettingKeys?.Contains(key) != true)
+            throw new UnauthorizedAccessException("Extension setting is not declared by the package.");
+        return ExtensionInvocationSecretScope.Resolve(key);
+    }
+
     public object HttpGet(string url, object? headers) => HttpCall("GET", url, null, headers);
 
     public object HttpPost(string url, string? body, object? headers) => HttpCall("POST", url, body, headers);
+
+    public object HttpPut(string url, string? body, object? headers) => HttpCall("PUT", url, body, headers);
+
+    public object HttpPatch(string url, string? body, object? headers) => HttpCall("PATCH", url, body, headers);
+
+    public object HttpDelete(string url, object? headers) => HttpCall("DELETE", url, null, headers);
+
+    public object HttpRequest(string method, string url, string? body, object? headers) =>
+        HttpCall(method, url, body, headers);
 
     public object ArtifactDownload(string url, string artifactId, object? headersObj)
     {
@@ -1468,6 +1562,29 @@ public class ExtensionHostBridge
         return File.Exists(resolved) ? new FileInfo(resolved).Length : 0;
     }
 
+    public object FileReadBytes(string path, object? options)
+    {
+        var scope = RequireFileScope();
+        var resolved = scope.ResolveTemporaryPath(path);
+        if (!File.Exists(resolved)) return new { success = false, data = "", size = 0L, error = "not_found" };
+        var bytes = File.ReadAllBytes(resolved);
+        if (bytes.LongLength > scope.MaximumBytes)
+            throw new InvalidDataException("Extension file exceeds the managed artifact size limit.");
+        return new { success = true, data = Convert.ToBase64String(bytes), size = bytes.LongLength };
+    }
+
+    public object FileWriteBytes(string path, string base64Data, object? options)
+    {
+        var scope = RequireFileScope();
+        var resolved = scope.ResolveTemporaryPath(path);
+        var bytes = Convert.FromBase64String(base64Data ?? string.Empty);
+        if (bytes.LongLength > scope.MaximumBytes)
+            throw new InvalidDataException("Extension file exceeds the managed artifact size limit.");
+        Directory.CreateDirectory(Path.GetDirectoryName(resolved)!);
+        File.WriteAllBytes(resolved, bytes);
+        return new { success = true, path, size = bytes.LongLength };
+    }
+
     public object CommitFile(string path, string artifactId)
     {
         var scope = RequireFileScope();
@@ -1494,6 +1611,49 @@ public class ExtensionHostBridge
         Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(value ?? ""))).ToLowerInvariant();
 
     public byte[] Base64Decode(string value) => Convert.FromBase64String(value ?? "");
+
+    public string Base64DecodeString(string value) =>
+        Encoding.Latin1.GetString(Convert.FromBase64String(value ?? string.Empty));
+
+    public string Base64EncodeString(string value) =>
+        Convert.ToBase64String(Encoding.Latin1.GetBytes(value ?? string.Empty));
+
+    public byte[] Utf8Encode(string value) => Encoding.UTF8.GetBytes(value ?? string.Empty);
+
+    public string Utf8Decode(JsValue value) => Encoding.UTF8.GetString(ConvertToByteArray(value));
+
+    public object ParseUrl(string value, string? baseValue)
+    {
+        Uri? uri;
+        if (baseValue != null && Uri.TryCreate(baseValue, UriKind.Absolute, out var baseUri))
+            Uri.TryCreate(baseUri, value, out uri);
+        else
+            Uri.TryCreate(value, UriKind.Absolute, out uri);
+        if (uri == null) return new { };
+        return new
+        {
+            href = uri.AbsoluteUri,
+            protocol = uri.Scheme + ":",
+            hostname = uri.Host,
+            host = uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}",
+            port = uri.IsDefaultPort ? "" : uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            pathname = uri.AbsolutePath,
+            search = uri.Query,
+            hash = uri.Fragment
+        };
+    }
+
+    public string ComposeUrl(string protocol, string hostname, string port, string pathname, string search, string hash)
+    {
+        var builder = new UriBuilder(protocol.TrimEnd(':'), hostname)
+        {
+            Path = string.IsNullOrEmpty(pathname) ? "/" : pathname,
+            Query = (search ?? string.Empty).TrimStart('?'),
+            Fragment = (hash ?? string.Empty).TrimStart('#')
+        };
+        if (int.TryParse(port, out var parsedPort)) builder.Port = parsedPort;
+        return builder.Uri.AbsoluteUri;
+    }
 
     public byte[] HmacSHA1(JsValue keyVal, JsValue dataVal)
     {
@@ -1545,7 +1705,7 @@ public class ExtensionHostBridge
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = TimeSpan.FromSeconds(15);
 
-            var request = new HttpRequestMessage(new HttpMethod(method), safeUri);
+            var request = new HttpRequestMessage(new HttpMethod(method.Trim().ToUpperInvariant()), safeUri);
 
             if (body != null)
             {
@@ -1560,24 +1720,34 @@ public class ExtensionHostBridge
                 throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
             if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
                 throw new InvalidOperationException("Extension response exceeds 4 MiB.");
-            using var reader = new StreamReader(response.Content.ReadAsStream());
-            var chars = new char[64 * 1024];
-            var bodyBuilder = new StringBuilder();
-            int charsRead;
-            while ((charsRead = reader.Read(chars, 0, chars.Length)) > 0)
+            using var responseStream = response.Content.ReadAsStream();
+            using var output = new MemoryStream();
+            var buffer = new byte[64 * 1024];
+            int bytesRead;
+            while ((bytesRead = responseStream.Read(buffer, 0, buffer.Length)) > 0)
             {
-                if (bodyBuilder.Length + charsRead > 4 * 1024 * 1024)
+                if (output.Length + bytesRead > 4 * 1024 * 1024)
                     throw new InvalidOperationException("Extension response exceeds 4 MiB.");
-                bodyBuilder.Append(chars, 0, charsRead);
+                output.Write(buffer, 0, bytesRead);
             }
-            var bodyText = bodyBuilder.ToString();
+            var bytes = output.ToArray();
+            var charset = response.Content.Headers.ContentType?.CharSet;
+            Encoding bodyEncoding;
+            try { bodyEncoding = string.IsNullOrWhiteSpace(charset) ? Encoding.UTF8 : Encoding.GetEncoding(charset); }
+            catch { bodyEncoding = Encoding.UTF8; }
+            var bodyText = bodyEncoding.GetString(bytes);
 
-            var respHeaders = response.Headers.ToDictionary(k => k.Key, v => (object)string.Join(", ", v.Value));
+            var respHeaders = response.Headers.Concat(response.Content.Headers)
+                .GroupBy(header => header.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => (object)string.Join(", ", group.SelectMany(item => item.Value)), StringComparer.OrdinalIgnoreCase);
 
             return new
             {
                 statusCode = (int)response.StatusCode,
+                statusText = response.ReasonPhrase ?? string.Empty,
+                url = response.RequestMessage?.RequestUri?.AbsoluteUri ?? safeUri.AbsoluteUri,
                 body = bodyText,
+                bodyBase64 = Convert.ToBase64String(bytes),
                 headers = respHeaders
             };
         }
