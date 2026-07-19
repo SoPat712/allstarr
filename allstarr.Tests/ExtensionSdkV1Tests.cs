@@ -100,6 +100,31 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         }
     }
 
+    [Fact]
+    public void VerifyArchive_AdaptsSpotiFlacManifestAndIconLayout()
+    {
+        Directory.CreateDirectory(_root);
+        var archivePath = Path.Combine(_root, "spotiflac.sflx");
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            Write(archive, "manifest.json", """
+                {"name":"demo","displayName":"Demo","version":"1.2.3","description":"Fixture",
+                 "type":["metadata_provider"],"permissions":{"network":["api.example.test","*.example.test"],"storage":true}}
+                """);
+            Write(archive, "index.js", "registerExtension({customSearch:function(){return [];},getTrack:function(id){return {id:id,name:'Demo',artists:['Artist']};}});");
+            Write(archive, "icon.jpg", "image");
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+
+        var verified = ExtensionSdkV1.VerifyArchive(archivePath, hash, Path.Combine(_root, "spotiflac-staged"));
+
+        Assert.Equal("spotiflac-demo", verified.Manifest.Id);
+        Assert.Contains(verified.Manifest.Permissions, item => item is { Kind: ExtensionPermissionKind.Cache, Value: "*" });
+        Assert.Contains(verified.Manifest.Permissions, item => item.Value == "https://*.example.test/");
+        Assert.True(SpotiFlacExtensionCompatibility.IsNormalizedManifest(
+            File.ReadAllText(Path.Combine(verified.PackageRoot, "manifest.json"))));
+    }
+
     private static string Manifest() => """
         {"id":"fixture-provider","displayName":"Fixture","version":"1.2.3","sdkVersion":"1","entryPoint":"index.js",
          "capabilities":[{"kind":"metadata","hooks":["searchTracks","getTrack"],"accountScopes":["user"]}],

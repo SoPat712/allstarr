@@ -103,8 +103,8 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
             default));
         var serialized = System.Text.Json.JsonSerializer.Serialize(result.Value);
 
-        Assert.Contains("GitHub repository page", serialized, StringComparison.Ordinal);
-        Assert.Contains("raw.githubusercontent.com", serialized, StringComparison.Ordinal);
+        Assert.Contains("GitHub project page", serialized, StringComparison.Ordinal);
+        Assert.Contains("raw registry.json", serialized, StringComparison.Ordinal);
         Assert.Empty(await _service.ListRegistriesAsync());
     }
 

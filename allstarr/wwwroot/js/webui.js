@@ -1493,6 +1493,14 @@ class AllstarrApp extends LitElement {
     this.extensionPermissions = next;
   }
 
+  async approveAllExtensionPermissions(item) {
+    const id = item.id || item.Id;
+    const next = new Map(this.extensionPermissions);
+    next.set(id, asArray(next.get(id)).map((review) => ({ ...review, uiDecision: "approved" })));
+    this.extensionPermissions = next;
+    await this.reviewExtensionPermissions(item);
+  }
+
   async runExtensionAction(item, label, action, message) {
     const id = item.id || item.Id;
     this.extensionActions = { ...this.extensionActions, [id]: label };
@@ -3689,7 +3697,10 @@ class AllstarrApp extends LitElement {
         <div class="extension-permission-review">
           <strong>Choose what this extension may access</strong>
           <p class="muted">Every requested permission needs a decision before the extension can be enabled.</p>
-          ${permissions.map((review) => {
+          <div class="row-actions"><button class="primary" ?disabled=${Boolean(action)} @click=${() => this.approveAllExtensionPermissions(item)}>Allow required access and enable</button></div>
+          <details>
+            <summary>Review ${permissions.length} permission${permissions.length === 1 ? "" : "s"} individually</summary>
+            <div class="extension-permission-list">${permissions.map((review) => {
             const permissionId = review.id || review.Id;
             const decision = review.uiDecision;
             return html`
@@ -3701,8 +3712,9 @@ class AllstarrApp extends LitElement {
                 </div>
               </div>
             `;
-          })}
-          <div class="row-actions"><button class="primary" ?disabled=${!allDecided || Boolean(action)} @click=${() => this.reviewExtensionPermissions(item)}>Save permissions and enable</button></div>
+          })}</div>
+          </details>
+          ${allDecided ? html`<div class="row-actions"><button ?disabled=${Boolean(action)} @click=${() => this.reviewExtensionPermissions(item)}>Save individual choices and enable</button></div>` : nothing}
         </div>
       `;
     };

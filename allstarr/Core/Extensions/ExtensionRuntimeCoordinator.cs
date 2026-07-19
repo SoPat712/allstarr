@@ -160,14 +160,16 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             Permissions = manifest.Permissions.Where(item =>
                 approvedKeys.Contains((item.Kind.ToString().ToLowerInvariant(), item.Value))).ToArray()
         };
-        var origins = approved.Where(item => item.PermissionKind == "network")
-            .Select(item => new Uri(item.PermissionValue)).ToArray();
+        var networkPermissions = approved.Where(item => item.PermissionKind == "network")
+            .Select(item => item.PermissionValue).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var origins = networkPermissions.Where(item => !item.Contains('*'))
+            .Select(item => new Uri(item)).ToArray();
         var cacheKeys = approved.Where(item => item.PermissionKind == "cache")
             .Select(item => item.PermissionValue).ToHashSet(StringComparer.Ordinal);
         var secretKeys = approved.Where(item => item.PermissionKind == "secret")
             .Select(item => item.PermissionValue).ToHashSet(StringComparer.Ordinal);
         var permissions = new ExtensionRuntimePermissionSet(
-            origins.Select(item => item.GetLeftPart(UriPartial.Authority) + "/").ToHashSet(StringComparer.Ordinal),
+            networkPermissions,
             cacheKeys, secretKeys, ExtensionInvocationSecretScope.Resolve,
             (level, message) => _controlPlane.WriteLogAsync(package.Id, level, "runtime.log", message,
                 "extension-runtime", CancellationToken.None).GetAwaiter().GetResult());

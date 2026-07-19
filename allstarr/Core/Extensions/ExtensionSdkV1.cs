@@ -53,7 +53,7 @@ public static partial class ExtensionSdkV1
     public const int MaximumFiles = 2_000;
     private static readonly HashSet<string> AllowedFiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "manifest.json", "index.js", "README.md", "LICENSE", "LICENSE.md"
+        "manifest.json", "index.js", "README.md", "LICENSE", "LICENSE.md", "icon.png", "icon.jpg", "icon.jpeg", "icon.webp"
     };
 
     public static ExtensionSdkManifest ParseManifest(string json)
@@ -124,7 +124,13 @@ public static partial class ExtensionSdkV1
         var entryPointPath = Path.Combine(extractionFull, "index.js");
         if (!File.Exists(manifestPath) || !File.Exists(entryPointPath))
             throw new ExtensionSdkValidationException("Extension package requires manifest.json and index.js at its root.");
-        var manifest = ParseManifest(File.ReadAllText(manifestPath));
+        var manifestJson = File.ReadAllText(manifestPath);
+        if (SpotiFlacExtensionCompatibility.IsManifest(manifestJson))
+        {
+            manifestJson = SpotiFlacExtensionCompatibility.NormalizeManifest(manifestJson, File.ReadAllText(entryPointPath));
+            File.WriteAllText(manifestPath, manifestJson);
+        }
+        var manifest = ParseManifest(manifestJson);
         return new(manifest, actualSha256, archiveLength, expanded, count, extractionFull,
             ComputePackageContentSha256(extractionFull));
     }
@@ -228,12 +234,19 @@ public static partial class ExtensionSdkV1
             var permissionValue = Required(value, "value");
             if (kind == ExtensionPermissionKind.Network)
             {
-                if (!Uri.TryCreate(permissionValue, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttps ||
-                    origin.PathAndQuery != "/" || !string.IsNullOrEmpty(origin.Fragment) || !string.IsNullOrEmpty(origin.UserInfo))
-                    throw new ExtensionSdkValidationException("Network permissions must be HTTPS origins without paths or credentials.");
-                permissionValue = origin.GetLeftPart(UriPartial.Authority) + "/";
+                if (WildcardOriginPattern().IsMatch(permissionValue))
+                {
+                    permissionValue = permissionValue.ToLowerInvariant();
+                }
+                else
+                {
+                    if (!Uri.TryCreate(permissionValue, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttps ||
+                        origin.PathAndQuery != "/" || !string.IsNullOrEmpty(origin.Fragment) || !string.IsNullOrEmpty(origin.UserInfo))
+                        throw new ExtensionSdkValidationException("Network permissions must be HTTPS origins without paths or credentials.");
+                    permissionValue = origin.GetLeftPart(UriPartial.Authority) + "/";
+                }
             }
-            else if (!SettingKeyPattern().IsMatch(permissionValue))
+            else if (permissionValue != "*" && !SettingKeyPattern().IsMatch(permissionValue))
                 throw new ExtensionSdkValidationException("Cache and secret permissions must use lower camel-case setting keys.");
             var required = value.TryGetProperty("required", out var requiredValue) && requiredValue.ValueKind == JsonValueKind.True;
             result.Add(new(kind, permissionValue, required));
@@ -271,6 +284,8 @@ public static partial class ExtensionSdkV1
     private static partial Regex SemanticVersionPattern();
     [GeneratedRegex("^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256Pattern();
+    [GeneratedRegex("^https://\\*\\.[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?/$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex WildcardOriginPattern();
     [GeneratedRegex("^[a-z][A-Za-z0-9]*$", RegexOptions.CultureInvariant)]
     private static partial Regex SettingKeyPattern();
 }

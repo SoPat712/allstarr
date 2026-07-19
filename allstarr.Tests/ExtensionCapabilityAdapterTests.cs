@@ -13,6 +13,74 @@ namespace allstarr.Tests;
 public sealed class ExtensionCapabilityAdapterTests
 {
     [Fact]
+    public void SpotiFlacRuntimeAdapter_MapsLegacySearchAndArtwork()
+    {
+        const string sourceManifest = """
+            {"name":"demo","displayName":"Demo","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{"storage":true}}
+            """;
+        const string script = """
+            registerExtension({customSearch:function(){return [{id:'track-1',name:'Song',artists:['Artist'],album_name:'Album',cover_url:'https://images.example.test/cover.jpg',item_type:'track'}];}});
+            """;
+        var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(), new HashSet<string>(["*"]), new HashSet<string>());
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
+            new HttpClientFactory(), NullLogger.Instance, permissions);
+
+        var json = sandbox.InvokeJson("searchTracks", "{\"query\":\"Song\",\"page\":{\"limit\":10}}");
+
+        Assert.NotNull(json);
+        Assert.Contains("\"title\":\"Song\"", json, StringComparison.Ordinal);
+        Assert.Contains("https://images.example.test/cover.jpg", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SpotiFlacRuntimeAdapter_BrokersDirectDownloadsIntoManagedWorkspace()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-download", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string sourceManifest = """
+                {"name":"demo","displayName":"Demo","version":"1.0.0","description":"Fixture",
+                 "type":["metadata_provider","download_provider"],"permissions":{"network":["media.example.test"]}}
+                """;
+            const string script = """
+                registerExtension({customSearch:function(){return [];},checkAvailability:function(){return {available:true};},
+                  download:function(id, quality, path){return file.download('https://media.example.test/audio', path, {});}});
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]), new HashSet<string>(), new HashSet<string>());
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance, permissions, Path.Combine(root, "runtime"));
+            var store = new MemoryArtifactStore();
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(store, options);
+            var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
+            var context = Context("spotiflac-demo");
+            var job = Guid.CreateVersion7();
+            var workspace = await resolver.CreateWorkspaceAsync(new(
+                context.Actor.TenantId, context.Actor.EffectiveUserId, job, "spotiflac-demo", null, "download"));
+
+            string? raw;
+            using (ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "spotiflac-demo", 1024, CancellationToken.None))
+                raw = sandbox.InvokeJson("download", "{\"trackId\":\"track-1\",\"requestedQuality\":\"Any\"}");
+
+            Assert.NotNull(raw);
+            Assert.Contains("\"sizeBytes\":4", raw, StringComparison.Ordinal);
+            var outcome = await adapter.DownloadAsync(context, new(
+                new ProviderExternalResourceId("spotiflac-demo", ProviderResourceKind.Track, "track-1"),
+                job, workspace.Reference, ProviderAudioQuality.Any));
+            Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+            Assert.Equal(4, outcome.Value!.SizeBytes);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
     public async Task Metadata_AllDeclaredAlbumAndArtistHooksMapTypedSchemas()
     {
         string[] hooks = ["searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum", "searchArtists", "getArtist"];
@@ -259,13 +327,13 @@ public sealed class ExtensionCapabilityAdapterTests
     private static ProviderExternalResourceId Id(ProviderResourceKind kind, string value) =>
         new("fixture-extension", kind, value);
 
-    private static ProviderExecutionContext Context()
+    private static ProviderExecutionContext Context(string providerId = "fixture-extension")
     {
         var actor = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User, Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "user"));
-        return new ProviderExecutionContext(actor, "fixture-extension", null, null,
+        return new ProviderExecutionContext(actor, providerId, null, null,
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
-                ProviderExplicitContentPolicy.Allow, true, false, true, ["fixture-extension"]),
+                ProviderExplicitContentPolicy.Allow, true, false, true, [providerId]),
             "extension-test", "extension-test-correlation", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None,
             "extension-test-idempotency");
     }

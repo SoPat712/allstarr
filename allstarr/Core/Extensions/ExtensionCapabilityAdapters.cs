@@ -86,9 +86,9 @@ public abstract class ExtensionCapabilityAdapterBase
     protected static bool Bool(JsonElement value, string name, bool fallback = false) =>
         value.TryGetProperty(name, out var item) && item.ValueKind is JsonValueKind.True or JsonValueKind.False ? item.GetBoolean() : fallback;
     protected static long? Long(JsonElement value, string name) =>
-        value.TryGetProperty(name, out var item) && item.TryGetInt64(out var result) ? result : null;
+        value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var result) ? result : null;
     protected static int? Int(JsonElement value, string name) =>
-        value.TryGetProperty(name, out var item) && item.TryGetInt32(out var result) ? result : null;
+        value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var result) ? result : null;
     protected static TEnum EnumValue<TEnum>(JsonElement value, string name) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(Text(value, name), true, out var parsed) && Enum.IsDefined(parsed) ? parsed : throw new JsonException();
     protected static ProviderMediaFormat Media(JsonElement value)

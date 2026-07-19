@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Text;
+using allstarr.Core.Extensions;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
@@ -27,8 +28,8 @@ public class ExtensionManagerSecurityTests
             var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
                 manager.ValidateStoreRegistryAsync("https://github.com/spotiflacapp/SpotiFLAC-Extension"));
 
-            Assert.Contains("GitHub repository page", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("raw.githubusercontent.com", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("GitHub project page", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("raw registry.json", exception.Message, StringComparison.Ordinal);
             httpClientFactory.VerifyNoOtherCalls();
         }
         finally
@@ -38,7 +39,29 @@ public class ExtensionManagerSecurityTests
     }
 
     [Fact]
-    public async Task ValidateStoreRegistryAsync_ExplainsWhenAnotherAppsRegistryHasNoChecksums()
+    public async Task ValidateStoreRegistryAsync_ExplainsRawGitHubFolderUrlsBeforeRequestingThem()
+    {
+        var testRoot = CreateTestRoot();
+        try
+        {
+            var httpClientFactory = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+            var manager = CreateManager(testRoot, httpClientFactory.Object);
+
+            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                manager.ValidateStoreRegistryAsync("https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/"));
+
+            Assert.Contains("folders return 404", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("/main/registry.json", exception.Message, StringComparison.Ordinal);
+            httpClientFactory.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            DeleteTestRoot(testRoot);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateStoreRegistryAsync_AcceptsSpotiFlacCatalogAndDerivesChecksum()
     {
         const string registry = """
         {
@@ -57,13 +80,13 @@ public class ExtensionManagerSecurityTests
                 testRoot,
                 CreateHttpClientFactory(Encoding.UTF8.GetBytes(registry)));
 
-            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
-                manager.ValidateStoreRegistryAsync(
-                    "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json"));
+            var count = await manager.ValidateStoreRegistryAsync(
+                "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json");
 
-            Assert.Contains("no installable Allstarr packages", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("SHA-256 checksum", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("another application", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(1, count);
+            var item = Assert.Single(ExtensionManager.ParseStoreRegistry(registry));
+            Assert.Equal("spotiflac-spotify-web", item.Id);
+            Assert.Equal(SpotiFlacExtensionCompatibility.Marker, item.PackageFormat);
         }
         finally
         {

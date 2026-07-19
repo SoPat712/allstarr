@@ -34,6 +34,7 @@ public class ExtensionManager
     private readonly ExtensionControlPlaneService? _controlPlane;
 
     private readonly ConcurrentDictionary<string, ExtensionSandbox> _activeExtensions = new();
+    private readonly ConcurrentDictionary<string, string> _packageChecksumCache = new(StringComparer.Ordinal);
 
     public ExtensionManager(
         IHttpClientFactory httpClientFactory,
@@ -150,7 +151,7 @@ public class ExtensionManager
         catalog.Repositories.AddRange(registries.Select(item => item.RegistryUrl));
 
         using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
-        client.Timeout = TimeSpan.FromSeconds(5);
+        client.Timeout = TimeSpan.FromSeconds(15);
 
         foreach (var registry in registries)
         {
@@ -165,6 +166,8 @@ public class ExtensionManager
                 var parsedItems = ParseStoreRegistry(json, repo);
                 foreach (var item in parsedItems)
                 {
+                    if (item.PackageFormat == SpotiFlacExtensionCompatibility.Marker && string.IsNullOrEmpty(item.Sha256))
+                        item.Sha256 = await ResolveRemotePackageSha256Async(client, item.DownloadUrl, cancellationToken);
                     item.RegistryId = registry.Id;
                     item.IsInstalled = packages.Any(package => package.ExtensionId == item.Id &&
                                                                package.State != ExtensionPackageState.Uninstalled);
@@ -208,7 +211,14 @@ public class ExtensionManager
             registryUri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).Length == 2)
         {
             throw new InvalidDataException(
-                "That URL is a GitHub repository page. Enter the direct raw URL to an Allstarr registry JSON document instead, such as https://raw.githubusercontent.com/owner/repository/main/registry.json.");
+                "That is a GitHub project page, not its extension catalog. Use the project's raw registry.json URL. Allstarr supports both native Allstarr catalogs and SpotiFLAC catalogs.");
+        }
+
+        if (registryUri.Host.Equals("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase) &&
+            registryUri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).Length < 4)
+        {
+            throw new InvalidDataException(
+                "That raw GitHub URL points to a project folder, and folders return 404. Use the complete registry.json URL, including the branch name—for this store: https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Extension/main/registry.json");
         }
 
         using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
@@ -220,7 +230,7 @@ public class ExtensionManager
         if (!response.IsSuccessStatusCode)
         {
             throw new InvalidDataException(
-                $"Registry URL returned HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Enter a direct URL to the registry JSON document.");
+                $"Catalog URL returned HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Check that the complete URL ends with the catalog JSON filename.");
         }
 
         var json = await ReadRegistryJsonAsync(response.Content, cancellationToken);
@@ -239,10 +249,42 @@ public class ExtensionManager
         if (items.Count == 0)
         {
             throw new InvalidDataException(
-                "Registry contains no installable Allstarr packages. Every entry needs a safe extension id, a direct HTTPS download URL, and a 64-character SHA-256 checksum. Registries made for another application are not compatible.");
+                "This catalog does not contain Allstarr or SpotiFLAC extension packages.");
         }
 
+        var compatible = items.FirstOrDefault(item => item.PackageFormat == SpotiFlacExtensionCompatibility.Marker && string.IsNullOrEmpty(item.Sha256));
+        if (compatible != null)
+            compatible.Sha256 = await ResolveRemotePackageSha256Async(client, compatible.DownloadUrl, cancellationToken);
+
         return items.Count;
+    }
+
+    private async Task<string> ResolveRemotePackageSha256Async(
+        HttpClient client,
+        string downloadUrl,
+        CancellationToken cancellationToken)
+    {
+        if (_packageChecksumCache.TryGetValue(downloadUrl, out var cached)) return cached;
+        using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength > ExtensionSdkV1.MaximumArchiveBytes)
+            throw new InvalidDataException("SpotiFLAC extension package exceeds the supported size limit.");
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            total += read;
+            if (total > ExtensionSdkV1.MaximumArchiveBytes)
+                throw new InvalidDataException("SpotiFLAC extension package exceeds the supported size limit.");
+            hash.AppendData(buffer, 0, read);
+        }
+        if (total == 0) throw new InvalidDataException("SpotiFLAC extension package is empty.");
+        var checksum = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        _packageChecksumCache[downloadUrl] = checksum;
+        return checksum;
     }
 
     private static async Task<string> ReadRegistryJsonAsync(
@@ -543,9 +585,12 @@ public class ExtensionManager
             var displayName = ReadString(ext, "displayName", "display_name", "title", "label", "name");
             var downloadUrl = ReadString(ext, "downloadUrl", "download_url", "zipUrl", "zip_url", "archiveUrl", "archive_url", "packageUrl", "package_url", "url");
             var sha256 = ReadString(ext, "sha256", "checksum", "packageSha256", "package_sha256");
+            var isSpotiFlacPackage = string.IsNullOrWhiteSpace(sha256) &&
+                (downloadUrl.EndsWith(".sflx", StringComparison.OrdinalIgnoreCase) ||
+                 downloadUrl.EndsWith(".spotiflac-ext", StringComparison.OrdinalIgnoreCase));
 
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(downloadUrl) ||
-                !Regex.IsMatch(sha256, "^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant) ||
+                (!isSpotiFlacPackage && !Regex.IsMatch(sha256, "^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant)) ||
                 !OutboundRequestGuard.TryCreateSafeHttpUri(downloadUrl, out var packageUri, out _) ||
                 packageUri!.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(packageUri.Fragment))
             {
@@ -565,12 +610,13 @@ public class ExtensionManager
             var version = ReadString(ext, "version");
             items.Add(new StoreExtensionItem
             {
-                Id = id,
+                Id = isSpotiFlacPackage ? $"spotiflac-{id}" : id,
                 Name = name,
                 DisplayName = displayName,
                 Description = ReadString(ext, "description", "summary"),
                 DownloadUrl = downloadUrl,
                 Sha256 = sha256.ToLowerInvariant(),
+                PackageFormat = isSpotiFlacPackage ? SpotiFlacExtensionCompatibility.Marker : "allstarr-v1",
                 Version = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version,
                 RepoUrl = repoUrl,
                 HomepageUrl = ReadString(ext, "homepage", "homepageUrl", "homepage_url", "repository", "repoUrl", "repo_url"),
@@ -825,6 +871,7 @@ public class StoreExtensionItem
     public string DownloadUrl { get; set; } = "";
     public string Sha256 { get; set; } = "";
     public string Version { get; set; } = "";
+    public string PackageFormat { get; set; } = "allstarr-v1";
     public Guid? RegistryId { get; set; }
     public bool IsInstalled { get; set; }
     public bool IsEnabled { get; set; }
@@ -940,9 +987,13 @@ public class ExtensionSandbox
         _engine.Execute("const secrets = { get: function(key) { return host.SecretGet(key); } };");
         _engine.Execute("const http = { get: function(url, headers) { return host.HttpGet(url, headers); }, post: function(url, body, headers) { return host.HttpPost(url, body, headers); } };");
         _engine.Execute("const artifacts = { download: function(url, artifactId, headers) { return host.ArtifactDownload(url, artifactId, headers); } };");
-        _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
+        _engine.Execute("const file = { download: function(url, path, options) { return host.FileDownload(url, path, options); }, exists: function(path) { return host.FileExists(path); }, delete: function(path) { return host.FileDelete(path); }, getSize: function(path) { return host.FileSize(path); } };");
+        _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, appUserAgent: function() { return host.AppUserAgent(); }, appVersion: function() { return '4.7.0'; }, sleep: function(ms) { host.Sleep(ms); }, sha256: function(value) { return host.Sha256(value); }, md5: function(value) { return host.Md5(value); }, base64Decode: function(value) { return host.Base64Decode(value); }, isDownloadCancelled: function() { return false; }, isRequestCancelled: function() { return false; }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
 
         _engine.Execute(indexJs);
+
+        var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
+        if (isSpotiFlac) _engine.Execute(SpotiFlacExtensionCompatibility.RuntimeAdapterScript);
 
         _extensionObj = _engine.GetValue("_registeredExtension");
         if (_extensionObj.IsUndefined() || _extensionObj.IsNull())
@@ -953,7 +1004,8 @@ public class ExtensionSandbox
         var initFn = _extensionObj.Get("initialize");
         if (initFn.IsCallable())
         {
-            var configObj = _engine.Evaluate("({})");
+            var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
+            var configObj = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), settingsJson);
             _engine.Invoke(initFn, configObj);
         }
     }
@@ -1336,7 +1388,7 @@ public class ExtensionHostBridge
                     throw new UnauthorizedAccessException("The artifact broker is available only during a download invocation.");
         if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var safeUri, out _) ||
             safeUri!.Scheme != Uri.UriSchemeHttps ||
-            !_permissions.NetworkOrigins.Contains(safeUri.GetLeftPart(UriPartial.Authority) + "/"))
+            !IsNetworkAllowed(safeUri))
             throw new UnauthorizedAccessException("Extension artifact origin is not approved.");
 
         using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
@@ -1345,7 +1397,7 @@ public class ExtensionHostBridge
         using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken)
             .GetAwaiter().GetResult();
         if (response.RequestMessage?.RequestUri is not { } finalUri ||
-            !_permissions.NetworkOrigins.Contains(finalUri.GetLeftPart(UriPartial.Authority) + "/"))
+            !IsNetworkAllowed(finalUri))
             throw new UnauthorizedAccessException("Extension artifact redirect left its approved origin.");
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException("Extension artifact request failed.", null, response.StatusCode);
@@ -1360,7 +1412,88 @@ public class ExtensionHostBridge
         };
     }
 
+    public object FileDownload(string url, string outputPath, object? options)
+    {
+        var scope = ExtensionArtifactInvocationScope.Current ??
+                    throw new UnauthorizedAccessException("File access is available only during a download invocation.");
+        if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var safeUri, out _) ||
+            safeUri!.Scheme != Uri.UriSchemeHttps || !IsNetworkAllowed(safeUri))
+            return new { success = false, path = "", error = "permission_denied" };
+        var target = scope.ResolveTemporaryPath(outputPath);
+        try
+        {
+            using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
+            using var request = new HttpRequestMessage(HttpMethod.Get, safeUri);
+            AddHeaders(request, HeaderObject(options));
+            using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken)
+                .GetAwaiter().GetResult();
+            if (response.RequestMessage?.RequestUri is not { } finalUri || !IsNetworkAllowed(finalUri))
+                throw new UnauthorizedAccessException("Extension download redirect left its approved origin.");
+            response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength > scope.MaximumBytes)
+                throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
+            using var source = response.Content.ReadAsStream(scope.CancellationToken);
+            using var destination = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
+            var buffer = new byte[128 * 1024];
+            long written = 0;
+            int read;
+            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                written += read;
+                if (written > scope.MaximumBytes)
+                    throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
+                destination.Write(buffer, 0, read);
+            }
+            return new { success = true, path = outputPath, size = written };
+        }
+        catch (Exception exception)
+        {
+            if (File.Exists(target)) File.Delete(target);
+            return new { success = false, path = "", error = exception is UnauthorizedAccessException ? "permission_denied" : "download_failed" };
+        }
+    }
+
+    public bool FileExists(string path) => File.Exists(RequireFileScope().ResolveTemporaryPath(path));
+
+    public bool FileDelete(string path)
+    {
+        var resolved = RequireFileScope().ResolveTemporaryPath(path);
+        if (File.Exists(resolved)) File.Delete(resolved);
+        return true;
+    }
+
+    public long FileSize(string path)
+    {
+        var resolved = RequireFileScope().ResolveTemporaryPath(path);
+        return File.Exists(resolved) ? new FileInfo(resolved).Length : 0;
+    }
+
+    public object CommitFile(string path, string artifactId)
+    {
+        var scope = RequireFileScope();
+        var resolved = scope.ResolveTemporaryPath(path);
+        using var stream = new FileStream(resolved, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var result = scope.Write(artifactId, stream, stream.Length);
+        return new { artifactId = result.ArtifactId, sha256 = result.Sha256, sizeBytes = result.SizeBytes, verified = true };
+    }
+
     public string RandomUserAgent() => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    public string AppUserAgent() => "Allstarr/3.0 (SpotiFLAC compatibility runtime)";
+
+    public void Sleep(int milliseconds)
+    {
+        if (milliseconds is < 0 or > 30_000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
+        Thread.Sleep(milliseconds);
+    }
+
+    public string Sha256(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value ?? ""))).ToLowerInvariant();
+
+    public string Md5(string value) =>
+        Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(value ?? ""))).ToLowerInvariant();
+
+    public byte[] Base64Decode(string value) => Convert.FromBase64String(value ?? "");
 
     public byte[] HmacSHA1(JsValue keyVal, JsValue dataVal)
     {
@@ -1407,7 +1540,7 @@ public class ExtensionHostBridge
         {
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var safeUri, out _) ||
                 safeUri!.Scheme != Uri.UriSchemeHttps ||
-                !_permissions.NetworkOrigins.Contains(safeUri.GetLeftPart(UriPartial.Authority) + "/"))
+                !IsNetworkAllowed(safeUri))
                 throw new UnauthorizedAccessException("Extension network origin is not approved.");
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = TimeSpan.FromSeconds(15);
@@ -1423,7 +1556,7 @@ public class ExtensionHostBridge
 
             using var response = client.SendAsync(request).GetAwaiter().GetResult();
             if (response.RequestMessage?.RequestUri is { } finalUri &&
-                !_permissions.NetworkOrigins.Contains(finalUri.GetLeftPart(UriPartial.Authority) + "/"))
+                !IsNetworkAllowed(finalUri))
                 throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
             if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
                 throw new InvalidOperationException("Extension response exceeds 4 MiB.");
@@ -1478,10 +1611,36 @@ public class ExtensionHostBridge
         }
     }
 
+    private static object? HeaderObject(object? options)
+    {
+        if (options is not Jint.Native.Object.ObjectInstance value) return options;
+        var headers = value.Get("headers");
+        return headers.IsObject() ? headers.AsObject() : options;
+    }
+
+    private static ExtensionArtifactInvocationScope RequireFileScope() =>
+        ExtensionArtifactInvocationScope.Current ??
+        throw new UnauthorizedAccessException("File access is available only during a download invocation.");
+
     private void EnsureCachePermission(string key)
     {
-        if (string.IsNullOrWhiteSpace(key) || !_permissions.CacheKeys.Contains(key))
+        if (string.IsNullOrWhiteSpace(key) || (!_permissions.CacheKeys.Contains(key) && !_permissions.CacheKeys.Contains("*")))
             throw new UnauthorizedAccessException("Extension cache permission is not approved.");
+    }
+
+    private bool IsNetworkAllowed(Uri uri)
+    {
+        var origin = uri.GetLeftPart(UriPartial.Authority) + "/";
+        if (_permissions.NetworkOrigins.Contains(origin)) return true;
+        foreach (var permission in _permissions.NetworkOrigins)
+        {
+            if (!permission.StartsWith("https://*.", StringComparison.OrdinalIgnoreCase)) continue;
+            var suffix = permission["https://*".Length..].TrimEnd('/');
+            if (uri.Scheme == Uri.UriSchemeHttps &&
+                uri.Host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
+                uri.Host.Length > suffix.Length) return true;
+        }
+        return false;
     }
 
     private string ResolveSecretMarkers(string value)
@@ -1507,7 +1666,7 @@ public class ExtensionHostBridge
                 var data = JsonSerializer.Deserialize<Dictionary<string, string>>(txt);
                 if (data != null)
                 {
-                    var approved = data.Where(item => _permissions.CacheKeys.Contains(item.Key) &&
+                    var approved = data.Where(item => (_permissions.CacheKeys.Contains(item.Key) || _permissions.CacheKeys.Contains("*")) &&
                                                        item.Value.Length <= 256 * 1024)
                         .Take(MaximumCacheKeys).ToArray();
                     var bytes = approved.Sum(item => Encoding.UTF8.GetByteCount(item.Key) +

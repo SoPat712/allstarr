@@ -27,7 +27,7 @@ public sealed class WebUiExtensionControlPlaneContractTests
         Assert.Contains("Extension store", _script, StringComparison.Ordinal);
         Assert.Contains("Extension installed and enabled", _script, StringComparison.Ordinal);
         Assert.Contains("Review and enable", _script, StringComparison.Ordinal);
-        Assert.Contains("Save permissions and enable", _script, StringComparison.Ordinal);
+        Assert.Contains("Allow required access and enable", _script, StringComparison.Ordinal);
         Assert.Contains("Advanced settings", _script, StringComparison.Ordinal);
         Assert.Contains("Verify and install", _script, StringComparison.Ordinal);
         Assert.Contains("expectedRevision", _script, StringComparison.Ordinal);
