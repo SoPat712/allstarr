@@ -70,6 +70,7 @@ public partial class JellyfinController
         // Check Redis cache first for fast serving (only if Jellyfin playlist hasn't changed)
         var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(spotifyPlaylistName);
         var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(cacheKey);
+        NormalizeSyntheticPlaylistItems(cachedItems);
 
         if (cachedItems != null && cachedItems.Count > 0 &&
             InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(cachedItems))
@@ -134,6 +135,7 @@ public partial class JellyfinController
 
         // Check file cache as fallback
         var fileItems = await LoadPlaylistItemsFromFile(spotifyPlaylistName);
+        NormalizeSyntheticPlaylistItems(fileItems);
         if (fileItems != null && fileItems.Count > 0 &&
             InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(fileItems))
         {
@@ -507,6 +509,28 @@ public partial class JellyfinController
         }
 
         item["DateCreated"] = addedAt.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+    }
+
+    private void NormalizeSyntheticPlaylistItems(List<Dictionary<string, object?>>? items)
+    {
+        if (items == null) return;
+
+        foreach (var item in items)
+        {
+            if (!item.TryGetValue("Id", out var rawId)) continue;
+            var id = rawId switch
+            {
+                string value => value,
+                JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+                _ => null
+            };
+            if (id?.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) != true) continue;
+
+            // A Jellyfin client associates images with the server identity it connected to.
+            // Repair older caches at the serving boundary so upgrades do not require a rematch.
+            item["ServerId"] = _settings.DeviceId;
+            item["HasLyrics"] = true;
+        }
     }
 
     private bool RequestIncludesField(string fieldName)

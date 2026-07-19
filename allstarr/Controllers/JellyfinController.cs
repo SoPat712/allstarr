@@ -1800,7 +1800,36 @@ public partial class JellyfinController : ControllerBase
             // Get all configured playlists
             var playlists = _spotifySettings.Playlists;
 
-            // Search through each playlist's matched tracks cache
+            // The injected item cache contains the exact playable item plus the
+            // originating Spotify identity. Prefer it because provider priority may
+            // have changed since the older matched-track cache was written.
+            foreach (var playlist in playlists)
+            {
+                var itemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name);
+                var items = await _cache.GetAsync<List<Dictionary<string, JsonElement>>>(itemsKey);
+                if (items == null) continue;
+
+                foreach (var item in items)
+                {
+                    if (!item.TryGetValue("Id", out var id) || id.ValueKind != JsonValueKind.String ||
+                        !string.Equals(id.GetString(), externalSong.Id, StringComparison.OrdinalIgnoreCase) ||
+                        !item.TryGetValue("ProviderIds", out var providerIds) ||
+                        providerIds.ValueKind != JsonValueKind.Object ||
+                        !providerIds.TryGetProperty("Spotify", out var spotifyId) ||
+                        spotifyId.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(spotifyId.GetString()))
+                    {
+                        continue;
+                    }
+
+                    _logger.LogDebug(
+                        "Found Spotify ID {SpotifyId} for {Provider}/{ExternalId} in injected item cache {Playlist}",
+                        spotifyId.GetString(), externalSong.ExternalProvider, externalSong.ExternalId, playlist.Name);
+                    return spotifyId.GetString();
+                }
+            }
+
+            // Search through each playlist's matched tracks cache as a legacy fallback.
             foreach (var playlist in playlists)
             {
                 var cacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name);

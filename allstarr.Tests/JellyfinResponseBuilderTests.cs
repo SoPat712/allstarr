@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Models.Domain;
 using allstarr.Models.Subsonic;
+using allstarr.Models.Settings;
 using allstarr.Services.Jellyfin;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Tests;
 
@@ -75,6 +77,28 @@ public class JellyfinResponseBuilderTests
         Assert.NotNull(providerIds);
         Assert.Equal("12345", providerIds["deezer"]);
         Assert.Equal("USRC12345678", providerIds["ISRC"]);
+        Assert.True(Assert.IsType<bool>(result["HasLyrics"]));
+    }
+
+    [Fact]
+    public void ConvertSongToJellyfinItem_UsesTheAdvertisedProxyServerIdentity()
+    {
+        var builder = new JellyfinResponseBuilder(Options.Create(new JellyfinSettings
+        {
+            DeviceId = "proxy-server-id"
+        }));
+
+        var result = builder.ConvertSongToJellyfinItem(new Song
+        {
+            Id = "ext-applemusic-song-42",
+            Title = "Artwork Track",
+            Artist = "Artwork Artist",
+            IsLocal = false,
+            ExternalProvider = "applemusic",
+            ExternalId = "42"
+        });
+
+        Assert.Equal("proxy-server-id", result["ServerId"]);
     }
 
     [Fact]

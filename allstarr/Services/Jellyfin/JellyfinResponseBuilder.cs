@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 using allstarr.Models.Domain;
+using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
 
 namespace allstarr.Services.Jellyfin;
@@ -10,6 +12,15 @@ namespace allstarr.Services.Jellyfin;
 /// </summary>
 public class JellyfinResponseBuilder
 {
+    private readonly string _serverId;
+
+    public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null)
+    {
+        _serverId = string.IsNullOrWhiteSpace(settings?.Value.DeviceId)
+            ? "allstarrrr-proxy"
+            : settings.Value.DeviceId;
+    }
+
     /// <summary>
     /// Creates a Jellyfin items response containing songs.
     /// </summary>
@@ -136,7 +147,7 @@ public class JellyfinResponseBuilder
             ["Id"] = playlist.Id,
             ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
             ["Type"] = "MusicAlbum",  // Must be MusicAlbum for Jellyfin clients
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = _serverId,
             ["ChannelId"] = null,
             ["IsFolder"] = true,
             ["PremiereDate"] = playlist.CreatedDate?.ToString("o"),
@@ -314,10 +325,12 @@ public class JellyfinResponseBuilder
         var item = new Dictionary<string, object?>
         {
             ["Name"] = songTitle,
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = _serverId,
             ["Id"] = song.Id,
             ["PlaylistItemId"] = song.Id, // Required for playlist items
-            ["HasLyrics"] = false, // Could be enhanced to check if lyrics exist
+            // This capability flag prompts Jellyfin clients to call the lyrics route.
+            // The route still returns 404 when every configured provider has a genuine miss.
+            ["HasLyrics"] = !song.IsLocal,
             ["Container"] = "flac",
             ["PremiereDate"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null,
             ["DateCreated"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
@@ -563,7 +576,7 @@ public class JellyfinResponseBuilder
         var item = new Dictionary<string, object?>
         {
             ["Name"] = albumName,
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = _serverId,
             ["Id"] = album.Id,
             ["PremiereDate"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : null,
             ["DateCreated"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : "1970-01-01T00:00:00.0000000Z",
@@ -655,7 +668,7 @@ public class JellyfinResponseBuilder
         var item = new Dictionary<string, object?>
         {
             ["Name"] = artistName,
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = _serverId,
             ["Id"] = artist.Id,
             ["ChannelId"] = (object?)null,
             ["Genres"] = new string[0], // Artists aggregate genres from albums/tracks
@@ -731,7 +744,7 @@ public class JellyfinResponseBuilder
         var item = new Dictionary<string, object?>
         {
             ["Name"] = playlist.Name,
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = _serverId,
             ["Id"] = playlist.Id,
             ["ChannelId"] = (object?)null,
             ["Genres"] = new string[0], // Playlists aggregate genres from tracks
@@ -780,7 +793,7 @@ public class JellyfinResponseBuilder
         var item = new Dictionary<string, object?>
         {
             ["Name"] = BuildExternalPlaylistName(playlist.Name, playlist.Provider),
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = _serverId,
             ["Id"] = playlist.Id,
             ["ChannelId"] = (object?)null,
             ["Genres"] = new string[0],

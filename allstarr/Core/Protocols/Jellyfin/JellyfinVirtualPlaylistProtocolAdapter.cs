@@ -1,10 +1,25 @@
 using allstarr.Core.Playlists;
+using allstarr.Models.Settings;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Protocols.Jellyfin;
 
-public sealed class JellyfinVirtualPlaylistProtocolAdapter(IPlaylistVirtualizationService playlists)
+public sealed class JellyfinVirtualPlaylistProtocolAdapter
 {
+    private readonly IPlaylistVirtualizationService playlists;
+    private readonly string serverId;
+
+    public JellyfinVirtualPlaylistProtocolAdapter(
+        IPlaylistVirtualizationService playlists,
+        IOptions<JellyfinSettings>? settings = null)
+    {
+        this.playlists = playlists;
+        serverId = string.IsNullOrWhiteSpace(settings?.Value.DeviceId)
+            ? "allstarrrr-proxy"
+            : settings.Value.DeviceId;
+    }
+
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
 
@@ -17,7 +32,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(IPlaylistVirtualizati
         {
             ["Name"] = playlist.Name,
             ["Overview"] = playlist.Description,
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = serverId,
             ["Id"] = playlist.ProtocolId,
             ["IsFolder"] = true,
             ["Type"] = "Playlist",
@@ -42,7 +57,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(IPlaylistVirtualizati
         var items = playlist.Tracks.Select(track => new Dictionary<string, object?>
         {
             ["Name"] = track.Title,
-            ["ServerId"] = "allstarr",
+            ["ServerId"] = serverId,
             ["Id"] = track.BackendItemId,
             ["PlaylistItemId"] = $"{playlist.ProtocolId}-{track.SourcePosition}",
             ["ParentId"] = playlist.ProtocolId,
