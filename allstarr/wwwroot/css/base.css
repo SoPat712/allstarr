@@ -1341,8 +1341,10 @@ tbody tr:hover {
 }
 
 .provider-logo.provider-spotify img {
-    width: 86%;
-    height: 86%;
+    width: 28px;
+    height: 28px;
+    max-width: 28px;
+    max-height: 28px;
 }
 
 .provider-spotify {
