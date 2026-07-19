@@ -25,9 +25,10 @@ public sealed class ExtensionSdkV1Tests : IDisposable
     public void Manifest_AllowsPublicCapabilityToOptOutOfAccountRequirement()
     {
         var manifest = ExtensionSdkV1.ParseManifest(Manifest().Replace(
-            "\"accountScopes\":[\"user\"]", "\"accountScopes\":[\"user\"],\"accountRequired\":false"));
+            "\"accountScopes\":[\"user\"]", "\"accountScopes\":[],\"accountRequired\":false"));
 
         Assert.False(manifest.Capabilities.Single().AccountRequired);
+        Assert.Empty(manifest.Capabilities.Single().AccountScopes);
     }
 
     [Theory]
@@ -119,6 +120,11 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         var verified = ExtensionSdkV1.VerifyArchive(archivePath, hash, Path.Combine(_root, "spotiflac-staged"));
 
         Assert.Equal("spotiflac-demo", verified.Manifest.Id);
+        Assert.All(verified.Manifest.Capabilities, capability =>
+        {
+            Assert.False(capability.AccountRequired);
+            Assert.Empty(capability.AccountScopes);
+        });
         Assert.Contains(verified.Manifest.Permissions, item => item is { Kind: ExtensionPermissionKind.Cache, Value: "*" });
         Assert.Contains(verified.Manifest.Permissions, item => item.Value == "https://*.example.test/");
         Assert.True(SpotiFlacExtensionCompatibility.IsNormalizedManifest(

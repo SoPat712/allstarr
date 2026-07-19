@@ -205,14 +205,15 @@ public static partial class ExtensionSdkV1
                 Enum.TryParse<ProviderAccountScope>(scope, true, out var parsed) && Enum.IsDefined(parsed)
                     ? parsed
                     : throw new ExtensionSdkValidationException("Capability account scope is unsupported.")).ToArray();
-            if (scopes.Length == 0 || scopes.Distinct().Count() != scopes.Length)
-                throw new ExtensionSdkValidationException("Capability accountScopes cannot be empty or contain duplicates.");
             var accountRequired = !value.TryGetProperty("accountRequired", out var required) || required.ValueKind switch
             {
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
                 _ => throw new ExtensionSdkValidationException("Capability accountRequired must be a boolean.")
             };
+            if (scopes.Distinct().Count() != scopes.Length || accountRequired != (scopes.Length > 0))
+                throw new ExtensionSdkValidationException(
+                    "Capability accountScopes must be unique, non-empty when an account is required, and empty otherwise.");
             result.Add(new(kind, hooks, scopes, accountRequired));
         }
         if (result.Select(item => item.Kind).Distinct().Count() != result.Count)

@@ -114,7 +114,7 @@ public static class SpotiFlacExtensionCompatibility
     {
         ["kind"] = kind,
         ["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray()),
-        ["accountScopes"] = new JsonArray(JsonValue.Create("Global")),
+        ["accountScopes"] = new JsonArray(),
         ["accountRequired"] = false
     };
 
