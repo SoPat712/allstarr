@@ -645,6 +645,12 @@ public sealed class ProtocolProviderGateway(
             ? $"{providerId}:{externalId}"
             : fallback;
 
-    private static bool Allowed(string? providerId, IReadOnlySet<string> allowed) =>
-        providerId != null && allowed.Contains(providerId);
+    private static bool Allowed(string? providerId, IReadOnlySet<string> allowed)
+    {
+        if (string.IsNullOrWhiteSpace(providerId)) return false;
+
+        var normalized = NormalizeProvider(providerId);
+        return allowed.Any(item =>
+            NormalizeProvider(item).Equals(normalized, StringComparison.Ordinal));
+    }
 }
