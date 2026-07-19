@@ -3755,9 +3755,11 @@ button.setup-choice {
     background: rgba(124, 83, 214, .18);
 }
 
-.provider-logo.provider-soundcloud { background: rgba(255, 85, 0, .1); border-color: rgba(255, 85, 0, .28); }
+.provider-logo.provider-soundcloud,
+.provider-logo.provider-spotiflac-soundcloud { background: rgba(255, 85, 0, .1); border-color: rgba(255, 85, 0, .28); }
 .provider-logo.provider-youtubemusic,
-.provider-logo.provider-youtube-music { background: rgba(255, 0, 51, .1); border-color: rgba(255, 0, 51, .28); }
+.provider-logo.provider-youtube-music,
+.provider-logo.provider-spotiflac-ytmusic-spotiflac { background: rgba(255, 0, 51, .1); border-color: rgba(255, 0, 51, .28); }
 .provider-logo.provider-lastfm { background: rgba(239, 51, 64, .1); border-color: rgba(239, 51, 64, .28); }
 .provider-logo.provider-listenbrainz { background: rgba(235, 116, 59, .1); border-color: rgba(235, 116, 59, .28); }
 

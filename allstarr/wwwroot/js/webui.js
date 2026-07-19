@@ -201,8 +201,9 @@ function providerLogoUrl(provider) {
     "last.fm": "lastfm",
     "listen-brainz": "listenbrainz",
   };
-  const logoId = logoAliases[id] || id;
   const logos = new Set(["spotify", "applemusic", "deezer", "qobuz", "musicbrainz", "jellyfin", "soundcloud", "youtubemusic", "lastfm", "listenbrainz"]);
+  const nameId = String(provider?.name || provider?.Name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const logoId = logoAliases[id] || (logos.has(id) ? id : logoAliases[nameId] || nameId);
   return logos.has(logoId) ? `/images/providers/${logoId}.svg` : "";
 }
 
