@@ -3775,7 +3775,7 @@ class AllstarrApp extends LitElement {
           const providerId = String(provider.id || provider.Id).toLowerCase();
           const accountManaged = ACCOUNT_MANAGED_PROVIDERS.has(providerId);
           const status = this.providerStatus(provider);
-          return html`<article class="source-catalog-item">${this.renderProviderLogo(providerId, "large")}<div><strong>${provider.name}</strong><small>${asArray(provider.categories).map(titleCase).join(" · ") || "Extension provider"}</small></div><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span><button @click=${async () => { close(); if (accountManaged) this.navigate("/settings"); else if (status === "disabled") await this.setProviderDisabled(provider, false); else this.selectedProviderId = providerId; }}>${accountManaged ? "Connect" : status === "disabled" ? "Enable" : "Manage"}</button></article>`;
+          return html`<article class="source-catalog-item">${this.renderProviderLogo(providerId, "large")}<div><strong>${provider.name}</strong><small>${asArray(provider.categories).map(titleCase).join(" · ") || "Extension provider"}</small></div><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span><button @click=${async () => { close(); if (accountManaged) this.navigate("/settings"); else if (status === "disabled") await this.setProviderDisabled(provider, false); else this.selectedProviderId = providerId; }}>${accountManaged ? status === "healthy" ? "Account settings" : "Connect" : status === "disabled" ? "Enable" : "Manage"}</button></article>`;
         })}</div>
       </section>
     </div>`;

@@ -731,7 +731,13 @@ public class PlaylistController : ControllerBase
             ? Math.Round(matchedTracks * 100d / trackCount, 1)
             : 0d;
         var lastSyncAt = playlistInfo.TryGetValue("lastFetched", out var fetched)
-            ? fetched as DateTime?
+            ? fetched switch
+            {
+                DateTime value => value,
+                DateTimeOffset value => value.UtcDateTime,
+                JsonElement { ValueKind: JsonValueKind.String } element when element.TryGetDateTime(out var value) => value,
+                _ => (DateTime?)null
+            }
             : null;
 
         DateTime? nextSyncAt = null;
@@ -804,7 +810,7 @@ public class PlaylistController : ControllerBase
 
         if (value is Dictionary<string, string> providerIds)
         {
-            return providerIds;
+            return new Dictionary<string, string>(providerIds, StringComparer.OrdinalIgnoreCase);
         }
 
         if (value is not JsonElement { ValueKind: JsonValueKind.Object } element)
@@ -886,24 +892,10 @@ public class PlaylistController : ControllerBase
             foreach (var item in cachedPlaylistItems)
             {
                 // Try to get Spotify ID from ProviderIds (works for both local and external)
-                if (item.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
+                var providerIds = ReadCachedProviderIds(item);
+                if (providerIds != null)
                 {
-                    Dictionary<string, string>? providerIds = null;
-
-                    if (providerIdsObj is Dictionary<string, string> dict)
-                    {
-                        providerIds = dict;
-                    }
-                    else if (providerIdsObj is JsonElement jsonEl && jsonEl.ValueKind == JsonValueKind.Object)
-                    {
-                        providerIds = new Dictionary<string, string>();
-                        foreach (var prop in jsonEl.EnumerateObject())
-                        {
-                            providerIds[prop.Name] = prop.Value.GetString() ?? "";
-                        }
-                    }
-
-                    if (providerIds != null && providerIds.TryGetValue("Spotify", out var spotifyId) && !string.IsNullOrEmpty(spotifyId))
+                    if (providerIds.TryGetValue("Spotify", out var spotifyId) && !string.IsNullOrEmpty(spotifyId))
                     {
                         spotifyIdToItem[spotifyId] = item;
                     }
@@ -960,27 +952,10 @@ public class PlaylistController : ControllerBase
                             isLocal = false;
 
                             // Try to determine the provider from ProviderIds
-                            if (cachedItem.TryGetValue("ProviderIds", out var providerIdsObjExt) && providerIdsObjExt != null)
+                            var providerIdsExt = ReadCachedProviderIds(cachedItem);
+                            if (providerIdsExt != null)
                             {
-                                Dictionary<string, string>? providerIdsExt = null;
-
-                                if (providerIdsObjExt is Dictionary<string, string> dictExt)
-                                {
-                                    providerIdsExt = dictExt;
-                                }
-                                else if (providerIdsObjExt is JsonElement jsonElExt && jsonElExt.ValueKind == JsonValueKind.Object)
-                                {
-                                    providerIdsExt = new Dictionary<string, string>();
-                                    foreach (var prop in jsonElExt.EnumerateObject())
-                                    {
-                                        providerIdsExt[prop.Name] = prop.Value.GetString() ?? "";
-                                    }
-                                }
-
-                                if (providerIdsExt != null)
-                                {
-                                    externalProvider = ResolveExternalProviderFromProviderIds(providerIdsExt);
-                                }
+                                externalProvider = ResolveExternalProviderFromProviderIds(providerIdsExt);
                             }
 
                             // Fallback 1: derive provider from matched-track cache
@@ -1034,45 +1009,23 @@ public class PlaylistController : ControllerBase
                     }
 
                     // Track is in the playlist cache with real Jellyfin ServerId - determine type from ProviderIds
-                    if (cachedItem.TryGetValue("ProviderIds", out var providerIdsObj) && providerIdsObj != null)
+                    var providerIds = ReadCachedProviderIds(cachedItem);
+                    if (providerIds != null)
                     {
-                        Dictionary<string, string>? providerIds = null;
+                        _logger.LogDebug("Track {Title} has ProviderIds: {Keys}", track.Title, string.Join(", ", providerIds.Keys));
 
-                        if (providerIdsObj is Dictionary<string, string> dict)
+                        externalProvider = ResolveExternalProviderFromProviderIds(providerIds);
+
+                        if (!string.IsNullOrWhiteSpace(externalProvider))
                         {
-                            providerIds = dict;
-                        }
-                        else if (providerIdsObj is JsonElement jsonEl && jsonEl.ValueKind == JsonValueKind.Object)
-                        {
-                            providerIds = new Dictionary<string, string>();
-                            foreach (var prop in jsonEl.EnumerateObject())
-                            {
-                                providerIds[prop.Name] = prop.Value.GetString() ?? "";
-                            }
-                        }
-
-                        if (providerIds != null)
-                        {
-                            _logger.LogDebug("Track {Title} has ProviderIds: {Keys}", track.Title, string.Join(", ", providerIds.Keys));
-
-                            externalProvider = ResolveExternalProviderFromProviderIds(providerIds);
-
-                            if (!string.IsNullOrWhiteSpace(externalProvider))
-                            {
-                                isLocal = false;
-                                _logger.LogDebug("✓ Track {Title} identified as {Provider} from cache", track.Title, externalProvider);
-                            }
-                            else
-                            {
-                                // No external provider key found - it's a local Jellyfin track
-                                isLocal = true;
-                                _logger.LogDebug("✓ Track {Title} identified as LOCAL from cache", track.Title);
-                            }
+                            isLocal = false;
+                            _logger.LogDebug("✓ Track {Title} identified as {Provider} from cache", track.Title, externalProvider);
                         }
                         else
                         {
+                            // No external provider key found - it's a local Jellyfin track
                             isLocal = true;
-                            _logger.LogDebug("✓ Track {Title} identified as LOCAL (ProviderIds null)", track.Title);
+                            _logger.LogDebug("✓ Track {Title} identified as LOCAL from cache", track.Title);
                         }
                     }
                     else
