@@ -300,7 +300,11 @@ public sealed class LibraryIndexMaintenanceService(
                 .MaxAsync(track => (DateTimeOffset?)track.IndexedAt, cancellationToken);
             if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < MaximumIndexAge) continue;
 
-            var generation = now.UtcTicks / MaximumIndexAge.Ticks;
+            // An empty index may be the result of a transient backend/schema problem. Give it
+            // a fresh hourly idempotency bucket so a corrected deployment can recover promptly;
+            // populated indexes retain the quieter twelve-hour refresh cadence.
+            var generationWindow = lastIndexedAt.HasValue ? MaximumIndexAge : CheckInterval;
+            var generation = now.UtcTicks / generationWindow.Ticks;
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
                 "library.index",
                 $"library-index:auto:{identity.TenantId:N}:{identity.UserId:N}:{identity.BackendInstanceId}:music:{generation}",
