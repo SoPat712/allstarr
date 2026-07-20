@@ -37,6 +37,19 @@ public class AuthHeaderHelperTests
 
         Assert.True(forwarded);
         Assert.True(request.Headers.Contains("X-Emby-Authorization"));
+        Assert.True(request.Headers.TryGetValues("X-Emby-Token", out var tokens));
+        Assert.Contains("abc", tokens);
+    }
+
+    [Fact]
+    public void ExtractToken_ShouldReadMediaBrowserAuthorizationUsedByNativePlayers()
+    {
+        var headers = new HeaderDictionary
+        {
+            ["Authorization"] = "MediaBrowser Client=\"Finer\", Device=\"iPhone\", Token=\"player-token\""
+        };
+
+        Assert.Equal("player-token", AuthHeaderHelper.ExtractToken(headers));
     }
 
     [Fact]

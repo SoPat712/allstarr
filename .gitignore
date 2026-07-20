@@ -112,3 +112,6 @@ apis/specifications/jellyfin/*
 
 # Sample missing playlists for Spotify integration testing
 sampleMissingPlaylists/
+
+# Local design references and screenshots
+/references/

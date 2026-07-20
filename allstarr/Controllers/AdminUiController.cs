@@ -325,6 +325,38 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
+            Id = "apple-musickit",
+            Name = "Apple Music library",
+            Icon = "applemusic",
+            Status = "available",
+            Categories = ["metadata", "playlist"],
+            Notes = ["Personal library", "Music User Token"],
+            AccountSettings =
+            [
+                new AdminUiConfigField
+                {
+                    Key = "DeveloperToken",
+                    Label = "Apple developer token",
+                    Type = "password",
+                    Sensitive = true,
+                    Required = true,
+                    Ownership = "provider-account",
+                    HelpText = "The MusicKit developer token issued by your Apple developer integration."
+                },
+                new AdminUiConfigField
+                {
+                    Key = "MusicUserToken",
+                    Label = "Music User Token",
+                    Type = "password",
+                    Sensitive = true,
+                    Required = true,
+                    Ownership = "provider-account",
+                    HelpText = "The per-user Apple Music authorization token for personal library and playlist access."
+                }
+            ]
+        },
+        new()
+        {
             Id = "deezer",
             Name = "Deezer",
             Icon = "deezer",

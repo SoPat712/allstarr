@@ -7,7 +7,7 @@ const SETUP_GUIDE_DISMISSED_KEY = "allstarr-setup-guide-dismissed";
 const SETUP_GUIDE_STEP_KEY = "allstarr-setup-guide-step";
 const SETUP_GUIDE_LAST_STEP = 4;
 const REDACTION_MODE_KEY = "allstarr-sharing-redaction";
-const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz", "lastfm", "listenbrainz"]);
+const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz", "lastfm", "listenbrainz", "apple-musickit"]);
 
 function normalizeRoute(hash = window.location.hash) {
   const route = hash.replace(/^#/, "") || DEFAULT_ROUTE;
@@ -98,6 +98,22 @@ function formatDuration(value) {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function jobCopy(type, state, failure) {
+  const normalized = String(type || "").toLowerCase();
+  const known = {
+    "playback.signal.process": ["Process playback activity", "Updates listening history and other enabled playback actions."],
+    "playlist.link.run": ["Synchronize linked playlist", "Reads the source playlist, resolves tracks, and updates its target."],
+    "library.action.execute": ["Apply library action", "Runs an explicitly enabled favorite or library workflow."],
+    "recommendation.generate": ["Build recommendations", "Generates a provider-neutral recommendation set."],
+  };
+  const [label, description] = known[normalized] || [titleCase(String(type || "Background job").replaceAll(".", " ")), "Durable background work managed by Allstarr."];
+  if (String(state).toLowerCase() !== "failed") return { label, description, explanation: failure || "No failure." };
+  const attempts = normalized === "playback.signal.process"
+    ? "The playback update exhausted its retries. Check the scrobbling account tests above; future playback events will continue normally."
+    : "Allstarr exhausted the retry budget. Open the related source or playlist, correct the reported problem, then run it again.";
+  return { label, description, explanation: failure ? `${failure} ${attempts}` : attempts };
+}
+
 function formatSchedule(value) {
   const parts = String(value || "").trim().split(/\s+/);
   if (parts.length !== 5) return display(value, "Manual");
@@ -178,6 +194,7 @@ function providerMark(provider) {
   const marks = {
     spotify: "Spotify",
     applemusic: "Apple Music",
+    "apple-musickit": "Apple Music",
     "apple-download": "Apple download",
     deezer: "Deezer",
     qobuz: "Qobuz",
@@ -197,6 +214,7 @@ function providerLogoUrl(provider) {
   const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
   const logoAliases = {
     "apple-download": "applemusic",
+    "apple-musickit": "applemusic",
     "spotiflac-amazon": "amazonmusic",
     amazon: "amazonmusic",
     "amazon-music": "amazonmusic",
@@ -1715,6 +1733,7 @@ class AllstarrApp extends LitElement {
     const authorizationWindow = window.open("about:blank", "_blank");
     try {
       const result = await API.startExtensionSession(id);
+      if (result.success === false) throw new Error(result.error || "Authorization could not start");
       const authUrl = result.auth_url || result.open_auth_url || result.authUrl || result.openAuthUrl;
       this.extensionSession = { ...(this.extensionSession || {}), ...result, authUrl, authorizationError: "" };
       if (authUrl && authorizationWindow) {
@@ -2510,7 +2529,7 @@ class AllstarrApp extends LitElement {
       ["link", "Playlist links", "playlist"],
       ["injected", "Injected", "library"],
       ["mappings", "Mappings", "sources"],
-      ["external", "External playlists", "playlist"],
+      ["external", "Browse providers", "playlist"],
       ["kept", "Kept", "check"],
     ];
     return html`
@@ -2529,11 +2548,11 @@ class AllstarrApp extends LitElement {
         </button>
         <button class="card" @click=${() => this.navigate("/library/mappings")}>
           <h3>Track mappings</h3>
-          <p class="muted">Manage manual Spotify to local or external mappings.</p>
+          <p class="muted">Review the canonical Postgres track map from any source provider to local and playable provider identities.</p>
         </button>
         <button class="card" @click=${() => this.navigate("/library/external")}>
           <h3>External playlists</h3>
-          <p class="muted">Browse provider playlists from Deezer, Qobuz, SquidWTF, and Apple Music.</p>
+          <p class="muted">Browse playlists from playback-capable providers such as Deezer, Qobuz, and Apple Music.</p>
         </button>
         <button class="card" @click=${() => this.navigate("/library/kept")}>
           <h3>Kept downloads</h3>
@@ -2549,7 +2568,7 @@ class AllstarrApp extends LitElement {
       <div class="playlist-link-layout">
         <div class="view-stack">
           <form class="panel form-stack" aria-label="Create playlist link" @submit=${this.createPlaylistLink}>
-            <div><h3>New playlist link</h3><p class="muted">Only songs already found in the selected local library are added. Allstarr never moves the music files.</p></div>
+            <div><h3>New playlist link</h3><p class="muted">Choose exactly one source provider account for this playlist. Allstarr can still resolve each track through any enabled playback provider and never moves local music files.</p></div>
             <div class="playlist-link-form-grid">
               <div class="form-row"><label for="playlist-provider-account">Provider account</label><select id="playlist-provider-account" name="providerAccountId" required><option value="">Choose an account</option>${this.providerAccounts.map((account) => html`<option value=${account.id || account.Id}>${providerDisplayName(account.providerId || account.ProviderId, this.schema?.providers)} · ${account.displayName || account.DisplayName || "Account"}</option>`)}</select></div>
               <div class="form-row"><label for="playlist-source-id">Source playlist ID</label><input id="playlist-source-id" name="sourcePlaylistId" required autocomplete="off" placeholder="Playlist ID or stable provider reference"></div>
@@ -2991,6 +3010,7 @@ class AllstarrApp extends LitElement {
     const pagination = this.mappings?.pagination || this.mappings?.Pagination || {};
 
     return html`
+      <div class="section-heading mapping-page-heading"><div><h3>Canonical track map</h3><p>These provider-neutral identities and local matches are stored durably in Postgres. Provider IDs stay attached to the same recording instead of creating separate provider-specific maps.</p></div><span class="chip success">Postgres</span></div>
       <div class="grid">
         <div class="card metric"><span class="metric-label">Total</span><span class="metric-value">${display(stats.total ?? 0)}</span></div>
         <div class="card metric"><span class="metric-label">Accepted</span><span class="metric-value">${display(stats.accepted ?? 0)}</span></div>
@@ -3222,12 +3242,14 @@ class AllstarrApp extends LitElement {
     const results = asArray(this.externalPlaylists?.results || this.externalPlaylists?.Results);
     return html`
       <div class="panel">
+        <div class="section-heading"><div><h3>Browse provider playlists</h3><p>Find a playlist at one provider, preview its tracks, then create a link using that single source account.</p></div></div>
         <div class="toolbar">
           <div class="form-row">
             <label>Provider</label>
             <select .value=${this.externalPlaylistProvider} @change=${(event) => { this.externalPlaylistProvider = event.target.value; }}>
               <option value="deezer">Deezer</option>
               <option value="qobuz">Qobuz</option>
+              <option value="applemusic">Apple Music</option>
             </select>
           </div>
           <div class="form-row">
@@ -3432,7 +3454,7 @@ class AllstarrApp extends LitElement {
       ? html`<select name=${field.key} ?required=${field.required}>${asArray(field.options).map((option) => html`<option value=${option}>${qualityLabel(providerId, option)}</option>`)}</select>`
       : field.type === "toggle"
         ? html`<input name=${field.key} type="checkbox">`
-        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}${field.description ? html`<small>${field.description}</small>` : nothing}</div>`)
+        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}${field.description || field.helpText ? html`<small>${field.description || field.helpText}</small>` : nothing}</div>`)
       : html`<div class="empty full-span">This provider does not require account details.</div>`;
   }
 
@@ -3440,7 +3462,7 @@ class AllstarrApp extends LitElement {
     const builtIns = [
       { id: "spotify", name: "Spotify" }, { id: "deezer", name: "Deezer" },
       { id: "qobuz", name: "Qobuz" }, { id: "lastfm", name: "Last.fm" },
-      { id: "listenbrainz", name: "ListenBrainz" },
+      { id: "listenbrainz", name: "ListenBrainz" }, { id: "apple-musickit", name: "Apple Music library" },
     ];
     const extensions = asArray(this.schema?.providers)
       .filter((provider) => asArray(provider.accountSettings).length)
@@ -3850,7 +3872,10 @@ class AllstarrApp extends LitElement {
           <div><span>Last check</span><strong>${lastChecked ? formatRelativeTime(lastChecked) : "—"}</strong></div>
           <div><span>Failures</span><strong class=${Number(summary?.failedCapabilityCount || 0) ? "warning-text" : ""}>${summary?.failedCapabilityCount ?? "—"}</strong></div>
         </div>
-        <div class="source-card-footer"><span>Connected as</span><strong>${accountManaged ? providerAccountDisplayName(account?.displayName || account?.DisplayName || summary?.connectedAccountName) : "System"}</strong></div>
+        <div class="source-card-footer">
+          <span>${accountManaged ? "Connected account" : "Source type"}</span>
+          <strong>${accountManaged ? providerAccountDisplayName(account?.displayName || account?.DisplayName || summary?.connectedAccountName) : provider.id === "musicbrainz" ? "Built-in enrichment" : "Built-in or extension"}</strong>
+        </div>
         ${status === "degraded" ? html`<div class="source-warning">${icon("warning", 16)}<span>${titleCase(summary?.lastFailureCode || "Connection needs attention")}</span><button @click=${() => { this.selectedProviderId = providerId; }}>View details</button></div>` : nothing}
       </article>
     `;
@@ -4298,7 +4323,7 @@ class AllstarrApp extends LitElement {
           </div>
           <button class="primary" @click=${async () => { await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]); this.toast("Activity refreshed"); }}>Refresh</button>
         </div>
-        <div class="panel">
+        <div class="panel durable-jobs-panel">
           <h3>Background jobs</h3>
           <p class="muted">Queued work that Allstarr remembers across restarts, retries when appropriate, and records until it finishes or is cancelled.</p>
           ${this.renderDurableJobs()}
@@ -4313,7 +4338,7 @@ class AllstarrApp extends LitElement {
             ${this.renderScrobbling()}
           </div>
         </div>
-        <div class="panel">
+        <div class="panel api-analytics-panel">
           <div class="view-header">
             <div><h3>API analytics</h3></div>
             <button class="danger" @click=${async () => { await API.clearEndpointUsage(); await this.loadEndpointUsage(); this.toast("Endpoint usage cleared"); }}>Clear</button>
@@ -4371,9 +4396,10 @@ class AllstarrApp extends LitElement {
               const id = job.id || job.Id;
               const state = job.state || job.State;
               const failure = job.lastErrorMessage || job.LastErrorMessage || job.lastErrorCode || job.LastErrorCode;
+              const copy = jobCopy(job.type || job.Type, state, failure);
               return html`
                 <tr>
-                  <td><strong>${display(job.type || job.Type)}</strong><div class="muted mono">${id}</div></td>
+                  <td><strong>${copy.label}</strong><div class="muted">${copy.description}</div><details class="job-technical-details"><summary>Technical details</summary><span class="mono">${display(job.type || job.Type)} · ${id}</span></details></td>
                   <td><span class="status-chip ${state === "Succeeded" ? "configured" : state === "Failed" ? "degraded" : "needs_config"}">${display(state)}</span></td>
                   <td>
                     <div>Runs: ${display(job.attemptCount ?? job.AttemptCount ?? 0)}</div>
@@ -4381,7 +4407,7 @@ class AllstarrApp extends LitElement {
                     <div class="muted">Waits: ${display(job.deferralCount ?? job.DeferralCount ?? 0)} / ${display(job.maxDeferrals ?? job.MaxDeferrals ?? 0)}</div>
                   </td>
                   <td>${formatDate(job.completedAt || job.CompletedAt || job.availableAt || job.AvailableAt)}</td>
-                  <td>${failure ? html`<span class="error-text">${failure}</span>` : html`<span class="muted">—</span>`}</td>
+                  <td>${failure ? html`<span class="error-text">${copy.explanation}</span>` : html`<span class="muted">No failure</span>`}</td>
                   <td>${!terminal.has(state) ? html`<button class="danger" @click=${async () => { await API.cancelJob(id); await this.loadJobs(); this.toast("Cancellation requested"); }}>Cancel</button>` : nothing}</td>
                 </tr>
               `;
@@ -4488,15 +4514,15 @@ class AllstarrApp extends LitElement {
         <section class="view-stack">
           <div class="view-header"><div><h2>Settings</h2><p>Manage your own connected provider accounts.</p></div></div>
           <div class="panel">
-            <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
+            <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
             ${this.renderProviderAccounts()}
           </div>
           ${this.renderProviderAccountModal()}
         </section>`;
     }
     return html`
-      <section class="view-stack">
-        <div class="view-header">
+      <section class="view-stack settings-view">
+        <div class="view-header settings-page-header">
           <div>
             <h2>Settings</h2>
             <p>Accounts, application preferences, and maintenance.</p>
@@ -4504,7 +4530,7 @@ class AllstarrApp extends LitElement {
           <button @click=${() => this.navigate("/settings/extensions")}>${icon("extensions", 17)} Manage extensions</button>
         </div>
         <div class="panel">
-          <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
+          <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
           ${this.renderProviderAccounts()}
         </div>
         ${this.renderProviderAccountModal()}

@@ -443,6 +443,7 @@ builder.Services.AddSingleton<IConcreteDownloadService>(sp =>
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<IMusicMetadataService, MultiProviderMetadataService>();
+builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadataResolver>();
 builder.Services.AddSingleton<IDownloadService, MultiProviderDownloadService>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 

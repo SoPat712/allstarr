@@ -35,7 +35,9 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
         string itemId,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(itemId) || !CanQueryBackend())
+        if (string.IsNullOrWhiteSpace(itemId) ||
+            itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) ||
+            !CanQueryBackend())
         {
             return null;
         }

@@ -52,8 +52,14 @@ public static class AuthHeaderHelper
                     headerValue.Contains("Client=", StringComparison.OrdinalIgnoreCase) ||
                     headerValue.Contains("Token=", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Forward as X-Emby-Authorization (Jellyfin's expected header)
+                    // Forward both forms. Some native players put the token only in
+                    // Authorization, while Jellyfin's Users/Me route is most reliable
+                    // when the token is also supplied through X-Emby-Token.
                     targetRequest.Headers.TryAddWithoutValidation("X-Emby-Authorization", headerValue);
+                    if (ExtractTokenFromAuthorizationValue(headerValue) is { Length: > 0 } token)
+                    {
+                        targetRequest.Headers.TryAddWithoutValidation("X-Emby-Token", token);
+                    }
                     return true;
                 }
                 else
@@ -133,6 +139,51 @@ public static class AuthHeaderHelper
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Extracts the Jellyfin access token regardless of which supported client header carried it.
+    /// </summary>
+    public static string? ExtractToken(IHeaderDictionary headers)
+    {
+        if (headers.TryGetValue("X-Emby-Token", out var directToken))
+        {
+            return directToken.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        }
+
+        foreach (var name in new[] { "X-Emby-Authorization", "Authorization" })
+        {
+            if (!headers.TryGetValue(name, out var values))
+            {
+                continue;
+            }
+
+            foreach (var value in values)
+            {
+                if (ExtractTokenFromAuthorizationValue(value) is { Length: > 0 } token)
+                {
+                    return token;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractTokenFromAuthorizationValue(string? value)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            value ?? string.Empty,
+            @"(?:^|[,\s])Token\s*=\s*""([^""]+)""",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success)
+        {
+            return match.Groups[1].Value;
+        }
+
+        return value?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
+            ? value["Bearer ".Length..].Trim()
+            : null;
     }
 
     /// <summary>

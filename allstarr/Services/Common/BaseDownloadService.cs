@@ -6,6 +6,8 @@ using allstarr.Models.Subsonic;
 using allstarr.Services.Local;
 using allstarr.Services.Subsonic;
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using TagLib;
 using IOFile = System.IO.File;
 
@@ -843,10 +845,26 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     {
         try
         {
-            using var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(url, cancellationToken);
+            var artworkCache = Path.Combine(CachePath, "artwork");
+            Directory.CreateDirectory(artworkCache);
+            var cacheKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url))).ToLowerInvariant();
+            var cacheFile = Path.Combine(artworkCache, $"{cacheKey}.image");
+            if (IOFile.Exists(cacheFile))
+            {
+                return await IOFile.ReadAllBytesAsync(cacheFile, cancellationToken);
+            }
+
+            using var httpClient = _serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient();
+            using var response = await httpClient.GetAsync(url, cancellationToken);
             response.EnsureSuccessStatusCode();
-            return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            var data = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            if (data.Length > 0)
+            {
+                var temporary = $"{cacheFile}.{Guid.NewGuid():N}.tmp";
+                await IOFile.WriteAllBytesAsync(temporary, data, cancellationToken);
+                IOFile.Move(temporary, cacheFile, overwrite: true);
+            }
+            return data;
         }
         catch (Exception ex)
         {

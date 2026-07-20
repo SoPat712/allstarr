@@ -185,28 +185,28 @@ public class DownloadActivityController : ControllerBase
                 continue;
             }
 
-            var localMetadata = await TryResolveLocalPlaybackMetadataAsync(itemId, cancellationToken);
+            var playbackMetadata = await TryResolvePlaybackMetadataAsync(itemId, cancellationToken);
 
             entries.Add(new DownloadActivityEntry
             {
                 SongId = itemId,
                 ExternalId = itemId,
                 ExternalProvider = ResolvePlaybackProvider(itemId),
-                Title = localMetadata?.Title ?? ResolvePlaybackTitle(itemId),
-                Artist = localMetadata?.Artist ?? playbackState.DeviceId,
+                Title = playbackMetadata?.Title ?? ResolvePlaybackTitle(itemId),
+                Artist = playbackMetadata?.Artist ?? "External provider",
                 Status = DownloadStatus.Completed,
                 Progress = 1,
                 RequestedForStreaming = false,
                 StartedAt = playbackState.LastActivity,
                 IsPlaying = true,
                 PlaybackLastActivity = playbackState.LastActivity,
-                CoverArtUrl = localMetadata?.CoverArtUrl,
-                DurationSeconds = localMetadata?.DurationSeconds,
+                CoverArtUrl = playbackMetadata?.CoverArtUrl,
+                DurationSeconds = playbackMetadata?.DurationSeconds,
                 PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond),
-                PlaybackProgress = localMetadata?.DurationSeconds > 0
+                PlaybackProgress = playbackMetadata?.DurationSeconds > 0
                     ? Math.Clamp(
                         playbackState.PositionTicks / (double)TimeSpan.TicksPerSecond /
-                        localMetadata.DurationSeconds.Value,
+                        playbackMetadata.DurationSeconds.Value,
                         0d,
                         1d)
                     : null,
@@ -221,15 +221,10 @@ public class DownloadActivityController : ControllerBase
             .ToList();
     }
 
-    private async Task<PlaybackTrackMetadata?> TryResolveLocalPlaybackMetadataAsync(
+    private async Task<PlaybackTrackMetadata?> TryResolvePlaybackMetadataAsync(
         string itemId,
         CancellationToken cancellationToken)
     {
-        if (itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
         foreach (var resolver in _metadataResolvers)
         {
             try
@@ -288,8 +283,7 @@ public class DownloadActivityController : ControllerBase
             return "jellyfin";
         }
 
-        var parts = itemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 1 ? parts[1].ToLowerInvariant() : "external";
+        return ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId)?.Provider.ToLowerInvariant() ?? "external";
     }
 
     private static string ResolvePlaybackTitle(string itemId)
@@ -299,10 +293,7 @@ public class DownloadActivityController : ControllerBase
             return "Local Jellyfin track";
         }
 
-        var parts = itemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 3
-            ? string.Join("-", parts.Skip(3))
-            : "External track";
+        return ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId)?.ExternalId ?? "External track";
     }
 
     private sealed class DownloadActivityEntry : DownloadInfo

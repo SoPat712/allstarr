@@ -631,6 +631,15 @@ public class SpotifyTrackMatchingService : BackgroundService
         // Only re-match if cache is missing OR if we detect manual mappings that need to be applied
         if (existingMatched != null && existingMatched.Count > 0)
         {
+            var trackIdsToMatch = tracksToMatch
+                .Select(track => track.SpotifyId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var cachedIds = existingMatched
+                .Select(match => match.SpotifyId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var hasUncachedSourceTracks = trackIdsToMatch.Any(id => !cachedIds.Contains(id));
+            var hasLocalMatchesToReverify = existingMatched.Any(match =>
+                trackIdsToMatch.Contains(match.SpotifyId) && match.MatchedSong?.IsLocal == true);
             var hasIncompleteLocalSnapshots = existingMatched.Any(m =>
                 m.MatchedSong?.IsLocal == true && !JellyfinItemSnapshotHelper.HasRawItemSnapshot(m.MatchedSong));
             var hasPolicyBlockedExternalMatches = existingMatched.Any(m =>
@@ -648,6 +657,20 @@ public class SpotifyTrackMatchingService : BackgroundService
             {
                 _logger.LogInformation(
                     "Rebuilding matched track cache for {Playlist}: a cached provider can no longer supply playback audio",
+                    playlistName);
+            }
+
+            if (hasUncachedSourceTracks)
+            {
+                _logger.LogInformation(
+                    "Rebuilding matched track cache for {Playlist}: the source playlist contains tracks not present in the cache",
+                    playlistName);
+            }
+
+            if (hasLocalMatchesToReverify)
+            {
+                _logger.LogInformation(
+                    "Rebuilding matched track cache for {Playlist}: cached local tracks are no longer present in the target playlist and must be reverified",
                     playlistName);
             }
 
@@ -673,7 +696,8 @@ public class SpotifyTrackMatchingService : BackgroundService
                 }
             }
 
-            if (!hasNewManualMappings && !hasIncompleteLocalSnapshots && !hasPolicyBlockedExternalMatches)
+            if (!hasNewManualMappings && !hasUncachedSourceTracks && !hasLocalMatchesToReverify &&
+                !hasIncompleteLocalSnapshots && !hasPolicyBlockedExternalMatches)
             {
                 _logger.LogWarning("✓ Playlist {Playlist} already has {Count} matched tracks cached (skipping {ToMatch} new tracks), no re-matching needed",
                     playlistName, existingMatched.Count, tracksToMatch.Count);
