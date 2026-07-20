@@ -37,7 +37,8 @@
     --space-7: 32px;
     --space-8: 40px;
     --radius-sm: 7px;
-    --radius: 10px;
+    --radius-md: 10px;
+    --radius: var(--radius-md);
     --radius-lg: 14px;
     --control-height: 40px;
     --rail-width: 248px;
@@ -47,10 +48,10 @@
 :root[data-theme="light"] {
     color-scheme: light;
     --surface-page: #f5f7fa;
-    --surface-rail: #ffffff;
-    --surface-card: #ffffff;
+    --surface-rail: #fff;
+    --surface-card: #fff;
     --surface-elevated: #f0f3f7;
-    --surface-control: #ffffff;
+    --surface-control: #fff;
     --surface-control-hover: #f3f5f8;
     --surface-subtle: #eef2ff;
     --surface-glass: rgba(255, 255, 255, 0.9);
@@ -84,10 +85,10 @@
     :root:not([data-theme="dark"]) {
         color-scheme: light;
         --surface-page: #f5f7fa;
-        --surface-rail: #ffffff;
-        --surface-card: #ffffff;
+        --surface-rail: #fff;
+        --surface-card: #fff;
         --surface-elevated: #f0f3f7;
-        --surface-control: #ffffff;
+        --surface-control: #fff;
         --surface-control-hover: #f3f5f8;
         --surface-subtle: #eef2ff;
         --surface-glass: rgba(255, 255, 255, 0.9);
