@@ -2159,11 +2159,21 @@ class AllstarrApp extends LitElement {
         </div>
         ${administrator ? this.renderGlobalSearch() : nothing}
         <div class="actions">
-          <select class="theme-select" aria-label="Theme" .value=${this.theme} @change=${(event) => this.setTheme(event.target.value)}>
-            <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
+          <details class="theme-menu">
+            <summary aria-label="Choose theme" title="Theme">${titleCase(this.theme)}</summary>
+            <div class="theme-menu-popover" role="menu" aria-label="Theme">
+              ${["system", "dark", "light"].map((theme) => html`<button
+                type="button"
+                role="menuitemradio"
+                aria-checked=${this.theme === theme ? "true" : "false"}
+                class=${this.theme === theme ? "active" : ""}
+                @click=${(event) => {
+                  this.setTheme(theme);
+                  event.currentTarget.closest("details")?.removeAttribute("open");
+                }}
+              ><span>${titleCase(theme)}</span>${this.theme === theme ? icon("check", 16) : nothing}</button>`)}
+            </div>
+          </details>
           ${administrator ? html`<button class="refresh-button icon-button ghost" aria-label="Refresh current status" title="Refresh" @click=${async () => { await Promise.all([this.loadStatus(), this.loadConfig(), this.loadEnvMigrationStatus(), this.loadForRoute(true)]); this.toast("Status refreshed"); }}>${icon("refresh")}</button>` : nothing}
         </div>
       </header>
@@ -4215,8 +4225,17 @@ class AllstarrApp extends LitElement {
                 </section>` : nothing}
 
               <section class="extension-manage-section">
-                <div class="section-heading"><div><h4>Capabilities and runtime</h4><p>${display(item.compatibility || item.Compatibility, "Allstarr extension SDK")}</p></div></div>
-                <div class="row-actions">${asArray(item.requiredRuntimeFeatures || item.RequiredRuntimeFeatures).map((feature) => html`<span class="chip">${feature}</span>`)}</div>
+                <div class="section-heading"><div><h4>Capabilities</h4><p>What this extension can provide to Allstarr.</p></div></div>
+                <div class="extension-capability-summary">
+                  ${this.extensionCapabilities(item).length
+                    ? this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)
+                    : html`<span class="muted">No provider capabilities declared.</span>`}
+                </div>
+                <div class="extension-runtime-summary">
+                  <strong>Runtime</strong>
+                  <span class="muted">${display(item.compatibility || item.Compatibility, "Allstarr extension SDK")}</span>
+                  ${asArray(item.requiredRuntimeFeatures || item.RequiredRuntimeFeatures).map((feature) => html`<span class="chip">${feature}</span>`)}
+                </div>
                 ${qualityOptions.length ? html`<div class="extension-quality-options"><strong>Supported quality modes</strong>${qualityOptions.map((option) => html`<span class="chip" title=${option.description || option.Description || ""}>${option.label || option.Label || option.id || option.Id}</span>`)}</div>` : nothing}
                 ${state === "failed" && (item.failureCode || item.FailureCode) ? html`<div class="error-text">${titleCase(item.failureCode || item.FailureCode)}</div>` : nothing}
               </section>

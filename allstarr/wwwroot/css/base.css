@@ -641,9 +641,70 @@ a {
     text-transform: uppercase;
 }
 
-.theme-select {
-    width: auto;
-    min-width: 108px;
+.theme-menu {
+    position: relative;
+    width: 108px;
+}
+
+.theme-menu > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 40px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    cursor: pointer;
+    list-style: none;
+    padding: 8px 12px;
+}
+
+.theme-menu > summary::-webkit-details-marker {
+    display: none;
+}
+
+.theme-menu > summary::after {
+    width: 7px;
+    height: 7px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    content: "";
+    transform: translateY(-2px) rotate(45deg);
+}
+
+.theme-menu[open] > summary::after {
+    transform: translateY(2px) rotate(225deg);
+}
+
+.theme-menu-popover {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 7px);
+    right: 0;
+    display: grid;
+    width: 148px;
+    gap: 3px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-card);
+    box-shadow: var(--shadow-modal);
+    padding: 5px;
+}
+
+.theme-menu-popover button {
+    justify-content: space-between;
+    width: 100%;
+    min-height: 36px;
+    border: 0;
+    background: transparent;
+    padding: 7px 10px;
+}
+
+.theme-menu-popover button:hover,
+.theme-menu-popover button.active {
+    background: var(--surface-elevated);
 }
 
 .sidebar-close {
@@ -2100,6 +2161,19 @@ fieldset.form-row > label small {
 .extension-manage-section h4,
 .extension-manage-section p {
     margin: 0;
+}
+
+.extension-capability-summary,
+.extension-runtime-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.extension-runtime-summary {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
 }
 
 .extension-account-summary,

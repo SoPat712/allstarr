@@ -14,6 +14,12 @@
     .topbar {
         grid-template-columns: minmax(160px, 1fr) minmax(240px, 420px) auto;
     }
+
+    .sidebar {
+        visibility: visible;
+        transform: none;
+        transition: none;
+    }
 }
 
 @media (max-width: 900px) {
@@ -318,8 +324,8 @@
 }
 
 @media (max-width: 390px) {
-    .theme-select {
-        max-width: 96px;
+    .theme-menu {
+        width: 96px;
     }
 
     .topbar-eyebrow {

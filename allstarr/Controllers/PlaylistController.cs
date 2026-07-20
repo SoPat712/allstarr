@@ -402,6 +402,52 @@ public class PlaylistController : ControllerBase
                 {
                     _logger.LogWarning(ex, "Failed to calculate durable mapping stats for {Name}", config.Name);
                 }
+
+                // The playlist currently materialized in Jellyfin is the user-visible truth.
+                // Reconcile every summary against it after reading caches so imported or stale
+                // mapping records cannot make a fully populated playlist appear unmatched.
+                try
+                {
+                    var materializedItems = await GetMaterializedPlaylistItemsAsync(config.Name);
+                    if (materializedItems?.Count == spotifyTrackCount)
+                    {
+                        var materializedLocal = 0;
+                        var materializedExternal = 0;
+                        foreach (var item in materializedItems)
+                        {
+                            var itemId = ReadCachedString(item, "Id");
+                            var serverId = ReadCachedString(item, "ServerId");
+                            if (string.Equals(serverId, "allstarr", StringComparison.OrdinalIgnoreCase) ||
+                                itemId?.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                var providerIds = ReadCachedProviderIds(item);
+                                var externalProvider = providerIds == null
+                                    ? null
+                                    : ResolveExternalProviderFromProviderIds(providerIds);
+                                externalProvider ??= ExtractExternalProviderFromItemId(itemId);
+                                if (ExternalTrackPlaybackPolicy.CanUseForPlayback(externalProvider, itemId))
+                                {
+                                    materializedExternal++;
+                                }
+                            }
+                            else
+                            {
+                                materializedLocal++;
+                            }
+                        }
+
+                        ApplyPlaylistStats(
+                            playlistInfo,
+                            materializedLocal,
+                            materializedExternal,
+                            spotifyTrackCount - materializedLocal - materializedExternal);
+                        playlistItemStatsApplied = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to reconcile materialized summary for {Name}", config.Name);
+                }
             }
 
             // LEGACY FALLBACK: Only used if global mappings fail
@@ -993,27 +1039,25 @@ public class PlaylistController : ControllerBase
             _logger.LogWarning(cacheEx, "Failed to deserialize playlist cache for {Playlist}", decodedName);
         }
 
-        // Imported v2 caches can contain only the few tracks that needed explicit mappings,
-        // even though the Jellyfin playlist is already fully materialized. Prefer the actual
-        // ordered playlist whenever it covers the complete current source playlist.
-        if ((cachedPlaylistItems?.Count ?? 0) != spotifyTracks.Count)
+        // The materialized Jellyfin playlist is authoritative for every injected playlist.
+        // Mapping caches are an implementation detail and may be partial, stale, or imported
+        // from v2. When Jellyfin exposes the complete current playlist, always derive the
+        // per-track playback state from those ordered items.
+        try
         {
-            try
+            var materializedItems = await GetMaterializedPlaylistItemsAsync(decodedName);
+            if (materializedItems?.Count == spotifyTracks.Count)
             {
-                var materializedItems = await GetMaterializedPlaylistItemsAsync(decodedName);
-                if (materializedItems?.Count == spotifyTracks.Count)
-                {
-                    cachedPlaylistItems = materializedItems;
-                    _logger.LogDebug(
-                        "Using {Count} materialized Jellyfin items for playlist detail status in {Playlist}",
-                        materializedItems.Count,
-                        decodedName);
-                }
+                cachedPlaylistItems = materializedItems;
+                _logger.LogDebug(
+                    "Using {Count} authoritative materialized Jellyfin items for playlist detail status in {Playlist}",
+                    materializedItems.Count,
+                    decodedName);
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to load materialized track details for {Playlist}", decodedName);
-            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load materialized track details for {Playlist}", decodedName);
         }
 
         _logger.LogDebug("GetPlaylistTracks for {Playlist}: Cache found: {Found}, Count: {Count}",
