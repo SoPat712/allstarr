@@ -116,14 +116,6 @@ button.icon-button {
     place-items: center;
 }
 
-/* Most outline glyphs carry more visual weight on their right edge. Keep the
-   DOM boxes mathematically centered, then apply one shared optical correction. */
-.ui-icon,
-.provider-logo img,
-.menu-trigger-lines {
-    transform: translateX(-1px);
-}
-
 .actions {
     display: flex;
     flex-wrap: wrap;
