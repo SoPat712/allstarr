@@ -2792,12 +2792,12 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="injected-page-heading">
         <div><h3>Injected playlists</h3><p>Playlists that Allstarr has injected into your media server.</p></div>
-        <div class="actions"><button @click=${() => { this.injectedAddOpen = true; }}>${icon("plus")}Add playlist</button><button class="primary" @click=${async () => {
+        <div class="actions injected-heading-actions"><button @click=${() => { this.injectedAddOpen = true; }}>${icon("plus")}<span>Add playlist</span></button><button class="primary" @click=${async () => {
           const names = selected.size ? [...selected] : playlists.map((item) => item.name);
           if (selected.size) await Promise.all(names.map((name) => API.refreshPlaylist(name)));
           else await API.refreshPlaylists();
           this.toast(`Sync started for ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
-        }}>${icon("refresh")}Sync ${selected.size ? `${selected.size} selected` : "all now"}</button></div>
+        }}>${icon("refresh")}<span>Sync ${selected.size ? `${selected.size} selected` : "all now"}</span></button></div>
       </div>
       <div class="playlist-toolbar">
         <label class="search-control">${icon("search")}<input aria-label="Search playlists" placeholder="Search playlists…" .value=${this.injectedSearch} @input=${(event) => { this.injectedSearch = event.target.value; this.injectedPage = 1; }}></label>
@@ -2812,15 +2812,21 @@ class AllstarrApp extends LitElement {
           const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
           const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
           const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matchPercent >= 50 ? "partial" : "needs_attention");
-          return html`<div class="injected-table-row">
+          const openRow = (event) => {
+            if (event.target.closest("button, input, details, summary, a, select")) return;
+            this.openInjectedPlaylist(playlist.name);
+          };
+          return html`<div class="injected-table-row injected-table-row-interactive" role="link" tabindex="0"
+            aria-label="Open ${playlist.name} playlist details" @click=${openRow}
+            @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
             <span><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></span>
-            <button class="playlist-cell playlist-name-button" @click=${() => this.openInjectedPlaylist(playlist.name)}><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></button>
+            <span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span>
             <span>${display(playlist.trackCount, 0)}</span>
             <span><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></span>
             <span><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></span>
             <span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span>
             <span><span class="status-chip ${status}">${titleCase(status)}</span></span>
-            <span>${formatRelativeTime(playlist.lastSyncAt || playlist.lastFetched)}</span>
+            <span>${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</span>
             <span class="row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></span>
           </div>`;
         }) : html`<div class="empty">No playlists match these filters.</div>`}
@@ -2869,6 +2875,7 @@ class AllstarrApp extends LitElement {
     const externalTracks = Number(details?.externalTracks ?? details?.ExternalTracks ?? 0);
     const unmatchedTracks = Number(details?.unmatchedTracks ?? details?.UnmatchedTracks ?? Math.max(0, tracks.length - playable));
     const lastSourceRefreshAt = details?.lastSourceRefreshAt || details?.LastSourceRefreshAt;
+    const lastSuccessfulSyncAt = details?.lastSuccessfulSyncAt || details?.LastSuccessfulSyncAt;
     const nextSyncAt = details?.nextSyncAt || details?.NextSyncAt;
     const matchStatus = details?.matchStatus || details?.MatchStatus || "pending";
     const sourceProvider = details?.sourceProvider || "unknown";
@@ -2905,17 +2912,17 @@ class AllstarrApp extends LitElement {
             </div>
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
-          ${details ? html`<div class="playlist-operation-summary" aria-label="Playlist synchronization details">
+          ${details ? html`<div class="playlist-operation-row"><div class="playlist-operation-summary" aria-label="Playlist synchronization details">
             <span><small>Local</small><strong>${localTracks}</strong></span>
             <span><small>External</small><strong>${externalTracks}</strong></span>
             <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
             <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
+            <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not synced yet"}</strong></span>
             <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
-          </div>
-          <button class="primary compact playlist-rematch-action" @click=${async () => {
+          </div><button class="primary compact playlist-rematch-action" @click=${async () => {
             await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
             await this.reloadInjectedPlaylistDetails();
-          }}>${icon("refresh", 15)} Sync & rematch</button>
+          }}>${icon("refresh", 15)}<span>Sync & rematch</span></button></div>
           ${matchStatus === "rematch_required" ? html`<div class="playlist-match-notice" role="status">
             ${icon("warning", 17)}<span><strong>Current source snapshot needs matching</strong><small>The provider playlist changed after its last completed match. Run a sync now or wait for the next scheduled sync.</small></span>
           </div>` : nothing}` : nothing}
@@ -2928,7 +2935,7 @@ class AllstarrApp extends LitElement {
               ${filtered.length ? filtered.map((track, index) => html`<div class="playlist-track-row playlist-track-inspectable" role="button" tabindex="0"
                 aria-label="Open mapping details for ${display(track.title, "track")}" @click=${() => this.openTrackDetails(track)}
                 @keydown=${(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openTrackDetails(track); } }}>
-                <span class="track-position">${display(track.position ?? index + 1)}</span>
+                <span class="track-position" title=${track.sourcePosition ? `Provider position ${track.sourcePosition}` : ""}>${display(track.position ?? index + 1)}</span>
                 <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt=""><strong>${display(track.title)}</strong></span>
                 <span>${asArray(track.artists).join(", ") || "Unknown artist"}</span>
                 <span>${display(track.album)}</span>

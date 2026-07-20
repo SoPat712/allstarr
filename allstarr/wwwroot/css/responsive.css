@@ -24,8 +24,12 @@
 }
 
 @media (max-width: 900px) {
-    .playlist-operation-summary {
+    .playlist-operation-row {
         grid-column: 1 / -1;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .playlist-operation-summary {
         grid-template-columns: repeat(3, minmax(90px, 1fr));
     }
 
@@ -34,8 +38,11 @@
     }
 
     .playlist-rematch-action {
-        grid-column: 1 / -1;
         justify-self: end;
+    }
+
+    .playlist-dialog-hero {
+        grid-template-columns: 110px minmax(0, 1fr);
     }
 
     :root {
@@ -93,10 +100,6 @@
         border-right: 0;
     }
 
-    .playlist-operation-summary > span:nth-of-type(5) {
-        grid-column: 1 / -1;
-        border-right: 0;
-    }
 }
 
 @media (max-width: 760px) {
@@ -295,9 +298,14 @@
     }
 
     .playlist-dialog-hero {
-        grid-template-columns: 76px minmax(0, 1fr) 40px;
+        grid-template-columns: 76px minmax(0, 1fr);
         gap: 14px;
-        padding: 16px;
+        padding: 16px 64px 16px 16px;
+    }
+
+    .playlist-dialog-hero .dialog-close {
+        top: 16px;
+        right: 16px;
     }
 
     .playlist-hero-art {

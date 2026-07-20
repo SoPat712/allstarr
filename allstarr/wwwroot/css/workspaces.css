@@ -172,15 +172,17 @@
 .playlist-dialog-hero {
     position: relative;
     display: grid;
-    grid-template-columns: 120px minmax(0, 1fr) auto;
+    grid-template-columns: 120px minmax(0, 1fr);
     gap: 16px 24px;
     align-items: start;
-    padding: 24px;
+    padding: 24px 76px 24px 24px;
     border-bottom: 1px solid var(--border);
 }
 
 .playlist-dialog-hero .dialog-close {
-    align-self: start;
+    position: absolute;
+    top: 24px;
+    right: 24px;
     width: 40px;
     min-width: 40px;
     height: 40px;
@@ -223,13 +225,20 @@
     display: block;
 }
 
-.playlist-operation-summary {
+.playlist-operation-row {
     display: grid;
     grid-column: 2;
-    grid-template-columns: repeat(5, minmax(96px, 1fr));
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: stretch;
+    margin-top: 8px;
+}
+
+.playlist-operation-summary {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(86px, 1fr));
     align-items: stretch;
     gap: 0;
-    margin-top: 8px;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -259,16 +268,16 @@
 }
 
 .playlist-rematch-action {
-    grid-column: 3;
-    place-self: stretch end;
+    place-self: stretch;
     min-width: 164px;
     min-height: 40px;
+    margin: 0;
     padding: 8px 14px;
     white-space: nowrap;
 }
 
 .playlist-match-notice {
-    grid-column: 2 / -1;
+    grid-column: 2;
     display: flex;
     align-items: center;
     gap: 10px;

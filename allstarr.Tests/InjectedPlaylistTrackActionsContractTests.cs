@@ -91,6 +91,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "workspaces.css"));
 
         Assert.Contains("lastSourceRefreshAt", controller, StringComparison.Ordinal);
+        Assert.Contains("lastSuccessfulSyncAt", controller, StringComparison.Ordinal);
+        Assert.Contains("BuildSpotifyPlaylistLastSuccessfulSyncKey", controller, StringComparison.Ordinal);
         Assert.Contains("playlistMetadata?.FetchedAt", controller, StringComparison.Ordinal);
         Assert.Contains("nextSyncAt", controller, StringComparison.Ordinal);
         Assert.Contains("matchStatus", controller, StringComparison.Ordinal);
@@ -98,6 +100,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("External</small>", script, StringComparison.Ordinal);
         Assert.Contains("Unmatched</small>", script, StringComparison.Ordinal);
         Assert.Contains("Next rematch", script, StringComparison.Ordinal);
+        Assert.Contains("Last synced", script, StringComparison.Ordinal);
         Assert.Contains("Sync & rematch", script, StringComparison.Ordinal);
         Assert.Contains("playlist-rematch-action", script, StringComparison.Ordinal);
         var summaryStart = script.IndexOf("playlist-operation-summary\" aria-label=\"Playlist synchronization details", StringComparison.Ordinal);
@@ -108,6 +111,33 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Current source snapshot needs matching", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-summary", styles, StringComparison.Ordinal);
         Assert.Contains(".playlist-rematch-action", styles, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlaylistDetails_UseContiguousDisplayOrderAndRetainRawProviderPosition()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.True(
+            controller.Split("position = trackIndex + 1", StringSplitOptions.None).Length >= 3,
+            "Both playlist detail paths must return a contiguous display ordinal.");
+        Assert.True(
+            controller.Split("sourcePosition = track.Position", StringSplitOptions.None).Length >= 3,
+            "Both playlist detail paths must retain the raw provider position for diagnostics.");
+        Assert.Contains("Provider position ${track.sourcePosition}", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InjectedPlaylistRows_AreWholeRowInteractiveWithoutHijackingControls()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("injected-table-row injected-table-row-interactive", script, StringComparison.Ordinal);
+        Assert.Contains("button, input, details, summary, a, select", script, StringComparison.Ordinal);
+        Assert.Contains("injected-heading-actions", script, StringComparison.Ordinal);
+        Assert.Contains(".injected-table-row-interactive:hover", styles, StringComparison.Ordinal);
     }
 
     [Fact]

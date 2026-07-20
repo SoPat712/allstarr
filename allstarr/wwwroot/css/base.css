@@ -4479,6 +4479,22 @@ button.setup-choice {
 .injected-page-heading h3 { font-size: 1.35rem; }
 .injected-page-heading p { margin-top: 4px; color: var(--text-secondary); }
 
+.injected-heading-actions {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.injected-heading-actions button,
+.playlist-rematch-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
 .playlist-toolbar {
     display: grid;
     grid-template-columns: minmax(220px, 1.4fr) minmax(150px, .65fr) minmax(150px, .65fr) auto;
@@ -4519,6 +4535,18 @@ button.setup-choice {
     border-top: 1px solid var(--border);
 }
 
+.injected-table-row-interactive {
+    cursor: pointer;
+    transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.injected-table-row-interactive:hover,
+.injected-table-row-interactive:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--signal) 7%, var(--surface-card));
+    box-shadow: inset 3px 0 0 var(--signal);
+}
+
 .injected-table-row > span,
 .injected-table-row > button {
     min-width: 0;
@@ -4530,6 +4558,9 @@ button.setup-choice {
 }
 
 .playlist-name-button {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     justify-content: flex-start;
     width: 100%;
     min-height: 0;

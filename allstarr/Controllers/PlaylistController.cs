@@ -32,7 +32,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
-    private const int PlaylistSummarySchemaVersion = 3;
+    private const int PlaylistSummarySchemaVersion = 4;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -135,6 +135,7 @@ public class PlaylistController : ControllerBase
                 ["localTracks"] = 0,
                 ["externalTracks"] = 0,
                 ["lastFetched"] = null as DateTime?,
+                ["lastSuccessfulSyncAt"] = await ResolveLastSuccessfulSyncAtAsync(config.Name),
                 ["cacheAge"] = null as string,
                 ["artworkUrl"] = null as string,
                 ["sourceProvider"] = "spotify"
@@ -873,8 +874,8 @@ public class PlaylistController : ControllerBase
         var matchPercent = trackCount > 0
             ? Math.Round(matchedTracks * 100d / trackCount, 1)
             : 0d;
-        var lastSyncAt = playlistInfo.TryGetValue("lastFetched", out var fetched)
-            ? fetched switch
+        var lastSyncAt = playlistInfo.TryGetValue("lastSuccessfulSyncAt", out var completed)
+            ? completed switch
             {
                 DateTime value => value,
                 DateTimeOffset value => value.UtcDateTime,
@@ -909,6 +910,9 @@ public class PlaylistController : ControllerBase
                     ? "partial"
                     : "needs_attention";
         playlistInfo["lastSyncAt"] = lastSyncAt;
+        playlistInfo["lastSourceRefreshAt"] = playlistInfo.TryGetValue("lastFetched", out var sourceRefresh)
+            ? sourceRefresh
+            : null;
         playlistInfo["nextSyncAt"] = nextSyncAt;
     }
 
@@ -1129,6 +1133,7 @@ public class PlaylistController : ControllerBase
             : "track_fallback";
         var syncSchedule = playlistConfig?.SyncSchedule ?? "0 8 * * *";
         var lastSourceRefreshAt = playlistMetadata?.FetchedAt ?? ReadPlaylistCacheTimestamp(decodedName);
+        var lastSuccessfulSyncAt = await ResolveLastSuccessfulSyncAtAsync(decodedName);
         var nextSyncAt = GetNextScheduledOccurrence(syncSchedule);
         var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);
@@ -1452,7 +1457,8 @@ public class PlaylistController : ControllerBase
 
                 tracksWithStatus.Add(new
                 {
-                    position = track.Position,
+                    position = trackIndex + 1,
+                    sourcePosition = track.Position,
                     title = track.Title,
                     artists = track.Artists,
                     album = track.Album,
@@ -1490,6 +1496,7 @@ public class PlaylistController : ControllerBase
                 unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
                 syncSchedule,
                 lastSourceRefreshAt,
+                lastSuccessfulSyncAt,
                 nextSyncAt,
                 matchStatus = matchedTrackCount == spotifyTracks.Count
                     ? "ready"
@@ -1503,8 +1510,9 @@ public class PlaylistController : ControllerBase
         // Fallback: Cache not available, use matched tracks cache
         _logger.LogWarning("Playlist cache not available for {Playlist}, using fallback", decodedName);
 
-        foreach (var track in spotifyTracks)
+        for (var trackIndex = 0; trackIndex < spotifyTracks.Count; trackIndex++)
         {
+            var track = spotifyTracks[trackIndex];
             bool? isLocal = null;
             string? externalProvider = null;
             string? backendItemId = null;
@@ -1589,7 +1597,8 @@ public class PlaylistController : ControllerBase
 
             tracksWithStatus.Add(new
             {
-                position = track.Position,
+                position = trackIndex + 1,
+                sourcePosition = track.Position,
                 title = track.Title,
                 artists = track.Artists,
                 album = track.Album,
@@ -1633,6 +1642,7 @@ public class PlaylistController : ControllerBase
             unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
             syncSchedule,
             lastSourceRefreshAt,
+            lastSuccessfulSyncAt,
             nextSyncAt,
             matchStatus = matchedTrackCount == spotifyTracks.Count
                 ? "ready"
@@ -1685,6 +1695,28 @@ public class PlaylistController : ControllerBase
         }
 
         return System.IO.File.GetLastWriteTimeUtc(cacheFilePath);
+    }
+
+    private async Task<DateTime?> ResolveLastSuccessfulSyncAtAsync(string playlistName)
+    {
+        var cacheValue = await _cache.GetStringAsync(
+            CacheKeyBuilder.BuildSpotifyPlaylistLastSuccessfulSyncKey(playlistName));
+        if (DateTimeOffset.TryParse(cacheValue, out var completedAt))
+        {
+            return completedAt.UtcDateTime;
+        }
+
+        var safeName = AdminHelperService.SanitizeFileName(playlistName);
+        var candidates = new[]
+        {
+            Path.Combine(CacheDirectory, $"{safeName}_matched.json"),
+            Path.Combine(CacheDirectory, $"{safeName}_items.json")
+        };
+        return candidates
+            .Where(System.IO.File.Exists)
+            .Select(System.IO.File.GetLastWriteTimeUtc)
+            .Cast<DateTime?>()
+            .Max();
     }
 
     /// <summary>

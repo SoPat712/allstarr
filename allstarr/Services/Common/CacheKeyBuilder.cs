@@ -97,6 +97,11 @@ public static class CacheKeyBuilder
         return $"spotify:playlist:stats:{playlistName}";
     }
 
+    public static string BuildSpotifyPlaylistLastSuccessfulSyncKey(string playlistName)
+    {
+        return $"spotify:playlist:last-successful-sync:{playlistName}";
+    }
+
     public static string BuildSpotifyPlaylistStatsPattern()
     {
         return "spotify:playlist:stats:*";

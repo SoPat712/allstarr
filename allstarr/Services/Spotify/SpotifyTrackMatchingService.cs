@@ -310,6 +310,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         }
 
         await ClearPlaylistImageCacheAsync(playlist);
+        await RecordSuccessfulPlaylistSyncAsync(playlist.Name);
         _logger.LogInformation("✓ Rebuild complete for {Playlist}", playlistName);
     }
 
@@ -354,12 +355,22 @@ public class SpotifyTrackMatchingService : BackgroundService
             }
 
             await ClearPlaylistImageCacheAsync(playlist);
+            await RecordSuccessfulPlaylistSyncAsync(playlist.Name);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error matching tracks for playlist {Playlist}", playlist.Name);
             throw;
         }
+    }
+
+    private async Task RecordSuccessfulPlaylistSyncAsync(string playlistName)
+    {
+        var completedAt = DateTimeOffset.UtcNow.ToString("O");
+        await _cache.SetStringAsync(
+            CacheKeyBuilder.BuildSpotifyPlaylistLastSuccessfulSyncKey(playlistName),
+            completedAt,
+            TimeSpan.FromDays(365));
     }
 
     private async Task ClearPlaylistImageCacheAsync(SpotifyPlaylistConfig playlist)
