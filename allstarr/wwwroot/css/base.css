@@ -697,6 +697,7 @@ a {
 
 .view-stack {
     display: grid;
+    align-content: start;
     gap: var(--space-5);
     min-width: 0;
     max-width: 100%;

@@ -69,6 +69,15 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void ViewStacks_KeepNavigationAndPanelsAtTheirIntrinsicHeight()
+    {
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains(".view-stack {\n    display: grid;\n    align-content: start;", css, StringComparison.Ordinal);
+        Assert.Contains(".subnav {\n    gap: 0;\n    width: 100%;", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SidebarAvatar_CropsAroundTheCenteredProfilePhoto()
     {
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
