@@ -63,5 +63,5 @@ public class SpotifyApiSettings
     /// Default: http://spotify-lyrics:8080 (docker-compose service name)
     /// This service wraps Spotify's color-lyrics API for easier access.
     /// </summary>
-    public string LyricsApiUrl { get; set; } = "http://spotify-lyrics:8080";
+    public string LyricsApiUrl { get; set; } = string.Empty;
 }

@@ -144,9 +144,9 @@ public class LyricsOrchestrator
 
     private async Task<LyricsInfo?> TrySpotifyLyrics(string spotifyTrackId, string artistName, string trackName)
     {
-        if (!_spotifySettings.Enabled)
+        if (string.IsNullOrWhiteSpace(_spotifySettings.LyricsApiUrl))
         {
-            _logger.LogWarning("Spotify API not enabled, skipping Spotify lyrics");
+            _logger.LogDebug("Spotify lyrics sidecar not configured, skipping Spotify lyrics");
             return null;
         }
 

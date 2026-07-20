@@ -2404,8 +2404,9 @@ class AllstarrApp extends LitElement {
     const builtInIcon = providerLogoUrl({ id: extensionId, name });
     const logoUrl = packageIcon || builtInIcon;
     return html`<span class="provider-logo extension-logo provider-${extensionId} logo-${size}">
-      <span class="extension-logo-fallback">${icon("extensions", size === "hero" ? 28 : 20)}</span>
-      ${logoUrl ? html`<img src=${logoUrl} alt="" @error=${(event) => event.currentTarget.remove()}>` : nothing}
+      ${logoUrl
+        ? html`<img src=${logoUrl} alt="" @error=${(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling?.removeAttribute("hidden"); }}><span class="extension-logo-fallback" hidden>${icon("extensions", size === "hero" ? 28 : 20)}</span>`
+        : html`<span class="extension-logo-fallback">${icon("extensions", size === "hero" ? 28 : 20)}</span>`}
     </span>`;
   }
 
@@ -3450,11 +3451,20 @@ class AllstarrApp extends LitElement {
     if (providerId === "listenbrainz") return html`<div class="form-row full-span"><label>ListenBrainz user token</label><input name="token" type="password" autocomplete="off" required></div>`;
     const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === String(providerId).toLowerCase());
     const fields = asArray(provider?.accountSettings);
-    return fields.length ? fields.map((field) => html`<div class="form-row"><label>${field.label}</label>${field.type === "select"
-      ? html`<select name=${field.key} ?required=${field.required}>${asArray(field.options).map((option) => html`<option value=${option}>${qualityLabel(providerId, option)}</option>`)}</select>`
+    return fields.length ? fields.map((field) => {
+      const help = field.description || field.helpText;
+      const defaultJson = field.defaultValueJson ?? field.defaultJson;
+      let defaultValue = "";
+      if (defaultJson != null) {
+        try { defaultValue = JSON.parse(defaultJson); }
+        catch { defaultValue = defaultJson; }
+      }
+      return html`<div class="form-row"><label class="extension-setting-label"><span>${field.label}</span>${help ? html`<span class="field-info" title=${help} aria-label=${help}>${icon("info", 14)}</span>` : nothing}</label>${field.type === "select"
+      ? html`<select name=${field.key} .value=${String(defaultValue)} ?required=${field.required}>${asArray(field.options).map((option) => html`<option value=${option}>${qualityLabel(providerId, option)}</option>`)}</select>`
       : field.type === "toggle"
-        ? html`<input name=${field.key} type="checkbox">`
-        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} autocomplete="off" ?required=${field.required}>`}${field.description || field.helpText ? html`<small>${field.description || field.helpText}</small>` : nothing}</div>`)
+        ? html`<input name=${field.key} type="checkbox" .checked=${Boolean(defaultValue)}>`
+        : html`<input name=${field.key} type=${field.sensitive ? "password" : field.type === "number" ? "number" : "text"} .value=${String(defaultValue)} autocomplete="off" ?required=${field.required}>`}${help ? html`<small>${help}</small>` : nothing}</div>`;
+    })
       : html`<div class="empty full-span">This provider does not require account details.</div>`;
   }
 
@@ -3857,9 +3867,6 @@ class AllstarrApp extends LitElement {
           <div class="source-card-actions">
             <span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>
             <button @click=${() => { this.selectedProviderId = providerId; }}>Manage</button>
-            <details class="action-menu"><summary class="icon-button" aria-label="More ${provider.name} actions">${icon("more")}</summary><div>
-              ${accountManaged ? html`<button @click=${() => this.navigate("/settings")}>Manage account</button>` : status === "disabled" ? html`<button @click=${() => this.setProviderDisabled(provider, false)}>Enable source</button>` : html`<button class="danger-text" @click=${() => this.setProviderDisabled(provider, true)}>Disable source</button>`}
-            </div></details>
           </div>
         </div>
         <div class="chip-list capability-list">
@@ -3874,7 +3881,7 @@ class AllstarrApp extends LitElement {
         </div>
         <div class="source-card-footer">
           <span>${accountManaged ? "Connected account" : "Source type"}</span>
-          <strong>${accountManaged ? providerAccountDisplayName(account?.displayName || account?.DisplayName || summary?.connectedAccountName) : provider.id === "musicbrainz" ? "Built-in enrichment" : "Built-in or extension"}</strong>
+          <strong>${accountManaged ? providerAccountDisplayName(account?.displayName || account?.DisplayName || summary?.connectedAccountName) : provider.id === "musicbrainz" ? "Built-in enrichment" : "Allstarr source"}</strong>
         </div>
         ${status === "degraded" ? html`<div class="source-warning">${icon("warning", 16)}<span>${titleCase(summary?.lastFailureCode || "Connection needs attention")}</span><button @click=${() => { this.selectedProviderId = providerId; }}>View details</button></div>` : nothing}
       </article>
@@ -3902,6 +3909,9 @@ class AllstarrApp extends LitElement {
         </div>` : html`<div class="empty compact">No automatic capability probes are available.</div>`}
         ${accountManaged ? html`<div class="provider-detail-cta"><div><strong>Account and credentials</strong><p>Accounts are managed separately so Sources stays focused on routing and health.</p></div><button class="primary" @click=${() => this.navigate("/settings")}>Open account settings</button></div>` : html`<div class="config-grid">${asArray(provider.configSchema).map((field) => this.renderConfigField(field))}</div>`}
         ${providerId === "apple-download" ? this.renderAppleMusicManager() : nothing}
+        <div class="dialog-actions provider-detail-actions">
+          <button class=${status === "disabled" ? "primary" : "danger"} @click=${async () => { await this.setProviderDisabled(provider, status !== "disabled"); close(); }}>${status === "disabled" ? "Enable source" : "Disable source"}</button>
+        </div>
       </section>
     </div>`;
   }
@@ -4130,6 +4140,7 @@ class AllstarrApp extends LitElement {
     const previousPackageId = item.previousPackageId || item.PreviousPackageId;
     const settings = asArray(item.settings || item.Settings);
     const requiredSettings = settings.filter((setting) => setting.required ?? setting.Required);
+    const qualityOptions = asArray(item.qualityOptions || item.QualityOptions);
     const accounts = asArray(this.providerAccounts).filter((account) =>
       String(account.providerId || account.ProviderId).toLowerCase() === String(extensionId).toLowerCase());
     const usesSession = item.usesSignedSession || item.UsesSignedSession;
@@ -4141,7 +4152,7 @@ class AllstarrApp extends LitElement {
           <div class="dialog-header extension-manage-hero">
             <div class="provider-brand">
               ${this.renderExtensionLogo(item, "hero")}
-              <div><h3 id="extension-manage-title">${name}</h3><span class="muted">Version ${item.version || item.Version}${item.author || item.Author ? ` · ${item.author || item.Author}` : ""}</span></div>
+              <div><h3 id="extension-manage-title">${name}</h3><span class="muted">Extension package · Version ${item.version || item.Version}${item.author || item.Author ? ` · ${item.author || item.Author}` : ""}</span></div>
             </div>
             <div class="row-actions"><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : "warning"}">${state === "active" ? "Enabled" : titleCase(state)}</span><button class="icon-button ghost" aria-label="Close extension manager" @click=${close}>${icon("close")}</button></div>
           </div>
@@ -4182,8 +4193,9 @@ class AllstarrApp extends LitElement {
                 </section>` : nothing}
 
               <section class="extension-manage-section">
-                <h4>Capabilities and runtime</h4>
+                <div class="section-heading"><div><h4>Capabilities and runtime</h4><p>${display(item.compatibility || item.Compatibility, "Allstarr extension SDK")}</p></div></div>
                 <div class="row-actions">${asArray(item.requiredRuntimeFeatures || item.RequiredRuntimeFeatures).map((feature) => html`<span class="chip">${feature}</span>`)}</div>
+                ${qualityOptions.length ? html`<div class="extension-quality-options"><strong>Supported quality modes</strong>${qualityOptions.map((option) => html`<span class="chip" title=${option.description || option.Description || ""}>${option.label || option.Label || option.id || option.Id}</span>`)}</div>` : nothing}
                 ${state === "failed" && (item.failureCode || item.FailureCode) ? html`<div class="error-text">${titleCase(item.failureCode || item.FailureCode)}</div>` : nothing}
               </section>
             </div>

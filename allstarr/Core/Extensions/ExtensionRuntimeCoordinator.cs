@@ -214,7 +214,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             ProviderSettingScope.ProviderAccount,
             setting.Label,
             setting.Required,
-            SettingKind(setting) == ProviderSettingValueKind.Choice ? setting.Choices : null))
+            SettingKind(setting) == ProviderSettingValueKind.Choice ? setting.Choices : null,
+            setting.Description,
+            setting.DefaultJson))
             .Concat(secretKeys
                 .Where(key => declaredSettings.All(setting => !setting.Key.Equals(key, StringComparison.Ordinal)))
                 .Select(key => new ProviderSettingDescriptor(

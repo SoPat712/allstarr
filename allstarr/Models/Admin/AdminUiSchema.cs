@@ -232,6 +232,9 @@ public sealed class AdminUiConfigField
     [JsonPropertyName("helpText")]
     public string? HelpText { get; set; }
 
+    [JsonPropertyName("defaultValueJson")]
+    public string? DefaultValueJson { get; set; }
+
     [JsonPropertyName("requiresRestart")]
     public bool RequiresRestart { get; set; }
 

@@ -79,7 +79,11 @@ public sealed class ProviderRegistryTests
             ProviderSettingValueKind.Secret,
             ProviderSettingScope.ProviderAccount,
             "API token",
-            required: true);
+            required: true,
+            helpText: "Token supplied by the provider.",
+            defaultJson: "\"demo\"");
+        Assert.Equal("Token supplied by the provider.", secret.HelpText);
+        Assert.Equal("\"demo\"", secret.DefaultJson);
         var undeclaredPermission = BaseDescriptor(
             "secret-provider",
             settings: [secret],

@@ -133,7 +133,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
                 {"name":"demo","displayName":"Demo","version":"1.2.3","description":"Fixture",
                  "author":"Example","icon":"icon.jpg","type":["metadata_provider"],
                  "settings":[{"key":"mediaUserToken","label":"Media user token","type":"password","required":true},
-                             {"key":"storefront","label":"Storefront","type":"select","options":["us","ca"],"default":"us"}],
+                             {"key":"storefront","label":"Storefront","description":"Apple Music storefront code (e.g. us, gb, jp, id).","type":"select","options":["us","ca"],"default":"us"}],
                  "qualityOptions":[{"id":"lossless","label":"Lossless"}],
                  "permissions":{"network":["api.example.test","*.example.test"],"storage":true}}
                 """);
@@ -155,6 +155,8 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.Equal(2, verified.Manifest.Settings!.Count);
         Assert.True(verified.Manifest.Settings.Single(item => item.Key == "mediaUserToken").Sensitive);
         Assert.Equal(["us", "ca"], verified.Manifest.Settings.Single(item => item.Key == "storefront").Choices);
+        Assert.Equal("Apple Music storefront code (e.g. us, gb, jp, id).",
+            verified.Manifest.Settings.Single(item => item.Key == "storefront").Description);
         Assert.Equal("lossless", Assert.Single(verified.Manifest.QualityOptions!).Id);
         Assert.Contains(verified.Manifest.Permissions, item => item is
         { Kind: ExtensionPermissionKind.Secret, Value: "mediaUserToken", Required: true });

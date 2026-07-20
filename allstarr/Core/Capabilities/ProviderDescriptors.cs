@@ -92,7 +92,9 @@ public sealed record ProviderSettingDescriptor
         ProviderSettingScope scope,
         string label,
         bool required = false,
-        IEnumerable<string>? choices = null)
+        IEnumerable<string>? choices = null,
+        string? helpText = null,
+        string? defaultJson = null)
     {
         if (!Enum.IsDefined(valueKind))
         {
@@ -123,6 +125,8 @@ public sealed record ProviderSettingDescriptor
         ValueKind = valueKind;
         Scope = scope;
         Label = ProviderContractValidation.RequiredText(label, nameof(label), 100);
+        HelpText = ProviderContractValidation.OptionalContent(helpText, nameof(helpText), 1000);
+        DefaultJson = ProviderContractValidation.OptionalContent(defaultJson, nameof(defaultJson), 4000);
         Required = required;
         Choices = Array.AsReadOnly(normalizedChoices);
     }
@@ -134,6 +138,10 @@ public sealed record ProviderSettingDescriptor
     public ProviderSettingScope Scope { get; }
 
     public string Label { get; }
+
+    public string? HelpText { get; }
+
+    public string? DefaultJson { get; }
 
     public bool Required { get; }
 

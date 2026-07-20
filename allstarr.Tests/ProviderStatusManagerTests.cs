@@ -13,6 +13,27 @@ namespace allstarr.Tests;
 public sealed class ProviderStatusManagerTests
 {
     [Fact]
+    public void SpotifyLyricsSidecar_DoesNotRequireDirectSpotifyApiMode()
+    {
+        var manager = CreateManager(
+            new Dictionary<string, string?>
+            {
+                ["MULTI_PROVIDER_LYRICS_ORDER"] = "spotify,lrclib"
+            },
+            spotifySettings: new SpotifyApiSettings
+            {
+                Enabled = false,
+                SessionCookie = string.Empty,
+                LyricsApiUrl = "http://lyrics-sidecar:8080"
+            });
+
+        var status = manager.GetStatus("spotify", ProviderCapabilities.Lyrics);
+
+        Assert.Equal(ProviderConfigurationState.Configured, status.Configuration);
+        Assert.Contains("spotify", manager.GetEnabledLyricsProviders());
+    }
+
+    [Fact]
     public void DisabledProvider_IsRemovedFromEveryCurrentCapabilityLane()
     {
         var manager = CreateManager(new Dictionary<string, string?>

@@ -48,12 +48,6 @@ public class SpotifyLyricsService
     /// <returns>Lyrics info with synced lyrics in LRC format, or null if not available</returns>
     public async Task<SpotifyLyricsResult?> GetLyricsByTrackIdAsync(string spotifyTrackId)
     {
-        if (!_settings.Enabled || string.IsNullOrEmpty(_settings.SessionCookie))
-        {
-            _logger.LogInformation("Spotify API not enabled or no session cookie configured");
-            return null;
-        }
-
         if (string.IsNullOrEmpty(_settings.LyricsApiUrl))
         {
             _logger.LogInformation("Spotify lyrics API URL not configured");

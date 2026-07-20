@@ -514,6 +514,7 @@ public class ExtensionController : ControllerBase
                 .ToArray(),
             qualityOptions = manifest?.QualityOptions,
             requiredRuntimeFeatures = manifest?.RequiredRuntimeFeatures,
+            compatibility = manifest?.Compatibility,
             usesSignedSession = manifest?.SignedSession != null,
             state = item.State.ToString().ToLowerInvariant(),
             item.FailureCode,

@@ -590,8 +590,6 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
             ("spotify", ProviderCapabilities.Lyrics) =>
-                _spotifySettings.Enabled &&
-                IsConfiguredValue(_spotifySettings.SessionCookie) &&
                 IsConfiguredValue(_spotifySettings.LyricsApiUrl)
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_lyrics_configuration"),
@@ -613,7 +611,6 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist) =>
                 IsConfiguredValue(SecretValue(secrets, "sessioncookie", "spdc", "cookie")),
             ("spotify", ProviderCapabilities.Lyrics) =>
-                IsConfiguredValue(SecretValue(secrets, "sessioncookie", "spdc", "cookie")) &&
                 IsConfiguredValue(_spotifySettings.LyricsApiUrl),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "arl")),

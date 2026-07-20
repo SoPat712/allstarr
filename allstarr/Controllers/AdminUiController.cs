@@ -457,6 +457,8 @@ public class AdminUiController : ControllerBase
                         Sensitive = setting.ValueKind == ProviderSettingValueKind.Secret,
                         Required = setting.Required,
                         Options = setting.Choices.ToList(),
+                        HelpText = setting.HelpText,
+                        DefaultValueJson = setting.DefaultJson,
                         Ownership = "provider-account"
                     }).ToList()
                 }));

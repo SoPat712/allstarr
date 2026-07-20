@@ -205,6 +205,33 @@ a {
     font-weight: 650;
 }
 
+.extension-setting-label {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    gap: 6px;
+}
+
+.field-info {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-muted);
+    cursor: help;
+}
+
+.extension-quality-options {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.extension-quality-options > strong {
+    width: 100%;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
 .inline-check {
     display: flex;
     align-items: flex-start;
@@ -1993,6 +2020,13 @@ fieldset.form-row > label small {
     gap: var(--space-3);
     border-bottom: 1px solid var(--border);
     padding-bottom: var(--space-2);
+}
+
+.extension-mini-log,
+.extension-mini-log > div,
+.extension-mini-log > div > * {
+    min-width: 0;
+    max-width: 100%;
 }
 
 .extension-action-stack button {
@@ -5087,11 +5121,14 @@ button.setup-choice {
 
 .extension-workspace-side {
     display: grid;
+    min-width: 0;
     gap: 14px;
 }
 
 .extension-capability-legend,
 .extension-activity-summary {
+    min-width: 0;
+    overflow: hidden;
     padding: 16px;
 }
 
@@ -5110,6 +5147,22 @@ button.setup-choice {
     gap: 10px;
     border-top: 1px solid var(--border);
     padding: 10px 0;
+}
+
+.extension-activity-summary > div:not(.section-heading) > *,
+.extension-activity-summary p,
+.extension-activity-summary strong,
+.extension-activity-summary small {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.extension-activity-summary strong,
+.extension-activity-summary small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .extension-capability-legend > div > span:first-child {
@@ -5147,6 +5200,11 @@ button.setup-choice {
     position: relative;
     z-index: 1;
     object-fit: contain;
+}
+
+.extension-logo > img[hidden],
+.extension-logo-fallback[hidden] {
+    display: none;
 }
 
 .extension-search {
