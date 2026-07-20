@@ -159,7 +159,7 @@
     .topbar {
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 10px;
-        padding-inline: 12px;
+        padding-inline: 16px;
     }
 
     .topbar .global-search {
@@ -168,6 +168,9 @@
 
     .topbar > .actions {
         grid-column: 2;
+        width: auto;
+        margin: 0;
+        justify-self: end;
     }
 
     .topbar-title-group {
@@ -240,6 +243,7 @@
 
     .overview-card {
         min-height: 96px;
+        padding: 14px;
     }
 
     .section-heading {

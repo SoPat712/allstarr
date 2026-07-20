@@ -6,7 +6,7 @@
 
 .overview-card {
     display: grid;
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: 44px minmax(0, 1fr);
     gap: 12px;
     align-items: center;
     min-height: 116px;
@@ -18,10 +18,12 @@
 }
 
 .overview-icon,
-.provider-logo.overview {
+.provider-logo.logo-overview {
     display: grid;
-    width: 48px;
-    height: 48px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
     border-radius: 12px;
     background: var(--surface-elevated);
     place-items: center;
