@@ -46,6 +46,28 @@ public sealed class BackendLibraryIndexingTests
     }
 
     [Fact]
+    public async Task JellyfinScanner_FallsBackToDateCreatedWhenDateModifiedIsAbsent()
+    {
+        var handler = new RecordingHandler("""
+            {"Items":[
+              {"Id":"song-1","Name":"First","Path":"/music/Artist/First.flac","Artists":["Artist"],"RunTimeTicks":1800000000,"DateCreated":"2026-07-12T01:00:00Z"}
+            ],"TotalRecordCount":1}
+            """);
+        var index = new RecordingIndex();
+        var scanner = new JellyfinLibraryCatalogScanner(
+            new HttpClient(handler),
+            new JellyfinSettings { Url = "https://jellyfin.test", ApiKey = "ephemeral-key" },
+            index,
+            new Clock());
+
+        var result = await scanner.ScanAsync(Context(ProtocolKind.Jellyfin), new("music", PageSize: 50), default);
+
+        Assert.Equal(1, result.Indexed);
+        Assert.Single(index.Inputs);
+        Assert.Contains("DateCreated", handler.LastRequest!.RequestUri!.Query, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SubsonicScanner_PostsEphemeralCredentialsAndReportsMalformedEntries()
     {
         var handler = new RecordingHandler("""

@@ -73,7 +73,7 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
         while (true)
         {
             var uri = new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"),
-                $"Items?Recursive=true&IncludeItemTypes=Audio&StartIndex={offset}&Limit={request.PageSize}&Fields=Path,ProviderIds,DateModified,Album,AlbumArtist,Artists,RunTimeTicks,ImageTags");
+                $"Items?Recursive=true&IncludeItemTypes=Audio&StartIndex={offset}&Limit={request.PageSize}&Fields=Path,ProviderIds,DateModified,DateCreated,Album,AlbumArtist,Artists,RunTimeTicks,ImageTags");
             using var message = new HttpRequestMessage(HttpMethod.Get, uri);
             message.Headers.TryAddWithoutValidation("X-Emby-Token", _settings.ApiKey);
             using var response = await _http.SendAsync(message, cancellationToken);
@@ -85,7 +85,11 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
             {
                 var path = Text(item, "Path");
                 if (string.IsNullOrWhiteSpace(path)) { pathless++; continue; }
-                var id = Text(item, "Id"); var title = Text(item, "Name"); var modified = Date(item, "DateModified");
+                var id = Text(item, "Id"); var title = Text(item, "Name");
+                // Jellyfin 10.11 does not populate DateModified for audio items even
+                // when requested explicitly. DateCreated is stable and universally
+                // returned, so use it as the source revision fallback.
+                var modified = Date(item, "DateModified") ?? Date(item, "DateCreated");
                 var artists = item.TryGetProperty("Artists", out var artistValues) && artistValues.ValueKind == JsonValueKind.Array
                     ? artistValues.EnumerateArray().Select(value => value.GetString()).Where(value => !string.IsNullOrWhiteSpace(value)).ToArray() : [];
                 if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title) || artists.Length == 0 || modified == null) { malformed++; continue; }
