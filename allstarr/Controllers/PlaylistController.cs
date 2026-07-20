@@ -1134,7 +1134,7 @@ public class PlaylistController : ControllerBase
             ? "playlist"
             : "track_fallback";
         var syncSchedule = playlistConfig?.SyncSchedule ?? "0 8 * * *";
-        var lastSourceRefreshAt = ReadPlaylistCacheTimestamp(decodedName);
+        var lastSourceRefreshAt = playlistMetadata?.FetchedAt ?? ReadPlaylistCacheTimestamp(decodedName);
         var nextSyncAt = GetNextScheduledOccurrence(syncSchedule);
         var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);

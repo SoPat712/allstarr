@@ -89,12 +89,13 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "workspaces.css"));
 
         Assert.Contains("lastSourceRefreshAt", controller, StringComparison.Ordinal);
+        Assert.Contains("playlistMetadata?.FetchedAt", controller, StringComparison.Ordinal);
         Assert.Contains("nextSyncAt", controller, StringComparison.Ordinal);
         Assert.Contains("matchStatus", controller, StringComparison.Ordinal);
         Assert.Contains("Local</small>", script, StringComparison.Ordinal);
         Assert.Contains("External</small>", script, StringComparison.Ordinal);
         Assert.Contains("Unmatched</small>", script, StringComparison.Ordinal);
-        Assert.Contains("Next scheduled sync", script, StringComparison.Ordinal);
+        Assert.Contains("Next rematch", script, StringComparison.Ordinal);
         Assert.Contains("Sync & rematch", script, StringComparison.Ordinal);
         Assert.Contains("Current source snapshot needs matching", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-summary", styles, StringComparison.Ordinal);
