@@ -48,6 +48,11 @@
     gap: 12px;
 }
 
+.readiness-heading-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+}
+
 .readiness-empty {
     display: flex;
     gap: 10px;

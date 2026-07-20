@@ -9,12 +9,13 @@ public sealed class WebUiHomeReadinessContractTests
     [Fact]
     public void HomeOffersOneGuidedCoreReadinessCheck()
     {
-        Assert.Contains("Run readiness check", _script, StringComparison.Ordinal);
+        Assert.Contains("Run check", _script, StringComparison.Ordinal);
         Assert.Contains("API.mediaProbe()", _script, StringComparison.Ordinal);
         Assert.Contains("API.playlistReadiness()", _script, StringComparison.Ordinal);
         Assert.Contains("Player artwork", _script, StringComparison.Ordinal);
         Assert.Contains("Restored playlists", _script, StringComparison.Ordinal);
-        Assert.Contains("Playlist refresh", _script, StringComparison.Ordinal);
+        Assert.Contains("Playlist sources", _script, StringComparison.Ordinal);
+        Assert.Contains("readyPlaylistProviderIds.length", _script, StringComparison.Ordinal);
         Assert.Contains("Playlist source", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("Spotify refresh", _script, StringComparison.Ordinal);
         Assert.Contains("Fix source connections", _script, StringComparison.Ordinal);

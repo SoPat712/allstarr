@@ -2299,16 +2299,24 @@ class AllstarrApp extends LitElement {
         capability.id === "download" && capability.canAttempt),
     );
     const playlistHealthRows = this.providerHealth.filter((item) =>
-      String(item.capability || item.Capability || "").toLowerCase() === "playlist");
-    const playlistHealth = [...playlistHealthRows].sort((left, right) => {
-      const leftHealthy = String(left.health || left.Health || "").toLowerCase() === "healthy" ? 1 : 0;
-      const rightHealthy = String(right.health || right.Health || "").toLowerCase() === "healthy" ? 1 : 0;
-      if (leftHealthy !== rightHealthy) return rightHealthy - leftHealthy;
-      return new Date(right.testedAt || right.TestedAt || 0).getTime() - new Date(left.testedAt || left.TestedAt || 0).getTime();
-    })[0];
-    const playlistProviderId = String(playlistHealth?.provider || playlistHealth?.Provider || "").toLowerCase();
-    const playlistRefreshState = String(playlistHealth?.health || playlistHealth?.Health || "unknown").toLowerCase();
-    const playlistProviderName = playlistProviderId ? providerDisplayName(playlistProviderId, this.schema?.providers) : "No source";
+      String(item.capability || item.Capability || "").toLowerCase() === "playlist" &&
+      (item.enabled ?? item.Enabled) !== false);
+    const playlistProviderIds = [...new Set(playlistHealthRows
+      .map((item) => String(item.provider || item.Provider || "").toLowerCase())
+      .filter(Boolean))];
+    const readyPlaylistProviderIds = playlistProviderIds.filter((providerId) =>
+      playlistHealthRows.some((item) =>
+        String(item.provider || item.Provider || "").toLowerCase() === providerId &&
+        String(item.health || item.Health || "").toLowerCase() === "healthy"));
+    const latestPlaylistCheck = playlistHealthRows
+      .map((item) => item.testedAt || item.TestedAt)
+      .filter(Boolean)
+      .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+    const playlistRefreshState = playlistProviderIds.length > 0 && readyPlaylistProviderIds.length === playlistProviderIds.length
+      ? "healthy"
+      : readyPlaylistProviderIds.length ? "partial" : "unknown";
+    const playlistProviderNames = playlistProviderIds.map((providerId) =>
+      providerDisplayName(providerId, this.schema?.providers));
     const readiness = this.serviceResults.readiness;
     const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
     const activeJobs = asArray(this.jobs).filter((job) => !["Succeeded", "Failed", "Cancelled"].includes(job.state || job.State)).length;
@@ -2316,11 +2324,7 @@ class AllstarrApp extends LitElement {
 
     return html`
       <section class="view-stack home-view" data-testid="home-workspace">
-        ${pageHeader(
-          "Home",
-          "Runtime state, provider readiness, and current activity.",
-          html`<button class="primary icon-label" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${icon("shield")}${readiness?.state === "running" ? "Running checks…" : "Run readiness check"}</button>`,
-        )}
+        ${pageHeader("Home", "Runtime state, provider readiness, and current activity.")}
 
         <div class="overview-grid">
           <div class="card overview-card">
@@ -2329,9 +2333,9 @@ class AllstarrApp extends LitElement {
             <small class="health-line healthy"><span></span>Running</small>
           </div>
           <div class="card overview-card">
-            ${playlistProviderId ? this.renderProviderLogo(playlistProviderId, "overview") : html`<span class="overview-icon provider">${icon("refresh", 22)}</span>`}
-            <div><span class="metric-label">Playlist refresh</span><span class="metric-value">${titleCase(playlistRefreshState)}</span></div>
-            <small class="health-line ${playlistRefreshState === "healthy" ? "healthy" : "warning"}"><span></span>${playlistHealth?.testedAt || playlistHealth?.TestedAt ? `${playlistProviderName} · ${formatRelativeTime(playlistHealth.testedAt || playlistHealth.TestedAt)}` : `${playlistProviderName} · Awaiting check`}</small>
+            <span class="overview-icon provider">${icon("refresh", 22)}</span>
+            <div><span class="metric-label">Playlist sources</span><span class="metric-value">${playlistProviderIds.length ? `${readyPlaylistProviderIds.length} / ${playlistProviderIds.length} ready` : "None"}</span></div>
+            <small class="health-line ${playlistRefreshState === "healthy" ? "healthy" : "warning"}" title=${playlistProviderNames.join(", ")}><span></span>${playlistProviderIds.length ? `${playlistProviderNames.join(", ")} · ${latestPlaylistCheck ? formatRelativeTime(latestPlaylistCheck) : "Awaiting check"}` : "Connect a playlist provider"}</small>
           </div>
           <div class="card overview-card">
             <span class="overview-icon playlists">${icon("playlist", 22)}</span>
@@ -2348,7 +2352,10 @@ class AllstarrApp extends LitElement {
         <div class="panel home-readiness" data-testid="readiness-panel">
           <div class="section-heading">
             <div><h3>Core readiness</h3><p>One read-only check covers the player artwork route, restored playlists, and source health.</p></div>
-            ${readiness ? html`<span class="status-chip ${readiness.state}">${readiness.state === "success" ? "Ready" : readiness.state === "running" ? "Checking" : "Action needed"}</span>` : html`<span class="status-chip unknown">Not checked</span>`}
+            <div class="actions readiness-heading-actions">
+              ${readiness ? html`<span class="status-chip ${readiness.state}">${readiness.state === "success" ? "Ready" : readiness.state === "running" ? "Checking" : "Action needed"}</span>` : html`<span class="status-chip unknown">Not checked</span>`}
+              <button class="primary icon-label" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${icon("shield", 17)}<span>${readiness?.state === "running" ? "Running…" : "Run check"}</span></button>
+            </div>
           </div>
           ${readiness ? html`
             <div class="callout ${readiness.state}" role="status"><strong>${readiness.state === "success" ? "Core music paths ready" : readiness.state === "running" ? "Running core checks" : "Some paths need attention"}</strong><span>${readiness.message}</span></div>
@@ -2377,7 +2384,7 @@ class AllstarrApp extends LitElement {
             <h3>Setup</h3>
             <div class="stat-list">
               ${this.renderSetupStep("Backend URL configured", Boolean(this.config?.jellyfin?.url || this.config?.subsonic?.url))}
-              ${this.renderSetupStep("Playlist source connected", playlistRefreshState === "healthy")}
+              ${this.renderSetupStep("Playlist source connected", readyPlaylistProviderIds.length > 0)}
               ${this.renderSetupStep("Download capability configured", downloadCanAttempt)}
               ${this.renderSetupStep("Playlist sync enabled", Boolean(this.config?.spotifyImport?.enabled))}
             </div>
