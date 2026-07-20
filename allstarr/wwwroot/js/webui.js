@@ -2848,6 +2848,12 @@ class AllstarrApp extends LitElement {
     const query = this.injectedTrackFilter.trim().toLowerCase();
     const filtered = tracks.filter((track) => !query || `${track.title} ${asArray(track.artists).join(" ")} ${track.album || ""}`.toLowerCase().includes(query));
     const playable = Number(details?.totalPlayable ?? details?.TotalPlayable ?? 0);
+    const localTracks = Number(details?.localTracks ?? details?.LocalTracks ?? 0);
+    const externalTracks = Number(details?.externalTracks ?? details?.ExternalTracks ?? 0);
+    const unmatchedTracks = Number(details?.unmatchedTracks ?? details?.UnmatchedTracks ?? Math.max(0, tracks.length - playable));
+    const lastSourceRefreshAt = details?.lastSourceRefreshAt || details?.LastSourceRefreshAt;
+    const nextSyncAt = details?.nextSyncAt || details?.NextSyncAt;
+    const matchStatus = details?.matchStatus || details?.MatchStatus || "pending";
     const sourceProvider = details?.sourceProvider || "unknown";
     const targetBackend = details?.targetBackend || String(this.status?.backendType || this.config?.backendType || "unknown").toLowerCase();
     const close = () => {
@@ -2878,6 +2884,20 @@ class AllstarrApp extends LitElement {
               <div><span class="hero-stat-icon">${icon("check")}</span><span><small>Playable</small><strong>${playable} / ${tracks.length}</strong></span></div>
               <div><span class="hero-stat-icon">${icon("library")}</span><span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
             </div>
+            ${details ? html`<div class="playlist-operation-summary" aria-label="Playlist synchronization details">
+              <span><small>Local</small><strong>${localTracks}</strong></span>
+              <span><small>External</small><strong>${externalTracks}</strong></span>
+              <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
+              <span><small>Source refreshed</small><strong>${formatRelativeTime(lastSourceRefreshAt)}</strong></span>
+              <span><small>Next scheduled sync</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual"}</strong></span>
+              <button class="primary compact" @click=${async () => {
+                await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
+                await this.reloadInjectedPlaylistDetails();
+              }}>${icon("refresh", 15)} Sync & rematch</button>
+            </div>
+            ${matchStatus === "rematch_required" ? html`<div class="playlist-match-notice" role="status">
+              ${icon("warning", 17)}<span><strong>Current source snapshot needs matching</strong><small>The provider playlist changed after its last completed match. Run a sync now or wait for the next scheduled sync.</small></span>
+            </div>` : nothing}` : nothing}
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
         </div>

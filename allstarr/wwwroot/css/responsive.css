@@ -23,6 +23,17 @@
 }
 
 @media (max-width: 900px) {
+    .playlist-operation-summary {
+        grid-template-columns: repeat(3, minmax(90px, 1fr));
+    }
+
+    .playlist-operation-summary > span:nth-of-type(3) {
+        border-right: 0;
+    }
+
+    .playlist-operation-summary button {
+        grid-column: 1 / -1;
+    }
     :root {
         --rail-width: 76px;
         --page-gutter: 20px;
@@ -62,6 +73,25 @@
     .wide-grid,
     .config-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 620px) {
+    .playlist-operation-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .playlist-operation-summary > span:nth-of-type(3) {
+        border-right: 1px solid var(--border);
+    }
+
+    .playlist-operation-summary > span:nth-of-type(even) {
+        border-right: 0;
+    }
+
+    .playlist-operation-summary > span:nth-of-type(5) {
+        grid-column: 1 / -1;
+        border-right: 0;
     }
 }
 

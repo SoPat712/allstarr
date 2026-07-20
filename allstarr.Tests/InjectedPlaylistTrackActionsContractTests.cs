@@ -80,6 +80,25 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.DoesNotContain("playlistSummary?.totalPlayable", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PlaylistDetails_ExposeSyncTimingBreakdownAndDirectRematch()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "workspaces.css"));
+
+        Assert.Contains("lastSourceRefreshAt", controller, StringComparison.Ordinal);
+        Assert.Contains("nextSyncAt", controller, StringComparison.Ordinal);
+        Assert.Contains("matchStatus", controller, StringComparison.Ordinal);
+        Assert.Contains("Local</small>", script, StringComparison.Ordinal);
+        Assert.Contains("External</small>", script, StringComparison.Ordinal);
+        Assert.Contains("Unmatched</small>", script, StringComparison.Ordinal);
+        Assert.Contains("Next scheduled sync", script, StringComparison.Ordinal);
+        Assert.Contains("Sync & rematch", script, StringComparison.Ordinal);
+        Assert.Contains("Current source snapshot needs matching", script, StringComparison.Ordinal);
+        Assert.Contains(".playlist-operation-summary", styles, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

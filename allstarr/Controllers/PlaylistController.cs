@@ -742,7 +742,7 @@ public class PlaylistController : ControllerBase
             // cannot always be joined back to Spotify IDs. Base the displayed match total on
             // current Spotify IDs intersected with the ordered match records instead of counting
             // unrelated stale items from the previous playlist snapshot.
-            if (playlistMetadata?.Tracks.Count > 0)
+            if (!playlistItemStatsApplied && playlistMetadata?.Tracks.Count > 0)
             {
                 try
                 {
@@ -983,6 +983,8 @@ public class PlaylistController : ControllerBase
     public async Task<IActionResult> GetPlaylistTracks(string name)
     {
         var decodedName = Uri.UnescapeDataString(name);
+        var playlistConfig = (await GetConfiguredPlaylistsAsync()).FirstOrDefault(item =>
+            item.Name.Equals(decodedName, StringComparison.OrdinalIgnoreCase));
 
         // Get Spotify tracks
         var spotifyTracks = await _playlistFetcher.GetPlaylistTracksAsync(decodedName);
@@ -996,6 +998,9 @@ public class PlaylistController : ControllerBase
         var playlistArtworkSource = !string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl)
             ? "playlist"
             : "track_fallback";
+        var syncSchedule = playlistConfig?.SyncSchedule ?? "0 8 * * *";
+        var lastSourceRefreshAt = ReadPlaylistCacheTimestamp(decodedName);
+        var nextSyncAt = GetNextScheduledOccurrence(syncSchedule);
         var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);
 
@@ -1358,6 +1363,14 @@ public class PlaylistController : ControllerBase
                 externalTracks = externalTrackCount,
                 matchedTracks = matchedTrackCount,
                 unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
+                syncSchedule,
+                lastSourceRefreshAt,
+                nextSyncAt,
+                matchStatus = matchedTrackCount == spotifyTracks.Count
+                    ? "ready"
+                    : matchedTrackCount == 0
+                        ? "rematch_required"
+                        : "partial",
                 tracks = tracksWithStatus
             });
         }
@@ -1478,8 +1491,60 @@ public class PlaylistController : ControllerBase
             externalTracks = externalTrackCount,
             matchedTracks = matchedTrackCount,
             unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
+            syncSchedule,
+            lastSourceRefreshAt,
+            nextSyncAt,
+            matchStatus = matchedTrackCount == spotifyTracks.Count
+                ? "ready"
+                : matchedTrackCount == 0
+                    ? "rematch_required"
+                    : "partial",
             tracks = tracksWithStatus
         });
+    }
+
+    private static DateTime? GetNextScheduledOccurrence(string? syncSchedule)
+    {
+        if (string.IsNullOrWhiteSpace(syncSchedule))
+        {
+            return null;
+        }
+
+        try
+        {
+            return CronExpression.Parse(syncSchedule).GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc);
+        }
+        catch (CronFormatException)
+        {
+            return null;
+        }
+    }
+
+    private static DateTime? ReadPlaylistCacheTimestamp(string playlistName)
+    {
+        var cacheFilePath = Path.Combine(
+            CacheDirectory,
+            $"{AdminHelperService.SanitizeFileName(playlistName)}_spotify.json");
+        if (!System.IO.File.Exists(cacheFilePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(System.IO.File.ReadAllText(cacheFilePath));
+            if (document.RootElement.TryGetProperty("fetchedAt", out var fetchedAt) &&
+                fetchedAt.TryGetDateTime(out var parsed))
+            {
+                return parsed;
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall back to the file timestamp for older cache formats.
+        }
+
+        return System.IO.File.GetLastWriteTimeUtc(cacheFilePath);
     }
 
     /// <summary>

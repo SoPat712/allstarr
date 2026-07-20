@@ -27,6 +27,7 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.Contains("[\"matchPercent\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"syncStatus\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"nextSyncAt\"]", Source, StringComparison.Ordinal);
+        Assert.Contains("!playlistItemStatsApplied && playlistMetadata?.Tracks.Count > 0", Source, StringComparison.Ordinal);
         Assert.Contains("currentSummaryShape", Source, StringComparison.Ordinal);
     }
 
