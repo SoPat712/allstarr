@@ -414,8 +414,12 @@ const API = {
     requestJson(`/api/admin/playlists${refresh ? "?refresh=true" : ""}`, {}, "Failed to load playlists"),
   playlistTracks: (name) =>
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/tracks`, {}, "Failed to load playlist tracks"),
-  trackMappingDetails: (spotifyId) =>
-    requestJson(`/api/admin/track-matches/spotify/${encodeURIComponent(spotifyId)}`, {}, "Failed to load track mapping history"),
+  trackMappingDetails: (spotifyId, backendItemId = "") => {
+    const params = new URLSearchParams();
+    if (backendItemId) params.set("backendItemId", backendItemId);
+    const query = params.size ? `?${params}` : "";
+    return requestJson(`/api/admin/track-matches/spotify/${encodeURIComponent(spotifyId)}${query}`, {}, "Failed to load track mapping history");
+  },
   searchLocalTracks: (query) =>
     requestJson(`/api/admin/jellyfin/search?query=${encodeURIComponent(query)}`, {}, "Failed to search the local library"),
   searchExternalTracks: (query, provider, limit = 20) => {
@@ -2950,7 +2954,7 @@ class AllstarrApp extends LitElement {
     this.trackDetailsLoading = true;
     this.injectedTrackMenuId = "";
     try {
-      this.selectedTrackDetails = await API.trackMappingDetails(spotifyId);
+      this.selectedTrackDetails = await API.trackMappingDetails(spotifyId, String(track?.backendItemId || "").trim());
     } catch (error) {
       this.toast(error.message, "error");
     } finally {
@@ -2971,6 +2975,7 @@ class AllstarrApp extends LitElement {
     const activity = asArray(details?.activity);
     const artifacts = asArray(details?.cache?.artifacts);
     const legacy = details?.legacyMapping;
+    const materializedBackendItemId = String(context?.backendItemId || "").trim();
     const close = () => {
       this.selectedTrackContext = null;
       this.selectedTrackDetails = null;
@@ -2992,7 +2997,7 @@ class AllstarrApp extends LitElement {
         </header>
         ${this.trackDetailsLoading ? html`<div class="empty">Loading mapping history…</div>` : details ? html`
           <div class="track-detail-stat-strip">
-            <div><small>Current route</small><strong>${legacy ? `${titleCase(legacy.targetType)} · ${titleCase(legacy.source)}` : details.found ? "Durable mapping" : "Unmatched"}</strong></div>
+            <div><small>Current route</small><strong>${context.isLocal === true ? `${titleCase(this.status?.backendType || "Jellyfin")} · materialized` : legacy ? `${titleCase(legacy.targetType)} · ${titleCase(legacy.source)}` : details.found ? "Durable mapping" : "Unmatched"}</strong></div>
             <div><small>First mapped</small><strong>${details.firstMappedAt ? formatDate(details.firstMappedAt) : "Not recorded"}</strong></div>
             <div><small>Last mapped</small><strong>${details.lastMappedAt ? formatRelativeTime(details.lastMappedAt) : "Not recorded"}</strong></div>
             <div><small>Last cached</small><strong>${lastCached ? formatRelativeTime(lastCached) : "Not cached"}</strong></div>
@@ -3000,10 +3005,11 @@ class AllstarrApp extends LitElement {
           <div class="track-details-grid">
             <section class="track-detail-section"><div class="section-heading"><div><h4>Identifiers and destinations</h4><p>Every known provider identity and local media item for this recording.</p></div></div>
               <div class="track-identity-list">
+                ${context.isLocal === true && materializedBackendItemId ? html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>${display(context.title)} · <span class="mono">${materializedBackendItemId}</span></strong><small>Present in the materialized playlist${localTracks.length ? " · linked to the durable library index" : " · durable library indexing is pending"}</small></div>` : nothing}
                 ${legacy ? html`<div><span class="provider-badge configured">${icon("metadata", 14)} Legacy mapping cache</span><strong>${legacy.localId ? `Jellyfin ${legacy.localId}` : `${titleCase(legacy.targetType)} target`}</strong><small>Created ${formatDate(legacy.createdAt)}${legacy.lastValidatedAt ? ` · validated ${formatRelativeTime(legacy.lastValidatedAt)}` : " · not yet validated"}</small></div>` : nothing}
                 ${identities.map((identity) => html`<div><span class="provider-badge configured">${this.renderProviderLogo(identity.providerId, "tiny")} ${providerDisplayName(identity.providerId, this.schema?.providers)}</span><strong class="mono">${display(identity.externalId)}</strong><small>${titleCase(identity.verification)} via ${display(identity.verificationMethod, "unspecified method")} · verified ${formatDate(identity.verifiedAt)}</small></div>`)}
                 ${localTracks.map((track) => html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>${display(track.title)} · <span class="mono">${display(track.backendItemId)}</span></strong><small>Indexed ${formatDate(track.indexedAt)} · updated ${formatRelativeTime(track.updatedAt)}</small></div>`)}
-                ${!legacy && !identities.length && !localTracks.length ? html`<div class="empty compact">No saved mapping record exists for this source track yet.</div>` : nothing}
+                ${!materializedBackendItemId && !legacy && !identities.length && !localTracks.length ? html`<div class="empty compact">No saved mapping record exists for this source track yet.</div>` : nothing}
               </div>
             </section>
             <section class="track-detail-section"><div class="section-heading"><div><h4>Match decisions</h4><p>Durable matcher decisions, confidence, and policy version.</p></div></div>

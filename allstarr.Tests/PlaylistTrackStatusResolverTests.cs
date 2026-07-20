@@ -6,6 +6,36 @@ namespace allstarr.Tests;
 
 public class PlaylistTrackStatusResolverTests
 {
+    [Theory]
+    [InlineData("Like I'm Gonna Lose You (feat. John Legend)", "Meghan Trainor", "Like I’m Gonna Lose You", "Meghan Trainor")]
+    [InlineData("I know love (feat. The Kid LAROI)", "Tate McRae", "I know love", "Tate McRae")]
+    public void MaterializedIdentityMatches_FeaturingDecoratorDifferences_ReturnsTrue(
+        string sourceTitle,
+        string sourceArtist,
+        string materializedTitle,
+        string materializedArtist)
+    {
+        var matches = PlaylistTrackStatusResolver.MaterializedIdentityMatches(
+            sourceTitle,
+            sourceArtist,
+            materializedTitle,
+            [materializedArtist]);
+
+        Assert.True(matches);
+    }
+
+    [Fact]
+    public void MaterializedIdentityMatches_DifferentPrimaryArtist_ReturnsFalse()
+    {
+        var matches = PlaylistTrackStatusResolver.MaterializedIdentityMatches(
+            "Same title (feat. Guest)",
+            "Artist A",
+            "Same title",
+            ["Artist B"]);
+
+        Assert.False(matches);
+    }
+
     [Fact]
     public void TryResolveFromMatchedTrack_LocalMatch_ReturnsLocal()
     {

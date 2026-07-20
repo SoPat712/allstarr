@@ -23,11 +23,14 @@ public sealed class TrackMatchesController(
     [HttpGet("spotify/{spotifyId}")]
     public async Task<IActionResult> Detail(
         string spotifyId,
+        [FromQuery] string? backendItemId = null,
         CancellationToken cancellationToken = default)
     {
         if (!TrySession(out var session, out var error)) return error!;
         spotifyId = spotifyId.Trim();
         if (spotifyId.Length is < 3 or > 128) return BadRequest(new { error = "Spotify track id is invalid" });
+        backendItemId = string.IsNullOrWhiteSpace(backendItemId) ? null : backendItemId.Trim();
+        if (backendItemId?.Length > 256) return BadRequest(new { error = "Backend item id is invalid" });
 
         var legacy = await spotifyMappings.GetMappingAsync(spotifyId);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -51,7 +54,8 @@ public sealed class TrackMatchesController(
         if (!session.IsAdministrator) localQuery = localQuery.Where(item => item.OwnerUserId == userId);
         var localTracks = await localQuery
             .Where(item => (item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value)) ||
-                           (legacy != null && legacy.LocalId != null && item.BackendItemId == legacy.LocalId))
+                           (legacy != null && legacy.LocalId != null && item.BackendItemId == legacy.LocalId) ||
+                           (backendItemId != null && item.BackendItemId == backendItemId))
             .OrderByDescending(item => item.UpdatedAt)
             .ToListAsync(cancellationToken);
 
@@ -113,7 +117,7 @@ public sealed class TrackMatchesController(
         return Ok(new
         {
             spotifyId,
-            found = legacy != null || identities.Count > 0 || decisions.Count > 0,
+            found = legacy != null || identities.Count > 0 || decisions.Count > 0 || localTracks.Count > 0,
             firstMappedAt,
             lastMappedAt,
             durationMilliseconds = primaryLocal?.DurationMilliseconds ?? legacy?.Metadata?.DurationMs,

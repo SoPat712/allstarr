@@ -1,4 +1,5 @@
 using allstarr.Models.Spotify;
+using allstarr.Services.Common;
 using allstarr.Services.Spotify;
 
 namespace allstarr.Services.Admin;
@@ -8,6 +9,37 @@ namespace allstarr.Services.Admin;
 /// </summary>
 public static class PlaylistTrackStatusResolver
 {
+    /// <summary>
+    /// Reconciles a provider snapshot entry with an item that is already present in the
+    /// materialized backend playlist. Provider titles frequently retain a featuring
+    /// decorator while Jellyfin stores the same recording without it, so use the same
+    /// decorator-insensitive identity rule as the local matcher.
+    /// </summary>
+    public static bool MaterializedIdentityMatches(
+        string? sourceTitle,
+        string? sourcePrimaryArtist,
+        string? materializedTitle,
+        IEnumerable<string>? materializedArtists)
+    {
+        var normalizedSourceTitle = NormalizeIdentity(FuzzyMatcher.StripDecorators(sourceTitle ?? string.Empty));
+        var normalizedMaterializedTitle = NormalizeIdentity(FuzzyMatcher.StripDecorators(materializedTitle ?? string.Empty));
+        if (normalizedSourceTitle.Length == 0 ||
+            !normalizedSourceTitle.Equals(normalizedMaterializedTitle, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var normalizedSourceArtist = NormalizeIdentity(sourcePrimaryArtist);
+        var normalizedMaterializedArtists = (materializedArtists ?? [])
+            .Select(NormalizeIdentity)
+            .Where(artist => artist.Length > 0)
+            .ToArray();
+
+        return normalizedSourceArtist.Length == 0 ||
+               normalizedMaterializedArtists.Length == 0 ||
+               normalizedMaterializedArtists.Contains(normalizedSourceArtist, StringComparer.Ordinal);
+    }
+
     public static bool TryResolveFromMatchedTrack(
         IReadOnlyDictionary<string, MatchedTrack> matchedTracksBySpotifyId,
         string? spotifyId,
@@ -108,4 +140,7 @@ public static class PlaylistTrackStatusResolver
 
         return NormalizeExternalProvider(parts[1]);
     }
+
+    private static string NormalizeIdentity(string? value) => string.Concat(
+        (value ?? string.Empty).Normalize().ToLowerInvariant().Where(char.IsLetterOrDigit));
 }

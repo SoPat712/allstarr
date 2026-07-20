@@ -999,14 +999,6 @@ public class PlaylistController : ControllerBase
         SpotifyPlaylistTrack source,
         Dictionary<string, object?> item)
     {
-        var sourceTitle = NormalizePlaylistIdentity(source.Title);
-        var itemTitle = NormalizePlaylistIdentity(ReadCachedString(item, "Name"));
-        if (sourceTitle.Length == 0 || !sourceTitle.Equals(itemTitle, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var sourceArtist = NormalizePlaylistIdentity(source.PrimaryArtist);
         var itemArtists = ReadCachedStringList(item, "Artists");
         if (itemArtists.Count == 0)
         {
@@ -1017,9 +1009,11 @@ public class PlaylistController : ControllerBase
             }
         }
 
-        return sourceArtist.Length == 0 || itemArtists.Count == 0 || itemArtists
-            .Select(NormalizePlaylistIdentity)
-            .Any(artist => artist.Equals(sourceArtist, StringComparison.Ordinal));
+        return PlaylistTrackStatusResolver.MaterializedIdentityMatches(
+            source.Title,
+            source.PrimaryArtist,
+            ReadCachedString(item, "Name"),
+            itemArtists);
     }
 
     private static List<string> ReadCachedStringList(Dictionary<string, object?> item, string key)
@@ -1045,9 +1039,6 @@ public class PlaylistController : ControllerBase
 
         return [];
     }
-
-    private static string NormalizePlaylistIdentity(string? value) => string.Concat(
-        (value ?? "").Normalize().ToLowerInvariant().Where(char.IsLetterOrDigit));
 
     private static bool IsExternalPlaylistItem(Dictionary<string, object?> item)
     {
@@ -1466,6 +1457,9 @@ public class PlaylistController : ControllerBase
                     spotifyId = track.SpotifyId,
                     durationMs = track.DurationMs,
                     albumArtUrl = track.AlbumArtUrl,
+                    backendItemId = isLocal == true
+                        ? cachedItem != null ? ReadCachedString(cachedItem, "Id") : manualMappingId
+                        : null,
                     isLocal = isLocal,
                     externalProvider = externalProvider,
                     provider = isLocal == true ? targetBackend : externalProvider,
@@ -1510,14 +1504,28 @@ public class PlaylistController : ControllerBase
         {
             bool? isLocal = null;
             string? externalProvider = null;
+            string? backendItemId = null;
+
+            if (materializedItemsBySpotifyId.TryGetValue(track.SpotifyId, out var materializedItem) &&
+                !IsExternalPlaylistItem(materializedItem))
+            {
+                isLocal = true;
+                backendItemId = ReadCachedString(materializedItem, "Id");
+            }
 
             // Check for manual Jellyfin mapping
             var manualMappingKey = $"spotify:manual-map:{decodedName}:{track.SpotifyId}";
             var manualJellyfinId = await _cache.GetAsync<string>(manualMappingKey);
 
-            if (!string.IsNullOrEmpty(manualJellyfinId))
+            if (isLocal == true)
+            {
+                // The materialized backend playlist is authoritative for currently playable
+                // local entries even when an upgraded cache no longer carries Spotify IDs.
+            }
+            else if (!string.IsNullOrEmpty(manualJellyfinId))
             {
                 isLocal = true;
+                backendItemId = manualJellyfinId;
             }
             else
             {
@@ -1586,6 +1594,7 @@ public class PlaylistController : ControllerBase
                 spotifyId = track.SpotifyId,
                 durationMs = track.DurationMs,
                 albumArtUrl = track.AlbumArtUrl,
+                backendItemId,
                 isLocal = isLocal,
                 externalProvider = externalProvider,
                 provider = isLocal == true ? targetBackend : externalProvider,

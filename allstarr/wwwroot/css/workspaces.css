@@ -238,8 +238,8 @@
     display: grid;
     gap: 2px;
     align-content: center;
-    min-height: 52px;
-    padding: 8px 12px;
+    min-height: 44px;
+    padding: 6px 10px;
     border-right: 1px solid var(--border);
 }
 
@@ -258,7 +258,10 @@
 
 .playlist-operation-summary button {
     align-self: center;
-    margin: 7px;
+    min-width: 164px;
+    min-height: 40px;
+    margin: 6px;
+    padding: 8px 14px;
     white-space: nowrap;
 }
 
@@ -299,7 +302,7 @@
 }
 
 .track-details-backdrop {
-    z-index: 90;
+    z-index: 1020;
     padding: clamp(12px, 3vw, 40px);
 }
 

@@ -78,6 +78,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("localTracks = localTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("externalTracks = externalTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("matchState = isLocal == true ? \"local\"", controller, StringComparison.Ordinal);
+        Assert.Contains("backendItemId = isLocal == true", controller, StringComparison.Ordinal);
+        Assert.Contains("FuzzyMatcher.StripDecorators", File.ReadAllText(FindRepositoryFile("allstarr", "Services", "Admin", "PlaylistTrackStatusResolver.cs")), StringComparison.Ordinal);
         Assert.DoesNotContain("playlistSummary?.totalPlayable", script, StringComparison.Ordinal);
     }
 
@@ -114,6 +116,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("ProviderDownloadArtifacts", controller, StringComparison.Ordinal);
         Assert.Contains("spotifyMappings.GetMappingAsync(spotifyId)", controller, StringComparison.Ordinal);
         Assert.Contains("trackMappingDetails:", script, StringComparison.Ordinal);
+        Assert.Contains("backendItemId", script, StringComparison.Ordinal);
         Assert.Contains("Open mapping details for", script, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"track-details-dialog\"", script, StringComparison.Ordinal);
         Assert.Contains("Identifiers and destinations", script, StringComparison.Ordinal);
@@ -121,6 +124,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Cache and downloads", script, StringComparison.Ordinal);
         Assert.Contains("Track activity", script, StringComparison.Ordinal);
         Assert.Contains(".track-details-dialog", styles, StringComparison.Ordinal);
+        Assert.Contains("z-index: 1020", styles, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] path)
