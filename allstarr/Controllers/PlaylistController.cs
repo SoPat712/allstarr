@@ -876,6 +876,60 @@ public class PlaylistController : ControllerBase
             StringComparer.OrdinalIgnoreCase);
     }
 
+    private async Task<List<Dictionary<string, object?>>?> GetMaterializedPlaylistItemsAsync(string playlistName)
+    {
+        var playlist = (await GetConfiguredPlaylistsAsync()).FirstOrDefault(item =>
+            item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
+        if (playlist == null || string.IsNullOrWhiteSpace(playlist.JellyfinId))
+        {
+            return null;
+        }
+
+        var userId = _jellyfinSettings.UserId;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            var usersRequest = _helperService.CreateJellyfinRequest(HttpMethod.Get, $"{_jellyfinSettings.Url}/Users");
+            using var usersResponse = await _jellyfinHttpClient.SendAsync(usersRequest, HttpContext.RequestAborted);
+            if (usersResponse.IsSuccessStatusCode)
+            {
+                using var usersDocument = JsonDocument.Parse(await usersResponse.Content.ReadAsStringAsync(HttpContext.RequestAborted));
+                userId = usersDocument.RootElement.ValueKind == JsonValueKind.Array &&
+                         usersDocument.RootElement.GetArrayLength() > 0
+                    ? usersDocument.RootElement[0].GetProperty("Id").GetString()
+                    : null;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return null;
+        }
+
+        var url = $"{_jellyfinSettings.Url}/Playlists/{playlist.JellyfinId}/Items?UserId={userId}&Fields=ProviderIds,Path";
+        var request = _helperService.CreateJellyfinRequest(HttpMethod.Get, url);
+        using var response = await _jellyfinHttpClient.SendAsync(request, HttpContext.RequestAborted);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning(
+                "Failed to read materialized playlist {Playlist} while building track details: {StatusCode}",
+                playlistName,
+                response.StatusCode);
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(HttpContext.RequestAborted));
+        if (!document.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        return items.EnumerateArray()
+            .Select(item => JsonSerializer.Deserialize<Dictionary<string, object?>>(item.GetRawText()))
+            .Where(item => item != null)
+            .Select(item => item!)
+            .ToList();
+    }
+
     /// <summary>
     /// Get tracks for a specific playlist with local/external status
     /// </summary>
@@ -937,6 +991,29 @@ public class PlaylistController : ControllerBase
         catch (Exception cacheEx)
         {
             _logger.LogWarning(cacheEx, "Failed to deserialize playlist cache for {Playlist}", decodedName);
+        }
+
+        // Imported v2 caches can contain only the few tracks that needed explicit mappings,
+        // even though the Jellyfin playlist is already fully materialized. Prefer the actual
+        // ordered playlist whenever it covers the complete current source playlist.
+        if ((cachedPlaylistItems?.Count ?? 0) != spotifyTracks.Count)
+        {
+            try
+            {
+                var materializedItems = await GetMaterializedPlaylistItemsAsync(decodedName);
+                if (materializedItems?.Count == spotifyTracks.Count)
+                {
+                    cachedPlaylistItems = materializedItems;
+                    _logger.LogDebug(
+                        "Using {Count} materialized Jellyfin items for playlist detail status in {Playlist}",
+                        materializedItems.Count,
+                        decodedName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load materialized track details for {Playlist}", decodedName);
+            }
         }
 
         _logger.LogDebug("GetPlaylistTracks for {Playlist}: Cache found: {Found}, Count: {Count}",
