@@ -437,6 +437,8 @@ const API = {
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/refresh`, { method: "POST" }, "Failed to refresh playlist"),
   matchPlaylist: (name) =>
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/match`, { method: "POST" }, "Failed to match playlist"),
+  matchAllPlaylists: () =>
+    requestJson("/api/admin/playlists/match-all", { method: "POST" }, "Failed to match playlists"),
   clearPlaylistCache: (name) =>
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/clear-cache`, { method: "POST" }, "Failed to clear playlist cache"),
   addPlaylist: (name, spotifyId, localTracksPosition = "first") =>
@@ -2794,9 +2796,17 @@ class AllstarrApp extends LitElement {
         <div><h3>Injected playlists</h3><p>Playlists that Allstarr has injected into your media server.</p></div>
         <div class="actions injected-heading-actions"><button @click=${() => { this.injectedAddOpen = true; }}>${icon("plus")}<span>Add playlist</span></button><button class="primary" @click=${async () => {
           const names = selected.size ? [...selected] : playlists.map((item) => item.name);
-          if (selected.size) await Promise.all(names.map((name) => API.refreshPlaylist(name)));
-          else await API.refreshPlaylists();
-          this.toast(`Sync started for ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
+          if (selected.size) {
+            await Promise.all(names.map(async (name) => {
+              await API.refreshPlaylist(name);
+              await API.matchPlaylist(name);
+            }));
+          } else {
+            await API.refreshPlaylists();
+            await API.matchAllPlaylists();
+          }
+          await this.loadPlaylists(true);
+          this.toast(`Refreshed and rematched ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
         }}>${icon("refresh")}<span>Sync ${selected.size ? `${selected.size} selected` : "all now"}</span></button></div>
       </div>
       <div class="playlist-toolbar">

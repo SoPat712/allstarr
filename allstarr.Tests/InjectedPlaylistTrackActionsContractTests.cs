@@ -141,6 +141,20 @@ public sealed class InjectedPlaylistTrackActionsContractTests
     }
 
     [Fact]
+    public void SyncActions_RefreshSourcesAndRunMatching()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains("matchAllPlaylists: () =>", script, StringComparison.Ordinal);
+        Assert.Contains("/api/admin/playlists/match-all", script, StringComparison.Ordinal);
+        Assert.Contains("await API.refreshPlaylist(name);", script, StringComparison.Ordinal);
+        Assert.Contains("await API.matchPlaylist(name);", script, StringComparison.Ordinal);
+        Assert.Contains("await API.refreshPlaylists();", script, StringComparison.Ordinal);
+        Assert.Contains("await API.matchAllPlaylists();", script, StringComparison.Ordinal);
+        Assert.Contains("Refreshed and rematched", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlaylistTrackRows_OpenAnAuthoritativeMappingHistoryDialog()
     {
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "TrackMatchesController.cs"));
