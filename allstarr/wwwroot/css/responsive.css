@@ -192,6 +192,45 @@
         justify-self: start;
     }
 
+    .extensions-page-header,
+    .extensions-page-title,
+    .extensions-page-title > div,
+    .extension-workspace-grid,
+    .extension-workspace-grid > div,
+    .extension-registry-bar,
+    .extension-list,
+    .extension-row,
+    .extension-row-copy {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .extensions-page-title {
+        align-items: flex-start;
+    }
+
+    .extensions-page-title p,
+    .extension-row-copy p {
+        overflow-wrap: anywhere;
+    }
+
+    .extension-tabs {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .extension-row {
+        grid-template-columns: 48px minmax(0, 1fr);
+    }
+
+    .extension-row > .status-chip,
+    .extension-row > button,
+    .extension-row-chips {
+        grid-column: 2;
+        justify-self: start;
+    }
+
     .overview-grid,
     .wide-grid,
     .config-grid,
