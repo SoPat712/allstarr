@@ -49,7 +49,8 @@ public sealed class ProtocolProviderGatewayContractTests
         Assert.Contains("ResolveAllowedCompatibilityProvidersAsync", source, StringComparison.Ordinal);
         Assert.Contains("accounts.ResolveAsync", source, StringComparison.Ordinal);
         Assert.Contains("legacy.Songs.Where(item => Allowed", source, StringComparison.Ordinal);
-        Assert.Contains("RequireCompatibilityProviderAsync(protocol, providerId)", source, StringComparison.Ordinal);
+        Assert.Contains("var routedProviderId = NormalizeProvider(providerId)", source, StringComparison.Ordinal);
+        Assert.Contains("RequireCompatibilityProviderAsync(protocol, routedProviderId)", source, StringComparison.Ordinal);
         Assert.Contains("NormalizeProvider(item).Equals(normalized", source, StringComparison.Ordinal);
         Assert.Contains("ProviderCapabilityKind.Playlist", source, StringComparison.Ordinal);
         Assert.Contains("ResolveAllowedCompatibilityProvidersAsync(\n            protocol, actor, ProviderCapabilityKind.Playlist)", source, StringComparison.Ordinal);

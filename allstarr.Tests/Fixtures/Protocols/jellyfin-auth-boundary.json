@@ -62,7 +62,7 @@
     "verification": {
       "status": 403,
       "body": { "error": "user disabled" },
-      "pathAndQuery": "/Users/Me"
+      "pathAndQuery": "/Users/spoofed-user"
     },
     "expected": {
       "status": 403,

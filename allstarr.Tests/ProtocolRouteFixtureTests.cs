@@ -590,7 +590,7 @@ public sealed class ProtocolRouteFixtureTests
             request =>
             {
                 observedPaths.Add(request.RequestUri!.PathAndQuery);
-                if (request.RequestUri.AbsolutePath.Equals("/Users/Me", StringComparison.Ordinal))
+                if (request.RequestUri.AbsolutePath.StartsWith("/Users/", StringComparison.Ordinal))
                 {
                     return Json(StatusCodes.Status200OK, """{"Id":"verified-user","Name":"Fixture User"}""");
                 }
@@ -711,7 +711,7 @@ public sealed class ProtocolRouteFixtureTests
         var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
         using var unresolvedFactory = new ProtocolFactory(
             "Jellyfin",
-            request => request.RequestUri!.AbsolutePath.Equals("/Users/Me", StringComparison.Ordinal)
+            request => request.RequestUri!.AbsolutePath.StartsWith("/Users/", StringComparison.Ordinal)
                 ? Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""")
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>

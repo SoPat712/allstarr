@@ -157,11 +157,12 @@ public sealed class ProtocolProviderGateway(
     {
         if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
             return await legacyMetadata.GetSongAsync(providerId, externalId, protocol.CancellationToken);
+        var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
-            protocol, providerId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");
+            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");
         if (routed.Candidate != null)
         {
-            var id = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
+            var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Track, externalId);
             var outcome = await routed.Candidate.Implementation.GetTrackAsync(
                 routed.Candidate.Context,
                 new ProviderTrackLookupRequest(id));
@@ -169,7 +170,7 @@ public sealed class ProtocolProviderGateway(
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
-        await RequireCompatibilityProviderAsync(protocol, providerId);
+        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
         return await legacyMetadata.GetSongAsync(providerId, externalId, protocol.CancellationToken);
     }
 
@@ -180,12 +181,13 @@ public sealed class ProtocolProviderGateway(
     {
         if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
             return await legacyMetadata.GetAlbumAsync(providerId, externalId, protocol.CancellationToken);
+        var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
-            protocol, providerId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-album");
+            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-album");
         Album? typed = null;
         if (routed.Candidate != null)
         {
-            var id = new ProviderExternalResourceId(providerId, ProviderResourceKind.Album, externalId);
+            var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Album, externalId);
             var outcome = await routed.Candidate.Implementation.GetAlbumAsync(
                 routed.Candidate.Context,
                 new ProviderAlbumLookupRequest(id));
@@ -200,7 +202,7 @@ public sealed class ProtocolProviderGateway(
         {
             return await legacyMetadata.GetAlbumAsync(providerId, externalId, protocol.CancellationToken) ?? typed;
         }
-        await RequireCompatibilityProviderAsync(protocol, providerId);
+        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
         return await legacyMetadata.GetAlbumAsync(providerId, externalId, protocol.CancellationToken);
     }
 
@@ -211,11 +213,12 @@ public sealed class ProtocolProviderGateway(
     {
         if (protocol.Actor is null && IsPublicMetadataProvider(providerId))
             return await legacyMetadata.GetArtistAsync(providerId, externalId, protocol.CancellationToken);
+        var routedProviderId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
-            protocol, providerId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist");
+            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist");
         if (routed.Candidate != null)
         {
-            var id = new ProviderExternalResourceId(providerId, ProviderResourceKind.Artist, externalId);
+            var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
             var outcome = await routed.Candidate.Implementation.GetArtistAsync(
                 routed.Candidate.Context,
                 new ProviderArtistLookupRequest(id));
@@ -223,7 +226,7 @@ public sealed class ProtocolProviderGateway(
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
-        await RequireCompatibilityProviderAsync(protocol, providerId);
+        await RequireCompatibilityProviderAsync(protocol, routedProviderId);
         return await legacyMetadata.GetArtistAsync(providerId, externalId, protocol.CancellationToken);
     }
 
