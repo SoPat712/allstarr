@@ -282,6 +282,13 @@ a {
     border-bottom: 1px solid var(--border);
 }
 
+.brand-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
 .brand-title {
     display: flex;
     align-items: center;
@@ -289,6 +296,15 @@ a {
     width: 100%;
     color: var(--text-primary);
     text-decoration: none;
+}
+
+.brand-heading .sidebar-collapse {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    margin-left: auto;
+    padding: 0;
 }
 
 .brand-mark {
@@ -447,11 +463,6 @@ a {
     text-align: left;
 }
 
-.sidebar-collapse {
-    margin-top: var(--space-1);
-    border-top-color: var(--border);
-}
-
 @media (min-width: 961px) {
     .app-shell.sidebar-collapsed {
         --rail-width: 76px;
@@ -465,6 +476,7 @@ a {
         padding-inline: 0;
     }
 
+    .sidebar-collapsed .brand-heading,
     .sidebar-collapsed .brand-title,
     .sidebar-collapsed .brand-status,
     .sidebar-collapsed .user-summary,
@@ -482,6 +494,15 @@ a {
     .sidebar-collapsed .user-summary > span:last-child,
     .sidebar-collapsed .sidebar-footer button > span {
         display: none;
+    }
+
+    .sidebar-collapsed .brand-heading {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .sidebar-collapsed .brand-heading .sidebar-collapse {
+        margin-left: 0;
     }
 
     .sidebar-collapsed .nav-group > summary::after {
@@ -1512,12 +1533,26 @@ tbody tr:hover {
 }
 
 .section-heading h3,
-.section-heading p {
-    margin-top: 0;
+.section-heading p,
+.dialog-header h3,
+.dialog-header p,
+.injected-page-heading h3,
+.injected-page-heading p {
+    margin: 0;
 }
 
-.section-heading p:last-child {
-    margin-bottom: 0;
+.section-heading > div,
+.dialog-header > div,
+.injected-page-heading > div:first-child {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.section-heading p,
+.dialog-header p,
+.injected-page-heading p {
+    color: var(--text-secondary);
 }
 
 .content-disclosure {
@@ -4494,9 +4529,18 @@ button.setup-choice {
     display: grid;
     grid-template-columns: 142px minmax(0, 1fr) auto;
     gap: 28px;
+    align-items: start;
     border-bottom: 1px solid var(--border);
     background: radial-gradient(circle at 78% -40%, color-mix(in srgb, var(--accent), transparent 80%), transparent 55%), var(--surface-card);
     padding: 30px;
+}
+
+.playlist-dialog-hero .dialog-close {
+    align-self: start;
+    width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
 }
 
 .playlist-hero-art {
@@ -4563,6 +4607,11 @@ button.setup-choice {
     min-height: 0;
     overflow: auto;
     padding: 20px 28px 24px;
+}
+
+.playlist-track-summary {
+    color: var(--text-muted);
+    font-size: .82rem;
 }
 
 .playlist-track-search { width: min(360px, 100%); }
@@ -4837,6 +4886,10 @@ button.setup-choice {
         padding-left: 16px;
     }
 
+    .brand-heading .sidebar-collapse {
+        display: none;
+    }
+
     .overview-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -4868,13 +4921,13 @@ button.setup-choice {
     }
 
     .playlist-dialog-hero {
-        grid-template-columns: 82px minmax(0, 1fr) auto;
+        grid-template-columns: 72px minmax(0, 1fr) 40px;
         gap: 14px;
         padding: 18px;
     }
 
-    .playlist-hero-art { width: 82px; height: 82px; }
-    .playlist-hero-stats { grid-column: 1 / -1; }
+    .playlist-hero-art { width: 72px; height: 72px; }
+    .playlist-hero-stats { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; }
 
     .now-playing {
         position: relative;
@@ -4961,10 +5014,12 @@ button.setup-choice {
     }
 
     .playlist-dialog-hero {
-        grid-template-columns: 70px minmax(0, 1fr) auto;
+        grid-template-columns: 58px minmax(0, 1fr) 40px;
+        gap: 10px;
+        padding: 14px;
     }
 
-    .playlist-hero-art { width: 70px; height: 70px; }
+    .playlist-hero-art { width: 58px; height: 58px; border-radius: 10px; }
     .playlist-hero-content h3 { font-size: 1.45rem; }
     .playlist-hero-content > p { margin-bottom: 10px; }
     .playlist-hero-stats > div { min-width: 100%; }

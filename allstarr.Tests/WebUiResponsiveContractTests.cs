@@ -50,13 +50,29 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.Contains("SIDEBAR_COLLAPSED_KEY", script, StringComparison.Ordinal);
         Assert.Contains("localStorage.setItem(SIDEBAR_COLLAPSED_KEY", script, StringComparison.Ordinal);
-        Assert.Contains("class=\"ghost sidebar-collapse\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"ghost icon-button sidebar-collapse\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"brand-heading\"", script, StringComparison.Ordinal);
         Assert.Contains("this.sidebarCollapsed ? \"Expand sidebar\" : \"Collapse sidebar\"", script, StringComparison.Ordinal);
         Assert.Contains("title=${route.label} aria-label=${route.label}", script, StringComparison.Ordinal);
         Assert.Contains("@media (min-width: 961px)", css, StringComparison.Ordinal);
         Assert.Contains(".app-shell.sidebar-collapsed", css, StringComparison.Ordinal);
         Assert.Contains("--rail-width: 76px;", css, StringComparison.Ordinal);
         Assert.Contains(".sidebar-collapsed .nav-link > span", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InjectedPlaylistDetails_ShowAllTracksAndUsePlayableSummary()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.DoesNotContain("injectedTrackPage", script, StringComparison.Ordinal);
+        Assert.Contains("<small>Playable</small><strong>${playable} / ${tracks.length}</strong>", script, StringComparison.Ordinal);
+        Assert.Contains("playlistSummary?.totalPlayable", script, StringComparison.Ordinal);
+        Assert.Contains("filtered.map((track, index)", script, StringComparison.Ordinal);
+        Assert.Contains("`All ${tracks.length} tracks`", script, StringComparison.Ordinal);
+        Assert.Contains(".playlist-dialog-hero .dialog-close", css, StringComparison.Ordinal);
+        Assert.Contains("align-items: start;", css, StringComparison.Ordinal);
     }
 
     [Fact]

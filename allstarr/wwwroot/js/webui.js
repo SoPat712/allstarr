@@ -681,7 +681,6 @@ class AllstarrApp extends LitElement {
     injectedPage: { state: true },
     injectedPageSize: { state: true },
     injectedTrackFilter: { state: true },
-    injectedTrackPage: { state: true },
     injectedAddOpen: { state: true },
     selectedInjectedPlaylists: { state: true },
   };
@@ -770,7 +769,6 @@ class AllstarrApp extends LitElement {
     this.injectedPage = 1;
     this.injectedPageSize = 10;
     this.injectedTrackFilter = "";
-    this.injectedTrackPage = 1;
     this.injectedAddOpen = false;
     this.selectedInjectedPlaylists = new Set();
     this.playlistLinkFilters = { libraryScopeId: "" };
@@ -2062,10 +2060,23 @@ class AllstarrApp extends LitElement {
               }
             }}
           >×</button>
-          <a class="brand-title" href=${administrator ? "#/home" : "#/sources"} title="Allstarr home" aria-label="Allstarr home">
-            <span class="brand-mark" aria-hidden="true">A</span>
-            <span><strong>Allstarr</strong><small>Music control center</small></span>
-          </a>
+          <div class="brand-heading">
+            <a class="brand-title" href=${administrator ? "#/home" : "#/sources"} title="Allstarr home" aria-label="Allstarr home">
+              <span class="brand-mark" aria-hidden="true">A</span>
+              <span><strong>Allstarr</strong><small>Music control center</small></span>
+            </a>
+            <button
+              type="button"
+              class="ghost icon-button sidebar-collapse"
+              title=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-expanded=${this.sidebarCollapsed ? "false" : "true"}
+              @click=${() => {
+                this.sidebarCollapsed = !this.sidebarCollapsed;
+                localStorage.setItem(SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed ? "1" : "0");
+              }}
+            >${icon(this.sidebarCollapsed ? "chevronRight" : "chevronLeft")}</button>
+          </div>
           <div class="brand-status">
             <span class="status-dot" aria-hidden="true"></span>
             <span>${display(this.schema?.activeBackend || this.config?.backendType)}</span>
@@ -2088,17 +2099,6 @@ class AllstarrApp extends LitElement {
           <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
           ${administrator ? html`<button class="ghost" title=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-label=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
           <button class="ghost" title="Logout" aria-label="Logout" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
-          <button
-            type="button"
-            class="ghost sidebar-collapse"
-            title=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-expanded=${this.sidebarCollapsed ? "false" : "true"}
-            @click=${() => {
-              this.sidebarCollapsed = !this.sidebarCollapsed;
-              localStorage.setItem(SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed ? "1" : "0");
-            }}
-          >${icon(this.sidebarCollapsed ? "chevronRight" : "chevronLeft")}<span>${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}</span></button>
         </div>
       </aside>
     `;
@@ -2812,7 +2812,6 @@ class AllstarrApp extends LitElement {
     this.injectedTrackMenuId = "";
     this.injectedTrackEditor = null;
     this.injectedTrackFilter = "";
-    this.injectedTrackPage = 1;
     await this.updateComplete;
     this.renderRoot.querySelector(".injected-playlist-dialog")?.focus();
     try {
@@ -2827,13 +2826,23 @@ class AllstarrApp extends LitElement {
     if (!this.selectedInjectedPlaylist) return nothing;
     const details = this.injectedPlaylistDetails;
     const tracks = asArray(details?.tracks || details?.Tracks);
+    const playlistSummary = asArray(this.playlists?.playlists || this.playlists?.Playlists)
+      .find((playlist) => String(playlist.name || playlist.Name) === String(details?.name || details?.Name || this.selectedInjectedPlaylist));
+    const summaryLocal = Number(playlistSummary?.localTracks ?? 0);
+    const summaryExternal = Number(playlistSummary?.externalTracks ?? 0);
+    const unknownTracks = tracks.filter((track) => track.isLocal == null);
+    const knownLocal = tracks.filter((track) => track.isLocal === true).length;
+    const knownExternal = tracks.filter((track) => track.isLocal === false).length;
+    const missingLocal = Math.max(0, summaryLocal - knownLocal);
+    const missingExternal = Math.max(0, summaryExternal - knownExternal);
+    const canReconcileLocal = missingLocal === unknownTracks.length && missingExternal === 0;
+    const canReconcileExternal = missingExternal === unknownTracks.length && missingLocal === 0;
+    const reconciledTracks = tracks.map((track) => track.isLocal != null ? track : canReconcileLocal
+      ? { ...track, isLocal: true, matchState: "local" }
+      : canReconcileExternal ? { ...track, isLocal: false, matchState: "external" } : track);
     const query = this.injectedTrackFilter.trim().toLowerCase();
-    const filtered = tracks.filter((track) => !query || `${track.title} ${asArray(track.artists).join(" ")} ${track.album || ""}`.toLowerCase().includes(query));
-    const pageSize = 10;
-    const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-    const page = Math.min(this.injectedTrackPage, pageCount);
-    const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
-    const matched = Number(details?.matchedTracks ?? tracks.filter((track) => track.isLocal != null).length);
+    const filtered = reconciledTracks.filter((track) => !query || `${track.title} ${asArray(track.artists).join(" ")} ${track.album || ""}`.toLowerCase().includes(query));
+    const playable = Number(playlistSummary?.totalPlayable ?? playlistSummary?.matchedTracks ?? details?.matchedTracks ?? reconciledTracks.filter((track) => track.isLocal != null).length);
     const sourceProvider = details?.sourceProvider || "unknown";
     const targetBackend = details?.targetBackend || String(this.status?.backendType || this.config?.backendType || "unknown").toLowerCase();
     const close = () => {
@@ -2861,7 +2870,7 @@ class AllstarrApp extends LitElement {
           <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
             <div class="playlist-hero-stats">
               <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
-              <div><span class="hero-stat-icon">${icon("check")}</span><span><small>Matched</small><strong>${matched} / ${tracks.length}</strong></span></div>
+              <div><span class="hero-stat-icon">${icon("check")}</span><span><small>Playable</small><strong>${playable} / ${tracks.length}</strong></span></div>
               <div><span class="hero-stat-icon">${icon("library")}</span><span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
             </div>
           </div>
@@ -2869,11 +2878,11 @@ class AllstarrApp extends LitElement {
         </div>
         <div class="injected-playlist-scroll">
           ${this.renderInjectedTrackEditor()}
-          ${details ? html`<label class="search-control playlist-track-search">${icon("search")}<input aria-label="Filter playlist tracks" placeholder="Filter tracks…" .value=${this.injectedTrackFilter} @input=${(event) => { this.injectedTrackFilter = event.target.value; this.injectedTrackPage = 1; }}></label>
+          ${details ? html`<label class="search-control playlist-track-search">${icon("search")}<input aria-label="Filter playlist tracks" placeholder="Filter tracks…" .value=${this.injectedTrackFilter} @input=${(event) => { this.injectedTrackFilter = event.target.value; }}></label>
             <div class="playlist-track-table">
               <div class="playlist-track-head"><span>#</span><span>Track</span><span>Artist</span><span>Album</span><span>Provider</span><span></span></div>
-              ${visible.length ? visible.map((track, index) => html`<div class="playlist-track-row">
-                <span class="track-position">${display(track.position ?? (page - 1) * pageSize + index + 1)}</span>
+              ${filtered.length ? filtered.map((track, index) => html`<div class="playlist-track-row">
+                <span class="track-position">${display(track.position ?? index + 1)}</span>
                 <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt=""><strong>${display(track.title)}</strong></span>
                 <span>${asArray(track.artists).join(", ") || "Unknown artist"}</span>
                 <span>${display(track.album)}</span>
@@ -2881,7 +2890,7 @@ class AllstarrApp extends LitElement {
                 <span>${this.renderInjectedTrackMenu(track)}</span>
               </div>`) : html`<div class="empty compact">No tracks match this filter.</div>`}
             </div>
-            <div class="table-pagination"><span>Showing ${filtered.length ? (page - 1) * pageSize + 1 : 0}–${Math.min(page * pageSize, filtered.length)} of ${filtered.length} tracks</span><div><button class="icon-button" ?disabled=${page <= 1} @click=${() => { this.injectedTrackPage = page - 1; }}>${icon("chevronLeft")}</button><span class="page-number">${page}</span><button class="icon-button" ?disabled=${page >= pageCount} @click=${() => { this.injectedTrackPage = page + 1; }}>${icon("chevronRight")}</button></div></div>
+            <div class="playlist-track-summary">${query ? `Showing ${filtered.length} of ${tracks.length} tracks` : `All ${tracks.length} tracks`}</div>
           ` : html`<div class="empty">Loading playlist tracks…</div>`}
         </div>
       </section>
