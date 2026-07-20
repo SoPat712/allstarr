@@ -796,6 +796,8 @@ class AllstarrApp extends LitElement {
         window.history.replaceState(null, "", `#${this.route}`);
       }
       this.navOpen = false;
+      const content = this.renderRoot.querySelector("main.content");
+      if (content) content.scrollTop = 0;
       this.loadFailures = {};
       this.loadForRoute();
     };

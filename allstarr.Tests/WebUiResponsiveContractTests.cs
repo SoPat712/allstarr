@@ -71,8 +71,11 @@ public sealed class WebUiResponsiveContractTests
     [Fact]
     public void ViewStacks_KeepNavigationAndPanelsAtTheirIntrinsicHeight()
     {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
+        Assert.Contains("const content = this.renderRoot.querySelector(\"main.content\")", script, StringComparison.Ordinal);
+        Assert.Contains("if (content) content.scrollTop = 0;", script, StringComparison.Ordinal);
         Assert.Contains(".view-stack {\n    display: grid;\n    align-content: start;", css, StringComparison.Ordinal);
         Assert.Contains(".subnav {\n    gap: 0;\n    width: 100%;", css, StringComparison.Ordinal);
     }
