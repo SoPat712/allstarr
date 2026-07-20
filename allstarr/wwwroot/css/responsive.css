@@ -32,6 +32,12 @@
         display: none;
     }
 
+    .sidebar {
+        visibility: visible;
+        transform: none;
+        transition: none;
+    }
+
     .brand-heading,
     .nav-link,
     .user-summary,
