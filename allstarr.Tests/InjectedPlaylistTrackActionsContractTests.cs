@@ -152,6 +152,16 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("await API.refreshPlaylists();", script, StringComparison.Ordinal);
         Assert.Contains("await API.matchAllPlaylists();", script, StringComparison.Ordinal);
         Assert.Contains("Refreshed and rematched", script, StringComparison.Ordinal);
+        Assert.Contains("Playlist rematching queued. Progress appears in the operation center.", script, StringComparison.Ordinal);
+
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
+        Assert.Contains("DurableJobQueue jobs", controller, StringComparison.Ordinal);
+        Assert.Contains("\"playlist.match-all\"", controller, StringComparison.Ordinal);
+        Assert.Contains("return Accepted", controller, StringComparison.Ordinal);
+
+        var matcher = File.ReadAllText(FindRepositoryFile("allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
+        Assert.Contains("LegacyPlaylistMatchAllJobHandler", matcher, StringComparison.Ordinal);
+        Assert.Contains("IDurableJobHandler", matcher, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -172,10 +182,11 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("backendItemId", script, StringComparison.Ordinal);
         Assert.Contains("Open mapping details for", script, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"track-details-dialog\"", script, StringComparison.Ordinal);
-        Assert.Contains("<h4>Playback</h4>", script, StringComparison.Ordinal);
-        Assert.Contains("<h4>Identifiers</h4>", script, StringComparison.Ordinal);
-        Assert.Contains("<h4>Match history</h4>", script, StringComparison.Ordinal);
-        Assert.Contains("<h4>Activity</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("<small>Playback</small>", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Current route</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Known services</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("Technical history", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Recent activity</h4>", script, StringComparison.Ordinal);
         Assert.Contains("compact-track-details", script, StringComparison.Ordinal);
         Assert.Contains("track-details-dialog redesigned-dialog", script, StringComparison.Ordinal);
         Assert.Contains("track-details-scroll", script, StringComparison.Ordinal);

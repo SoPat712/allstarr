@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
+using allstarr.Models.Settings;
 using allstarr.Models.Spotify;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Spotify;
 
@@ -14,6 +16,8 @@ namespace allstarr.Services.Spotify;
 /// </summary>
 public sealed class LegacySpotifyMappingProjector(
     SpotifyMappingService mappings,
+    SpotifyPlaylistFetcher playlistFetcher,
+    IOptions<SpotifyImportSettings> importSettings,
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableStorageState storageState,
     ILogger<LegacySpotifyMappingProjector> logger) : BackgroundService
@@ -29,6 +33,7 @@ public sealed class LegacySpotifyMappingProjector(
                 if (storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready)
                 {
                     await ProjectAllAsync(stoppingToken);
+                    await ProjectConfiguredSourceTracksAsync(stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -61,6 +66,30 @@ public sealed class LegacySpotifyMappingProjector(
         if (projected > 0)
         {
             logger.LogInformation("Projected {Count} legacy Spotify mappings into Postgres", projected);
+        }
+        return projected;
+    }
+
+    /// <summary>
+    /// Projects every configured legacy playlist source entry, including tracks
+    /// which have never matched. This keeps the durable identity graph complete
+    /// without requiring a manual rematch first.
+    /// </summary>
+    internal async Task<int> ProjectConfiguredSourceTracksAsync(CancellationToken cancellationToken)
+    {
+        var projected = 0;
+        foreach (var playlist in importSettings.Value.Playlists
+                     .Where(item => !string.IsNullOrWhiteSpace(item.Name)))
+        {
+            var tracks = await playlistFetcher.GetPlaylistTracksAsync(playlist.Name);
+            projected += await ProjectSourceTracksAsync(tracks, cancellationToken);
+        }
+
+        if (projected > 0)
+        {
+            logger.LogInformation(
+                "Projected {Count} legacy playlist source tracks into Postgres",
+                projected);
         }
         return projected;
     }

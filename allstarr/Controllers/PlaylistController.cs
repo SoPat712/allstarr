@@ -11,6 +11,7 @@ using allstarr.Filters;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using allstarr.Core.Settings;
+using allstarr.Core.Jobs;
 using Cronos;
 
 namespace allstarr.Controllers;
@@ -2462,7 +2463,9 @@ public class PlaylistController : ControllerBase
     /// Trigger track matching for all playlists
     /// </summary>
     [HttpPost("playlists/match-all")]
-    public async Task<IActionResult> MatchAllPlaylistTracks()
+    public async Task<IActionResult> MatchAllPlaylistTracks(
+        [FromServices] DurableJobQueue jobs,
+        CancellationToken cancellationToken)
     {
         _logger.LogInformation("Manual track matching triggered for all playlists");
 
@@ -2471,16 +2474,41 @@ public class PlaylistController : ControllerBase
             return BadRequest(new { error = "Track matching service is not available" });
         }
 
-        try
+        if (!TrySession(out var session, out var error)) return error!;
+        var generation = DateTimeOffset.UtcNow.UtcTicks;
+        var receipt = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LegacyPlaylistMatchAllJobPayload>(
+            "playlist.match-all",
+            $"playlist-match-all:{session!.TenantId:N}:{generation / TimeSpan.TicksPerMinute}",
+            new(generation),
+            session.TenantId,
+            session.AllstarrUserId,
+            CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
+        return Accepted(new
         {
-            await _matchingService.TriggerMatchingAsync();
-            return Ok(new { message = "Track matching triggered for all playlists", timestamp = DateTime.UtcNow });
-        }
-        catch (Exception ex)
+            message = receipt.Created ? "Playlist rematching queued" : "Playlist rematching is already queued",
+            jobId = receipt.JobId,
+            created = receipt.Created,
+            generation
+        });
+    }
+
+    private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
+    {
+        session = null;
+        error = null;
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession authenticated)
         {
-            _logger.LogError(ex, "Failed to trigger track matching for all playlists");
-            return StatusCode(500, new { error = "Failed to trigger track matching" });
+            error = Unauthorized(new { error = "Authentication required" });
+            return false;
         }
+        if (!authenticated.TenantId.HasValue || !authenticated.AllstarrUserId.HasValue)
+        {
+            error = StatusCode(403, new { error = "The backend identity is not linked to an Allstarr user" });
+            return false;
+        }
+        session = authenticated;
+        return true;
     }
 
     private static string? NormalizeKnownExternalProvider(string? provider)

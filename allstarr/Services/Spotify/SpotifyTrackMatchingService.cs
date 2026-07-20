@@ -3,6 +3,7 @@ using allstarr.Models.Settings;
 using allstarr.Models.Spotify;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
+using allstarr.Core.Jobs;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -453,10 +454,10 @@ public class SpotifyTrackMatchingService : BackgroundService
     /// This bypasses cron schedules and runs immediately WITHOUT clearing cache or refreshing from Spotify.
     /// Use this when only the local library has changed.
     /// </summary>
-    public async Task TriggerMatchingAsync()
+    public async Task TriggerMatchingAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Manual track matching triggered for all playlists (bypassing cron schedules)");
-        await MatchAllPlaylistsAsync(CancellationToken.None);
+        await MatchAllPlaylistsAsync(cancellationToken);
     }
 
     /// <summary>
@@ -2436,4 +2437,30 @@ public class SpotifyTrackMatchingService : BackgroundService
         return song;
     }
 
+}
+
+public sealed record LegacyPlaylistMatchAllJobPayload(long Generation);
+
+/// <summary>
+/// Runs the compatibility playlist matcher outside the admin request so the UI
+/// can report durable progress and the work survives a browser disconnect.
+/// </summary>
+public sealed class LegacyPlaylistMatchAllJobHandler(SpotifyTrackMatchingService matchingService)
+    : IDurableJobHandler
+{
+    public string JobType => "playlist.match-all";
+
+    public async Task<DurableJobCompletion> ExecuteAsync(
+        DurableJobExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        LegacyPlaylistMatchAllJobPayload? payload;
+        try { payload = context.Claim.Payload.Deserialize<LegacyPlaylistMatchAllJobPayload>(); }
+        catch (JsonException) { payload = null; }
+        if (payload == null || payload.Generation <= 0)
+            return DurableJobCompletion.Failure("playlist_match_payload_invalid", "The playlist match request is invalid.");
+
+        await matchingService.TriggerMatchingAsync(cancellationToken);
+        return DurableJobCompletion.Success();
+    }
 }

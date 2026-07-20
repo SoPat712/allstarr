@@ -423,6 +423,22 @@
     padding: 8px 20px 20px;
 }
 
+.track-technical-history {
+    border-top: 1px solid var(--border);
+    padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.track-technical-history > summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-weight: 700;
+    list-style-position: inside;
+}
+
+.track-technical-history[open] > summary {
+    margin-bottom: var(--space-4);
+}
+
 .track-detail-section {
     min-width: 0;
     padding: 18px 16px;

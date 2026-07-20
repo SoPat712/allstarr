@@ -577,6 +577,7 @@ builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMissingTracks
 // Register Spotify track matching service (pre-matches tracks with rate limiting)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyTrackMatchingService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyTrackMatchingService>());
+builder.Services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, allstarr.Services.Spotify.LegacyPlaylistMatchAllJobHandler>();
 
 // Register lyrics prefetch service (prefetches lyrics for all playlist tracks)
 // DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast

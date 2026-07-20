@@ -2801,12 +2801,14 @@ class AllstarrApp extends LitElement {
               await API.refreshPlaylist(name);
               await API.matchPlaylist(name);
             }));
+            await this.loadPlaylists(true);
+            this.toast(`Refreshed and rematched ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
           } else {
             await API.refreshPlaylists();
             await API.matchAllPlaylists();
+            await this.loadPlaylists(true);
+            this.toast("Playlist rematching queued. Progress appears in the operation center.");
           }
-          await this.loadPlaylists(true);
-          this.toast(`Refreshed and rematched ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
         }}>${icon("refresh")}<span>Sync ${selected.size ? `${selected.size} selected` : "all now"}</span></button></div>
       </div>
       <div class="playlist-toolbar">
@@ -3020,27 +3022,28 @@ class AllstarrApp extends LitElement {
             <div><small>Cached</small><strong>${lastCached ? formatRelativeTime(lastCached) : "No"}</strong></div>
           </div>
           <div class="track-details-grid compact-track-details">
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Playback</h4></div></div>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Current route</h4><p>Where Allstarr will play this entry.</p></div></div>
               <div class="track-identity-list">
                 ${context.isLocal === true && materializedBackendItemId ? html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>Local library</strong><small class="mono">${materializedBackendItemId}</small></div>` : nothing}
                 ${context.isLocal === false ? html`<div><span class="provider-badge configured">${this.renderProviderLogo(context.externalProvider, "tiny")} ${providerDisplayName(context.externalProvider, this.schema?.providers)}</span><strong>External playback</strong><small>${legacy?.lastValidatedAt ? `Checked ${formatRelativeTime(legacy.lastValidatedAt)}` : "Ready for the next validation"}</small></div>` : nothing}
-                ${context.isLocal == null ? html`<div class="empty compact"><strong>Not matched</strong><span>Choose Rematch from the track menu.</span></div>` : nothing}
+                ${context.isLocal == null ? html`<div class="empty compact"><strong>No playable route yet</strong><span>Allstarr checked the local library first, then the enabled providers in your configured order. Use Rematch after changing the library or provider order.</span></div>` : nothing}
               </div>
             </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Identifiers</h4></div></div>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Known services</h4><p>Other identities associated with this recording.</p></div></div>
               <div class="track-identity-list">
-                <div><span class="provider-badge configured">${this.renderProviderLogo("spotify", "tiny")} Spotify</span><strong class="mono">${display(context.spotifyId)}</strong></div>
-                ${identities.filter((identity) => identity.providerId !== "spotify").map((identity) => html`<div><span class="provider-badge configured">${this.renderProviderLogo(identity.providerId, "tiny")} ${providerDisplayName(identity.providerId, this.schema?.providers)}</span><strong class="mono">${display(identity.externalId)}</strong></div>`)}
-                ${localTracks.filter((track) => track.backendItemId !== materializedBackendItemId).map((track) => html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong class="mono">${display(track.backendItemId)}</strong></div>`)}
+                <div><span class="provider-badge configured">${this.renderProviderLogo("spotify", "tiny")} Spotify</span><strong>Source track</strong></div>
+                ${identities.filter((identity) => identity.providerId !== "spotify").map((identity) => html`<div><span class="provider-badge configured">${this.renderProviderLogo(identity.providerId, "tiny")} ${providerDisplayName(identity.providerId, this.schema?.providers)}</span><strong>Linked</strong></div>`)}
+                ${localTracks.filter((track) => track.backendItemId !== materializedBackendItemId).map(() => html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>Another local copy</strong></div>`)}
               </div>
-            </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Match history</h4></div></div>
-              <div class="track-history-list">${history.length ? history.slice(0, 3).map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${item.confidence != null && Number.isFinite(Number(item.confidence)) ? `${(Number(item.confidence) * 100).toFixed(0)}% match` : titleCase(item.source || "automatic")}</strong><small>${item.decidedAt ? formatRelativeTime(item.decidedAt) : "Current playlist"}</small></div>`) : html`<div class="empty compact">No durable decision recorded yet.</div>`}</div>
-            </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Activity</h4></div></div>
-              <div class="track-activity-list">${activity.length ? activity.slice(0, 5).map((item) => html`<div><span>${icon(item.kind === "download" ? "download" : item.kind === "cache" ? "metadata" : item.kind === "validation" ? "check" : "link", 16)}</span><div><strong>${display(item.title)}</strong><small>${formatRelativeTime(item.at)}</small></div></div>`) : html`<div class="empty compact">No activity recorded yet.</div>`}</div>
             </section>
           </div>
+          <details class="track-technical-history">
+            <summary>Technical history</summary>
+            <div class="track-details-grid compact-track-details">
+              <section class="track-detail-section"><h4>Match decisions</h4><div class="track-history-list">${history.length ? history.slice(0, 3).map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${item.confidence != null && Number.isFinite(Number(item.confidence)) ? `${(Number(item.confidence) * 100).toFixed(0)}% match` : titleCase(item.source || "automatic")}</strong><small>${item.decidedAt ? formatRelativeTime(item.decidedAt) : "Current playlist"}</small></div>`) : html`<div class="empty compact">No saved decision yet.</div>`}</div></section>
+              <section class="track-detail-section"><h4>Recent activity</h4><div class="track-activity-list">${activity.length ? activity.slice(0, 5).map((item) => html`<div><span>${icon(item.kind === "download" ? "download" : item.kind === "cache" ? "metadata" : item.kind === "validation" ? "check" : "link", 16)}</span><div><strong>${display(item.title)}</strong><small>${formatRelativeTime(item.at)}</small></div></div>`) : html`<div class="empty compact">No activity recorded yet.</div>`}</div></section>
+            </div>
+          </details>
         ` : html`<div class="empty">Mapping history could not be loaded.</div>`}
         </div>
       </section>

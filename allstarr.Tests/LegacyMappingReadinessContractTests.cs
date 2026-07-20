@@ -47,6 +47,8 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("LibraryTracks", projector, StringComparison.Ordinal);
         Assert.Contains("ProjectAllAsync", projector, StringComparison.Ordinal);
         Assert.Contains("ProjectSourceTracksAsync", projector, StringComparison.Ordinal);
+        Assert.Contains("ProjectConfiguredSourceTracksAsync", projector, StringComparison.Ordinal);
+        Assert.Contains("playlistFetcher.GetPlaylistTracksAsync", projector, StringComparison.Ordinal);
     }
 
     [Fact]
