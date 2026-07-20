@@ -1413,6 +1413,8 @@ public class SpotifyTrackMatchingService : BackgroundService
     {
         var missingTracksKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
         var matchedTracksKey = CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlistName);
+        var currentSource = await _cache.GetAsync<SpotifyPlaylist>(
+            CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
 
         // Check if we already have matched tracks cached
         var existingMatched = await _cache.GetAsync<List<Song>>(matchedTracksKey);
@@ -1422,8 +1424,6 @@ public class SpotifyTrackMatchingService : BackgroundService
                 .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
                 .ToList();
             var blockedCount = existingMatched.Count - playableMatched.Count;
-            var currentSource = await _cache.GetAsync<SpotifyPlaylist>(
-                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
             var exactRetained = currentSource?.Tracks is { Count: > 0 }
                 ? LegacyPlaylistMatchRecovery.ReconstructExact(currentSource.Tracks, playableMatched)
                 : [];
@@ -1478,6 +1478,32 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         // Get missing tracks
         var missingTracks = await _cache.GetAsync<List<MissingTrack>>(missingTracksKey);
+        if (currentSource?.Tracks is { Count: > 0 } currentTracks)
+        {
+            var currentIds = currentTracks
+                .Select(track => track.SpotifyId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missingSnapshotIsStale = missingTracks is not { Count: > 0 } ||
+                                         missingTracks.Any(track => !currentIds.Contains(track.SpotifyId));
+
+            if (missingSnapshotIsStale)
+            {
+                missingTracks = currentTracks
+                    .OrderBy(track => track.Position)
+                    .Select(track => track.ToMissingTrack())
+                    .ToList();
+                await _cache.SetAsync(
+                    missingTracksKey,
+                    missingTracks,
+                    CacheExtensions.SpotifyPlaylistItemsTTL);
+                _logger.LogInformation(
+                    "Replaced stale missing-track snapshot for {Playlist} with {Count} tracks from the current provider generation",
+                    playlistName,
+                    missingTracks.Count);
+            }
+        }
+
         if (missingTracks == null || missingTracks.Count == 0)
         {
             _logger.LogWarning("No missing tracks found for {Playlist}, skipping matching", playlistName);

@@ -20,6 +20,9 @@ public sealed class PlaylistItemsRecoveryContractTests
         Assert.Contains("orderedMatches", source, StringComparison.Ordinal);
         Assert.Contains("includeUnorderedLocalItems: true", source, StringComparison.Ordinal);
         Assert.Contains("legacy-provider-search", source, StringComparison.Ordinal);
+        Assert.Contains("missingSnapshotIsStale", source, StringComparison.Ordinal);
+        Assert.Contains("currentTracks", source, StringComparison.Ordinal);
+        Assert.Contains("Replaced stale missing-track snapshot", source, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] segments)

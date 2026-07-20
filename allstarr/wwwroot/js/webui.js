@@ -2888,8 +2888,8 @@ class AllstarrApp extends LitElement {
               <span><small>Local</small><strong>${localTracks}</strong></span>
               <span><small>External</small><strong>${externalTracks}</strong></span>
               <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
-              <span><small>Source refreshed</small><strong>${formatRelativeTime(lastSourceRefreshAt)}</strong></span>
-              <span><small>Next scheduled sync</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual"}</strong></span>
+              <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
+              <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
               <button class="primary compact" @click=${async () => {
                 await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
                 await this.reloadInjectedPlaylistDetails();
