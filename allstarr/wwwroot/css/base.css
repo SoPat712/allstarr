@@ -2490,12 +2490,24 @@ fieldset.form-row > label small {
 }
 
 .callout {
+    display: grid;
+    gap: var(--space-1);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-elevated);
     color: var(--text-secondary);
     padding: var(--space-3);
     font-size: 0.86rem;
+}
+
+.callout > strong {
+    color: inherit;
+    line-height: 1.3;
+}
+
+.callout > p,
+.callout > ul {
+    margin: 0;
 }
 
 .callout.success {

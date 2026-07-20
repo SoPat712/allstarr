@@ -60,6 +60,15 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void Callouts_SeparateHeadingsFromSupportingMessages()
+    {
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains(".callout {\n    display: grid;\n    gap: var(--space-1);", css, StringComparison.Ordinal);
+        Assert.Contains(".callout > p,\n.callout > ul", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SidebarAvatar_CropsAroundTheCenteredProfilePhoto()
     {
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
