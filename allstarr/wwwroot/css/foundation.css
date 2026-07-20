@@ -1,0 +1,108 @@
+@font-face {
+    font-family: Inter;
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("/fonts/inter-latin.woff2") format("woff2-variations");
+}
+
+@font-face {
+    font-family: Sora;
+    font-style: normal;
+    font-weight: 100 800;
+    font-display: swap;
+    src: url("/fonts/sora-latin.woff2") format("woff2-variations");
+}
+
+:root {
+    --font-body: "Inter", system-ui, sans-serif;
+    --font-display: "Sora", "Inter", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", "Consolas", monospace;
+    --page-max: 1280px;
+    --page-gutter: 32px;
+    --topbar-height: 72px;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body,
+allstarr-app {
+    width: 100%;
+    min-width: 0;
+    min-height: 100%;
+    margin: 0;
+}
+
+html {
+    background: var(--surface-page);
+}
+
+body {
+    overflow: hidden;
+    color: var(--text-primary);
+    background: var(--surface-page);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    text-rendering: optimizelegibility;
+}
+
+button,
+input,
+select,
+textarea {
+    min-width: 0;
+    font: inherit;
+}
+
+button,
+a,
+summary,
+select {
+    -webkit-tap-highlight-color: transparent;
+}
+
+h1,
+h2,
+.brand-title strong {
+    font-family: var(--font-display);
+    letter-spacing: -0.035em;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+    margin-block: 0;
+}
+
+.mono {
+    font-family: var(--font-mono);
+}
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+::selection {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}

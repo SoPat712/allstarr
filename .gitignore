@@ -115,3 +115,6 @@ sampleMissingPlaylists/
 
 # Local design references and screenshots
 /references/
+
+# Development-only WebUI tooling
+/node_modules/

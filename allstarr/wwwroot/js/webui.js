@@ -159,6 +159,24 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function pageHeader(title, subtitle, actions = nothing) {
+  return html`<header class="view-header">
+    <div><h2>${title}</h2><p>${subtitle}</p></div>
+    ${actions === nothing ? nothing : html`<div class="actions">${actions}</div>`}
+  </header>`;
+}
+
+function sectionHeader(title, subtitle = "", trailing = nothing) {
+  return html`<header class="section-heading">
+    <div><h3>${title}</h3>${subtitle ? html`<p>${subtitle}</p>` : nothing}</div>
+    ${trailing}
+  </header>`;
+}
+
+function emptyState(message) {
+  return html`<div class="empty"><span>${message}</span></div>`;
+}
+
 function parseBoolValue(value) {
   if (typeof value === "boolean") {
     return value;
@@ -1965,7 +1983,7 @@ class AllstarrApp extends LitElement {
 
     const administrator = this.isAdministrator();
     return html`
-      <div class="app-shell ${this.sidebarCollapsed ? "sidebar-collapsed" : ""}">
+      <div class="app-shell ${this.sidebarCollapsed ? "sidebar-collapsed" : ""}" data-testid="app-shell">
         ${this.navOpen ? html`
           <button
             type="button"
@@ -1975,7 +1993,7 @@ class AllstarrApp extends LitElement {
           ></button>
         ` : nothing}
         ${this.renderSidebar()}
-        <div class="main-shell ${administrator && this.getRecentPlayback() ? "has-now-playing" : ""}">
+        <div class="main-shell ${administrator && this.getRecentPlayback() ? "has-now-playing" : ""}" data-testid="main-shell">
           ${this.renderTopbar()}
           <main class="content">
             ${this.renderLoadFailures()}
@@ -2046,7 +2064,7 @@ class AllstarrApp extends LitElement {
         ${icon(route.id)}<span>${route.label}</span>
       </a>`;
     return html`
-      <aside id="primary-sidebar" class="sidebar ${this.navOpen ? "open" : ""}">
+      <aside id="primary-sidebar" class="sidebar ${this.navOpen ? "open" : ""}" data-testid="primary-sidebar">
         <div class="brand">
           <button
             type="button"
@@ -2114,7 +2132,7 @@ class AllstarrApp extends LitElement {
     const [zone, sub] = routeParts(this.route);
     const administrator = this.isAdministrator();
     return html`
-      <header class="topbar">
+      <header class="topbar" data-testid="topbar">
         <div class="topbar-main">
           <button
             type="button"
@@ -2281,16 +2299,12 @@ class AllstarrApp extends LitElement {
     const providerSummaries = asArray(this.providerSummaries);
 
     return html`
-      <section class="view-stack home-view">
-        <div class="view-header">
-          <div>
-            <h2>Home</h2>
-            <p>Runtime state, provider readiness, and current activity.</p>
-          </div>
-          <div class="actions">
-            <button class="primary icon-label" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${icon("shield")}${readiness?.state === "running" ? "Running checks…" : "Run readiness check"}</button>
-          </div>
-        </div>
+      <section class="view-stack home-view" data-testid="home-workspace">
+        ${pageHeader(
+          "Home",
+          "Runtime state, provider readiness, and current activity.",
+          html`<button class="primary icon-label" ?disabled=${readiness?.state === "running"} @click=${this.runCoreReadiness}>${icon("shield")}${readiness?.state === "running" ? "Running checks…" : "Run readiness check"}</button>`,
+        )}
 
         <div class="overview-grid">
           <div class="card overview-card">
@@ -2315,7 +2329,7 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
 
-        <div class="panel home-readiness">
+        <div class="panel home-readiness" data-testid="readiness-panel">
           <div class="section-heading">
             <div><h3>Core readiness</h3><p>One read-only check covers the player artwork route, restored playlists, and source health.</p></div>
             ${readiness ? html`<span class="status-chip ${readiness.state}">${readiness.state === "success" ? "Ready" : readiness.state === "running" ? "Checking" : "Action needed"}</span>` : html`<span class="status-chip unknown">Not checked</span>`}
@@ -2327,7 +2341,7 @@ class AllstarrApp extends LitElement {
               ${this.renderReadinessCheck("Restored playlists", readiness.playlistsReady, readiness.playlistMessage)}
               ${this.renderReadinessCheck("Playlist source", readiness.playlistSourceReady, readiness.playlistSourceReady ? "At least one playlist provider is healthy." : "Connect or repair a playlist-capable source.")}
             </div>` : nothing}
-          ` : html`<div class="readiness-empty">${icon("shield", 24)}<span>Run the check after an update, provider change, or player problem.</span><button class="primary" @click=${this.runCoreReadiness}>Run readiness check</button></div>`}
+          ` : html`<div class="readiness-empty">${icon("shield", 20)}<span>Run the check after an update, provider change, or player problem.</span></div>`}
           ${readiness?.state === "warning" ? html`<div class="actions">
             ${readiness.affectedPlaylists?.length ? html`<button class="primary" ?disabled=${readiness.rematching} @click=${this.rematchUnavailablePlaylists}>${readiness.rematching ? "Starting rematch..." : "Rematch with available providers"}</button><button @click=${() => this.navigate("/library/injected")}>Review affected playlists</button>` : html`<button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button>`}
             <button @click=${() => this.navigate("/settings")}>Open detailed diagnostics</button>
@@ -2521,13 +2535,8 @@ class AllstarrApp extends LitElement {
     const [, requestedSub] = routeParts(this.route);
     const sub = requestedSub || "link";
     return html`
-      <section class="view-stack">
-        <div class="view-header">
-          <div>
-            <h2>Library</h2>
-            <p>Match provider playlists to your local library, keep their order, and choose where they show up.</p>
-          </div>
-        </div>
+      <section class="view-stack" data-testid="library-workspace">
+        ${pageHeader("Library", "Match provider playlists to your local library, keep their order, and choose where they show up.")}
         ${this.renderLibraryNav(sub)}
         ${sub === "link" ? this.renderLinkPlaylists() :
           sub === "injected" ? this.renderInjectedPlaylists() :
@@ -2550,7 +2559,7 @@ class AllstarrApp extends LitElement {
       ["kept", "Kept", "check"],
     ];
     return html`
-      <nav class="subnav">
+      <nav class="subnav" data-testid="library-tabs">
         ${items.map(([id, label, iconName]) => html`<a class=${active === id ? "active" : ""} href="#/library/${id}">${icon(iconName, 16)}<span>${label}</span></a>`)}
       </nav>
     `;
@@ -2826,23 +2835,9 @@ class AllstarrApp extends LitElement {
     if (!this.selectedInjectedPlaylist) return nothing;
     const details = this.injectedPlaylistDetails;
     const tracks = asArray(details?.tracks || details?.Tracks);
-    const playlistSummary = asArray(this.playlists?.playlists || this.playlists?.Playlists)
-      .find((playlist) => String(playlist.name || playlist.Name) === String(details?.name || details?.Name || this.selectedInjectedPlaylist));
-    const summaryLocal = Number(playlistSummary?.localTracks ?? 0);
-    const summaryExternal = Number(playlistSummary?.externalTracks ?? 0);
-    const unknownTracks = tracks.filter((track) => track.isLocal == null);
-    const knownLocal = tracks.filter((track) => track.isLocal === true).length;
-    const knownExternal = tracks.filter((track) => track.isLocal === false).length;
-    const missingLocal = Math.max(0, summaryLocal - knownLocal);
-    const missingExternal = Math.max(0, summaryExternal - knownExternal);
-    const canReconcileLocal = missingLocal === unknownTracks.length && missingExternal === 0;
-    const canReconcileExternal = missingExternal === unknownTracks.length && missingLocal === 0;
-    const reconciledTracks = tracks.map((track) => track.isLocal != null ? track : canReconcileLocal
-      ? { ...track, isLocal: true, matchState: "local" }
-      : canReconcileExternal ? { ...track, isLocal: false, matchState: "external" } : track);
     const query = this.injectedTrackFilter.trim().toLowerCase();
-    const filtered = reconciledTracks.filter((track) => !query || `${track.title} ${asArray(track.artists).join(" ")} ${track.album || ""}`.toLowerCase().includes(query));
-    const playable = Number(playlistSummary?.totalPlayable ?? playlistSummary?.matchedTracks ?? details?.matchedTracks ?? reconciledTracks.filter((track) => track.isLocal != null).length);
+    const filtered = tracks.filter((track) => !query || `${track.title} ${asArray(track.artists).join(" ")} ${track.album || ""}`.toLowerCase().includes(query));
+    const playable = Number(details?.totalPlayable ?? details?.TotalPlayable ?? 0);
     const sourceProvider = details?.sourceProvider || "unknown";
     const targetBackend = details?.targetBackend || String(this.status?.backendType || this.config?.backendType || "unknown").toLowerCase();
     const close = () => {
@@ -2863,7 +2858,7 @@ class AllstarrApp extends LitElement {
         else if (this.injectedTrackMenuId) this.injectedTrackMenuId = "";
         else close();
       }}>
-      <section class="panel injected-playlist-dialog redesigned-dialog" role="dialog" aria-modal="true"
+      <section class="panel injected-playlist-dialog redesigned-dialog" role="dialog" aria-modal="true" data-testid="playlist-dialog"
         aria-labelledby="injected-playlist-title" tabindex="-1">
         <div class="playlist-dialog-hero">
           <img class="playlist-hero-art" src=${details?.artworkUrl || "/placeholder.png"} alt="">
@@ -3235,32 +3230,34 @@ class AllstarrApp extends LitElement {
   renderKeptDownloads() {
     const files = asArray(this.downloads?.files || this.downloads?.Files);
     return html`
-      <div class="grid">
-        <div class="card metric"><span class="metric-label">Files</span><span class="metric-value">${display(this.downloads?.count ?? this.downloads?.Count ?? files.length)}</span></div>
-        <div class="card metric"><span class="metric-label">Size</span><span class="metric-value">${display(this.downloads?.totalSizeFormatted ?? this.downloads?.TotalSizeFormatted)}</span></div>
-      </div>
-      <div class="panel">
-        <div class="actions">
-          <button class="primary" @click=${async () => { await this.loadDownloads(); this.toast("Downloads refreshed"); }}>Refresh</button>
-          <button class="danger" @click=${async () => { if (confirm("Delete all kept downloads?")) { await API.deleteAllDownloads(); await this.loadDownloads(); this.toast("Downloads deleted"); } }}>Delete all</button>
+      <section class="panel kept-surface" data-testid="kept-downloads">
+        <header class="kept-surface-header">
+          <div class="stat-strip" aria-label="Kept download totals">
+            <div><span class="metric-label">Files</span><strong>${display(this.downloads?.count ?? this.downloads?.Count ?? files.length)}</strong></div>
+            <div><span class="metric-label">Size</span><strong>${display(this.downloads?.totalSizeFormatted ?? this.downloads?.TotalSizeFormatted, "—")}</strong></div>
+          </div>
+          <div class="actions">
+            <button class="primary" @click=${async () => { await this.loadDownloads(); this.toast("Downloads refreshed"); }}>Refresh</button>
+            ${files.length ? html`<button class="danger" @click=${async () => { if (confirm("Delete all kept downloads?")) { await API.deleteAllDownloads(); await this.loadDownloads(); this.toast("Downloads deleted"); } }}>Delete all</button>` : nothing}
+          </div>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Artist</th><th>Album</th><th>File</th><th>Size</th><th></th></tr></thead>
+            <tbody>
+              ${files.length ? files.map((file) => html`
+                <tr>
+                  <td>${display(file.artist)}</td>
+                  <td>${display(file.album)}</td>
+                  <td class="mono">${display(file.fileName)}</td>
+                  <td>${display(file.sizeFormatted)}</td>
+                  <td><button class="danger" @click=${async () => { await API.deleteDownload(file.path); await this.loadDownloads(); this.toast("Download deleted"); }}>Delete</button></td>
+                </tr>
+              `) : html`<tr><td colspan="5"><div class="empty">No kept downloads. Tracks you keep will appear here.</div></td></tr>`}
+            </tbody>
+          </table>
         </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Artist</th><th>Album</th><th>File</th><th>Size</th><th></th></tr></thead>
-          <tbody>
-            ${files.length ? files.map((file) => html`
-              <tr>
-                <td>${display(file.artist)}</td>
-                <td>${display(file.album)}</td>
-                <td class="mono">${display(file.fileName)}</td>
-                <td>${display(file.sizeFormatted)}</td>
-                <td><button class="danger" @click=${async () => { await API.deleteDownload(file.path); await this.loadDownloads(); this.toast("Download deleted"); }}>Delete</button></td>
-              </tr>
-            `) : html`<tr><td colspan="5"><div class="empty">No kept downloads found.</div></td></tr>`}
-          </tbody>
-        </table>
-      </div>
+      </section>
     `;
   }
 
@@ -3357,7 +3354,7 @@ class AllstarrApp extends LitElement {
       asArray(provider.categories).some((category) => ["streaming", "download", "playlist"].includes(String(category).toLowerCase())));
     const helperProviders = orderedProviders.filter((provider) => !musicProviders.includes(provider));
     return html`
-      <section class="view-stack sources-view">
+      <section class="view-stack sources-view" data-testid="sources-workspace">
         <div class="view-header">
           <div>
             <h2>Sources</h2>
@@ -4352,7 +4349,7 @@ class AllstarrApp extends LitElement {
 
   renderActivity() {
     return html`
-      <section class="view-stack">
+      <section class="view-stack" data-testid="activity-workspace">
         <div class="view-header">
           <div>
             <h2>Activity</h2>
@@ -5374,7 +5371,7 @@ class AllstarrApp extends LitElement {
     const scrobbleError = current?.scrobbleError || current?.ScrobbleError || current?.scrobbleFailure || current?.ScrobbleFailure;
     const scrobbleState = scrobbleError ? "failed" : scrobbled ? "delivered" : "pending";
     return html`
-      <footer class="now-playing">
+      <footer class="now-playing" data-testid="now-playing">
         <div class="now-track">
           <img class="art" src=${coverArtUrl} alt="">
           <div>

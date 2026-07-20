@@ -41,8 +41,9 @@ public class JavaScriptSyntaxTests
 
         Assert.Contains("<allstarr-app>", content);
         Assert.Contains("/js/webui.js", content);
-        Assert.Contains("/css/tokens.css", content);
-        Assert.Contains("/css/base.css", content);
+        Assert.Contains("/css/app.css", content);
+        Assert.DoesNotContain("/css/base.css", content);
+        Assert.DoesNotContain("/css/tokens.css", content);
     }
 
     [Fact]

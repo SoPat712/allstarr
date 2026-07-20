@@ -1,0 +1,219 @@
+.view-stack {
+    display: grid;
+    align-content: start;
+    gap: var(--space-5);
+    width: min(100%, var(--page-max));
+    margin-inline: auto;
+}
+
+.view-header,
+.section-heading,
+.dialog-header {
+    display: flex;
+    gap: var(--space-4);
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.view-header > div:first-child,
+.section-heading > div:first-child,
+.dialog-header > div:first-child {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.view-header h2 {
+    font-size: clamp(1.75rem, 2.4vw, 2.25rem);
+    line-height: 1.08;
+}
+
+.view-header p,
+.section-heading p,
+.dialog-header p {
+    max-width: 72ch;
+    color: var(--text-secondary);
+}
+
+.panel,
+.card,
+.table-wrap {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    box-shadow: none;
+}
+
+.panel,
+.card {
+    padding: var(--space-5);
+}
+
+.table-wrap {
+    max-width: 100%;
+    overflow: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-align: left;
+    text-transform: uppercase;
+}
+
+th,
+td {
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+button,
+.button {
+    min-height: var(--control-height);
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    background: var(--surface-control);
+    font-weight: 650;
+    cursor: pointer;
+}
+
+button:hover:not(:disabled),
+.button:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    background: var(--surface-control-hover);
+}
+
+button.primary,
+.button.primary {
+    border-color: transparent;
+    color: white;
+    background: var(--accent-action-gradient);
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+button.icon-button {
+    display: inline-grid;
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+    place-items: center;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.status-chip,
+.chip,
+.provider-badge {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    min-height: 24px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.empty {
+    display: grid;
+    min-height: 112px;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    text-align: center;
+    place-items: center;
+}
+
+.callout {
+    display: grid;
+    gap: var(--space-1);
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+}
+
+.callout > p,
+.callout > ul,
+.callout > span {
+    color: var(--text-secondary);
+}
+
+.modal-backdrop {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    display: grid;
+    padding: var(--space-6);
+    overflow: auto;
+    background: rgba(5, 7, 11, 0.78);
+    backdrop-filter: blur(12px);
+    place-items: center;
+}
+
+.modal-backdrop > [role="dialog"] {
+    width: min(100%, 920px);
+    max-height: min(90dvh, 900px);
+    overflow: hidden;
+    box-shadow: var(--shadow-modal);
+}
+
+.subnav {
+    display: flex;
+    gap: 2px;
+    width: 100%;
+    min-height: 48px;
+    padding: 0;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+    scrollbar-width: none;
+}
+
+.subnav::-webkit-scrollbar {
+    display: none;
+}
+
+.subnav a {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 48px;
+    padding: 0 14px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--text-secondary);
+    background: transparent;
+    text-decoration: none;
+}
+
+.subnav a.active {
+    border-color: var(--accent);
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+}

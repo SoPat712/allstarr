@@ -889,6 +889,8 @@ public class PlaylistController : ControllerBase
 
         var tracksWithStatus = new List<object>();
         var matchedTrackCount = 0;
+        var localTrackCount = 0;
+        var externalTrackCount = 0;
         var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(decodedName);
         var playlistArtworkUrl = playlistMetadata?.ImageUrl ?? spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
         var playlistArtworkSource = !string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl)
@@ -958,9 +960,14 @@ public class PlaylistController : ControllerBase
                 }
             }
 
-            // Match each Spotify track to its cached item
-            foreach (var track in spotifyTracks)
+            // Match each source track to its materialized item. Modern caches include the
+            // source identity; upgraded caches may only preserve the ordered Jellyfin items.
+            // When both ordered collections have the same length, the materialized playlist
+            // is authoritative and position is a safe compatibility fallback.
+            var canUseMaterializedOrder = cachedPlaylistItems.Count == spotifyTracks.Count;
+            for (var trackIndex = 0; trackIndex < spotifyTracks.Count; trackIndex++)
             {
+                var track = spotifyTracks[trackIndex];
                 bool? isLocal = null;
                 string? externalProvider = null;
                 bool isManualMapping = false;
@@ -973,6 +980,14 @@ public class PlaylistController : ControllerBase
                 if (spotifyIdToItem.TryGetValue(track.SpotifyId, out cachedItem))
                 {
                     _logger.LogDebug("Matched track {Title} by Spotify ID", track.Title);
+                }
+                else if (canUseMaterializedOrder)
+                {
+                    cachedItem = cachedPlaylistItems[trackIndex];
+                    _logger.LogDebug(
+                        "Matched track {Title} from materialized playlist position {Position}",
+                        track.Title,
+                        trackIndex + 1);
                 }
 
                 // Check if track is in the playlist cache first
@@ -1177,6 +1192,14 @@ public class PlaylistController : ControllerBase
                 if (isLocal.HasValue)
                 {
                     matchedTrackCount++;
+                    if (isLocal.Value)
+                    {
+                        localTrackCount++;
+                    }
+                    else
+                    {
+                        externalTrackCount++;
+                    }
                 }
 
                 tracksWithStatus.Add(new
@@ -1209,6 +1232,9 @@ public class PlaylistController : ControllerBase
                 artworkSource = playlistArtworkSource,
                 sourceProvider = "spotify",
                 targetBackend,
+                totalPlayable = matchedTrackCount,
+                localTracks = localTrackCount,
+                externalTracks = externalTrackCount,
                 matchedTracks = matchedTrackCount,
                 unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
                 tracks = tracksWithStatus
@@ -1307,6 +1333,14 @@ public class PlaylistController : ControllerBase
             if (isLocal.HasValue)
             {
                 matchedTrackCount++;
+                if (isLocal.Value)
+                {
+                    localTrackCount++;
+                }
+                else
+                {
+                    externalTrackCount++;
+                }
             }
         }
 
@@ -1318,6 +1352,9 @@ public class PlaylistController : ControllerBase
             artworkSource = playlistArtworkSource,
             sourceProvider = "spotify",
             targetBackend,
+            totalPlayable = matchedTrackCount,
+            localTracks = localTrackCount,
+            externalTracks = externalTrackCount,
             matchedTracks = matchedTrackCount,
             unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
             tracks = tracksWithStatus

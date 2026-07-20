@@ -68,11 +68,29 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.DoesNotContain("injectedTrackPage", script, StringComparison.Ordinal);
         Assert.Contains("<small>Playable</small><strong>${playable} / ${tracks.length}</strong>", script, StringComparison.Ordinal);
-        Assert.Contains("playlistSummary?.totalPlayable", script, StringComparison.Ordinal);
+        Assert.Contains("details?.totalPlayable", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("canReconcileLocal", script, StringComparison.Ordinal);
         Assert.Contains("filtered.map((track, index)", script, StringComparison.Ordinal);
         Assert.Contains("`All ${tracks.length} tracks`", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-dialog-hero .dialog-close", css, StringComparison.Ordinal);
         Assert.Contains("align-items: start;", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesignSystem_UsesOrderedLayersAndFinalResponsiveOverrides()
+    {
+        var index = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "index.html"));
+        var app = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "app.css"));
+        var responsive = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "responsive.css"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains("/css/app.css", index, StringComparison.Ordinal);
+        Assert.Contains("@layer tokens, legacy, foundation, primitives, shell, workspaces, responsive;", app, StringComparison.Ordinal);
+        Assert.Contains("@import url(\"./responsive.css\") layer(responsive);", app, StringComparison.Ordinal);
+        Assert.Contains(".sidebar {\n        position: fixed;", responsive, StringComparison.Ordinal);
+        Assert.Contains(".main-shell.has-now-playing", responsive, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"main-shell\"", script, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"playlist-dialog\"", script, StringComparison.Ordinal);
     }
 
     [Fact]

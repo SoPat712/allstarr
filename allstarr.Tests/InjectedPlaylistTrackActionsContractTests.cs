@@ -65,6 +65,21 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PlaylistDetails_UseMaterializedOrderAndReturnAuthoritativeCounts()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains("canUseMaterializedOrder", controller, StringComparison.Ordinal);
+        Assert.Contains("cachedItem = cachedPlaylistItems[trackIndex]", controller, StringComparison.Ordinal);
+        Assert.Contains("totalPlayable = matchedTrackCount", controller, StringComparison.Ordinal);
+        Assert.Contains("localTracks = localTrackCount", controller, StringComparison.Ordinal);
+        Assert.Contains("externalTracks = externalTrackCount", controller, StringComparison.Ordinal);
+        Assert.Contains("matchState = isLocal == true ? \"local\"", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("playlistSummary?.totalPlayable", script, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -47,6 +47,20 @@ introducing page-specific spacing, card, button, status, or modal systems.
 
 ## Tokens
 
+- Styles load through `css/app.css` in one declared cascade order:
+  `tokens → legacy → foundation → primitives → shell → workspaces → responsive`.
+  The legacy layer is transitional and may not receive new component rules.
+  Breakpoint rules belong only in the final responsive layer.
+- Sora is bundled locally for brand and page titles. Inter is bundled locally
+  for controls and body copy. IDs, endpoints, and durations use the system
+  monospace stack. Runtime font requests are forbidden.
+- The core dark palette is Night deck `#0B0D12`, Rail `#10131A`, Console
+  `#151922`, Raised surface `#1C222D`, Signal violet `#7C8CFF`, and Meter mint
+  `#58C894`. Light-mode values are tokenized equivalents.
+- Signal violet is the product signature. Use it for the active navigation path,
+  playback progress, live operation progress, focus, and the primary action—not
+  as decorative glow on ordinary surfaces.
+
 - Base spacing unit: `4px`; use `8, 12, 16, 20, 24, 32, 40` only.
 - Control height: `40px`; compact control: `34px`; primary CTA: `44px`.
 - Card radius: `14px`; control radius: `9–10px`; modal radius: `16px`.
@@ -164,8 +178,16 @@ meaningless controls.
 - Playlist artwork comes from the playlist itself; first-track artwork is only a
   last-resort fallback and must be identified as such by the API.
 - Clicking a playlist opens the playlist-detail modal with playlist artwork,
-  provider, match count, destination, searchable tracks, provider badges, and
-  pagination.
+  provider, playable count, destination, searchable tracks, and provider badges.
+  Every track is rendered in one internally scrollable list; do not add
+  artificial ten-row pagination.
+
+### Library / Kept
+
+- Kept downloads use one surface: Files/Size stat strip and actions in its
+  header, with the file table directly below.
+- Hide destructive bulk actions when no files exist. The empty state says where
+  future kept tracks will appear and does not create a second empty card.
 
 ### Settings
 

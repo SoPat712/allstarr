@@ -31,6 +31,10 @@ apis/
 docs/
 first-party/
 tools/
+node_modules/
+package-lock.json
+package.json
+.stylelintrc.json
 
 allstarr.Tests/**
 !allstarr.Tests/allstarr.Tests.csproj
