@@ -137,6 +137,15 @@ button.icon-button {
     white-space: nowrap;
 }
 
+.provider-logo.logo-hero,
+.provider-logo.logo-large,
+.provider-logo.logo-small,
+.provider-logo.logo-mini,
+.provider-logo.logo-overview,
+.provider-logo.logo-tiny {
+    padding: 0;
+}
+
 .empty {
     display: grid;
     min-height: 112px;
