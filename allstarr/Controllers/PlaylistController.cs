@@ -742,7 +742,7 @@ public class PlaylistController : ControllerBase
             // cannot always be joined back to Spotify IDs. Base the displayed match total on
             // current Spotify IDs intersected with the ordered match records instead of counting
             // unrelated stale items from the previous playlist snapshot.
-            if (!playlistItemStatsApplied && playlistMetadata?.Tracks.Count > 0)
+            if (playlistMetadata?.Tracks.Count > 0)
             {
                 try
                 {
@@ -775,6 +775,48 @@ public class PlaylistController : ControllerBase
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to align current playlist match stats for {Playlist}", config.Name);
+                }
+            }
+
+            // Finally reconcile the current provider snapshot with the actual Jellyfin playlist
+            // by identity. Rotating playlists often retain the same item count while every track
+            // changes, so count or position alone must never make last week's items look current.
+            if (playlistMetadata?.Tracks.Count > 0)
+            {
+                try
+                {
+                    var materializedItems = await GetMaterializedPlaylistItemsAsync(config.Name);
+                    var materializedMatches = MatchMaterializedItems(playlistMetadata.Tracks, materializedItems);
+                    var materializedLocal = 0;
+                    var materializedExternal = 0;
+                    foreach (var item in materializedMatches.Values)
+                    {
+                        if (IsExternalPlaylistItem(item))
+                        {
+                            var itemId = ReadCachedString(item, "Id");
+                            var providerIds = ReadCachedProviderIds(item);
+                            var provider = providerIds == null ? null : ResolveExternalProviderFromProviderIds(providerIds);
+                            provider ??= ExtractExternalProviderFromItemId(itemId);
+                            if (ExternalTrackPlaybackPolicy.CanUseForPlayback(provider, itemId))
+                            {
+                                materializedExternal++;
+                            }
+                        }
+                        else
+                        {
+                            materializedLocal++;
+                        }
+                    }
+
+                    ApplyPlaylistStats(
+                        playlistInfo,
+                        materializedLocal,
+                        materializedExternal,
+                        Math.Max(0, playlistMetadata.Tracks.Count - materializedLocal - materializedExternal));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to reconcile current materialized identities for {Playlist}", config.Name);
                 }
             }
 
@@ -922,6 +964,99 @@ public class PlaylistController : ControllerBase
             StringComparer.OrdinalIgnoreCase);
     }
 
+    private static Dictionary<string, Dictionary<string, object?>> MatchMaterializedItems(
+        IReadOnlyList<SpotifyPlaylistTrack> sourceTracks,
+        IReadOnlyList<Dictionary<string, object?>>? materializedItems)
+    {
+        var matches = new Dictionary<string, Dictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
+        if (materializedItems == null || materializedItems.Count == 0)
+        {
+            return matches;
+        }
+
+        var remaining = materializedItems.Select((item, index) => (item, index)).ToList();
+        foreach (var track in sourceTracks)
+        {
+            var direct = remaining.FirstOrDefault(candidate =>
+                ReadCachedProviderIds(candidate.item)?.TryGetValue("Spotify", out var spotifyId) == true &&
+                spotifyId.Equals(track.SpotifyId, StringComparison.OrdinalIgnoreCase));
+            var matchIndex = direct.item == null
+                ? remaining.FindIndex(candidate => MaterializedIdentityMatches(track, candidate.item))
+                : remaining.FindIndex(candidate => candidate.index == direct.index);
+            if (matchIndex < 0)
+            {
+                continue;
+            }
+
+            matches[track.SpotifyId] = remaining[matchIndex].item;
+            remaining.RemoveAt(matchIndex);
+        }
+
+        return matches;
+    }
+
+    private static bool MaterializedIdentityMatches(
+        SpotifyPlaylistTrack source,
+        Dictionary<string, object?> item)
+    {
+        var sourceTitle = NormalizePlaylistIdentity(source.Title);
+        var itemTitle = NormalizePlaylistIdentity(ReadCachedString(item, "Name"));
+        if (sourceTitle.Length == 0 || !sourceTitle.Equals(itemTitle, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var sourceArtist = NormalizePlaylistIdentity(source.PrimaryArtist);
+        var itemArtists = ReadCachedStringList(item, "Artists");
+        if (itemArtists.Count == 0)
+        {
+            var albumArtist = ReadCachedString(item, "AlbumArtist");
+            if (!string.IsNullOrWhiteSpace(albumArtist))
+            {
+                itemArtists.Add(albumArtist);
+            }
+        }
+
+        return sourceArtist.Length == 0 || itemArtists.Count == 0 || itemArtists
+            .Select(NormalizePlaylistIdentity)
+            .Any(artist => artist.Equals(sourceArtist, StringComparison.Ordinal));
+    }
+
+    private static List<string> ReadCachedStringList(Dictionary<string, object?> item, string key)
+    {
+        if (!item.TryGetValue(key, out var value) || value == null)
+        {
+            return [];
+        }
+
+        if (value is IEnumerable<string> strings)
+        {
+            return strings.Where(entry => !string.IsNullOrWhiteSpace(entry)).ToList();
+        }
+
+        if (value is JsonElement { ValueKind: JsonValueKind.Array } array)
+        {
+            return array.EnumerateArray()
+                .Where(entry => entry.ValueKind == JsonValueKind.String)
+                .Select(entry => entry.GetString() ?? "")
+                .Where(entry => !string.IsNullOrWhiteSpace(entry))
+                .ToList();
+        }
+
+        return [];
+    }
+
+    private static string NormalizePlaylistIdentity(string? value) => string.Concat(
+        (value ?? "").Normalize().ToLowerInvariant().Where(char.IsLetterOrDigit));
+
+    private static bool IsExternalPlaylistItem(Dictionary<string, object?> item)
+    {
+        var itemId = ReadCachedString(item, "Id");
+        var serverId = ReadCachedString(item, "ServerId");
+        return string.Equals(serverId, "allstarr", StringComparison.OrdinalIgnoreCase) ||
+               itemId?.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     private async Task<List<Dictionary<string, object?>>?> GetMaterializedPlaylistItemsAsync(string playlistName)
     {
         var playlist = (await GetConfiguredPlaylistsAsync()).FirstOrDefault(item =>
@@ -1044,21 +1179,19 @@ public class PlaylistController : ControllerBase
             _logger.LogWarning(cacheEx, "Failed to deserialize playlist cache for {Playlist}", decodedName);
         }
 
-        // The materialized Jellyfin playlist is authoritative for every injected playlist.
-        // Mapping caches are an implementation detail and may be partial, stale, or imported
-        // from v2. When Jellyfin exposes the complete current playlist, always derive the
-        // per-track playback state from those ordered items.
+        var materializedItemsBySpotifyId = new Dictionary<string, Dictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
+        // The materialized Jellyfin playlist is authoritative only when an item can be joined
+        // to the current provider snapshot by identity. Position is not an identity for rotating
+        // playlists such as Release Radar.
         try
         {
             var materializedItems = await GetMaterializedPlaylistItemsAsync(decodedName);
-            if (materializedItems?.Count == spotifyTracks.Count)
-            {
-                cachedPlaylistItems = materializedItems;
-                _logger.LogDebug(
-                    "Using {Count} authoritative materialized Jellyfin items for playlist detail status in {Playlist}",
-                    materializedItems.Count,
-                    decodedName);
-            }
+            materializedItemsBySpotifyId = MatchMaterializedItems(spotifyTracks, materializedItems);
+            _logger.LogDebug(
+                "Matched {MatchedCount} of {SourceCount} current tracks to materialized Jellyfin items in {Playlist}",
+                materializedItemsBySpotifyId.Count,
+                spotifyTracks.Count,
+                decodedName);
         }
         catch (Exception ex)
         {
@@ -1090,7 +1223,6 @@ public class PlaylistController : ControllerBase
             // source identity; upgraded caches may only preserve the ordered Jellyfin items.
             // When both ordered collections have the same length, the materialized playlist
             // is authoritative and position is a safe compatibility fallback.
-            var canUseMaterializedOrder = cachedPlaylistItems.Count == spotifyTracks.Count;
             for (var trackIndex = 0; trackIndex < spotifyTracks.Count; trackIndex++)
             {
                 var track = spotifyTracks[trackIndex];
@@ -1103,17 +1235,13 @@ public class PlaylistController : ControllerBase
                 Dictionary<string, object?>? cachedItem = null;
 
                 // Try to match by Spotify ID only (no position-based fallback!)
-                if (spotifyIdToItem.TryGetValue(track.SpotifyId, out cachedItem))
+                if (materializedItemsBySpotifyId.TryGetValue(track.SpotifyId, out cachedItem))
+                {
+                    _logger.LogDebug("Matched track {Title} to current materialized Jellyfin identity", track.Title);
+                }
+                else if (spotifyIdToItem.TryGetValue(track.SpotifyId, out cachedItem))
                 {
                     _logger.LogDebug("Matched track {Title} by Spotify ID", track.Title);
-                }
-                else if (canUseMaterializedOrder)
-                {
-                    cachedItem = cachedPlaylistItems[trackIndex];
-                    _logger.LogDebug(
-                        "Matched track {Title} from materialized playlist position {Position}",
-                        track.Title,
-                        trackIndex + 1);
                 }
 
                 // Check if track is in the playlist cache first

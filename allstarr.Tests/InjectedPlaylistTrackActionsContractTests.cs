@@ -71,8 +71,9 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
-        Assert.Contains("canUseMaterializedOrder", controller, StringComparison.Ordinal);
-        Assert.Contains("cachedItem = cachedPlaylistItems[trackIndex]", controller, StringComparison.Ordinal);
+        Assert.Contains("MatchMaterializedItems(spotifyTracks, materializedItems)", controller, StringComparison.Ordinal);
+        Assert.Contains("MaterializedIdentityMatches", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("cachedItem = cachedPlaylistItems[trackIndex]", controller, StringComparison.Ordinal);
         Assert.Contains("totalPlayable = matchedTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("localTracks = localTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("externalTracks = externalTrackCount", controller, StringComparison.Ordinal);
