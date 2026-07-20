@@ -43,6 +43,23 @@ public sealed class WebUiResponsiveContractTests
     }
 
     [Fact]
+    public void DesktopSidebar_CollapsesToPersistentAccessibleIconRail()
+    {
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+
+        Assert.Contains("SIDEBAR_COLLAPSED_KEY", script, StringComparison.Ordinal);
+        Assert.Contains("localStorage.setItem(SIDEBAR_COLLAPSED_KEY", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"ghost sidebar-collapse\"", script, StringComparison.Ordinal);
+        Assert.Contains("this.sidebarCollapsed ? \"Expand sidebar\" : \"Collapse sidebar\"", script, StringComparison.Ordinal);
+        Assert.Contains("title=${route.label} aria-label=${route.label}", script, StringComparison.Ordinal);
+        Assert.Contains("@media (min-width: 961px)", css, StringComparison.Ordinal);
+        Assert.Contains(".app-shell.sidebar-collapsed", css, StringComparison.Ordinal);
+        Assert.Contains("--rail-width: 76px;", css, StringComparison.Ordinal);
+        Assert.Contains(".sidebar-collapsed .nav-link > span", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SidebarAvatar_CropsAroundTheCenteredProfilePhoto()
     {
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));

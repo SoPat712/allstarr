@@ -7,6 +7,7 @@ const SETUP_GUIDE_DISMISSED_KEY = "allstarr-setup-guide-dismissed";
 const SETUP_GUIDE_STEP_KEY = "allstarr-setup-guide-step";
 const SETUP_GUIDE_LAST_STEP = 4;
 const REDACTION_MODE_KEY = "allstarr-sharing-redaction";
+const SIDEBAR_COLLAPSED_KEY = "allstarr-sidebar-collapsed";
 const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz", "lastfm", "listenbrainz", "apple-musickit"]);
 
 function normalizeRoute(hash = window.location.hash) {
@@ -604,6 +605,7 @@ class AllstarrApp extends LitElement {
     loading: { type: Boolean },
     route: { type: String },
     navOpen: { type: Boolean },
+    sidebarCollapsed: { type: Boolean },
     session: { state: true },
     authBackend: { state: true },
     schema: { state: true },
@@ -690,6 +692,7 @@ class AllstarrApp extends LitElement {
     this.loading = true;
     this.route = normalizeRoute();
     this.navOpen = false;
+    this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
     this.session = null;
     this.authBackend = "media server";
     this.schema = null;
@@ -1962,7 +1965,7 @@ class AllstarrApp extends LitElement {
 
     const administrator = this.isAdministrator();
     return html`
-      <div class="app-shell">
+      <div class="app-shell ${this.sidebarCollapsed ? "sidebar-collapsed" : ""}">
         ${this.navOpen ? html`
           <button
             type="button"
@@ -2039,7 +2042,7 @@ class AllstarrApp extends LitElement {
     const otherRoutes = routes.filter((route) => !groupedRoutes.has(route));
     const systemActive = systemRoutes.some((route) => this.isRouteActive(route.path));
     const renderNavLink = (route) => html`
-      <a class="nav-link ${this.isRouteActive(route.path) ? "active" : ""}" href=${route.path}>
+      <a class="nav-link ${this.isRouteActive(route.path) ? "active" : ""}" href=${route.path} title=${route.label} aria-label=${route.label}>
         ${icon(route.id)}<span>${route.label}</span>
       </a>`;
     return html`
@@ -2057,7 +2060,7 @@ class AllstarrApp extends LitElement {
               }
             }}
           >×</button>
-          <a class="brand-title" href=${administrator ? "#/home" : "#/sources"}>
+          <a class="brand-title" href=${administrator ? "#/home" : "#/sources"} title="Allstarr home" aria-label="Allstarr home">
             <span class="brand-mark" aria-hidden="true">A</span>
             <span><strong>Allstarr</strong><small>Music control center</small></span>
           </a>
@@ -2074,15 +2077,26 @@ class AllstarrApp extends LitElement {
             ${otherRoutes.map(renderNavLink)}
           </div>
           ${systemRoutes.length ? html`
-            <details class="nav-group" ?open=${systemActive}>
-              <summary>System</summary>
+            <details class="nav-group" ?open=${systemActive || this.sidebarCollapsed}>
+              <summary title="System">${icon("settings")}<span>System</span></summary>
               <div class="nav-section">${systemRoutes.map(renderNavLink)}</div>
             </details>` : nothing}
         </nav>
         <div class="sidebar-footer">
           <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
-          ${administrator ? html`<button class="ghost" aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
-          <button class="ghost" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
+          ${administrator ? html`<button class="ghost" title=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-label=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
+          <button class="ghost" title="Logout" aria-label="Logout" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
+          <button
+            type="button"
+            class="ghost sidebar-collapse"
+            title=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded=${this.sidebarCollapsed ? "false" : "true"}
+            @click=${() => {
+              this.sidebarCollapsed = !this.sidebarCollapsed;
+              localStorage.setItem(SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed ? "1" : "0");
+            }}
+          >${icon(this.sidebarCollapsed ? "chevronRight" : "chevronLeft")}<span>${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}</span></button>
         </div>
       </aside>
     `;
