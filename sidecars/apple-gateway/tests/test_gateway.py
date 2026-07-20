@@ -54,6 +54,7 @@ class FakeCatalog:
 class FakeRunner:
     def __init__(self):
         self.calls: list[tuple[str, str]] = []
+        self.transcodes: list[str] = []
 
     async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
         self.calls.append((url, quality))
@@ -64,8 +65,14 @@ class FakeRunner:
         return [artifact]
 
     async def to_flac(self, source: Path, target: Path) -> Path:
+        self.transcodes.append("file")
         target.write_bytes(b"fLaCfixture")
         return target.resolve()
+
+    async def stream_flac(self, source: Path):
+        self.transcodes.append("stream")
+        yield b"fLaC"
+        yield b"fixture"
 
 
 def song(song_id: str, title: str) -> dict[str, Any]:
@@ -150,7 +157,12 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     assert response.headers["content-type"].startswith("audio/flac")
     assert response.content == b"fLaCfixture"
     assert client[2].calls == [("https://music.apple.com/us/song/101", "alac")]
-    assert client[0].get("/api/stream/102", params={"quality": "aac-320"}).status_code == 200
+    assert client[2].transcodes == ["file"]
+    streamed = client[0].get("/api/stream/102", params={"quality": "aac-320"})
+    assert streamed.status_code == 200
+    assert streamed.headers["content-type"].startswith("audio/flac")
+    assert streamed.content == b"fLaCfixture"
+    assert client[2].transcodes == ["file", "stream"]
     assert client[2].calls[-1] == ("https://music.apple.com/us/song/102", "aac")
     assert client[0].get("/api/download/not-an-id").status_code == 400
 
@@ -280,6 +292,39 @@ async def test_process_runner_caps_output_and_times_out(settings: Settings, tmp_
     timeout_runner = BoundedProcessRunner(timeout_settings)
     with pytest.raises(ProcessFailure, match="process_timeout"):
         await timeout_runner.execute([sys.executable, "-c", "import time; time.sleep(2)"], tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_process_runner_streams_exact_flac_stdout(settings: Settings, tmp_path: Path):
+    producer = tmp_path / "fake-ffmpeg"
+    producer.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys, time\n"
+        "sys.stdout.buffer.write(b'fLaC')\n"
+        "sys.stdout.buffer.flush()\n"
+        "time.sleep(0.01)\n"
+        "sys.stdout.buffer.write(b'fixture')\n",
+        encoding="utf-8",
+    )
+    producer.chmod(0o750)
+    source = tmp_path / "source.m4a"
+    source.write_bytes(b"encrypted-source-fixture")
+    runner = BoundedProcessRunner(replace(settings, ffmpeg_path=str(producer)))
+
+    chunks = [chunk async for chunk in runner.stream_flac(source, chunk_size=4)]
+
+    assert b"".join(chunks) == b"fLaCfixture"
+
+
+@pytest.mark.asyncio
+async def test_process_runner_relays_existing_flac_without_reencoding(settings: Settings, tmp_path: Path):
+    source = tmp_path / "source.flac"
+    source.write_bytes(b"fLaCready")
+    runner = BoundedProcessRunner(settings)
+
+    chunks = [chunk async for chunk in runner.stream_flac(source, chunk_size=3)]
+
+    assert b"".join(chunks) == b"fLaCready"
 
 
 @pytest.mark.asyncio

@@ -110,7 +110,7 @@ public class AppleMusicDownloadService : BaseDownloadService
 
             var streamUrl = new Uri(
                 baseUri,
-                $"api/download/{Uri.EscapeDataString(externalId)}?quality={Uri.EscapeDataString(quality)}");
+                $"api/stream/{Uri.EscapeDataString(externalId)}?quality={Uri.EscapeDataString(quality)}");
             using var request = new HttpRequestMessage(HttpMethod.Get, streamUrl);
             var response = await _httpClient.SendAsync(
                 request,

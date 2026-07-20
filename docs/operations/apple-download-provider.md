@@ -79,6 +79,7 @@ The current typed lanes use these routes:
 | Login and 2FA | `POST /api/login`, `POST /api/login/2fa` |
 | Song search and detail | `GET /api/search`, `GET /api/song/{id}` |
 | Managed track artifact | `GET /api/download/{id}?quality={quality}` |
+| Progressive playback | `GET /api/stream/{id}?quality={quality}` |
 
 Health must report the gateway, GAMDL runtime, and wrapper dependency truthfully. A raw wrapper-v2 `/health`
 response is not enough. Allstarr refuses redirects during discovery and login so credentials cannot be forwarded to

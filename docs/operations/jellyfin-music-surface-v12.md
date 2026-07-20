@@ -48,8 +48,10 @@ Allstarr upgrades the client connection.
 ## Apple Music cold playback
 
 For an uncached `apple-download` track, Allstarr opens the compatible sidecar's
-`api/download/{id}` response with `ResponseHeadersRead`. The sidecar already
-returns FLAC, so Allstarr relays those exact bytes immediately while teeing the
+`api/stream/{id}` response with `ResponseHeadersRead`. The sidecar
+streams FFmpeg's FLAC stdout after Apple fetch/decryption instead of waiting
+for a second complete converted file. The gateway returns FLAC, so Allstarr
+relays those exact bytes immediately while teeing the
 same bytes to a temporary file. Metadata resolution happens concurrently and is
 used only when the completed cache file is published. A partial artifact is never
 registered. Completed cache files support normal byte ranges and seeks.

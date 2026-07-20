@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from .catalog import CatalogClient
@@ -160,9 +160,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="song_not_found")
         return result
 
-    @application.get("/api/download/{song_id}")
-    @application.get("/api/stream/{song_id}")
-    async def download_song(song_id: str, quality: str = "alac-16-44") -> FileResponse:
+    async def prepare_song(song_id: str, quality: str) -> tuple[Path, Path]:
         try:
             url = song_url(config.storefront, song_id)
         except ValueError:
@@ -174,7 +172,20 @@ def create_app(
             audio = safe_files(root / "output", {".m4a", ".flac"})
             if not audio:
                 raise ProcessFailure("audio_artifact_missing")
-            artifact = await process_runner.to_flac(audio[0], root / f"{song_id}.flac")
+            return root, audio[0]
+        except ProcessFailure as exc:
+            shutil.rmtree(root, ignore_errors=True)
+            status = 504 if exc.code == "process_timeout" else 502
+            raise HTTPException(status_code=status, detail=exc.code) from None
+        except Exception:
+            shutil.rmtree(root, ignore_errors=True)
+            raise HTTPException(status_code=502, detail="download_failed") from None
+
+    @application.get("/api/download/{song_id}")
+    async def download_song(song_id: str, quality: str = "alac-16-44") -> FileResponse:
+        root, source = await prepare_song(song_id, quality)
+        try:
+            artifact = await process_runner.to_flac(source, root / f"{song_id}.flac")
         except ProcessFailure as exc:
             shutil.rmtree(root, ignore_errors=True)
             status = 504 if exc.code == "process_timeout" else 502
@@ -186,6 +197,16 @@ def create_app(
             artifact,
             media_type="audio/flac",
             filename=f"{song_id}.flac",
+            background=BackgroundTask(shutil.rmtree, root, ignore_errors=True),
+        )
+
+    @application.get("/api/stream/{song_id}")
+    async def stream_song(song_id: str, quality: str = "alac-16-44") -> StreamingResponse:
+        root, source = await prepare_song(song_id, quality)
+        return StreamingResponse(
+            process_runner.stream_flac(source),
+            media_type="audio/flac",
+            headers={"Content-Disposition": f'inline; filename="{song_id}.flac"'},
             background=BackgroundTask(shutil.rmtree, root, ignore_errors=True),
         )
 

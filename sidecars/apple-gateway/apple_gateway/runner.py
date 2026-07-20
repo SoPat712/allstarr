@@ -5,6 +5,7 @@ import os
 import signal
 from dataclasses import dataclass
 from pathlib import Path
+from typing import AsyncIterator
 
 from .config import Settings
 from .security import safe_files
@@ -98,3 +99,60 @@ class BoundedProcessRunner:
         if result.return_code != 0 or not target.is_file():
             raise ProcessFailure("transcode_failed")
         return target.resolve()
+
+    async def stream_flac(self, source: Path, chunk_size: int = 64 * 1024) -> AsyncIterator[bytes]:
+        """Yield the final FLAC bytes without materializing a second complete file."""
+        if source.suffix.lower() == ".flac":
+            with source.open("rb") as artifact:
+                while chunk := await asyncio.to_thread(artifact.read, chunk_size):
+                    yield chunk
+            return
+
+        async with self._semaphore:
+            process = await asyncio.create_subprocess_exec(
+                self._settings.ffmpeg_path,
+                "-nostdin", "-v", "error",
+                "-i", str(source),
+                "-map", "0:a:0", "-map_metadata", "-1",
+                "-c:a", "flac", "-compression_level", "0",
+                "-f", "flac", "pipe:1",
+                cwd=source.parent,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+            stderr_task = asyncio.create_task(self._read_limited(process.stderr))
+            deadline = asyncio.get_running_loop().time() + self._settings.subprocess_timeout_seconds
+            try:
+                if process.stdout is None:
+                    raise ProcessFailure("transcode_failed")
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise ProcessFailure("process_timeout")
+                    try:
+                        chunk = await asyncio.wait_for(process.stdout.read(chunk_size), timeout=remaining)
+                    except (TimeoutError, asyncio.TimeoutError) as exc:
+                        raise ProcessFailure("process_timeout") from exc
+                    if not chunk:
+                        break
+                    yield chunk
+
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise ProcessFailure("process_timeout")
+                try:
+                    return_code = await asyncio.wait_for(process.wait(), timeout=remaining)
+                except (TimeoutError, asyncio.TimeoutError) as exc:
+                    raise ProcessFailure("process_timeout") from exc
+                await stderr_task
+                if return_code != 0:
+                    raise ProcessFailure("transcode_failed")
+            finally:
+                if process.returncode is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    await process.wait()
+                if not stderr_task.done():
+                    stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
