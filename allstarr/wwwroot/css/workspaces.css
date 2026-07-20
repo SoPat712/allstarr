@@ -283,6 +283,160 @@
     overflow: auto;
 }
 
+.playlist-track-inspectable {
+    cursor: pointer;
+}
+
+.playlist-track-inspectable:hover,
+.playlist-track-inspectable:focus-visible {
+    background: color-mix(in srgb, var(--signal) 8%, var(--surface-raised));
+    outline: none;
+}
+
+.track-details-backdrop {
+    z-index: 90;
+    padding: clamp(12px, 3vw, 40px);
+}
+
+.track-details-dialog {
+    width: min(1060px, 100%);
+    max-height: min(900px, calc(100dvh - 32px));
+    padding: 0;
+    overflow: auto;
+}
+
+.track-details-hero {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr) 40px;
+    gap: 18px;
+    align-items: center;
+    padding: 22px 24px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+    backdrop-filter: blur(16px);
+}
+
+.track-details-hero > img {
+    width: 72px;
+    height: 72px;
+    border-radius: var(--radius-md);
+    object-fit: cover;
+}
+
+.track-details-hero h3,
+.track-details-hero p {
+    margin: 0;
+}
+
+.track-details-hero > div {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.track-detail-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 5px;
+}
+
+.track-detail-stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-bottom: 1px solid var(--border);
+}
+
+.track-detail-stat-strip > div {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 16px 20px;
+    border-right: 1px solid var(--border);
+}
+
+.track-detail-stat-strip > div:last-child {
+    border-right: 0;
+}
+
+.track-detail-stat-strip small,
+.track-detail-section small,
+.track-activity-list small {
+    color: var(--text-muted);
+}
+
+.track-details-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+}
+
+.track-detail-section {
+    min-width: 0;
+    padding: 20px 24px;
+    background: var(--surface);
+}
+
+.track-detail-section .section-heading {
+    margin-bottom: 12px;
+}
+
+.track-identity-list,
+.track-history-list,
+.track-activity-list {
+    display: grid;
+}
+
+.track-identity-list > div,
+.track-history-list > div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+}
+
+.track-identity-list > div:first-child,
+.track-history-list > div:first-child {
+    border-top: 0;
+}
+
+.track-identity-list .mono {
+    overflow-wrap: anywhere;
+}
+
+.track-activity-list > div {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+}
+
+.track-activity-list > div:first-child {
+    border-top: 0;
+}
+
+.track-activity-list > div > span {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    color: var(--signal);
+}
+
+.track-activity-list > div > div {
+    display: grid;
+    gap: 3px;
+}
+
 .playlist-track-table {
     min-width: 760px;
 }

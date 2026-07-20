@@ -739,9 +739,11 @@ public partial class JellyfinController
         string cleanQuery,
         string? userId)
     {
-        var endpoint = !string.IsNullOrWhiteSpace(userId)
-            ? $"Users/{userId}/Search/Hints"
-            : "Search/Hints";
+        // Jellyfin exposes one Search/Hints route and accepts UserId as a query
+        // parameter. Allstarr also accepts the older client-facing
+        // /Users/{userId}/Search/Hints shape, but must translate it rather than
+        // forwarding a route Jellyfin does not implement.
+        const string endpoint = "Search/Hints";
 
         var queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var kvp in Request.Query)
@@ -751,6 +753,7 @@ public partial class JellyfinController
 
         // Preserve literal request semantics, only normalize recovered SearchTerm.
         queryParams["SearchTerm"] = cleanQuery;
+        if (!string.IsNullOrWhiteSpace(userId)) queryParams["UserId"] = userId;
 
         _logger.LogInformation(
             "SEARCH TRACE: local hints proxy request endpoint='{Endpoint}' query='{SafeQuery}'",

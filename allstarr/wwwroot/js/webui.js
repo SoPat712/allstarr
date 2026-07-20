@@ -414,6 +414,8 @@ const API = {
     requestJson(`/api/admin/playlists${refresh ? "?refresh=true" : ""}`, {}, "Failed to load playlists"),
   playlistTracks: (name) =>
     requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/tracks`, {}, "Failed to load playlist tracks"),
+  trackMappingDetails: (spotifyId) =>
+    requestJson(`/api/admin/track-matches/spotify/${encodeURIComponent(spotifyId)}`, {}, "Failed to load track mapping history"),
   searchLocalTracks: (query) =>
     requestJson(`/api/admin/jellyfin/search?query=${encodeURIComponent(query)}`, {}, "Failed to search the local library"),
   searchExternalTracks: (query, provider, limit = 20) => {
@@ -642,6 +644,9 @@ class AllstarrApp extends LitElement {
     injectedPlaylistDetails: { state: true },
     injectedTrackMenuId: { state: true },
     injectedTrackEditor: { state: true },
+    selectedTrackDetails: { state: true },
+    selectedTrackContext: { state: true },
+    trackDetailsLoading: { state: true },
     downloads: { state: true },
     jobs: { state: true },
     providerAccounts: { state: true },
@@ -728,6 +733,9 @@ class AllstarrApp extends LitElement {
     this.injectedPlaylistDetails = null;
     this.injectedTrackMenuId = "";
     this.injectedTrackEditor = null;
+    this.selectedTrackDetails = null;
+    this.selectedTrackContext = null;
+    this.trackDetailsLoading = false;
     this.downloads = null;
     this.jobs = [];
     this.providerAccounts = [];
@@ -2861,6 +2869,8 @@ class AllstarrApp extends LitElement {
       this.injectedPlaylistDetails = null;
       this.injectedTrackMenuId = "";
       this.injectedTrackEditor = null;
+      this.selectedTrackDetails = null;
+      this.selectedTrackContext = null;
     };
     return html`<div class="modal-backdrop injected-playlist-backdrop"
       @click=${(event) => { if (event.target === event.currentTarget) close(); }}
@@ -2906,18 +2916,102 @@ class AllstarrApp extends LitElement {
           ${details ? html`<label class="search-control playlist-track-search">${icon("search")}<input aria-label="Filter playlist tracks" placeholder="Filter tracks…" .value=${this.injectedTrackFilter} @input=${(event) => { this.injectedTrackFilter = event.target.value; }}></label>
             <div class="playlist-track-table">
               <div class="playlist-track-head"><span>#</span><span>Track</span><span>Artist</span><span>Album</span><span>Provider</span><span></span></div>
-              ${filtered.length ? filtered.map((track, index) => html`<div class="playlist-track-row">
+              ${filtered.length ? filtered.map((track, index) => html`<div class="playlist-track-row playlist-track-inspectable" role="button" tabindex="0"
+                aria-label="Open mapping details for ${display(track.title, "track")}" @click=${() => this.openTrackDetails(track)}
+                @keydown=${(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openTrackDetails(track); } }}>
                 <span class="track-position">${display(track.position ?? index + 1)}</span>
                 <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt=""><strong>${display(track.title)}</strong></span>
                 <span>${asArray(track.artists).join(", ") || "Unknown artist"}</span>
                 <span>${display(track.album)}</span>
                 <span><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
-                <span>${this.renderInjectedTrackMenu(track)}</span>
+                <span @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track)}</span>
               </div>`) : html`<div class="empty compact">No tracks match this filter.</div>`}
             </div>
             <div class="playlist-track-summary">${query ? `Showing ${filtered.length} of ${tracks.length} tracks` : `All ${tracks.length} tracks`}</div>
           ` : html`<div class="empty">Loading playlist tracks…</div>`}
         </div>
+      </section>
+    </div>${this.renderTrackDetailsModal()}`;
+  }
+
+  async openTrackDetails(track) {
+    const spotifyId = String(track?.spotifyId || "").trim();
+    if (!spotifyId) {
+      this.toast("This playlist entry has no source track identifier", "error");
+      return;
+    }
+    this.selectedTrackContext = track;
+    this.selectedTrackDetails = null;
+    this.trackDetailsLoading = true;
+    this.injectedTrackMenuId = "";
+    try {
+      this.selectedTrackDetails = await API.trackMappingDetails(spotifyId);
+    } catch (error) {
+      this.toast(error.message, "error");
+    } finally {
+      this.trackDetailsLoading = false;
+      await this.updateComplete;
+      this.renderRoot.querySelector(".track-details-dialog")?.focus();
+    }
+  }
+
+  renderTrackDetailsModal() {
+    const context = this.selectedTrackContext;
+    if (!context) return nothing;
+    const details = this.selectedTrackDetails;
+    const metadata = details?.metadata || {};
+    const identities = asArray(details?.providerIdentities);
+    const localTracks = asArray(details?.localTracks);
+    const history = asArray(details?.matchHistory);
+    const activity = asArray(details?.activity);
+    const artifacts = asArray(details?.cache?.artifacts);
+    const legacy = details?.legacyMapping;
+    const close = () => {
+      this.selectedTrackContext = null;
+      this.selectedTrackDetails = null;
+      this.trackDetailsLoading = false;
+    };
+    const durationMs = Number(details?.durationMilliseconds ?? context.durationMs ?? 0);
+    const title = metadata.title || context.title || "Track details";
+    const artist = metadata.artist || asArray(context.artists).join(", ") || "Unknown artist";
+    const lastCached = details?.cache?.lastAudioCachedAt || details?.cache?.lastMetadataCachedAt;
+    return html`<div class="modal-backdrop track-details-backdrop" @click=${(event) => { event.stopPropagation(); if (event.target === event.currentTarget) close(); }}
+      @keydown=${(event) => { event.stopPropagation(); this.handleDialogKeydown(event, close); }}>
+      <section class="panel track-details-dialog" role="dialog" aria-modal="true" aria-labelledby="track-details-title" tabindex="-1" data-testid="track-details-dialog">
+        <header class="track-details-hero">
+          <img src=${metadata.artworkUrl || context.albumArtUrl || "/placeholder.png"} alt="">
+          <div><span class="eyebrow">Track mapping</span><h3 id="track-details-title">${display(title)}</h3><p>${display(artist)}${(metadata.album || context.album) ? ` · ${metadata.album || context.album}` : ""}</p>
+            <div class="track-detail-badges"><span class="chip">${durationMs ? formatDuration(durationMs / 1000) : "Duration unavailable"}</span><span class="chip mono">Spotify ${display(context.spotifyId)}</span></div>
+          </div>
+          <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close track mapping details">${icon("close")}</button>
+        </header>
+        ${this.trackDetailsLoading ? html`<div class="empty">Loading mapping history…</div>` : details ? html`
+          <div class="track-detail-stat-strip">
+            <div><small>Current route</small><strong>${legacy ? `${titleCase(legacy.targetType)} · ${titleCase(legacy.source)}` : details.found ? "Durable mapping" : "Unmatched"}</strong></div>
+            <div><small>First mapped</small><strong>${details.firstMappedAt ? formatDate(details.firstMappedAt) : "Not recorded"}</strong></div>
+            <div><small>Last mapped</small><strong>${details.lastMappedAt ? formatRelativeTime(details.lastMappedAt) : "Not recorded"}</strong></div>
+            <div><small>Last cached</small><strong>${lastCached ? formatRelativeTime(lastCached) : "Not cached"}</strong></div>
+          </div>
+          <div class="track-details-grid">
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Identifiers and destinations</h4><p>Every known provider identity and local media item for this recording.</p></div></div>
+              <div class="track-identity-list">
+                ${legacy ? html`<div><span class="provider-badge configured">${icon("metadata", 14)} Legacy mapping cache</span><strong>${legacy.localId ? `Jellyfin ${legacy.localId}` : `${titleCase(legacy.targetType)} target`}</strong><small>Created ${formatDate(legacy.createdAt)}${legacy.lastValidatedAt ? ` · validated ${formatRelativeTime(legacy.lastValidatedAt)}` : " · not yet validated"}</small></div>` : nothing}
+                ${identities.map((identity) => html`<div><span class="provider-badge configured">${this.renderProviderLogo(identity.providerId, "tiny")} ${providerDisplayName(identity.providerId, this.schema?.providers)}</span><strong class="mono">${display(identity.externalId)}</strong><small>${titleCase(identity.verification)} via ${display(identity.verificationMethod, "unspecified method")} · verified ${formatDate(identity.verifiedAt)}</small></div>`)}
+                ${localTracks.map((track) => html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>${display(track.title)} · <span class="mono">${display(track.backendItemId)}</span></strong><small>Indexed ${formatDate(track.indexedAt)} · updated ${formatRelativeTime(track.updatedAt)}</small></div>`)}
+                ${!legacy && !identities.length && !localTracks.length ? html`<div class="empty compact">No saved mapping record exists for this source track yet.</div>` : nothing}
+              </div>
+            </section>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Match decisions</h4><p>Durable matcher decisions, confidence, and policy version.</p></div></div>
+              <div class="track-history-list">${history.length ? history.map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${(Number(item.confidence) * 100).toFixed(1)}% confidence</strong><small>${formatDate(item.decidedAt)} · policy ${display(item.policyVersion)}${asArray(item.reasons).length ? ` · ${asArray(item.reasons).join("; ")}` : ""}</small></div>`) : html`<div class="empty compact">No PostgreSQL match decisions have been recorded for this legacy entry.</div>`}</div>
+            </section>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Cache and downloads</h4><p>Metadata snapshots and provider audio artifacts retained by Allstarr.</p></div></div>
+              <div class="track-history-list">${artifacts.length ? artifacts.map((item) => html`<div><span class="status-chip configured">${titleCase(item.state)}</span><strong>${providerDisplayName(item.providerId, this.schema?.providers)} · ${new Intl.NumberFormat().format(Number(item.length || 0))} bytes</strong><small>Verified ${formatDate(item.verifiedAt)}${item.placedAt ? ` · placed ${formatDate(item.placedAt)}` : ""}</small></div>`) : html`<div class="empty compact">No durable audio artifact is associated with this track.</div>`}</div>
+            </section>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Track activity</h4><p>Mapping, validation, metadata, and download events for this track.</p></div></div>
+              <div class="track-activity-list">${activity.length ? activity.map((item) => html`<div><span>${icon(item.kind === "download" ? "download" : item.kind === "cache" ? "metadata" : item.kind === "validation" ? "check" : "link", 16)}</span><div><strong>${display(item.title)}</strong><small>${display(item.detail)} · ${formatDate(item.at)}</small></div></div>`) : html`<div class="empty compact">No track-specific activity has been recorded.</div>`}</div>
+            </section>
+          </div>
+        ` : html`<div class="empty">Mapping history could not be loaded.</div>`}
       </section>
     </div>`;
   }

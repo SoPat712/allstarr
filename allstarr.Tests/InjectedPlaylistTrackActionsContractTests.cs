@@ -101,6 +101,28 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains(".playlist-operation-summary", styles, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PlaylistTrackRows_OpenAnAuthoritativeMappingHistoryDialog()
+    {
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "TrackMatchesController.cs"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+        var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "workspaces.css"));
+
+        Assert.Contains("[HttpGet(\"spotify/{spotifyId}\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("ProviderTrackIdentities", controller, StringComparison.Ordinal);
+        Assert.Contains("ExternalMetadataSnapshots", controller, StringComparison.Ordinal);
+        Assert.Contains("ProviderDownloadArtifacts", controller, StringComparison.Ordinal);
+        Assert.Contains("spotifyMappings.GetMappingAsync(spotifyId)", controller, StringComparison.Ordinal);
+        Assert.Contains("trackMappingDetails:", script, StringComparison.Ordinal);
+        Assert.Contains("Open mapping details for", script, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"track-details-dialog\"", script, StringComparison.Ordinal);
+        Assert.Contains("Identifiers and destinations", script, StringComparison.Ordinal);
+        Assert.Contains("Match decisions", script, StringComparison.Ordinal);
+        Assert.Contains("Cache and downloads", script, StringComparison.Ordinal);
+        Assert.Contains("Track activity", script, StringComparison.Ordinal);
+        Assert.Contains(".track-details-dialog", styles, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

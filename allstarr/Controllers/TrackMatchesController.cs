@@ -1,7 +1,9 @@
 using System.Text.Json;
+using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
+using allstarr.Services.Spotify;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,8 +16,184 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/track-matches")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class TrackMatchesController(IDbContextFactory<AllstarrDbContext> contextFactory) : ControllerBase
+public sealed class TrackMatchesController(
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    SpotifyMappingService spotifyMappings) : ControllerBase
 {
+    [HttpGet("spotify/{spotifyId}")]
+    public async Task<IActionResult> Detail(
+        string spotifyId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        spotifyId = spotifyId.Trim();
+        if (spotifyId.Length is < 3 or > 128) return BadRequest(new { error = "Spotify track id is invalid" });
+
+        var legacy = await spotifyMappings.GetMappingAsync(spotifyId);
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var tenantId = session!.TenantId!.Value;
+        var userId = session.AllstarrUserId!.Value;
+
+        var spotifyIdentities = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && item.ProviderId == "spotify" && item.ExternalId == spotifyId)
+            .OrderBy(item => item.CreatedAt)
+            .ToListAsync(cancellationToken);
+        var canonicalIds = spotifyIdentities.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
+
+        var identities = canonicalIds.Length == 0
+            ? []
+            : await db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => item.TenantId == tenantId && canonicalIds.Contains(item.CanonicalRecordingId))
+                .OrderBy(item => item.ProviderId).ThenBy(item => item.CreatedAt)
+                .ToListAsync(cancellationToken);
+
+        var localQuery = db.LibraryTracks.AsNoTracking().Where(item => item.TenantId == tenantId);
+        if (!session.IsAdministrator) localQuery = localQuery.Where(item => item.OwnerUserId == userId);
+        var localTracks = await localQuery
+            .Where(item => (item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value)) ||
+                           (legacy != null && legacy.LocalId != null && item.BackendItemId == legacy.LocalId))
+            .OrderByDescending(item => item.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
+        var identityIds = identities.Select(item => item.Id).Concat(spotifyIdentities.Select(item => item.Id)).Distinct().ToArray();
+        var snapshotQuery = db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && item.ProviderTrackIdentityId.HasValue &&
+                           identityIds.Contains(item.ProviderTrackIdentityId.Value));
+        if (!session.IsAdministrator) snapshotQuery = snapshotQuery.Where(item => item.OwnerUserId == userId);
+        var snapshots = await snapshotQuery.OrderByDescending(item => item.RetrievedAt).ToListAsync(cancellationToken);
+        var snapshotIds = snapshots.Select(item => item.Id).ToArray();
+        var decisions = snapshotIds.Length == 0
+            ? []
+            : await db.TrackMatches.AsNoTracking()
+                .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
+                .OrderByDescending(item => item.DecidedAt).ToListAsync(cancellationToken);
+        var overrides = snapshotIds.Length == 0
+            ? []
+            : await db.ManualTrackOverrides.AsNoTracking()
+                .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
+                .OrderByDescending(item => item.CreatedAt).ToListAsync(cancellationToken);
+
+        var externalIds = identities.Select(item => item.ExternalId)
+            .Concat(legacy?.ExternalMappings.Select(item => item.ExternalId) ?? [])
+            .Append(spotifyId).Where(item => !string.IsNullOrWhiteSpace(item)).Distinct().ToArray();
+        var artifactQuery = db.ProviderDownloadArtifacts.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && externalIds.Contains(item.ProviderArtifactId));
+        if (!session.IsAdministrator) artifactQuery = artifactQuery.Where(item => item.OwnerUserId == null || item.OwnerUserId == userId);
+        var artifacts = await artifactQuery.OrderByDescending(item => item.CreatedAt).Take(50).ToListAsync(cancellationToken);
+
+        var firstMappedAt = new DateTimeOffset?[]
+        {
+            legacy?.CreatedAt == default ? null : new DateTimeOffset(legacy!.CreatedAt),
+            identities.Count == 0 ? null : identities.Min(item => item.CreatedAt),
+            decisions.Count == 0 ? null : decisions.Min(item => item.DecidedAt),
+            overrides.Count == 0 ? null : overrides.Min(item => item.CreatedAt)
+        }.Where(item => item.HasValue).Min();
+        var lastMappedAt = new DateTimeOffset?[]
+        {
+            legacy?.UpdatedAt is null ? null : new DateTimeOffset(legacy.UpdatedAt.Value),
+            legacy?.LastValidatedAt is null ? null : new DateTimeOffset(legacy.LastValidatedAt.Value),
+            identities.Count == 0 ? null : identities.Max(item => item.UpdatedAt),
+            decisions.Count == 0 ? null : decisions.Max(item => item.DecidedAt),
+            overrides.Count == 0 ? null : overrides.Max(item => item.CreatedAt)
+        }.Where(item => item.HasValue).Max();
+
+        var activity = new List<object>();
+        if (legacy != null)
+        {
+            activity.Add(new { at = legacy.CreatedAt, kind = "mapping", title = "Legacy mapping created", detail = $"{legacy.Source} · {legacy.TargetType}" });
+            if (legacy.LastValidatedAt.HasValue) activity.Add(new { at = legacy.LastValidatedAt.Value, kind = "validation", title = "Legacy mapping validated", detail = legacy.TargetType });
+        }
+        activity.AddRange(identities.Select(item => (object)new { at = item.VerifiedAt, kind = "identity", title = $"{item.ProviderId} identity verified", detail = item.VerificationMethod }));
+        activity.AddRange(snapshots.Select(item => (object)new { at = item.RetrievedAt, kind = "cache", title = $"{item.ProviderId} metadata cached", detail = $"Snapshot v{item.SnapshotVersion}" }));
+        activity.AddRange(decisions.Select(item => (object)new { at = item.DecidedAt, kind = "match", title = $"Match {item.State.ToString().ToLowerInvariant()}", detail = $"{item.Confidence:P0} confidence · {item.PolicyVersion}" }));
+        activity.AddRange(overrides.Select(item => (object)new { at = item.CreatedAt, kind = "override", title = $"Manual {item.Decision.ToString().ToLowerInvariant()}", detail = item.Reason }));
+        activity.AddRange(artifacts.Select(item => (object)new { at = item.PlacedAt ?? item.VerifiedAt, kind = "download", title = $"{item.ProviderId} audio {item.State.ToString().ToLowerInvariant()}", detail = $"{item.Length} bytes" }));
+
+        var primaryLocal = localTracks.FirstOrDefault();
+        return Ok(new
+        {
+            spotifyId,
+            found = legacy != null || identities.Count > 0 || decisions.Count > 0,
+            firstMappedAt,
+            lastMappedAt,
+            durationMilliseconds = primaryLocal?.DurationMilliseconds ?? legacy?.Metadata?.DurationMs,
+            metadata = new
+            {
+                title = primaryLocal?.Title ?? legacy?.Metadata?.Title,
+                artist = primaryLocal?.Artist ?? legacy?.Metadata?.Artist,
+                album = primaryLocal?.Album ?? legacy?.Metadata?.Album,
+                artworkUrl = legacy?.Metadata?.ArtworkUrl,
+                isrc = primaryLocal?.Isrc,
+                musicBrainzRecordingId = primaryLocal?.MusicBrainzRecordingId
+            },
+            legacyMapping = legacy == null ? null : new
+            {
+                origin = "legacy-cache",
+                legacy.TargetType,
+                legacy.LocalId,
+                legacy.Source,
+                legacy.CreatedAt,
+                legacy.UpdatedAt,
+                legacy.LastValidatedAt,
+                externalMappings = legacy.ExternalMappings.Select(item => new { item.Provider, item.ExternalId, item.Source, item.CreatedAt, item.UpdatedAt })
+            },
+            providerIdentities = identities.Concat(spotifyIdentities).DistinctBy(item => item.Id).Select(item => new
+            {
+                item.Id,
+                item.CanonicalRecordingId,
+                item.ProviderId,
+                item.ExternalId,
+                resourceKind = item.ResourceKind.ToString().ToLowerInvariant(),
+                scope = item.Scope.ToString().ToLowerInvariant(),
+                verification = item.Verification.ToString().ToLowerInvariant(),
+                item.VerificationMethod,
+                item.DecisionVersion,
+                item.CreatedAt,
+                item.VerifiedAt,
+                item.UpdatedAt
+            }),
+            localTracks = localTracks.Select(item => new
+            {
+                item.Id,
+                item.CanonicalRecordingId,
+                item.BackendItemId,
+                item.LibraryScopeId,
+                item.Title,
+                item.Artist,
+                item.Album,
+                item.AlbumArtist,
+                item.DurationMilliseconds,
+                item.Isrc,
+                item.MusicBrainzRecordingId,
+                providerIds = ParseObject(item.ProviderIdsJson),
+                item.IndexedAt,
+                item.SourceModifiedAt,
+                item.UpdatedAt
+            }),
+            matchHistory = decisions.Select(item => new
+            {
+                item.Id,
+                state = item.State.ToString().ToLowerInvariant(),
+                item.Confidence,
+                item.Threshold,
+                item.DecisionVersion,
+                item.PolicyVersion,
+                reasons = ParseArray(item.ReasonsJson),
+                warnings = ParseArray(item.WarningsJson),
+                item.CorrelationId,
+                item.DecidedAt
+            }),
+            overrides = overrides.Select(item => new { item.Id, decision = item.Decision.ToString().ToLowerInvariant(), item.Reason, item.DecisionVersion, item.CreatedAt, item.RevokedAt }),
+            cache = new
+            {
+                lastMetadataCachedAt = snapshots.FirstOrDefault()?.RetrievedAt,
+                lastAudioCachedAt = artifacts.FirstOrDefault()?.CreatedAt,
+                artifacts = artifacts.Select(item => new { item.ProviderId, state = item.State.ToString().ToLowerInvariant(), item.Length, item.CreatedAt, item.VerifiedAt, item.PlacedAt })
+            },
+            activity = activity.OrderByDescending(item => ActivityAt(item)).Take(100)
+        });
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] string? libraryScopeId = null,
@@ -135,6 +313,21 @@ public sealed class TrackMatchesController(IDbContextFactory<AllstarrDbContext> 
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     private static string[] ParseArray(string? json)
     { try { return JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []; } catch (JsonException) { return []; } }
+
+    private static object ParseObject(string? json)
+    { try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json ?? "{}") ?? []; } catch (JsonException) { return new Dictionary<string, string>(); } }
+
+    private static DateTimeOffset ActivityAt(object value)
+    {
+        var property = value.GetType().GetProperty("at");
+        var raw = property?.GetValue(value);
+        return raw switch
+        {
+            DateTimeOffset offset => offset,
+            DateTime dateTime => new DateTimeOffset(dateTime),
+            _ => DateTimeOffset.MinValue
+        };
+    }
 
     private static object[] ParseCandidates(string? json)
     {

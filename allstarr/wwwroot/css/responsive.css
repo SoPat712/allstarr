@@ -309,6 +309,37 @@
         padding: 12px 16px 16px;
     }
 
+    .track-details-dialog {
+        max-height: calc(100dvh - 24px);
+    }
+
+    .track-details-hero {
+        grid-template-columns: 56px minmax(0, 1fr) 40px;
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .track-details-hero > img {
+        width: 56px;
+        height: 56px;
+    }
+
+    .track-detail-stat-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .track-detail-stat-strip > div:nth-child(2) {
+        border-right: 0;
+    }
+
+    .track-detail-stat-strip > div:nth-child(-n + 2) {
+        border-bottom: 1px solid var(--border);
+    }
+
+    .track-details-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .modal-backdrop {
         padding: 12px;
     }
@@ -346,6 +377,24 @@
 
     .kept-surface-header {
         display: grid;
+    }
+
+    .track-detail-stat-strip {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .track-detail-stat-strip > div,
+    .track-detail-stat-strip > div:nth-child(2) {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .track-detail-stat-strip > div:last-child {
+        border-bottom: 0;
+    }
+
+    .track-detail-section {
+        padding: 18px 16px;
     }
 
     .now-playing {
