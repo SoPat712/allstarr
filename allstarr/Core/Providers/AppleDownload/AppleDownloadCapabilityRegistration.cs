@@ -16,9 +16,11 @@ public static class AppleDownloadCapabilityRegistration
                 PooledConnectionLifetime = TimeSpan.FromMinutes(2)
             });
         services.AddSingleton<AppleDownloadCapabilityAdapter>();
+        services.AddSingleton<AppleDownloadLyricsCapabilityAdapter>();
         services.AddSingleton<ProviderRegistration>(provider =>
             AppleDownloadCapabilityAdapter.CreateRegistration(
-                provider.GetRequiredService<AppleDownloadCapabilityAdapter>()));
+                provider.GetRequiredService<AppleDownloadCapabilityAdapter>(),
+                provider.GetRequiredService<AppleDownloadLyricsCapabilityAdapter>()));
         return services;
     }
 }

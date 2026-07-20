@@ -29,6 +29,7 @@ public class ProviderStatusManager
         ("apple-download", ProviderCapabilities.Metadata),
         ("apple-download", ProviderCapabilities.Streaming),
         ("apple-download", ProviderCapabilities.Download),
+        ("apple-download", ProviderCapabilities.Lyrics),
         ("deezer", ProviderCapabilities.Metadata),
         ("deezer", ProviderCapabilities.Streaming),
         ("deezer", ProviderCapabilities.Download),
@@ -561,7 +562,7 @@ public class ProviderStatusManager
     {
         return (provider, capability) switch
         {
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
+            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
                 IsConfiguredValue(_appleMusicSettings.BaseUrl)
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_sidecar_url"),
@@ -648,7 +649,7 @@ public class ProviderStatusManager
     {
         return (provider, capability) switch
         {
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
+            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
                 _appleDownloadSnapshot?.Capability(capability).State != AppleDownloadCapabilityState.Unsupported,
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
@@ -666,7 +667,7 @@ public class ProviderStatusManager
     {
         return (provider, capability) switch
         {
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
+            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => true,
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("squidwtf", ProviderCapabilities.Metadata) => true,
@@ -691,7 +692,7 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie,
                 cancellationToken),
             ("spotify", ProviderCapabilities.Lyrics) => await AsOutcome(TestSpotifyLyricsAsync(cancellationToken)),
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
+            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestDeezerMetadataAsync(cancellationToken)),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
@@ -995,7 +996,7 @@ public class ProviderStatusManager
             .ToList();
 
     private List<string> GetLyricsOrder() =>
-        GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,lyricsplus,lrclib");
+        GetProviderOrder("MULTI_PROVIDER_LYRICS_ORDER", "spotify,apple-download,lyricsplus,lrclib");
 
     private List<string> GetProviderOrder(string key, string fallback)
     {

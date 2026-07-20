@@ -62,7 +62,9 @@ class FakeRunner:
         temporary.mkdir(parents=True, exist_ok=False)
         artifact = output / "fixture.m4a"
         artifact.write_bytes(b"source")
-        return [artifact]
+        lyrics = output / "fixture.lrc"
+        lyrics.write_text("[00:01.00]Fixture lyrics\n", encoding="utf-8")
+        return [artifact, lyrics]
 
     async def to_flac(self, source: Path, target: Path) -> Path:
         self.transcodes.append("file")
@@ -125,7 +127,7 @@ def test_capabilities_are_versioned_and_truthful(client):
     assert response.status_code == 200
     assert response.json()["sidecarApiVersion"] == API_VERSION
     ids = {item["id"] for item in response.json()["capabilities"]}
-    assert {"metadata-search-song", "metadata-song", "download-audio-song"} <= ids
+    assert {"metadata-search-song", "metadata-song", "download-audio-song", "synced-lyrics-artifact"} <= ids
 
 
 def test_health_reports_wrapper_and_authentication(client):
@@ -167,6 +169,19 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     assert client[0].get("/api/download/not-an-id").status_code == 400
 
 
+def test_song_lyrics_use_gamdl_artifact_and_cache(client):
+    response = client[0].get("/api/lyrics/103")
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "GAMDL",
+        "format": "LineTimed",
+        "content": "[00:01.00]Fixture lyrics\n",
+    }
+    calls = len(client[2].calls)
+    assert client[0].get("/api/lyrics/103").status_code == 200
+    assert len(client[2].calls) == calls
+
+
 @pytest.mark.asyncio
 async def test_gamdl_command_targets_separate_wrapper_decrypt_socket(settings: Settings, tmp_path: Path):
     class CapturingRunner(BoundedProcessRunner):
@@ -206,7 +221,7 @@ def test_generic_catalog_and_library_download_jobs_are_bounded_to_apple_urls(cli
         if state["state"] == "succeeded":
             break
         asyncio.run(asyncio.sleep(0.01))
-    assert state["artifact_count"] == 1
+    assert state["artifact_count"] == 2
 
     library = client[0].post("/api/jobs/download", json={
         "url": "https://music.apple.com/library/playlist/p.ABC123",
@@ -238,7 +253,7 @@ def test_terminal_download_job_is_persisted_and_rehydrated_after_restart(setting
     state_file = settings.data_root / "jobs" / job_id / "job.json"
     persisted = json.loads(state_file.read_text(encoding="utf-8"))
     assert persisted["state"] == "succeeded"
-    assert persisted["artifacts"] == ["artifacts/fixture.m4a"]
+    assert persisted["artifacts"] == ["artifacts/fixture.m4a", "artifacts/fixture.lrc"]
     assert not state_file.with_name("job.json.partial").exists()
 
     second_runner = FakeRunner()
@@ -250,7 +265,7 @@ def test_terminal_download_job_is_persisted_and_rehydrated_after_restart(setting
             "id": job_id,
             "state": "succeeded",
             "media_kind": "playlist",
-            "artifact_count": 1,
+                "artifact_count": 2,
             "error_code": None,
         }
     assert second_runner.calls == []

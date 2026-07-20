@@ -20,7 +20,11 @@ public sealed record ProviderLyricsRequest
         Guid canonicalRecordingId,
         ProviderExternalResourceId providerTrackId,
         bool availabilityOnly = false,
-        ProviderLyricsFormat? preferredFormat = null)
+        ProviderLyricsFormat? preferredFormat = null,
+        string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null,
+        string? albumTitle = null,
+        int? durationSeconds = null)
     {
         ArgumentNullException.ThrowIfNull(providerTrackId);
         if (canonicalRecordingId == Guid.Empty)
@@ -38,6 +42,16 @@ public sealed record ProviderLyricsRequest
         ProviderTrackId = providerTrackId;
         AvailabilityOnly = availabilityOnly;
         PreferredFormat = preferredFormat;
+        TrackTitle = ProviderContractValidation.OptionalText(trackTitle, nameof(trackTitle), 1_000);
+        ArtistNames = Array.AsReadOnly((artistNames ?? [])
+            .Select(name => ProviderContractValidation.RequiredText(name, nameof(artistNames), 1_000))
+            .ToArray());
+        AlbumTitle = ProviderContractValidation.OptionalText(albumTitle, nameof(albumTitle), 1_000);
+        if (durationSeconds is < 0 or > 24 * 60 * 60)
+        {
+            throw new ArgumentOutOfRangeException(nameof(durationSeconds));
+        }
+        DurationSeconds = durationSeconds;
     }
 
     public Guid CanonicalRecordingId { get; }
@@ -47,6 +61,14 @@ public sealed record ProviderLyricsRequest
     public bool AvailabilityOnly { get; }
 
     public ProviderLyricsFormat? PreferredFormat { get; }
+
+    public string? TrackTitle { get; }
+
+    public IReadOnlyList<string> ArtistNames { get; }
+
+    public string? AlbumTitle { get; }
+
+    public int? DurationSeconds { get; }
 }
 
 public sealed record ProviderLyricsResult

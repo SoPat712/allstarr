@@ -85,6 +85,46 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task SpotiFlacRuntimeAdapter_UsesKnownTrackMetadataForTimedLyrics()
+    {
+        const string sourceManifest = """
+            {"name":"lyrics-demo","displayName":"Lyrics demo","version":"1.0.0","description":"Fixture",
+             "type":["lyrics_provider"],"permissions":{}}
+            """;
+        const string script = """
+            registerExtension({
+              getTrack:function(){throw new Error('metadata lookup must not run');},
+              fetchLyrics:function(title,artist,album,duration){
+                if(title!=='Known title'||artist!=='Known artist'||album!=='Known album'||duration!==240) throw new Error('wrong metadata');
+                return {provider:'fixture',plainLyrics:'line one\nline two',lines:[
+                  {startTimeMs:1250,words:'line one'},
+                  {startTimeMs:62500,words:'line two'},
+                  {startTimeMs:999999999,words:''}
+                ]};
+              }
+            });
+            """;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var manifest = ExtensionSdkV1.ParseManifest(normalized);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script,
+            new HttpClientFactory(), NullLogger.Instance, ExtensionRuntimePermissionSet.None);
+        var adapter = new ExtensionLyricsCapabilityAdapter(sandbox, manifest);
+
+        var outcome = await adapter.FetchLyricsAsync(Context("spotiflac-lyrics-demo"), new ProviderLyricsRequest(
+            Guid.CreateVersion7(),
+            new ProviderExternalResourceId("spotiflac-lyrics-demo", ProviderResourceKind.Track, "catalog-id"),
+            preferredFormat: ProviderLyricsFormat.LineTimed,
+            trackTitle: "Known title",
+            artistNames: ["Known artist"],
+            albumTitle: "Known album",
+            durationSeconds: 240));
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+        Assert.Equal(ProviderLyricsFormat.LineTimed, outcome.Value!.Format);
+        Assert.Equal("[00:01.25]line one\n[01:02.50]line two", outcome.Value.Content);
+    }
+
+    [Fact]
     public async Task SpotiFlacRuntimeAdapter_BrokersDirectDownloadsIntoManagedWorkspace()
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-download", Guid.NewGuid().ToString("N"));

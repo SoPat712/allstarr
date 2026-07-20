@@ -60,7 +60,8 @@ public sealed class AppleDownloadEndpointDiscovery(
         {
             [ProviderCapabilities.Metadata] = ["metadata-search-song", "metadata-song"],
             [ProviderCapabilities.Streaming] = ["stream-audio-song"],
-            [ProviderCapabilities.Download] = ["download-audio-song"]
+            [ProviderCapabilities.Download] = ["download-audio-song"],
+            [ProviderCapabilities.Lyrics] = ["synced-lyrics-artifact"]
         };
     private static readonly string[] GranularFeatureIds =
     [
@@ -71,7 +72,8 @@ public sealed class AppleDownloadEndpointDiscovery(
     ];
     private static readonly HashSet<string> ImplementedFeatureIds = new(
     [
-        "metadata-search-song", "metadata-song", "stream-audio-song", "download-audio-song"
+        "metadata-search-song", "metadata-song", "stream-audio-song", "download-audio-song",
+        "synced-lyrics-artifact"
     ], StringComparer.OrdinalIgnoreCase);
 
     public async Task<AppleDownloadEndpointSnapshot> DiscoverAsync(

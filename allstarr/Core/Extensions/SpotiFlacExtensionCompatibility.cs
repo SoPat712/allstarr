@@ -256,13 +256,38 @@ public static class SpotiFlacExtensionCompatibility
           },
           fetchLyrics: function(request) {
             if (typeof _spotiflacExtension.fetchLyrics !== 'function') return { availability: 'Unavailable', source: 'SpotiFLAC' };
-            var track = typeof _spotiflacExtension.getTrack === 'function' ? _spotiflacExtension.getTrack(request.providerTrackId) : null;
-            if (!track) return { availability: 'Unavailable', source: 'SpotiFLAC' };
-            var artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
-            var result = _spotiflacExtension.fetchLyrics(track.name || track.title || '', artists, track.album_name || '', Number(track.duration_ms || 0) / 1000);
+            var track = null;
+            var title = String(request.trackTitle || '');
+            var artists = Array.isArray(request.artistNames) ? request.artistNames.join(', ') : '';
+            var album = String(request.albumTitle || '');
+            var duration = Number(request.durationSeconds || 0);
+            if (!title && typeof _spotiflacExtension.getTrack === 'function') {
+              track = _spotiflacExtension.getTrack(request.providerTrackId);
+              if (track) {
+                title = String(track.name || track.title || '');
+                artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
+                album = String(track.album_name || '');
+                duration = Number(track.duration_ms || 0) / 1000;
+              }
+            }
+            if (!title) return { availability: 'Unavailable', source: 'SpotiFLAC' };
+            var result = _spotiflacExtension.fetchLyrics(title, artists, album, duration);
             if (!result) return { availability: 'Unavailable', source: 'SpotiFLAC' };
-            var content = result.plainLyrics || result.plain_lyrics || result.lyrics || result.text || '';
-            return content ? { availability: 'Available', source: String(result.provider || 'SpotiFLAC'), format: 'PlainText', content: String(content), revision: null }
+            var lines = Array.isArray(result.lines) ? result.lines : [];
+            var timed = lines.filter(function(line) {
+              var start = Number(line && (line.startTimeMs !== undefined ? line.startTimeMs : line.start_time_ms));
+              return isFinite(start) && start >= 0 && start < 86400000 && String(line.words || line.text || '').trim();
+            }).map(function(line) {
+              var milliseconds = Number(line.startTimeMs !== undefined ? line.startTimeMs : line.start_time_ms);
+              var minutes = Math.floor(milliseconds / 60000);
+              var seconds = Math.floor((milliseconds % 60000) / 1000);
+              var hundredths = Math.floor((milliseconds % 1000) / 10);
+              return '[' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0') + '.' + String(hundredths).padStart(2, '0') + ']' + String(line.words || line.text || '').trim();
+            }).join('\n');
+            var plain = result.plainLyrics || result.plain_lyrics || result.lyrics || result.text || '';
+            var content = timed || plain;
+            var format = timed ? 'LineTimed' : 'PlainText';
+            return content ? { availability: 'Available', source: String(result.provider || 'SpotiFLAC'), format: format, content: String(content), revision: null }
               : { availability: 'Unavailable', source: String(result.provider || 'SpotiFLAC') };
           },
           checkAvailability: function(request) {

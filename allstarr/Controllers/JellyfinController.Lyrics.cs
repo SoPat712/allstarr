@@ -160,95 +160,14 @@ public partial class JellyfinController
             searchArtists.Add(searchArtist);
         }
 
-        // Use orchestrator for clean, modular lyrics fetching
-        LyricsInfo? lyrics = null;
-
-        // Ask the track's own provider first. Extensions such as Apple Music can use
-        // their configured account token without coupling Jellyfin to that provider.
-        if (isExternal && _providerGateway != null && HttpContext.GetProtocolExecutionContext() is { } protocol)
-        {
-            try
-            {
-                var providerLyrics = await _providerGateway.GetLyricsAsync(
-                    protocol,
-                    provider!,
-                    externalId!,
-                    ProviderLyricsFormat.LineTimed);
-                if (!string.IsNullOrWhiteSpace(providerLyrics?.Content))
-                {
-                    lyrics = new LyricsInfo
-                    {
-                        TrackName = searchTitle,
-                        ArtistName = string.Join(", ", searchArtists),
-                        AlbumName = searchAlbum,
-                        Duration = song.Duration ?? 0,
-                        PlainLyrics = providerLyrics.Format == ProviderLyricsFormat.PlainText
-                            ? providerLyrics.Content
-                            : null,
-                        SyncedLyrics = providerLyrics.Format != ProviderLyricsFormat.PlainText
-                            ? providerLyrics.Content
-                            : null
-                    };
-                }
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                _logger.LogWarning(exception,
-                    "Provider lyrics failed for {Provider}/{ExternalId}; continuing through configured fallbacks",
-                    provider, externalId);
-            }
-        }
-
-        if (lyrics == null && _lyricsOrchestrator != null)
-        {
-            lyrics = await _lyricsOrchestrator.GetLyricsAsync(
-                trackName: searchTitle,
-                artistNames: searchArtists.ToArray(),
-                albumName: searchAlbum,
-                durationSeconds: song.Duration ?? 0,
-                spotifyTrackId: spotifyTrackId);
-        }
-        else
-        {
-            // Fallback to manual fetching if orchestrator not available
-            _logger.LogWarning("LyricsOrchestrator not available, using fallback method");
-
-            // Try Spotify lyrics ONLY if we have a valid Spotify track ID
-            if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
-            {
-                var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
-
-                if (cleanSpotifyId.Length == 22 && !cleanSpotifyId.Contains(":") && !cleanSpotifyId.Contains("local"))
-                {
-                    var spotifyLyrics = await _spotifyLyricsService.GetLyricsByTrackIdAsync(cleanSpotifyId);
-
-                    if (spotifyLyrics != null && spotifyLyrics.Lines.Count > 0)
-                    {
-                        lyrics = _spotifyLyricsService.ToLyricsInfo(spotifyLyrics);
-                    }
-                }
-            }
-
-            // Fall back to LyricsPlus
-            if (lyrics == null && _lyricsPlusService != null)
-            {
-                lyrics = await _lyricsPlusService.GetLyricsAsync(
-                    searchTitle,
-                    searchArtists.ToArray(),
-                    searchAlbum,
-                    song.Duration ?? 0);
-            }
-
-            // Fall back to LRCLIB
-            if (lyrics == null && _lrclibService != null)
-            {
-                lyrics = await _lrclibService.GetLyricsAsync(
-                    searchTitle,
-                    searchArtists.ToArray(),
-                    searchAlbum,
-                    song.Duration ?? 0);
-            }
-        }
+        var lyrics = await FetchLyricsInConfiguredOrderAsync(
+            song,
+            searchTitle,
+            searchArtists,
+            searchAlbum,
+            isExternal ? provider : null,
+            isExternal ? externalId : null,
+            spotifyTrackId);
 
         if (lyrics == null)
         {
@@ -264,6 +183,122 @@ public partial class JellyfinController
         var response = _lyricsProtocolAdapter.Shape(lyrics);
         _logger.LogDebug("Returning lyrics response: synced={IsSynced}", isSynced);
         return Content(response.Body, response.ContentType, System.Text.Encoding.UTF8);
+    }
+
+    private async Task<LyricsInfo?> FetchLyricsInConfiguredOrderAsync(
+        Song song,
+        string trackTitle,
+        IReadOnlyList<string> artistNames,
+        string albumTitle,
+        string? sourceProvider,
+        string? sourceExternalId,
+        string? spotifyTrackId)
+    {
+        var order = _providerGateway?.GetProviderOrder(ProviderCapabilityKind.Lyrics) ??
+                    (_configuration["Providers:LyricsOrder"] ??
+                     _configuration["MULTI_PROVIDER_LYRICS_ORDER"] ??
+                     "spotify,apple-download,lyricsplus,lrclib")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var configuredProvider in order.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var lyrics = await TryLyricsProviderAsync(
+                configuredProvider,
+                song,
+                trackTitle,
+                artistNames,
+                albumTitle,
+                sourceProvider,
+                sourceExternalId,
+                spotifyTrackId);
+            if (lyrics != null) return lyrics;
+        }
+        return null;
+    }
+
+    private async Task<LyricsInfo?> TryLyricsProviderAsync(
+        string configuredProvider,
+        Song song,
+        string trackTitle,
+        IReadOnlyList<string> artistNames,
+        string albumTitle,
+        string? sourceProvider,
+        string? sourceExternalId,
+        string? spotifyTrackId)
+    {
+        var providerId = configuredProvider.Trim().ToLowerInvariant();
+        try
+        {
+            if (providerId == "spotify")
+            {
+                if (_spotifyLyricsService == null || !_spotifyApiSettings.Enabled || string.IsNullOrWhiteSpace(spotifyTrackId))
+                    return null;
+                var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "", StringComparison.OrdinalIgnoreCase).Trim();
+                if (cleanSpotifyId.Length != 22 || cleanSpotifyId.Contains(':') || cleanSpotifyId.Contains("local", StringComparison.OrdinalIgnoreCase))
+                    return null;
+                var spotifyLyrics = await _spotifyLyricsService.GetLyricsByTrackIdAsync(cleanSpotifyId);
+                return spotifyLyrics is { Lines.Count: > 0 } ? _spotifyLyricsService.ToLyricsInfo(spotifyLyrics) : null;
+            }
+            if (providerId == "lyricsplus")
+                return _lyricsPlusService == null ? null : await _lyricsPlusService.GetLyricsAsync(
+                    trackTitle, artistNames.ToArray(), albumTitle, song.Duration ?? 0);
+            if (providerId == "lrclib")
+                return _lrclibService == null ? null : await _lrclibService.GetLyricsAsync(
+                    trackTitle, artistNames.ToArray(), albumTitle, song.Duration ?? 0);
+
+            if (_providerGateway == null || HttpContext.GetProtocolExecutionContext() is not { } protocol)
+                return null;
+
+            var compatibleExternalId = ResolveLyricsExternalId(
+                providerId, sourceProvider, sourceExternalId, spotifyTrackId);
+            if (string.IsNullOrWhiteSpace(compatibleExternalId))
+                compatibleExternalId = sourceExternalId ?? song.Id;
+            if (string.IsNullOrWhiteSpace(compatibleExternalId)) return null;
+
+            var providerLyrics = await _providerGateway.GetLyricsAsync(
+                protocol,
+                providerId,
+                compatibleExternalId,
+                ProviderLyricsFormat.LineTimed,
+                trackTitle,
+                artistNames,
+                albumTitle,
+                song.Duration);
+            if (string.IsNullOrWhiteSpace(providerLyrics?.Content)) return null;
+            return new LyricsInfo
+            {
+                TrackName = trackTitle,
+                ArtistName = string.Join(", ", artistNames),
+                AlbumName = albumTitle,
+                Duration = song.Duration ?? 0,
+                PlainLyrics = providerLyrics.Format == ProviderLyricsFormat.PlainText ? providerLyrics.Content : null,
+                SyncedLyrics = providerLyrics.Format != ProviderLyricsFormat.PlainText ? providerLyrics.Content : null
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception,
+                "Lyrics provider {Provider} failed for {Artist} - {Track}; continuing in configured order",
+                providerId, string.Join(", ", artistNames), trackTitle);
+            return null;
+        }
+    }
+
+    private static string? ResolveLyricsExternalId(
+        string providerId,
+        string? sourceProvider,
+        string? sourceExternalId,
+        string? spotifyTrackId)
+    {
+        if (providerId == "spotify") return spotifyTrackId;
+        if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
+        var sourceIsApple = sourceProvider is not null &&
+                            (sourceProvider.Equals("applemusic", StringComparison.OrdinalIgnoreCase) ||
+                             sourceProvider.Equals("apple-download", StringComparison.OrdinalIgnoreCase) ||
+                             sourceProvider.Equals("spotiflac-apple-music", StringComparison.OrdinalIgnoreCase));
+        return sourceIsApple && providerId is "apple-download" or "spotiflac-apple-music"
+            ? sourceExternalId
+            : null;
     }
 
     /// <summary>

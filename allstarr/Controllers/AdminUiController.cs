@@ -553,7 +553,7 @@ public class AdminUiController : ControllerBase
         Priority("playlist", "Playlist discovery priority", "MULTI_PROVIDER_PLAYLIST_ORDER", "MULTI_PROVIDER_ENABLED_PLAYLIST",
             "spotify,deezer,qobuz"),
         Priority("lyrics", "Lyrics priority", "MULTI_PROVIDER_LYRICS_ORDER", null,
-            "spotify,lyricsplus,lrclib")
+            "spotify,apple-download,lyricsplus,lrclib")
     ];
 
     private AdminUiPriorityGroup Priority(
@@ -564,17 +564,25 @@ public class AdminUiController : ControllerBase
         string fallback)
     {
         var value = _configuration[envKey] ?? fallback;
+        var providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.ToLowerInvariant())
+            .Where(p => id == "metadata" || p != "squidwtf")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (_providerRegistry != null && Enum.TryParse<ProviderCapabilityKind>(id, true, out var capability))
+        {
+            providers.AddRange(_providerRegistry.FindByCapability(capability, includeNonOperational: true)
+                .Select(provider => provider.Id)
+                .Where(providerId => !providers.Contains(providerId, StringComparer.OrdinalIgnoreCase))
+                .OrderBy(providerId => providerId, StringComparer.Ordinal));
+        }
         return new AdminUiPriorityGroup
         {
             Id = id,
             Label = label,
             EnvKey = envKey,
             EnabledEnvKey = enabledEnvKey,
-            Providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(p => p.ToLowerInvariant())
-                .Where(p => id == "metadata" || p != "squidwtf")
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList()
+            Providers = providers
         };
     }
 

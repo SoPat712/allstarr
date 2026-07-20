@@ -162,7 +162,9 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         }
     }
 
-    public static ProviderRegistration CreateRegistration(AppleDownloadCapabilityAdapter adapter) => new(
+    public static ProviderRegistration CreateRegistration(
+        AppleDownloadCapabilityAdapter adapter,
+        AppleDownloadLyricsCapabilityAdapter? lyrics = null) => new(
         new ProviderDescriptor(
             StableProviderId,
             "Apple download",
@@ -180,10 +182,18 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
                     ProviderAccountRequirement.None,
                     compatibilityVersion: "1",
                     hooks: ["checkAvailability", "download"]),
+                lyrics == null
+                    ? ConfiguredLane(ProviderCapabilityKind.Lyrics)
+                    : new ProviderCapabilityDescriptor(
+                        ProviderCapabilityKind.Lyrics,
+                        ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None,
+                        compatibilityVersion: "1",
+                        hooks: ["fetchLyrics"]),
                 ConfiguredLane(ProviderCapabilityKind.Health)
             ],
             permissions: new ProviderPermissionDescriptor()),
-        [adapter]);
+        lyrics == null ? [adapter] : [adapter, lyrics]);
 
     private static ProviderCapabilityDescriptor ConfiguredLane(ProviderCapabilityKind capability) => new(
         capability,

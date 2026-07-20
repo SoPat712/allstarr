@@ -181,7 +181,17 @@ public sealed class ExtensionLyricsCapabilityAdapter : ExtensionCapabilityAdapte
     public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request)
     {
         context.RequireResourceOwner(request.ProviderTrackId, ProviderResourceKind.Track);
-        return InvokeAsync(context, "fetchLyrics", new { request.CanonicalRecordingId, providerTrackId = request.ProviderTrackId.Value, request.AvailabilityOnly, preferredFormat = request.PreferredFormat?.ToString() }, value =>
+        return InvokeAsync(context, "fetchLyrics", new
+        {
+            request.CanonicalRecordingId,
+            providerTrackId = request.ProviderTrackId.Value,
+            request.AvailabilityOnly,
+            preferredFormat = request.PreferredFormat?.ToString(),
+            request.TrackTitle,
+            request.ArtistNames,
+            request.AlbumTitle,
+            request.DurationSeconds
+        }, value =>
             new ProviderLyricsResult(EnumValue<ProviderLyricsAvailabilityState>(value, "availability"), Text(value, "source"),
                 value.TryGetProperty("format", out var format) && format.ValueKind == JsonValueKind.String ? Enum.Parse<ProviderLyricsFormat>(format.GetString()!, true) : null,
                 OptionalText(value, "content"), OptionalText(value, "revision")));

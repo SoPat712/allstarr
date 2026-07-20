@@ -26,6 +26,7 @@ CAPABILITIES = (
     "metadata-song",
     "stream-audio-song",
     "download-audio-song",
+    "synced-lyrics-artifact",
     "codec-alac",
     "codec-aac",
 )
@@ -169,6 +170,14 @@ def create_app(
         root = config.data_root / "artifacts" / request_id
         try:
             artifacts = await process_runner.download(url, _codec(quality), root / "output", root / "temporary")
+            lyrics = safe_files(root / "output", {".lrc"})
+            if lyrics:
+                lyrics_root = config.data_root / "lyrics"
+                lyrics_root.mkdir(exist_ok=True, mode=0o750)
+                target = lyrics_root / f"{song_id}.lrc"
+                partial = lyrics_root / f"{song_id}.lrc.partial"
+                shutil.copyfile(lyrics[0], partial)
+                partial.replace(target)
             audio = safe_files(root / "output", {".m4a", ".flac"})
             if not audio:
                 raise ProcessFailure("audio_artifact_missing")
@@ -209,6 +218,26 @@ def create_app(
             headers={"Content-Disposition": f'inline; filename="{song_id}.flac"'},
             background=BackgroundTask(shutil.rmtree, root, ignore_errors=True),
         )
+
+    @application.get("/api/lyrics/{song_id}")
+    async def lyrics_song(song_id: str) -> dict[str, str]:
+        try:
+            song_url(config.storefront, song_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_song_id") from None
+        cached = config.data_root / "lyrics" / f"{song_id}.lrc"
+        if not cached.is_file():
+            root, _ = await prepare_song(song_id, "alac-16-44")
+            shutil.rmtree(root, ignore_errors=True)
+        if not cached.is_file():
+            raise HTTPException(status_code=404, detail="lyrics_not_found")
+        try:
+            content = cached.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise HTTPException(status_code=502, detail="lyrics_unreadable") from None
+        if not content.strip():
+            raise HTTPException(status_code=404, detail="lyrics_not_found")
+        return {"source": "GAMDL", "format": "LineTimed", "content": content}
 
     @application.post("/api/jobs/download", status_code=202, response_model=DownloadJobView)
     async def enqueue_download(request: DownloadJobRequest) -> DownloadJobView:

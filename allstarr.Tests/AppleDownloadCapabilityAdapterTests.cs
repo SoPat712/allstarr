@@ -119,6 +119,29 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(ProviderDownloadAvailabilityState.Unavailable, outcome.RequireValue().State);
     }
 
+    [Fact]
+    public async Task Lyrics_ReturnsTimedGamdlArtifactWhenGatewayAdvertisesIt()
+    {
+        var gateway = new GatewayHandler([], "audio/flac") { AdvertiseLyrics = true };
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        var client = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(
+            new StaticClientFactory(client), Options.Create(settings));
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery);
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var track = new ProviderExternalResourceId(
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "103");
+
+        var outcome = await adapter.FetchLyricsAsync(Context(tenant, user), new(
+            Guid.CreateVersion7(), track, preferredFormat: ProviderLyricsFormat.LineTimed));
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+        Assert.Equal("GAMDL", outcome.Value!.Source);
+        Assert.Equal(ProviderLyricsFormat.LineTimed, outcome.Value.Format);
+        Assert.Equal("[00:01.00]Fixture lyrics\n", outcome.Value.Content);
+    }
+
     private static ProviderExecutionContext Context(Guid tenant, Guid user) => new(
         new ProviderActorContext(tenant, ProviderActorKind.User, user,
             new ProviderBackendPrincipal("jellyfin", "primary", "user")),
@@ -151,6 +174,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     private sealed class GatewayHandler(byte[] audio, string contentType) : HttpMessageHandler
     {
         public bool AdvertiseDownload { get; init; } = true;
+        public bool AdvertiseLyrics { get; init; }
         public List<Uri> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -165,11 +189,14 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
                       {"id":"metadata-song","state":"supported"},
                       {"id":"stream-audio-song","state":"supported"}
                       {{(AdvertiseDownload ? ",{\"id\":\"download-audio-song\",\"state\":\"supported\"}" : string.Empty)}}
+                      {{(AdvertiseLyrics ? ",{\"id\":\"synced-lyrics-artifact\",\"state\":\"supported\"}" : string.Empty)}}
                     ]}
                     """),
                 "/api/health" => Json("{\"staged\":true,\"daemon_running\":true,\"wrapper_healthy\":true,\"logged_in\":true}"),
                 "/api/me" => Json("{\"authenticated\":true}"),
                 _ when path.StartsWith("/api/download/", StringComparison.Ordinal) => Audio(),
+                _ when path.StartsWith("/api/lyrics/", StringComparison.Ordinal) => Json(
+                    "{\"source\":\"GAMDL\",\"format\":\"LineTimed\",\"content\":\"[00:01.00]Fixture lyrics\\n\"}"),
                 _ => new(HttpStatusCode.NotFound)
             };
             response.RequestMessage = request;

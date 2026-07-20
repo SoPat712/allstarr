@@ -140,7 +140,9 @@ public sealed class AppleDownloadEndpointDiscoveryTests
         Assert.Equal(AppleDownloadEndpointState.Available, snapshot.State);
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability("download-audio-song").State);
-        foreach (var feature in new[] { "download-album", "stream-music-video", "synced-lyrics-artifact" })
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability("synced-lyrics-artifact").State);
+        foreach (var feature in new[] { "download-album", "stream-music-video" })
         {
             var capability = snapshot.Capability(feature);
             Assert.Equal(AppleDownloadCapabilityState.Unsupported, capability.State);

@@ -16,6 +16,8 @@ namespace allstarr.Core.Protocols;
 /// </summary>
 public interface IProtocolProviderGateway
 {
+    IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability);
+
     Task<SearchResult> SearchAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -55,7 +57,11 @@ public interface IProtocolProviderGateway
         ProtocolExecutionContext protocol,
         string providerId,
         string externalId,
-        ProviderLyricsFormat? preferredFormat = null);
+        ProviderLyricsFormat? preferredFormat = null,
+        string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null,
+        string? albumTitle = null,
+        int? durationSeconds = null);
 }
 
 public sealed record ProtocolProviderStream(HttpResponseMessage Response, ProviderStreamLease Lease);
@@ -69,6 +75,9 @@ public sealed class ProtocolProviderGateway(
     IConfiguration? configuration = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
+
+    public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
+        ResolveProviderOrder(capability);
 
     public async Task<SearchResult> SearchAsync(
         ProtocolExecutionContext protocol,
@@ -368,7 +377,11 @@ public sealed class ProtocolProviderGateway(
         ProtocolExecutionContext protocol,
         string providerId,
         string externalId,
-        ProviderLyricsFormat? preferredFormat = null)
+        ProviderLyricsFormat? preferredFormat = null,
+        string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null,
+        string? albumTitle = null,
+        int? durationSeconds = null)
     {
         var trackId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
         var routed = await PlanExactAsync<IProviderLyricsCapability>(
@@ -382,7 +395,14 @@ public sealed class ProtocolProviderGateway(
         var canonicalId = new Guid(canonicalBytes.AsSpan(0, 16));
         var outcome = await routed.Candidate.Implementation.FetchLyricsAsync(
             routed.Candidate.Context,
-            new ProviderLyricsRequest(canonicalId, routed.Candidate.TrackId ?? trackId, preferredFormat: preferredFormat));
+            new ProviderLyricsRequest(
+                canonicalId,
+                routed.Candidate.TrackId ?? trackId,
+                preferredFormat: preferredFormat,
+                trackTitle: trackTitle,
+                artistNames: artistNames,
+                albumTitle: albumTitle,
+                durationSeconds: durationSeconds));
         if (outcome.IsSuccess)
         {
             var result = outcome.RequireValue();
