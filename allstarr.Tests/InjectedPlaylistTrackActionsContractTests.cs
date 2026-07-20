@@ -123,6 +123,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Match decisions", script, StringComparison.Ordinal);
         Assert.Contains("Cache and downloads", script, StringComparison.Ordinal);
         Assert.Contains("Track activity", script, StringComparison.Ordinal);
+        Assert.Contains("track-details-dialog redesigned-dialog", script, StringComparison.Ordinal);
+        Assert.Contains("track-details-scroll", script, StringComparison.Ordinal);
         Assert.Contains(".track-details-dialog", styles, StringComparison.Ordinal);
         Assert.Contains("z-index: 1020", styles, StringComparison.Ordinal);
     }

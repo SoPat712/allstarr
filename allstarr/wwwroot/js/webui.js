@@ -2987,7 +2987,7 @@ class AllstarrApp extends LitElement {
     const lastCached = details?.cache?.lastAudioCachedAt || details?.cache?.lastMetadataCachedAt;
     return html`<div class="modal-backdrop track-details-backdrop" @click=${(event) => { event.stopPropagation(); if (event.target === event.currentTarget) close(); }}
       @keydown=${(event) => { event.stopPropagation(); this.handleDialogKeydown(event, close); }}>
-      <section class="panel track-details-dialog" role="dialog" aria-modal="true" aria-labelledby="track-details-title" tabindex="-1" data-testid="track-details-dialog">
+      <section class="panel track-details-dialog redesigned-dialog" role="dialog" aria-modal="true" aria-labelledby="track-details-title" tabindex="-1" data-testid="track-details-dialog">
         <header class="track-details-hero">
           <img src=${metadata.artworkUrl || context.albumArtUrl || "/placeholder.png"} alt="">
           <div><span class="eyebrow">Track mapping</span><h3 id="track-details-title">${display(title)}</h3><p>${display(artist)}${(metadata.album || context.album) ? ` · ${metadata.album || context.album}` : ""}</p>
@@ -2995,8 +2995,9 @@ class AllstarrApp extends LitElement {
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close track mapping details">${icon("close")}</button>
         </header>
+        <div class="track-details-scroll">
         ${this.trackDetailsLoading ? html`<div class="empty">Loading mapping history…</div>` : details ? html`
-          <div class="track-detail-stat-strip">
+          <div class="track-detail-stat-strip" aria-label="Track mapping summary">
             <div><small>Current route</small><strong>${context.isLocal === true ? `${titleCase(this.status?.backendType || "Jellyfin")} · materialized` : legacy ? `${titleCase(legacy.targetType)} · ${titleCase(legacy.source)}` : details.found ? "Durable mapping" : "Unmatched"}</strong></div>
             <div><small>First mapped</small><strong>${details.firstMappedAt ? formatDate(details.firstMappedAt) : "Not recorded"}</strong></div>
             <div><small>Last mapped</small><strong>${details.lastMappedAt ? formatRelativeTime(details.lastMappedAt) : "Not recorded"}</strong></div>
@@ -3023,6 +3024,7 @@ class AllstarrApp extends LitElement {
             </section>
           </div>
         ` : html`<div class="empty">Mapping history could not be loaded.</div>`}
+        </div>
       </section>
     </div>`;
   }

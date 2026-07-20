@@ -316,14 +316,14 @@
     }
 
     .track-details-hero {
-        grid-template-columns: 56px minmax(0, 1fr) 40px;
+        grid-template-columns: 64px minmax(0, 1fr) 40px;
         gap: 12px;
         padding: 16px;
     }
 
     .track-details-hero > img {
-        width: 56px;
-        height: 56px;
+        width: 64px;
+        height: 64px;
     }
 
     .track-detail-stat-strip {
@@ -340,6 +340,11 @@
 
     .track-details-grid {
         grid-template-columns: minmax(0, 1fr);
+        padding-inline: 16px;
+    }
+
+    .track-detail-section:nth-child(odd) {
+        border-right: 0;
     }
 
     .modal-backdrop {

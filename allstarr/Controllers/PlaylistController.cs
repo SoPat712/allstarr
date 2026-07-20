@@ -32,6 +32,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
+    private const int PlaylistSummarySchemaVersion = 3;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -86,7 +87,9 @@ public class PlaylistController : ControllerBase
                             .Where(name => !string.IsNullOrWhiteSpace(name))
                             .ToHashSet(StringComparer.OrdinalIgnoreCase)
                         : [];
-                    var currentSummaryShape = cachedPlaylists.ValueKind == JsonValueKind.Array &&
+                    var currentSummaryShape = cachedDocument.RootElement.TryGetProperty("schemaVersion", out var cachedSchemaVersion) &&
+                                              cachedSchemaVersion.GetInt32() == PlaylistSummarySchemaVersion &&
+                                              cachedPlaylists.ValueKind == JsonValueKind.Array &&
                                               cachedPlaylists.EnumerateArray().All(item =>
                                                   item.TryGetProperty("artworkUrl", out _) &&
                                                   item.TryGetProperty("artworkSource", out _) &&
@@ -831,7 +834,7 @@ public class PlaylistController : ControllerBase
             Directory.CreateDirectory(cacheDir);
             var cacheFile = Path.Combine(cacheDir, "admin_playlists_summary.json");
 
-            var response = new { playlists };
+            var response = new { schemaVersion = PlaylistSummarySchemaVersion, playlists };
             var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = false });
             await System.IO.File.WriteAllTextAsync(cacheFile, json);
 
@@ -842,7 +845,7 @@ public class PlaylistController : ControllerBase
             _logger.LogError(ex, "Failed to save playlist summary cache");
         }
 
-        return Ok(new { playlists });
+        return Ok(new { schemaVersion = PlaylistSummarySchemaVersion, playlists });
     }
 
     private static void ApplyPlaylistStats(

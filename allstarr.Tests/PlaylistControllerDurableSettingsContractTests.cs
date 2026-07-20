@@ -29,6 +29,8 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.Contains("[\"nextSyncAt\"]", Source, StringComparison.Ordinal);
         Assert.Contains("MatchMaterializedItems(playlistMetadata.Tracks, materializedItems)", Source, StringComparison.Ordinal);
         Assert.Contains("currentSummaryShape", Source, StringComparison.Ordinal);
+        Assert.Contains("PlaylistSummarySchemaVersion", Source, StringComparison.Ordinal);
+        Assert.Contains("schemaVersion = PlaylistSummarySchemaVersion", Source, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] parts)
