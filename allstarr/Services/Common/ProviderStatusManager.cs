@@ -122,6 +122,17 @@ public class ProviderStatusManager
             .ToList();
     }
 
+    /// <summary>
+    /// Returns providers in the exact order used when selecting a playable route.
+    /// A provider that can both stream and download appears only once, at its
+    /// first configured position.
+    /// </summary>
+    public IReadOnlyList<string> GetEnabledPlaybackProviders() =>
+        GetEnabledStreamingProviders()
+            .Concat(GetEnabledDownloadProviders())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     public IReadOnlyList<string> GetEnabledLyricsProviders()
     {
         return GetLyricsOrder()

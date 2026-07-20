@@ -2805,6 +2805,10 @@ fieldset.form-row > label small {
     position: relative;
 }
 
+.track-action-menu:has(.track-action-popover) {
+    z-index: 30;
+}
+
 .track-action-trigger {
     display: inline-grid;
     place-items: center;
@@ -2831,7 +2835,7 @@ fieldset.form-row > label small {
     position: absolute;
     top: calc(100% + var(--space-1));
     right: 0;
-    z-index: 5;
+    z-index: 30;
     display: grid;
     width: min(220px, 75vw);
     border: 1px solid var(--border-strong);
@@ -4583,7 +4587,8 @@ button.setup-choice {
 
 .status-chip.synced { color: var(--success); background: color-mix(in srgb, var(--success), transparent 86%); border-color: color-mix(in srgb, var(--success), transparent 58%); }
 .status-chip.partial { color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 86%); border-color: color-mix(in srgb, var(--warning), transparent 58%); }
-.status-chip.needs_attention { color: var(--error); background: color-mix(in srgb, var(--error), transparent 88%); border-color: color-mix(in srgb, var(--error), transparent 58%); }
+.status-chip.needs_attention,
+.status-chip.needs_matching { color: var(--error); background: color-mix(in srgb, var(--error), transparent 88%); border-color: color-mix(in srgb, var(--error), transparent 58%); }
 
 .table-pagination {
     display: flex;

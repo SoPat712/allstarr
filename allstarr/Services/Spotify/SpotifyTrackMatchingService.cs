@@ -552,6 +552,14 @@ public class SpotifyTrackMatchingService : BackgroundService
             return;
         }
 
+        // Persist source identities even when no playable route is found. This
+        // makes imported v2 playlists fully inspectable in the Postgres graph.
+        var legacyProjector = _serviceProvider.GetService<LegacySpotifyMappingProjector>();
+        if (legacyProjector != null)
+        {
+            await legacyProjector.ProjectSourceTracksAsync(spotifyTracks, cancellationToken);
+        }
+
         // Get the Jellyfin playlist ID to check which tracks already exist
         var playlistConfig = _spotifySettings.Playlists
             .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
@@ -772,7 +780,6 @@ public class SpotifyTrackMatchingService : BackgroundService
             jellyfinTracks.Count, spotifyTracks.Count);
 
         var localMatches = new Dictionary<string, (Song JellyfinTrack, SpotifyPlaylistTrack SpotifyTrack, double Score)>();
-        var usedJellyfinIds = new HashSet<string>();
         var usedSpotifyIds = new HashSet<string>();
 
         // Build all possible matches with scores
@@ -782,8 +789,7 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             foreach (var spotifyTrack in spotifyTracks)
             {
-                var score = CalculateMatchScore(jellyfinTrack.Title, jellyfinTrack.Artist,
-                    spotifyTrack.Title, spotifyTrack.PrimaryArtist);
+                var score = CalculateLocalMatchScore(jellyfinTrack, spotifyTrack);
 
                 if (score >= 70) // Only consider good matches
                 {
@@ -792,14 +798,17 @@ public class SpotifyTrackMatchingService : BackgroundService
             }
         }
 
-        // Greedy assignment: best matches first
-        foreach (var (jellyfinTrack, spotifyTrack, score) in allLocalCandidates.OrderByDescending(c => c.Score))
+        // Pick the best local route independently for every source entry. A source
+        // playlist may contain the same recording more than once, and Jellyfin can
+        // materialize the same library item at each of those positions.
+        foreach (var (jellyfinTrack, spotifyTrack, score) in allLocalCandidates
+                     .GroupBy(candidate => candidate.SpotifyTrack.SpotifyId, StringComparer.OrdinalIgnoreCase)
+                     .Select(group => group.OrderByDescending(candidate => candidate.Score).First())
+                     .OrderBy(candidate => candidate.SpotifyTrack.Position))
         {
-            if (usedJellyfinIds.Contains(jellyfinTrack.Id)) continue;
             if (usedSpotifyIds.Contains(spotifyTrack.SpotifyId)) continue;
 
             localMatches[spotifyTrack.SpotifyId] = (jellyfinTrack, spotifyTrack, score);
-            usedJellyfinIds.Add(jellyfinTrack.Id);
             usedSpotifyIds.Add(spotifyTrack.SpotifyId);
 
             // Save local mapping
@@ -936,8 +945,11 @@ public class SpotifyTrackMatchingService : BackgroundService
 
                     foreach (var (song, score) in fuzzySongs)
                     {
-                        if (!song.IsLocal &&
-                            ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id))
+                        if (song.IsLocal)
+                        {
+                            candidates.Add((song, score, "fuzzy-local-library"));
+                        }
+                        else if (ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id))
                         {
                             candidates.Add((song, score, "fuzzy-external"));
                         }
@@ -1010,18 +1022,52 @@ public class SpotifyTrackMatchingService : BackgroundService
             }
         }
 
-        // PHASE 4: Greedy assignment for external matches
-        var usedSongIds = new HashSet<string>();
+        // PHASE 4: Prefer the complete local music library, then select the first
+        // acceptable external route in configured provider order. Repeated playlist
+        // entries may intentionally reuse the same local or provider track.
         var externalAssignments = new Dictionary<string, (Song Song, double Score, string MatchType)>();
 
-        foreach (var (spotifyTrack, song, score, matchType) in allCandidates.OrderByDescending(c => c.Score))
+        foreach (var candidate in allCandidates
+                     .Where(candidate => candidate.MatchedSong.IsLocal)
+                     .GroupBy(candidate => candidate.SpotifyTrack.SpotifyId, StringComparer.OrdinalIgnoreCase)
+                     .Select(group => group.OrderByDescending(candidate => candidate.Score).First()))
         {
+            if (localMatches.ContainsKey(candidate.SpotifyTrack.SpotifyId)) continue;
+
+            localMatches[candidate.SpotifyTrack.SpotifyId] =
+                (candidate.MatchedSong, candidate.SpotifyTrack, candidate.Score);
+            await _mappingService.SaveLocalMappingAsync(
+                candidate.SpotifyTrack.SpotifyId,
+                candidate.MatchedSong.Id,
+                new TrackMetadata
+                {
+                    Title = candidate.SpotifyTrack.Title,
+                    Artist = candidate.SpotifyTrack.PrimaryArtist,
+                    Album = candidate.SpotifyTrack.Album,
+                    ArtworkUrl = candidate.SpotifyTrack.AlbumArtUrl,
+                    DurationMs = candidate.SpotifyTrack.DurationMs
+                });
+        }
+
+        var playbackProviderOrder = _serviceProvider
+            .GetRequiredService<ProviderStatusManager>()
+            .GetEnabledPlaybackProviders();
+        var playbackProviderRanks = playbackProviderOrder
+            .Select((provider, index) => (provider, index))
+            .ToDictionary(item => item.provider, item => item.index, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (spotifyTrack, song, score, matchType) in allCandidates
+                     .Where(candidate => !candidate.MatchedSong.IsLocal)
+                     .OrderBy(candidate => playbackProviderRanks.TryGetValue(
+                         candidate.MatchedSong.ExternalProvider ?? string.Empty,
+                         out var rank) ? rank : int.MaxValue)
+                     .ThenByDescending(candidate => candidate.Score))
+        {
+            if (localMatches.ContainsKey(spotifyTrack.SpotifyId)) continue;
             if (externalAssignments.ContainsKey(spotifyTrack.SpotifyId)) continue;
-            if (usedSongIds.Contains(song.Id)) continue;
             if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id)) continue;
 
             externalAssignments[spotifyTrack.SpotifyId] = (song, score, matchType);
-            usedSongIds.Add(song.Id);
 
             // Save external mapping
             var metadata = new TrackMetadata
@@ -1187,22 +1233,45 @@ public class SpotifyTrackMatchingService : BackgroundService
         {
             try
             {
-                // Search Jellyfin for local tracks
-                var searchParams = new Dictionary<string, string>
+                // Jellyfin's SearchTerm tokenization can miss punctuation variants (for
+                // example curly vs straight apostrophes) and can become too restrictive
+                // when title and artist are combined. Search title variants first and
+                // score the union locally; all queries remain Audio-only.
+                var localItems = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+                foreach (var searchTerm in new[] { title, titleStripped, query }
+                             .Where(term => !string.IsNullOrWhiteSpace(term))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    ["searchTerm"] = query,
-                    ["includeItemTypes"] = "Audio",
-                    ["recursive"] = "true",
-                    ["limit"] = "10"
-                };
-
-                var (searchResponse, _) = await proxyService.GetJsonAsyncInternal("Items", searchParams);
-
-                if (searchResponse != null && searchResponse.RootElement.TryGetProperty("Items", out var items))
-                {
-                    var localResults = new List<Song>();
-                    foreach (var item in items.EnumerateArray())
+                    var searchParams = new Dictionary<string, string>
                     {
+                        ["searchTerm"] = searchTerm,
+                        ["includeItemTypes"] = "Audio",
+                        ["recursive"] = "true",
+                        ["limit"] = "25",
+                        ["fields"] = CachedPlaylistItemFields
+                    };
+                    var (searchResponse, _) = await proxyService.GetJsonAsyncInternal("Items", searchParams);
+                    if (searchResponse == null ||
+                        !searchResponse.RootElement.TryGetProperty("Items", out var searchItems)) continue;
+                    foreach (var item in searchItems.EnumerateArray())
+                    {
+                        if (!item.TryGetProperty("Id", out var idElement)) continue;
+                        var itemId = idElement.GetString();
+                        if (!string.IsNullOrWhiteSpace(itemId)) localItems[itemId] = item.Clone();
+                    }
+                }
+
+                if (localItems.Count > 0)
+                {
+                    var jellyfinModelMapper = scope.ServiceProvider.GetService<JellyfinModelMapper>();
+                    var localResults = new List<Song>();
+                    foreach (var item in localItems.Values)
+                    {
+                        if (jellyfinModelMapper != null)
+                        {
+                            localResults.Add(jellyfinModelMapper.ParseSong(item));
+                            continue;
+                        }
                         var id = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
                         var songTitle = item.TryGetProperty("Name", out var nameEl) ? nameEl.GetString() ?? "" : "";
                         var artist = "";
@@ -1303,11 +1372,21 @@ public class SpotifyTrackMatchingService : BackgroundService
         return allCandidates;
     }
 
-    private double CalculateMatchScore(string jellyfinTitle, string jellyfinArtist, string spotifyTitle, string spotifyArtist)
+    private static double CalculateLocalMatchScore(Song jellyfinTrack, SpotifyPlaylistTrack spotifyTrack)
     {
-        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(spotifyTitle, jellyfinTitle);
-        var artistScore = FuzzyMatcher.CalculateSimilarity(spotifyArtist, jellyfinArtist);
-        return (titleScore * 0.7) + (artistScore * 0.3);
+        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(spotifyTrack.Title, jellyfinTrack.Title);
+        var artistScore = FuzzyMatcher.CalculateArtistMatchScore(
+            spotifyTrack.Artists,
+            jellyfinTrack.Artist,
+            jellyfinTrack.Artists.Concat(jellyfinTrack.Contributors).ToList());
+        var albumScore = string.IsNullOrWhiteSpace(spotifyTrack.Album) || string.IsNullOrWhiteSpace(jellyfinTrack.Album)
+            ? 50
+            : FuzzyMatcher.CalculateSimilarityAggressive(spotifyTrack.Album, jellyfinTrack.Album);
+        var durationScore = jellyfinTrack.Duration is > 0 && spotifyTrack.DurationMs > 0
+            ? Math.Max(0, 100 - (Math.Abs((jellyfinTrack.Duration.Value * 1000L) - spotifyTrack.DurationMs) / 100.0))
+            : 50;
+
+        return (titleScore * 0.55) + (artistScore * 0.30) + (albumScore * 0.10) + (durationScore * 0.05);
     }
 
     /// <summary>

@@ -231,7 +231,12 @@ public partial class JellyfinController
         {
             if (providerId == "spotify")
             {
-                if (_spotifyLyricsService == null || !_spotifyApiSettings.Enabled || string.IsNullOrWhiteSpace(spotifyTrackId))
+                // The Spotify lyrics sidecar is independent of direct Spotify API
+                // playlist mode. A configured sidecar remains a valid fallback for
+                // Apple Music, local, and other provider tracks with a Spotify identity.
+                if (_spotifyLyricsService == null ||
+                    string.IsNullOrWhiteSpace(_spotifyApiSettings.LyricsApiUrl) ||
+                    string.IsNullOrWhiteSpace(spotifyTrackId))
                     return null;
                 var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "", StringComparison.OrdinalIgnoreCase).Trim();
                 if (cleanSpotifyId.Length != 22 || cleanSpotifyId.Contains(':') || cleanSpotifyId.Contains("local", StringComparison.OrdinalIgnoreCase))
@@ -407,7 +412,9 @@ public partial class JellyfinController
             _logger.LogWarning("LyricsOrchestrator not available for prefetch, using fallback method");
 
             // Try Spotify lyrics if we have a valid Spotify track ID
-            if (_spotifyLyricsService != null && _spotifyApiSettings.Enabled && !string.IsNullOrEmpty(spotifyTrackId))
+            if (_spotifyLyricsService != null &&
+                !string.IsNullOrWhiteSpace(_spotifyApiSettings.LyricsApiUrl) &&
+                !string.IsNullOrEmpty(spotifyTrackId))
             {
                 var cleanSpotifyId = spotifyTrackId.Replace("spotify:track:", "").Trim();
 

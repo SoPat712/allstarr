@@ -158,11 +158,11 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("backendItemId", script, StringComparison.Ordinal);
         Assert.Contains("Open mapping details for", script, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"track-details-dialog\"", script, StringComparison.Ordinal);
-        Assert.Contains("Identifiers and destinations", script, StringComparison.Ordinal);
-        Assert.Contains("Match decisions", script, StringComparison.Ordinal);
-        Assert.Contains("Recorded routing decisions", script, StringComparison.Ordinal);
-        Assert.Contains("Cache and downloads", script, StringComparison.Ordinal);
-        Assert.Contains("Track activity", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Playback</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Identifiers</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Match history</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("<h4>Activity</h4>", script, StringComparison.Ordinal);
+        Assert.Contains("compact-track-details", script, StringComparison.Ordinal);
         Assert.Contains("track-details-dialog redesigned-dialog", script, StringComparison.Ordinal);
         Assert.Contains("track-details-scroll", script, StringComparison.Ordinal);
         Assert.Contains(".track-details-dialog", styles, StringComparison.Ordinal);

@@ -2801,7 +2801,7 @@ class AllstarrApp extends LitElement {
       </div>
       <div class="playlist-toolbar">
         <label class="search-control">${icon("search")}<input aria-label="Search playlists" placeholder="Search playlists…" .value=${this.injectedSearch} @input=${(event) => { this.injectedSearch = event.target.value; this.injectedPage = 1; }}></label>
-        <select aria-label="Filter by status" .value=${this.injectedStatusFilter} @change=${(event) => { this.injectedStatusFilter = event.target.value; this.injectedPage = 1; }}><option value="">All statuses</option><option value="synced">Synced</option><option value="partial">Partial</option><option value="needs_attention">Needs attention</option><option value="pending">Pending</option></select>
+        <select aria-label="Filter by status" .value=${this.injectedStatusFilter} @change=${(event) => { this.injectedStatusFilter = event.target.value; this.injectedPage = 1; }}><option value="">All statuses</option><option value="synced">Synced</option><option value="partial">Partial</option><option value="needs_matching">Needs matching</option><option value="pending">Pending</option></select>
         <select aria-label="Filter by schedule" .value=${this.injectedScheduleFilter} @change=${(event) => { this.injectedScheduleFilter = event.target.value; this.injectedPage = 1; }}><option value="">All schedules</option><option value="scheduled">Scheduled</option><option value="manual">Manual</option></select>
       </div>
       ${this.renderInjectedPlaylistDetails()}
@@ -2811,7 +2811,7 @@ class AllstarrApp extends LitElement {
           const matched = Number(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0));
           const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
           const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
-          const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matchPercent >= 50 ? "partial" : "needs_attention");
+          const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matched === 0 ? "needs_matching" : "partial");
           const openRow = (event) => {
             if (event.target.closest("button, input, details, summary, a, select")) return;
             this.openInjectedPlaylist(playlist.name);
@@ -2997,7 +2997,7 @@ class AllstarrApp extends LitElement {
       <section class="panel track-details-dialog redesigned-dialog" role="dialog" aria-modal="true" aria-labelledby="track-details-title" tabindex="-1" data-testid="track-details-dialog">
         <header class="track-details-hero">
           <img src=${metadata.artworkUrl || context.albumArtUrl || "/placeholder.png"} alt="">
-          <div><span class="eyebrow">Track mapping</span><h3 id="track-details-title">${display(title)}</h3><p>${display(artist)}${(metadata.album || context.album) ? ` · ${metadata.album || context.album}` : ""}</p>
+          <div><span class="eyebrow">Track details</span><h3 id="track-details-title">${display(title)}</h3><p>${display(artist)}${(metadata.album || context.album) ? ` · ${metadata.album || context.album}` : ""}</p>
             <div class="track-detail-badges"><span class="chip">${durationMs ? formatDuration(durationMs / 1000) : "Duration unavailable"}</span><span class="chip mono">Spotify ${display(context.spotifyId)}</span></div>
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close track mapping details">${icon("close")}</button>
@@ -3005,29 +3005,30 @@ class AllstarrApp extends LitElement {
         <div class="track-details-scroll">
         ${this.trackDetailsLoading ? html`<div class="empty">Loading mapping history…</div>` : details ? html`
           <div class="track-detail-stat-strip" aria-label="Track mapping summary">
-            <div><small>Current route</small><strong>${context.isLocal === true ? `${titleCase(this.status?.backendType || "Jellyfin")} · materialized` : legacy ? `${titleCase(legacy.targetType)} · ${titleCase(legacy.source)}` : details.found ? "Durable mapping" : "Unmatched"}</strong></div>
-            <div><small>First mapped</small><strong>${details.firstMappedAt ? formatDate(details.firstMappedAt) : "Not recorded"}</strong></div>
-            <div><small>Last mapped</small><strong>${details.lastMappedAt ? formatRelativeTime(details.lastMappedAt) : "Not recorded"}</strong></div>
-            <div><small>Last cached</small><strong>${lastCached ? formatRelativeTime(lastCached) : "Not cached"}</strong></div>
+            <div><small>Playback</small><strong>${context.isLocal === true ? titleCase(this.status?.backendType || "Jellyfin") : context.isLocal === false ? providerDisplayName(context.externalProvider, this.schema?.providers) : "Not matched"}</strong></div>
+            <div><small>Mapped</small><strong>${details.lastMappedAt ? formatRelativeTime(details.lastMappedAt) : "Not yet"}</strong></div>
+            <div><small>Cached</small><strong>${lastCached ? formatRelativeTime(lastCached) : "No"}</strong></div>
           </div>
-          <div class="track-details-grid">
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Identifiers and destinations</h4><p>Every known provider identity and local media item for this recording.</p></div></div>
+          <div class="track-details-grid compact-track-details">
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Playback</h4></div></div>
               <div class="track-identity-list">
-                ${context.isLocal === true && materializedBackendItemId ? html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>${display(context.title)} · <span class="mono">${materializedBackendItemId}</span></strong><small>Present in the materialized playlist${localTracks.length ? " · linked to the durable library index" : " · durable library indexing is pending"}</small></div>` : nothing}
-                ${legacy ? html`<div><span class="provider-badge configured">${icon("metadata", 14)} Legacy mapping cache</span><strong>${legacy.localId ? `Jellyfin ${legacy.localId}` : `${titleCase(legacy.targetType)} target`}</strong><small>Created ${formatDate(legacy.createdAt)}${legacy.lastValidatedAt ? ` · validated ${formatRelativeTime(legacy.lastValidatedAt)}` : " · not yet validated"}</small></div>` : nothing}
-                ${identities.map((identity) => html`<div><span class="provider-badge configured">${this.renderProviderLogo(identity.providerId, "tiny")} ${providerDisplayName(identity.providerId, this.schema?.providers)}</span><strong class="mono">${display(identity.externalId)}</strong><small>${titleCase(identity.verification)} via ${display(identity.verificationMethod, "unspecified method")} · verified ${formatDate(identity.verifiedAt)}</small></div>`)}
-                ${localTracks.map((track) => html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>${display(track.title)} · <span class="mono">${display(track.backendItemId)}</span></strong><small>Indexed ${formatDate(track.indexedAt)} · updated ${formatRelativeTime(track.updatedAt)}</small></div>`)}
-                ${!materializedBackendItemId && !legacy && !identities.length && !localTracks.length ? html`<div class="empty compact">No saved mapping record exists for this source track yet.</div>` : nothing}
+                ${context.isLocal === true && materializedBackendItemId ? html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong>Local library</strong><small class="mono">${materializedBackendItemId}</small></div>` : nothing}
+                ${context.isLocal === false ? html`<div><span class="provider-badge configured">${this.renderProviderLogo(context.externalProvider, "tiny")} ${providerDisplayName(context.externalProvider, this.schema?.providers)}</span><strong>External playback</strong><small>${legacy?.lastValidatedAt ? `Checked ${formatRelativeTime(legacy.lastValidatedAt)}` : "Ready for the next validation"}</small></div>` : nothing}
+                ${context.isLocal == null ? html`<div class="empty compact"><strong>Not matched</strong><span>Choose Rematch from the track menu.</span></div>` : nothing}
               </div>
             </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Match decisions</h4><p>Recorded routing decisions, confidence when available, and the matcher that made them.</p></div></div>
-              <div class="track-history-list">${history.length ? history.map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${item.confidence != null && Number.isFinite(Number(item.confidence)) ? `${(Number(item.confidence) * 100).toFixed(1)}% confidence` : "Confidence was not recorded"}</strong><small>${item.decidedAt ? formatDate(item.decidedAt) : "Observed in the current playlist"} · ${display(item.source, "durable matcher")}${item.policyVersion ? ` · policy ${item.policyVersion}` : ""}${asArray(item.reasons).length ? ` · ${asArray(item.reasons).join("; ")}` : ""}</small></div>`) : html`<div class="empty compact">No match decision has been recorded for this source track.</div>`}</div>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Identifiers</h4></div></div>
+              <div class="track-identity-list">
+                <div><span class="provider-badge configured">${this.renderProviderLogo("spotify", "tiny")} Spotify</span><strong class="mono">${display(context.spotifyId)}</strong></div>
+                ${identities.filter((identity) => identity.providerId !== "spotify").map((identity) => html`<div><span class="provider-badge configured">${this.renderProviderLogo(identity.providerId, "tiny")} ${providerDisplayName(identity.providerId, this.schema?.providers)}</span><strong class="mono">${display(identity.externalId)}</strong></div>`)}
+                ${localTracks.filter((track) => track.backendItemId !== materializedBackendItemId).map((track) => html`<div><span class="provider-badge configured">${icon("library", 14)} ${titleCase(this.status?.backendType || "Jellyfin")}</span><strong class="mono">${display(track.backendItemId)}</strong></div>`)}
+              </div>
             </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Cache and downloads</h4><p>Metadata snapshots and provider audio artifacts retained by Allstarr.</p></div></div>
-              <div class="track-history-list">${artifacts.length ? artifacts.map((item) => html`<div><span class="status-chip configured">${titleCase(item.state)}</span><strong>${providerDisplayName(item.providerId, this.schema?.providers)} · ${new Intl.NumberFormat().format(Number(item.length || 0))} bytes</strong><small>Verified ${formatDate(item.verifiedAt)}${item.placedAt ? ` · placed ${formatDate(item.placedAt)}` : ""}</small></div>`) : html`<div class="empty compact">No durable audio artifact is associated with this track.</div>`}</div>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Match history</h4></div></div>
+              <div class="track-history-list">${history.length ? history.slice(0, 3).map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${item.confidence != null && Number.isFinite(Number(item.confidence)) ? `${(Number(item.confidence) * 100).toFixed(0)}% match` : titleCase(item.source || "automatic")}</strong><small>${item.decidedAt ? formatRelativeTime(item.decidedAt) : "Current playlist"}</small></div>`) : html`<div class="empty compact">No durable decision recorded yet.</div>`}</div>
             </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Track activity</h4><p>Mapping, validation, metadata, and download events for this track.</p></div></div>
-              <div class="track-activity-list">${activity.length ? activity.map((item) => html`<div><span>${icon(item.kind === "download" ? "download" : item.kind === "cache" ? "metadata" : item.kind === "validation" ? "check" : "link", 16)}</span><div><strong>${display(item.title)}</strong><small>${display(item.detail)} · ${formatDate(item.at)}</small></div></div>`) : html`<div class="empty compact">No track-specific activity has been recorded.</div>`}</div>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Activity</h4></div></div>
+              <div class="track-activity-list">${activity.length ? activity.slice(0, 5).map((item) => html`<div><span>${icon(item.kind === "download" ? "download" : item.kind === "cache" ? "metadata" : item.kind === "validation" ? "check" : "link", 16)}</span><div><strong>${display(item.title)}</strong><small>${formatRelativeTime(item.at)}</small></div></div>`) : html`<div class="empty compact">No activity recorded yet.</div>`}</div>
             </section>
           </div>
         ` : html`<div class="empty">Mapping history could not be loaded.</div>`}
@@ -3514,10 +3515,9 @@ class AllstarrApp extends LitElement {
         <details class="content-disclosure" @toggle=${(event) => {
           if (event.currentTarget.open) void this.loadExtensionControlPlane();
         }}>
-          <summary><span><strong>Routing and favorite behavior</strong><small>Source priority, capability details, and actions after favoriting a song</small></span></summary>
+          <summary><span><strong>Source behavior</strong><small>Capability details and actions after favoriting a song</small></span></summary>
           <div class="disclosure-body">
             ${this.renderFavoritePolicy()}
-            ${this.renderPriorityGroups()}
             ${this.renderProviderSupportMatrix()}
           </div>
         </details>
@@ -4720,6 +4720,15 @@ class AllstarrApp extends LitElement {
           <div class="section-heading account-section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary icon-label" @click=${() => this.openProviderAccountModal()}>${icon("plus", 17)}<span>Add account</span></button>` : nothing}</div>
           ${this.renderProviderAccounts()}
         </div>
+        <section class="settings-routing" aria-labelledby="provider-routing-heading">
+          <div class="section-heading">
+            <div>
+              <h3 id="provider-routing-heading">Provider routing</h3>
+              <p>Allstarr tries local library tracks first. Unresolved tracks then follow these provider orders.</p>
+            </div>
+          </div>
+          ${this.renderPriorityGroups()}
+        </section>
         ${this.renderProviderAccountModal()}
         ${asArray(this.schema?.configSections).map((section) => html`
           <details class="content-disclosure panel">

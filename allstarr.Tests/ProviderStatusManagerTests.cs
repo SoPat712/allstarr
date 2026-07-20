@@ -72,6 +72,21 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
+    public void PlaybackProviders_PreserveStreamingThenDownloadOrderWithoutDuplicates()
+    {
+        var manager = CreateManager(
+            new Dictionary<string, string?>
+            {
+                ["MULTI_PROVIDER_STREAMING_ORDER"] = "deezer,apple-download",
+                ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "apple-download,deezer"
+            },
+            appleMusicSettings: new AppleDownloadSettings { BaseUrl = "http://apple-gateway" },
+            deezerSettings: new DeezerSettings { Arl = "configured-arl" });
+
+        Assert.Equal(["deezer", "apple-download"], manager.GetEnabledPlaybackProviders());
+    }
+
+    [Fact]
     public void StatusRead_IsPureAndDoesNotInventHealthOrTestTime()
     {
         var factory = new CountingHttpClientFactory();

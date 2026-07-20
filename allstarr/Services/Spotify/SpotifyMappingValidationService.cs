@@ -4,6 +4,7 @@ using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
+using System.Text.Json;
 
 namespace allstarr.Services.Spotify;
 
@@ -202,48 +203,59 @@ public class SpotifyMappingValidationService
 
         try
         {
-            // Search Jellyfin using same query format as playlist matching
-            var query = $"{title} {artist}";
-            var searchParams = new Dictionary<string, string>
+            // Jellyfin search is much more reliable with a title query than a single
+            // concatenated title+artist term. Query both forms, then score the union.
+            var resultItems = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var query in new[] { FuzzyMatcher.StripDecorators(title), $"{title} {artist}" }
+                         .Where(value => !string.IsNullOrWhiteSpace(value))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                ["searchTerm"] = query,
-                ["includeItemTypes"] = "Audio",
-                ["recursive"] = "true",
-                ["limit"] = "10"
-            };
+                var searchParams = new Dictionary<string, string>
+                {
+                    ["searchTerm"] = query,
+                    ["includeItemTypes"] = "Audio",
+                    ["recursive"] = "true",
+                    ["limit"] = "25",
+                    ["fields"] = "Artists,AlbumArtist,Album,RunTimeTicks,ProviderIds"
+                };
 
-            if (!string.IsNullOrEmpty(_jellyfinSettings.LibraryId))
-            {
-                searchParams["parentId"] = _jellyfinSettings.LibraryId;
+                if (!string.IsNullOrEmpty(_jellyfinSettings.LibraryId))
+                {
+                    searchParams["parentId"] = _jellyfinSettings.LibraryId;
+                }
+
+                var (response, _) = await _jellyfinProxy.GetJsonAsyncInternal("Items", searchParams);
+                if (response == null || !response.RootElement.TryGetProperty("Items", out var items)) continue;
+                foreach (var item in items.EnumerateArray())
+                {
+                    var id = item.TryGetProperty("Id", out var idElement) ? idElement.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(id)) resultItems[id] = item.Clone();
+                }
             }
 
-            var (response, _) = await _jellyfinProxy.GetJsonAsyncInternal("Items", searchParams);
-
-            if (response == null || !response.RootElement.TryGetProperty("Items", out var items))
-            {
-                return null;
-            }
-
-            // Score all results using fuzzy matching (same as SpotifyTrackMatchingService)
             var candidates = new List<(Song Song, double Score)>();
 
-            foreach (var item in items.EnumerateArray())
+            foreach (var item in resultItems.Values)
             {
                 var itemTitle = item.TryGetProperty("Name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                var itemArtist = item.TryGetProperty("AlbumArtist", out var artistEl) ? artistEl.GetString() ?? "" : "";
+                var itemArtists = item.TryGetProperty("Artists", out var artistsElement) && artistsElement.ValueKind == JsonValueKind.Array
+                    ? artistsElement.EnumerateArray().Select(value => value.GetString() ?? string.Empty).Where(value => value.Length > 0).ToList()
+                    : new List<string>();
+                var itemArtist = itemArtists.FirstOrDefault()
+                    ?? (item.TryGetProperty("AlbumArtist", out var artistEl) ? artistEl.GetString() ?? "" : "");
                 var itemId = item.TryGetProperty("Id", out var idEl) ? idEl.GetString() ?? "" : "";
 
                 if (string.IsNullOrEmpty(itemId)) continue;
 
                 // Calculate similarity using aggressive matching (same as playlist matching)
                 var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, itemTitle);
-                var artistScore = FuzzyMatcher.CalculateSimilarity(artist, itemArtist);
+                var artistScore = FuzzyMatcher.CalculateArtistMatchScore([artist], itemArtist, itemArtists);
 
                 // Weight: 70% title, 30% artist (same as playlist matching)
                 var totalScore = (titleScore * 0.7) + (artistScore * 0.3);
 
-                // Same thresholds as playlist matching
-                if (totalScore >= 40 || (artistScore >= 70 && titleScore >= 30) || titleScore >= 85)
+                // Validation must not silently replace a route with a weak candidate.
+                if (totalScore >= 70 && titleScore >= 60 && artistScore >= 45)
                 {
                     var song = new Song
                     {

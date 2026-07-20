@@ -242,6 +242,77 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
     }
 }
 
+/// <summary>
+/// Keeps the durable audio index warm for linked Jellyfin users. The scanner itself
+/// requests IncludeItemTypes=Audio, so video and administrative resources never enter
+/// the music identity graph.
+/// </summary>
+public sealed class LibraryIndexMaintenanceService(
+    IDbContextFactory<AllstarrDbContext> factory,
+    DurableJobQueue jobs,
+    DurableStorageState storageState,
+    ILogger<LibraryIndexMaintenanceService> logger) : BackgroundService
+{
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
+    private static readonly TimeSpan MaximumIndexAge = TimeSpan.FromHours(12);
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready)
+                    await EnqueueStaleIndexesAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Durable Jellyfin audio index maintenance failed; it will retry");
+            }
+
+            await Task.Delay(CheckInterval, stoppingToken);
+        }
+    }
+
+    internal async Task<int> EnqueueStaleIndexesAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var identities = await db.BackendIdentities.AsNoTracking()
+            .Where(identity => identity.BackendType == "jellyfin")
+            .OrderBy(identity => identity.TenantId).ThenBy(identity => identity.UserId)
+            .ToListAsync(cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        var enqueued = 0;
+
+        foreach (var identity in identities)
+        {
+            var lastIndexedAt = await db.LibraryTracks.AsNoTracking()
+                .Where(track => track.TenantId == identity.TenantId && track.OwnerUserId == identity.UserId &&
+                    track.BackendInstanceId == identity.BackendInstanceId && track.LibraryScopeId == "music")
+                .MaxAsync(track => (DateTimeOffset?)track.IndexedAt, cancellationToken);
+            if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < MaximumIndexAge) continue;
+
+            var generation = now.UtcTicks / MaximumIndexAge.Ticks;
+            var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
+                "library.index",
+                $"library-index:auto:{identity.TenantId:N}:{identity.UserId:N}:{identity.BackendInstanceId}:music:{generation}",
+                new("music", identity.BackendInstanceId, identity.PrincipalId, null, 200),
+                identity.TenantId,
+                identity.UserId,
+                LibraryScopeId: "music",
+                CorrelationId: $"library-index-auto-{identity.Id:N}-{generation}"), cancellationToken);
+            if (result.Created) enqueued++;
+        }
+
+        if (enqueued > 0) logger.LogInformation("Enqueued {Count} stale Jellyfin audio index jobs", enqueued);
+        return enqueued;
+    }
+}
+
 public static class BackendLibraryIndexingRegistration
 {
     public static IServiceCollection AddBackendLibraryIndexing(this IServiceCollection services)
@@ -252,6 +323,7 @@ public static class BackendLibraryIndexingRegistration
         services.AddSingleton<IBackendLibraryCatalogScanner, SubsonicLibraryCatalogScanner>();
         services.AddSingleton<BackendLibraryCatalogScannerResolver>();
         services.AddSingleton<IDurableJobHandler, LibraryIndexJobHandler>();
+        services.AddHostedService<LibraryIndexMaintenanceService>();
         return services;
     }
 }

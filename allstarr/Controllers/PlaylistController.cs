@@ -906,9 +906,9 @@ public class PlaylistController : ControllerBase
             ? "pending"
             : unmatchedTracks == 0
                 ? "synced"
-                : matchPercent >= 50d
-                    ? "partial"
-                    : "needs_attention";
+                : matchedTracks == 0
+                    ? "needs_matching"
+                    : "partial";
         playlistInfo["lastSyncAt"] = lastSyncAt;
         playlistInfo["lastSourceRefreshAt"] = playlistInfo.TryGetValue("lastFetched", out var sourceRefresh)
             ? sourceRefresh

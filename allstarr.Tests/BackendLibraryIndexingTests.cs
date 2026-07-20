@@ -39,6 +39,10 @@ public sealed class BackendLibraryIndexingTests
         Assert.Equal("jellyfin-cover:song-1:cover-v1", track.CoverArtReference);
         Assert.Equal("ephemeral-key", handler.LastRequest!.Headers.GetValues("X-Emby-Token").Single());
         Assert.DoesNotContain("Audio", handler.LastRequest.RequestUri!.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "IncludeItemTypes=Audio",
+            Uri.UnescapeDataString(handler.LastRequest.RequestUri.Query),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

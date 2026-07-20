@@ -7,20 +7,24 @@ namespace allstarr.Services.Common;
 
 public class MultiProviderMetadataService : IMusicMetadataService
 {
+    private static readonly TimeSpan ProviderSearchTimeout = TimeSpan.FromSeconds(5);
     private readonly IEnumerable<IConcreteMetadataService> _allServices;
     private readonly ProviderStatusManager _statusManager;
     private readonly ExtensionManager _extensionManager;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<MultiProviderMetadataService> _logger;
 
     public MultiProviderMetadataService(
         IEnumerable<IConcreteMetadataService> services,
         ProviderStatusManager statusManager,
         ExtensionManager extensionManager,
+        IConfiguration configuration,
         ILogger<MultiProviderMetadataService> logger)
     {
         _allServices = services.ToList();
         _statusManager = statusManager;
         _extensionManager = extensionManager;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -28,7 +32,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
     {
         var providers = _statusManager.GetEnabledSearchProviders();
 
-        return await SearchSongsFromProvidersAsync(providers, query, limit, includeExtensions: true, cancellationToken);
+        return await SearchSongsFromProvidersAsync(
+            providers, query, limit, includeExtensions: true, requirePlayableExtensions: false, cancellationToken);
     }
 
     /// <summary>
@@ -40,12 +45,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
         int limit = 20,
         CancellationToken cancellationToken = default)
     {
-        var providers = _statusManager.GetEnabledStreamingProviders()
-            .Concat(_statusManager.GetEnabledDownloadProviders())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var providers = _statusManager.GetEnabledPlaybackProviders();
 
-        return await SearchSongsFromProvidersAsync(providers, query, limit, includeExtensions: false, cancellationToken);
+        return await SearchSongsFromProvidersAsync(
+            providers, query, limit, includeExtensions: true, requirePlayableExtensions: true, cancellationToken);
     }
 
     private async Task<List<Song>> SearchSongsFromProvidersAsync(
@@ -53,6 +56,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         string query,
         int limit,
         bool includeExtensions,
+        bool requirePlayableExtensions,
         CancellationToken cancellationToken)
     {
 
@@ -62,7 +66,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Song>();
             try
             {
-                return await service.SearchSongsAsync(query, limit, cancellationToken);
+                return await service.SearchSongsAsync(query, limit, cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -71,12 +76,17 @@ public class MultiProviderMetadataService : IMusicMetadataService
             }
         }).ToList();
 
-        var extensions = includeExtensions ? _extensionManager.GetActiveExtensions() : [];
+        var extensions = includeExtensions
+            ? _extensionManager.GetActiveExtensions()
+                .Where(extension => !requirePlayableExtensions || extension.Types.Any(IsPlaybackCapability))
+                .ToList()
+            : [];
         var extensionTasks = extensions.Select(async ext =>
         {
             try
             {
-                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken);
+                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
                 return res.Songs;
             }
             catch (Exception ex)
@@ -89,33 +99,64 @@ public class MultiProviderMetadataService : IMusicMetadataService
         var providerResults = await Task.WhenAll(tasks);
         var extensionResults = await Task.WhenAll(extensionTasks);
 
-        var allResultsList = providerResults.Concat(extensionResults).ToList();
-        return InterleaveLists(allResultsList);
+        var providerEntries = providers.Zip(providerResults, (id, results) => (Id: id, Results: results));
+        var extensionEntries = extensions.Zip(extensionResults, (extension, results) => (Id: extension.Id, Results: results));
+        var resultEntries = providerEntries.Concat(extensionEntries).ToList();
+        var configuredOrder = ConfiguredSearchOrder(requirePlayableExtensions);
+        var allResultsList = resultEntries
+            .OrderBy(entry => ProviderRank(configuredOrder, entry.Id))
+            .Select(entry => entry.Results)
+            .ToList();
+        return InterleaveLists(allResultsList).Take(Math.Max(0, limit)).ToList();
     }
 
     public async Task<Song?> FindPlayableSongByIsrcAsync(
         string isrc,
         CancellationToken cancellationToken = default)
     {
-        var providers = _statusManager.GetEnabledStreamingProviders()
-            .Concat(_statusManager.GetEnabledDownloadProviders())
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+        var providers = _statusManager.GetEnabledPlaybackProviders().ToList();
         var tasks = providers.Select(async provider =>
         {
             var service = GetMetadataServiceByName(provider);
             if (service == null) return null;
             try
             {
-                return await service.FindSongByIsrcAsync(isrc, cancellationToken);
+                return await service.FindSongByIsrcAsync(isrc, cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "ISRC lookup failed for playback provider: {Provider}", provider);
                 return null;
             }
-        });
+        }).ToList();
 
-        var results = await Task.WhenAll(tasks);
-        return results.FirstOrDefault(song => song != null);
+        var extensions = _extensionManager.GetActiveExtensions()
+            .Where(extension => extension.Types.Any(IsPlaybackCapability))
+            .ToList();
+        var extensionTasks = extensions.Select(async extension =>
+        {
+            try
+            {
+                var result = await Task.Run(() => extension.Search($"isrc:{isrc}", 1), cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                return result.Songs.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ISRC lookup failed for playback extension: {ExtensionId}", extension.Id);
+                return null;
+            }
+        }).ToList();
+
+        var providerResults = await Task.WhenAll(tasks);
+        var extensionResults = await Task.WhenAll(extensionTasks);
+        var configuredOrder = ConfiguredSearchOrder(playbackOnly: true);
+        return providers.Zip(providerResults, (id, song) => (Id: id, Song: song))
+            .Concat(extensions.Zip(extensionResults, (extension, song) => (Id: extension.Id, Song: song)))
+            .OrderBy(result => ProviderRank(configuredOrder, result.Id))
+            .Select(result => result.Song)
+            .FirstOrDefault(song => song is not null);
     }
 
     public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
@@ -128,7 +169,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Album>();
             try
             {
-                return await service.SearchAlbumsAsync(query, limit, cancellationToken);
+                return await service.SearchAlbumsAsync(query, limit, cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -142,7 +184,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken);
+                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
                 return res.Albums;
             }
             catch (Exception ex)
@@ -156,7 +199,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         var extensionResults = await Task.WhenAll(extensionTasks);
 
         var allResultsList = providerResults.Concat(extensionResults).ToList();
-        return InterleaveLists(allResultsList);
+        return InterleaveLists(allResultsList).Take(Math.Max(0, limit)).ToList();
     }
 
     public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
@@ -169,7 +212,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Artist>();
             try
             {
-                return await service.SearchArtistsAsync(query, limit, cancellationToken);
+                return await service.SearchArtistsAsync(query, limit, cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -183,7 +227,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken);
+                var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
                 return res.Artists;
             }
             catch (Exception ex)
@@ -197,7 +242,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         var extensionResults = await Task.WhenAll(extensionTasks);
 
         var allResultsList = providerResults.Concat(extensionResults).ToList();
-        return InterleaveLists(allResultsList);
+        return InterleaveLists(allResultsList).Take(Math.Max(0, limit)).ToList();
     }
 
     public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
@@ -210,7 +255,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return null;
             try
             {
-                return await service.SearchAllAsync(query, songLimit, albumLimit, artistLimit, cancellationToken);
+                return await service.SearchAllAsync(query, songLimit, albumLimit, artistLimit, cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -224,7 +270,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
         {
             try
             {
-                return await Task.Run(() => ext.Search(query, songLimit), cancellationToken);
+                return await Task.Run(() => ext.Search(query, songLimit), cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -250,9 +297,9 @@ public class MultiProviderMetadataService : IMusicMetadataService
 
         return new SearchResult
         {
-            Songs = InterleaveLists(allSongsLists),
-            Albums = InterleaveLists(allAlbumsLists),
-            Artists = InterleaveLists(allArtistsLists)
+            Songs = InterleaveLists(allSongsLists).Take(Math.Max(0, songLimit)).ToList(),
+            Albums = InterleaveLists(allAlbumsLists).Take(Math.Max(0, albumLimit)).ToList(),
+            Artists = InterleaveLists(allArtistsLists).Take(Math.Max(0, artistLimit)).ToList()
         };
     }
 
@@ -361,7 +408,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<ExternalPlaylist>();
             try
             {
-                return await service.SearchPlaylistsAsync(query, limit, cancellationToken);
+                return await service.SearchPlaylistsAsync(query, limit, cancellationToken)
+                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -371,7 +419,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         });
 
         var results = await Task.WhenAll(tasks);
-        return InterleaveLists(results.ToList());
+        return InterleaveLists(results.ToList()).Take(Math.Max(0, limit)).ToList();
     }
 
     public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
@@ -416,5 +464,37 @@ public class MultiProviderMetadataService : IMusicMetadataService
             }
         }
         return result;
+    }
+
+    private static bool IsPlaybackCapability(string capability)
+    {
+        var normalized = capability.Trim().Replace("_", "-", StringComparison.Ordinal).ToLowerInvariant();
+        return normalized is "stream" or "streaming" or "download" or "downloads";
+    }
+
+    private IReadOnlyList<string> ConfiguredSearchOrder(bool playbackOnly)
+    {
+        IEnumerable<string> values = playbackOnly
+            ? [
+                _configuration["Providers:StreamingOrder"] ?? _configuration["MULTI_PROVIDER_STREAMING_ORDER"] ?? "apple-download,deezer,qobuz",
+                _configuration["Providers:DownloadOrder"] ?? _configuration["MULTI_PROVIDER_DOWNLOAD_ORDER"] ?? "apple-download,deezer,qobuz"
+              ]
+            : [
+                _configuration["Providers:MetadataOrder"] ?? _configuration["MULTI_PROVIDER_METADATA_ORDER"] ?? "apple-download,deezer,qobuz"
+              ];
+        return values
+            .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Select(value => value.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static int ProviderRank(IReadOnlyList<string> configuredOrder, string providerId)
+    {
+        for (var index = 0; index < configuredOrder.Count; index++)
+        {
+            if (configuredOrder[index].Equals(providerId, StringComparison.OrdinalIgnoreCase)) return index;
+        }
+        return configuredOrder.Count;
     }
 }

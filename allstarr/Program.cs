@@ -561,6 +561,8 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService
 
 // Register Spotify mapping service (global Spotify ID → Local/External mappings)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>();
+builder.Services.AddSingleton<allstarr.Services.Spotify.LegacySpotifyMappingProjector>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.LegacySpotifyMappingProjector>());
 
 // Register Spotify mapping validation service (validates and upgrades mappings)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingValidationService>();

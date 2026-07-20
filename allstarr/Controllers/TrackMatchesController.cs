@@ -137,7 +137,7 @@ public sealed class TrackMatchesController(
             matchHistory.Add(new
             {
                 id = $"legacy-{spotifyId}",
-                state = "accepted",
+                state = legacy.LastValidatedAt.HasValue ? "accepted" : "candidate",
                 confidence = (double?)null,
                 threshold = (double?)null,
                 decisionVersion = (int?)null,
@@ -145,8 +145,8 @@ public sealed class TrackMatchesController(
                 source = legacy.Source.Equals("manual", StringComparison.OrdinalIgnoreCase)
                     ? "manual compatibility mapping"
                     : "legacy matcher",
-                reasons = new[] { $"Selected {route} using the compatibility matching pipeline." },
-                warnings = legacy.LastValidatedAt.HasValue ? Array.Empty<string>() : new[] { "This route has not recorded a validation timestamp." },
+                reasons = new[] { $"Compatibility matching selected {route}." },
+                warnings = legacy.LastValidatedAt.HasValue ? Array.Empty<string>() : new[] { "Awaiting validation." },
                 correlationId = (string?)null,
                 decidedAt = (DateTimeOffset?)(legacy.UpdatedAt ?? legacy.CreatedAt)
             });
