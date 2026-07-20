@@ -346,7 +346,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("renderProviderLogo(providerId, \"large\")", script, StringComparison.Ordinal);
         Assert.Contains("class=\"source-metrics\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"source-card-footer\"", script, StringComparison.Ordinal);
-        Assert.Contains(">Add account</button>", script, StringComparison.Ordinal);
+        Assert.Contains("icon(\"plus\", 17)}<span>Add account</span>", script, StringComparison.Ordinal);
         Assert.Contains("provider-account-dialog", script, StringComparison.Ordinal);
         Assert.Contains("this.navigate(\"/settings\")}>Manage accounts", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Add or enable a provider account above", script, StringComparison.Ordinal);

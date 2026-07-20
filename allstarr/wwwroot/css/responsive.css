@@ -12,7 +12,8 @@
     }
 
     .topbar {
-        grid-template-columns: minmax(160px, 1fr) minmax(240px, 420px) auto;
+        grid-template-columns: minmax(92px, auto) minmax(180px, 1fr) auto;
+        gap: 12px;
     }
 
     .sidebar {
@@ -34,6 +35,7 @@
     .playlist-operation-summary button {
         grid-column: 1 / -1;
     }
+
     :root {
         --rail-width: 76px;
         --page-gutter: 20px;

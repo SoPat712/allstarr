@@ -2137,7 +2137,6 @@ class AllstarrApp extends LitElement {
   }
 
   renderTopbar() {
-    const [zone, sub] = routeParts(this.route);
     const administrator = this.isAdministrator();
     return html`
       <header class="topbar" data-testid="topbar">
@@ -2161,8 +2160,7 @@ class AllstarrApp extends LitElement {
             </span>
           </button>
           <div class="topbar-title-group">
-            <span class="topbar-eyebrow">Workspace</span>
-            <h1>${titleCase(zone || "home")}${sub && !(zone === "settings" && sub === "extensions") ? html` <span>/ ${titleCase(sub)}</span>` : nothing}</h1>
+            <h1>Workspace</h1>
           </div>
         </div>
         ${administrator ? this.renderGlobalSearch() : nothing}
@@ -4681,7 +4679,7 @@ class AllstarrApp extends LitElement {
         <section class="view-stack">
           <div class="view-header"><div><h2>Settings</h2><p>Manage your own connected provider accounts.</p></div></div>
           <div class="panel">
-            <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
+            <div class="section-heading account-section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary icon-label" @click=${() => this.openProviderAccountModal()}>${icon("plus", 17)}<span>Add account</span></button>` : nothing}</div>
             ${this.renderProviderAccounts()}
           </div>
           ${this.renderProviderAccountModal()}
@@ -4697,7 +4695,7 @@ class AllstarrApp extends LitElement {
           <button @click=${() => this.navigate("/settings/extensions")}>${icon("extensions", 17)} Manage extensions</button>
         </div>
         <div class="panel">
-          <div class="section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary" @click=${() => this.openProviderAccountModal()}>Add account</button>` : nothing}</div>
+          <div class="section-heading account-section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary icon-label" @click=${() => this.openProviderAccountModal()}>${icon("plus", 17)}<span>Add account</span></button>` : nothing}</div>
           ${this.renderProviderAccounts()}
         </div>
         ${this.renderProviderAccountModal()}
