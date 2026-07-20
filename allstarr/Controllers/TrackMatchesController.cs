@@ -113,6 +113,62 @@ public sealed class TrackMatchesController(
         activity.AddRange(overrides.Select(item => (object)new { at = item.CreatedAt, kind = "override", title = $"Manual {item.Decision.ToString().ToLowerInvariant()}", detail = item.Reason }));
         activity.AddRange(artifacts.Select(item => (object)new { at = item.PlacedAt ?? item.VerifiedAt, kind = "download", title = $"{item.ProviderId} audio {item.State.ToString().ToLowerInvariant()}", detail = $"{item.Length} bytes" }));
 
+        var matchHistory = decisions.Select(item => (object)new
+        {
+            item.Id,
+            state = item.State.ToString().ToLowerInvariant(),
+            item.Confidence,
+            item.Threshold,
+            item.DecisionVersion,
+            item.PolicyVersion,
+            source = "durable matcher",
+            reasons = ParseArray(item.ReasonsJson),
+            warnings = ParseArray(item.WarningsJson),
+            item.CorrelationId,
+            item.DecidedAt
+        }).ToList();
+        if (legacy != null)
+        {
+            var route = legacy.TargetType.Equals("local", StringComparison.OrdinalIgnoreCase)
+                ? "Jellyfin library"
+                : legacy.TryGetExternalTarget(null, out var provider, out _)
+                    ? provider
+                    : "external provider";
+            matchHistory.Add(new
+            {
+                id = $"legacy-{spotifyId}",
+                state = "accepted",
+                confidence = (double?)null,
+                threshold = (double?)null,
+                decisionVersion = (int?)null,
+                policyVersion = "compatibility-v2",
+                source = legacy.Source.Equals("manual", StringComparison.OrdinalIgnoreCase)
+                    ? "manual compatibility mapping"
+                    : "legacy matcher",
+                reasons = new[] { $"Selected {route} using the compatibility matching pipeline." },
+                warnings = legacy.LastValidatedAt.HasValue ? Array.Empty<string>() : new[] { "This route has not recorded a validation timestamp." },
+                correlationId = (string?)null,
+                decidedAt = (DateTimeOffset?)(legacy.UpdatedAt ?? legacy.CreatedAt)
+            });
+        }
+        else if (backendItemId != null && localTracks.Count == 0)
+        {
+            matchHistory.Add(new
+            {
+                id = $"materialized-{backendItemId}",
+                state = "accepted",
+                confidence = (double?)null,
+                threshold = (double?)null,
+                decisionVersion = (int?)null,
+                policyVersion = "materialized-playlist",
+                source = "materialized Jellyfin playlist",
+                reasons = new[] { "The current Jellyfin playlist contains this backend item." },
+                warnings = new[] { "Durable library indexing is still pending for this item." },
+                correlationId = (string?)null,
+                decidedAt = (DateTimeOffset?)null
+            });
+        }
+
         var primaryLocal = localTracks.FirstOrDefault();
         return Ok(new
         {
@@ -174,19 +230,7 @@ public sealed class TrackMatchesController(
                 item.SourceModifiedAt,
                 item.UpdatedAt
             }),
-            matchHistory = decisions.Select(item => new
-            {
-                item.Id,
-                state = item.State.ToString().ToLowerInvariant(),
-                item.Confidence,
-                item.Threshold,
-                item.DecisionVersion,
-                item.PolicyVersion,
-                reasons = ParseArray(item.ReasonsJson),
-                warnings = ParseArray(item.WarningsJson),
-                item.CorrelationId,
-                item.DecidedAt
-            }),
+            matchHistory,
             overrides = overrides.Select(item => new { item.Id, decision = item.Decision.ToString().ToLowerInvariant(), item.Reason, item.DecisionVersion, item.CreatedAt, item.RevokedAt }),
             cache = new
             {

@@ -2903,22 +2903,22 @@ class AllstarrApp extends LitElement {
               <div><span class="hero-stat-icon">${icon("check")}</span><span><small>Playable</small><strong>${playable} / ${tracks.length}</strong></span></div>
               <div><span class="hero-stat-icon">${icon("library")}</span><span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
             </div>
-            ${details ? html`<div class="playlist-operation-summary" aria-label="Playlist synchronization details">
-              <span><small>Local</small><strong>${localTracks}</strong></span>
-              <span><small>External</small><strong>${externalTracks}</strong></span>
-              <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
-              <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
-              <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
-              <button class="primary compact" @click=${async () => {
-                await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
-                await this.reloadInjectedPlaylistDetails();
-              }}>${icon("refresh", 15)} Sync & rematch</button>
-            </div>
-            ${matchStatus === "rematch_required" ? html`<div class="playlist-match-notice" role="status">
-              ${icon("warning", 17)}<span><strong>Current source snapshot needs matching</strong><small>The provider playlist changed after its last completed match. Run a sync now or wait for the next scheduled sync.</small></span>
-            </div>` : nothing}` : nothing}
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
+          ${details ? html`<div class="playlist-operation-summary" aria-label="Playlist synchronization details">
+            <span><small>Local</small><strong>${localTracks}</strong></span>
+            <span><small>External</small><strong>${externalTracks}</strong></span>
+            <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
+            <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
+            <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
+          </div>
+          <button class="primary compact playlist-rematch-action" @click=${async () => {
+            await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
+            await this.reloadInjectedPlaylistDetails();
+          }}>${icon("refresh", 15)} Sync & rematch</button>
+          ${matchStatus === "rematch_required" ? html`<div class="playlist-match-notice" role="status">
+            ${icon("warning", 17)}<span><strong>Current source snapshot needs matching</strong><small>The provider playlist changed after its last completed match. Run a sync now or wait for the next scheduled sync.</small></span>
+          </div>` : nothing}` : nothing}
         </div>
         <div class="injected-playlist-scroll">
           ${this.renderInjectedTrackEditor()}
@@ -3013,8 +3013,8 @@ class AllstarrApp extends LitElement {
                 ${!materializedBackendItemId && !legacy && !identities.length && !localTracks.length ? html`<div class="empty compact">No saved mapping record exists for this source track yet.</div>` : nothing}
               </div>
             </section>
-            <section class="track-detail-section"><div class="section-heading"><div><h4>Match decisions</h4><p>Durable matcher decisions, confidence, and policy version.</p></div></div>
-              <div class="track-history-list">${history.length ? history.map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${(Number(item.confidence) * 100).toFixed(1)}% confidence</strong><small>${formatDate(item.decidedAt)} · policy ${display(item.policyVersion)}${asArray(item.reasons).length ? ` · ${asArray(item.reasons).join("; ")}` : ""}</small></div>`) : html`<div class="empty compact">No PostgreSQL match decisions have been recorded for this legacy entry.</div>`}</div>
+            <section class="track-detail-section"><div class="section-heading"><div><h4>Match decisions</h4><p>Recorded routing decisions, confidence when available, and the matcher that made them.</p></div></div>
+              <div class="track-history-list">${history.length ? history.map((item) => html`<div><span class="status-chip ${item.state}">${titleCase(item.state)}</span><strong>${item.confidence != null && Number.isFinite(Number(item.confidence)) ? `${(Number(item.confidence) * 100).toFixed(1)}% confidence` : "Confidence was not recorded"}</strong><small>${item.decidedAt ? formatDate(item.decidedAt) : "Observed in the current playlist"} · ${display(item.source, "durable matcher")}${item.policyVersion ? ` · policy ${item.policyVersion}` : ""}${asArray(item.reasons).length ? ` · ${asArray(item.reasons).join("; ")}` : ""}</small></div>`) : html`<div class="empty compact">No match decision has been recorded for this source track.</div>`}</div>
             </section>
             <section class="track-detail-section"><div class="section-heading"><div><h4>Cache and downloads</h4><p>Metadata snapshots and provider audio artifacts retained by Allstarr.</p></div></div>
               <div class="track-history-list">${artifacts.length ? artifacts.map((item) => html`<div><span class="status-chip configured">${titleCase(item.state)}</span><strong>${providerDisplayName(item.providerId, this.schema?.providers)} · ${new Intl.NumberFormat().format(Number(item.length || 0))} bytes</strong><small>Verified ${formatDate(item.verifiedAt)}${item.placedAt ? ` · placed ${formatDate(item.placedAt)}` : ""}</small></div>`) : html`<div class="empty compact">No durable audio artifact is associated with this track.</div>`}</div>

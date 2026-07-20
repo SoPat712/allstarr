@@ -25,6 +25,7 @@
 
 @media (max-width: 900px) {
     .playlist-operation-summary {
+        grid-column: 1 / -1;
         grid-template-columns: repeat(3, minmax(90px, 1fr));
     }
 
@@ -32,8 +33,9 @@
         border-right: 0;
     }
 
-    .playlist-operation-summary button {
+    .playlist-rematch-action {
         grid-column: 1 / -1;
+        justify-self: end;
     }
 
     :root {
@@ -304,6 +306,10 @@
     }
 
     .playlist-hero-stats {
+        grid-column: 1 / -1;
+    }
+
+    .playlist-match-notice {
         grid-column: 1 / -1;
     }
 

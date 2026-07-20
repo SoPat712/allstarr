@@ -99,8 +99,15 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Unmatched</small>", script, StringComparison.Ordinal);
         Assert.Contains("Next rematch", script, StringComparison.Ordinal);
         Assert.Contains("Sync & rematch", script, StringComparison.Ordinal);
+        Assert.Contains("playlist-rematch-action", script, StringComparison.Ordinal);
+        var summaryStart = script.IndexOf("playlist-operation-summary\" aria-label=\"Playlist synchronization details", StringComparison.Ordinal);
+        var summaryEnd = script.IndexOf("</div>", summaryStart, StringComparison.Ordinal);
+        var action = script.IndexOf("playlist-rematch-action", StringComparison.Ordinal);
+        Assert.True(summaryStart >= 0 && summaryEnd > summaryStart && action > summaryEnd,
+            "The rematch action must be a sibling of the synchronization stat strip, not nested inside it.");
         Assert.Contains("Current source snapshot needs matching", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-summary", styles, StringComparison.Ordinal);
+        Assert.Contains(".playlist-rematch-action", styles, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -115,12 +122,15 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("ExternalMetadataSnapshots", controller, StringComparison.Ordinal);
         Assert.Contains("ProviderDownloadArtifacts", controller, StringComparison.Ordinal);
         Assert.Contains("spotifyMappings.GetMappingAsync(spotifyId)", controller, StringComparison.Ordinal);
+        Assert.Contains("policyVersion = \"compatibility-v2\"", controller, StringComparison.Ordinal);
+        Assert.Contains("source = \"materialized Jellyfin playlist\"", controller, StringComparison.Ordinal);
         Assert.Contains("trackMappingDetails:", script, StringComparison.Ordinal);
         Assert.Contains("backendItemId", script, StringComparison.Ordinal);
         Assert.Contains("Open mapping details for", script, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"track-details-dialog\"", script, StringComparison.Ordinal);
         Assert.Contains("Identifiers and destinations", script, StringComparison.Ordinal);
         Assert.Contains("Match decisions", script, StringComparison.Ordinal);
+        Assert.Contains("Recorded routing decisions", script, StringComparison.Ordinal);
         Assert.Contains("Cache and downloads", script, StringComparison.Ordinal);
         Assert.Contains("Track activity", script, StringComparison.Ordinal);
         Assert.Contains("track-details-dialog redesigned-dialog", script, StringComparison.Ordinal);

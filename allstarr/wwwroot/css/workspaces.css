@@ -172,9 +172,9 @@
 .playlist-dialog-hero {
     position: relative;
     display: grid;
-    grid-template-columns: 120px minmax(0, 1fr) 40px;
-    gap: 24px;
-    align-items: center;
+    grid-template-columns: 120px minmax(0, 1fr) auto;
+    gap: 16px 24px;
+    align-items: start;
     padding: 24px;
     border-bottom: 1px solid var(--border);
 }
@@ -188,6 +188,7 @@
 }
 
 .playlist-hero-art {
+    grid-row: 1 / span 2;
     width: 120px;
     height: 120px;
     border-radius: 12px;
@@ -224,7 +225,8 @@
 
 .playlist-operation-summary {
     display: grid;
-    grid-template-columns: repeat(5, minmax(96px, 1fr)) auto;
+    grid-column: 2;
+    grid-template-columns: repeat(5, minmax(96px, 1fr));
     align-items: stretch;
     gap: 0;
     margin-top: 8px;
@@ -256,16 +258,17 @@
     color: var(--warning);
 }
 
-.playlist-operation-summary button {
-    align-self: center;
+.playlist-rematch-action {
+    grid-column: 3;
+    place-self: stretch end;
     min-width: 164px;
     min-height: 40px;
-    margin: 6px;
     padding: 8px 14px;
     white-space: nowrap;
 }
 
 .playlist-match-notice {
+    grid-column: 2 / -1;
     display: flex;
     align-items: center;
     gap: 10px;
