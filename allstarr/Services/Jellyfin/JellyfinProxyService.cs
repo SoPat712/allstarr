@@ -1072,7 +1072,7 @@ public class JellyfinProxyService
                 queryParams["userId"] = _settings.UserId;
             }
 
-            var (result, statusCode) = await GetJsonAsync("Library/MediaFolders", queryParams);
+            var (result, statusCode) = await GetJsonAsyncInternal("Library/MediaFolders", queryParams);
             if (result == null)
             {
                 return null;

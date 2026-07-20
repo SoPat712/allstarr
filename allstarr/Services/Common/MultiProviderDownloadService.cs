@@ -30,7 +30,7 @@ public class MultiProviderDownloadService : IDownloadService
                 _logger.LogInformation("Attempting download using target provider: {TargetProvider}", targetProvider);
 
                 string targetId = externalId;
-                if (!externalProvider.Equals(targetProvider, StringComparison.OrdinalIgnoreCase))
+                if (!ProviderIdsEquivalent(externalProvider, targetProvider))
                 {
                     var translatedId = await TranslateIdAsync(externalProvider, externalId, targetProvider, cancellationToken);
                     if (string.IsNullOrEmpty(translatedId))
@@ -82,7 +82,7 @@ public class MultiProviderDownloadService : IDownloadService
                 _logger.LogInformation("Attempting streaming using target provider: {TargetProvider}", targetProvider);
 
                 string targetId = externalId;
-                if (!externalProvider.Equals(targetProvider, StringComparison.OrdinalIgnoreCase))
+                if (!ProviderIdsEquivalent(externalProvider, targetProvider))
                 {
                     var translatedId = await TranslateIdAsync(externalProvider, externalId, targetProvider, cancellationToken);
                     if (string.IsNullOrEmpty(translatedId))
@@ -116,6 +116,15 @@ public class MultiProviderDownloadService : IDownloadService
 
         throw new InvalidOperationException("All configured download services failed to stream the song.", lastException);
     }
+
+    private static bool ProviderIdsEquivalent(string left, string right) =>
+        CanonicalProviderId(left).Equals(CanonicalProviderId(right), StringComparison.OrdinalIgnoreCase);
+
+    private static string CanonicalProviderId(string provider) => provider.Trim().ToLowerInvariant() switch
+    {
+        "applemusic" => "apple-download",
+        _ => provider.Trim().ToLowerInvariant()
+    };
 
     public void DownloadRemainingAlbumTracksInBackground(string externalProvider, string albumExternalId, string excludeTrackExternalId)
     {

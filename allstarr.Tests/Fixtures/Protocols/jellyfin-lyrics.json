@@ -16,8 +16,11 @@
     "upstreamLyricsStatus": 404,
     "upstreamLyricsBody": { "error": "missing" },
     "itemBody": { "Id": "not-a-song", "Type": "Movie", "Name": "Not Audio" },
-    "expectedStatus": 404,
-    "expectedBody": { "error": "Song not found" }
+    "expectedStatus": 403,
+    "expectedBody": {
+      "error": "This Allstarr endpoint only exposes music-related Jellyfin operations.",
+      "route": "/Audio/not-a-song/Lyrics"
+    }
   },
   {
     "name": "local metadata falls through to a lyrics not found response",

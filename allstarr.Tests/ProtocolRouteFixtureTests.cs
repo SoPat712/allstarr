@@ -401,6 +401,54 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream()
+    {
+        var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        metadata.Setup(service => service.GetSongAsync(
+                "applemusic",
+                "6768469976",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Song
+            {
+                Id = "ext-applemusic-song-6768469976",
+                ExternalProvider = "applemusic",
+                ExternalId = "6768469976",
+                Title = "Playback Track",
+                Artist = "Fixture Artist",
+                Album = "Fixture Album",
+                Duration = 180,
+                IsLocal = false
+            });
+        using var factory = new ProtocolFactory(
+            "Jellyfin",
+            request => request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""")
+                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
+            services =>
+            {
+                services.RemoveAll<ParallelMetadataService>();
+                services.RemoveAll<IMusicMetadataService>();
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(metadata.Object);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            "/Items/ext-applemusic-song-6768469976/PlaybackInfo?api_key=fixture-key");
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.OK, responseBody);
+        using var document = JsonDocument.Parse(responseBody);
+        var source = document.RootElement.GetProperty("MediaSources")[0];
+
+        Assert.Equal("flac", source.GetProperty("Container").GetString());
+        Assert.Equal(
+            "/Audio/ext-applemusic-song-6768469976/stream?static=true",
+            source.GetProperty("DirectStreamUrl").GetString());
+        Assert.False(source.GetProperty("RequiresOpening").GetBoolean());
+        metadata.VerifyAll();
+    }
+
+    [Fact]
     public async Task JellyfinLocalImage_ForwardsPlayerTokenAndReturnsArtwork()
     {
         var artworkBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
@@ -426,6 +474,11 @@ public sealed class ProtocolRouteFixtureTests
                         Headers = { ContentType = new("image/jpeg") }
                     }
                 };
+            }
+
+            if (request.RequestUri.AbsolutePath == "/Items/local-song")
+            {
+                return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
             }
 
             throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
@@ -483,6 +536,12 @@ public sealed class ProtocolRouteFixtureTests
                         return Json(StatusCodes.Status200OK, itemBody.GetRawText());
                     }
 
+                    if (request.RequestUri.AbsolutePath.StartsWith("/Items/", StringComparison.Ordinal))
+                    {
+                        var id = request.RequestUri.AbsolutePath.Split('/').Last();
+                        return Json(StatusCodes.Status200OK, $$"""{"Id":"{{id}}","Type":"Audio"}""");
+                    }
+
                     throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}");
                 },
                 services =>
@@ -503,7 +562,7 @@ public sealed class ProtocolRouteFixtureTests
                 Assert.Equal(
                     CanonicalJson(fixture.GetProperty("upstreamLyricsBody")),
                     CanonicalJson(JsonDocument.Parse(body).RootElement));
-                Assert.Equal(["/Users/Me", "/Audio/local-song/Lyrics"], observedPaths);
+                Assert.Equal(["/Items/local-song", "/Users/Me", "/Audio/local-song/Lyrics"], observedPaths);
             }
             else
             {
@@ -534,6 +593,11 @@ public sealed class ProtocolRouteFixtureTests
                 if (request.RequestUri.AbsolutePath.Equals("/Users/Me", StringComparison.Ordinal))
                 {
                     return Json(StatusCodes.Status200OK, """{"Id":"verified-user","Name":"Fixture User"}""");
+                }
+
+                if (request.RequestUri.AbsolutePath.Equals("/Items/local-song", StringComparison.Ordinal))
+                {
+                    return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
                 }
 
                 Assert.Equal(upstream.GetProperty("pathAndQuery").GetString(), request.RequestUri.PathAndQuery);
@@ -620,6 +684,10 @@ public sealed class ProtocolRouteFixtureTests
             using var factory = new ProtocolFactory("Jellyfin", request =>
             {
                 observedPaths.Add(request.RequestUri!.PathAndQuery);
+                if (request.RequestUri.AbsolutePath.Equals("/Items/item-1", StringComparison.Ordinal))
+                {
+                    return Json(StatusCodes.Status200OK, """{"Id":"item-1","Type":"Audio"}""");
+                }
                 return request.RequestUri.AbsolutePath.Equals("/Users/Me", StringComparison.Ordinal)
                     ? Json(StatusCodes.Status200OK, """{"Id":"verified-user"}""")
                     : Json(fixture.GetProperty("status").GetInt32(), fixture.GetProperty("body").GetRawText());
@@ -634,9 +702,10 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal(
                 CanonicalJson(fixture.GetProperty("body")),
                 CanonicalJson(JsonDocument.Parse(body).RootElement));
-            Assert.Equal(
-                ["/Users/Me?api_key=fixture-key", $"{path}?api_key=fixture-key&Limit=2"],
-                observedPaths);
+            var expectedPaths = path.Equals("/Items/item-1/InstantMix", StringComparison.Ordinal)
+                ? new[] { "/Items/item-1", "/Users/Me?api_key=fixture-key", $"{path}?api_key=fixture-key&Limit=2" }
+                : new[] { "/Users/Me?api_key=fixture-key", $"{path}?api_key=fixture-key&Limit=2" };
+            Assert.Equal(expectedPaths, observedPaths);
         }
 
         var metadata = new Mock<IMusicMetadataService>(MockBehavior.Strict);
@@ -1244,6 +1313,11 @@ public sealed class ProtocolRouteFixtureTests
                         return Json(StatusCodes.Status200OK, """{"Id":"user-1","Name":"Fixture User"}""");
                     }
 
+                    if (request.RequestUri.AbsolutePath is "/Items/local-song")
+                    {
+                        return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
+                    }
+
                     if (request.RequestUri.AbsolutePath is "/rest/ping.view")
                     {
                         return Json(
@@ -1275,12 +1349,14 @@ public sealed class ProtocolRouteFixtureTests
             Assert.Equal("bytes", response.Headers.AcceptRanges.Single());
             Assert.Equal("\"fixture-etag\"", response.Headers.ETag?.Tag);
             Assert.Equal("bytes 8-15/32", response.Content.Headers.ContentRange?.ToString());
-            Assert.Equal(2, observedRequests.Count);
-            Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[0].PathAndQuery);
-            Assert.Equal(fixture.GetProperty("method").GetString(), observedRequests[1].Method);
-            Assert.Equal(fixture.GetProperty("streamPath").GetString(), observedRequests[1].PathAndQuery);
-            Assert.Equal(fixture.GetProperty("range").GetString(), observedRequests[1].Range);
-            Assert.Equal(fixture.GetProperty("ifRange").GetString(), observedRequests[1].IfRange);
+            var streamIndex = fixture.GetProperty("protocol").GetString() == "jellyfin" ? 2 : 1;
+            Assert.Equal(streamIndex + 1, observedRequests.Count);
+            if (streamIndex == 2) Assert.Equal("/Items/local-song", observedRequests[0].PathAndQuery);
+            Assert.Equal(fixture.GetProperty("verificationPath").GetString(), observedRequests[streamIndex - 1].PathAndQuery);
+            Assert.Equal(fixture.GetProperty("method").GetString(), observedRequests[streamIndex].Method);
+            Assert.Equal(fixture.GetProperty("streamPath").GetString(), observedRequests[streamIndex].PathAndQuery);
+            Assert.Equal(fixture.GetProperty("range").GetString(), observedRequests[streamIndex].Range);
+            Assert.Equal(fixture.GetProperty("ifRange").GetString(), observedRequests[streamIndex].IfRange);
         }
     }
 
@@ -1328,6 +1404,13 @@ public sealed class ProtocolRouteFixtureTests
             var body = await response.Content.ReadAsStringAsync();
             var upstreamFixture = fixture.GetProperty("upstream");
 
+            if (fixture.TryGetProperty("blocked", out var blocked) && blocked.GetBoolean())
+            {
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+                Assert.Empty(observed);
+                continue;
+            }
+
             Assert.Equal(upstreamFixture.GetProperty("status").GetInt32(), (int)response.StatusCode);
             Assert.Equal(
                 upstreamFixture.GetProperty("contentType").GetString(),
@@ -1368,6 +1451,11 @@ public sealed class ProtocolRouteFixtureTests
             if (request.RequestUri!.AbsolutePath is "/Users/Me")
             {
                 return Json(StatusCodes.Status200OK, """{"Id":"user-1"}""");
+            }
+
+            if (request.RequestUri.AbsolutePath is "/Items/local-song")
+            {
+                return Json(StatusCodes.Status200OK, """{"Id":"local-song","Type":"Audio"}""");
             }
 
             if (request.RequestUri.AbsolutePath is "/rest/ping.view")

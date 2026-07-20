@@ -441,6 +441,8 @@ public class JellyfinResponseBuilder
                     ["Protocol"] = "File",
                     ["Id"] = song.Id,
                     ["Path"] = $"/music/{song.Artist}/{song.Album}/{song.Title}.flac",
+                    ["DirectStreamUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/stream?static=true",
+                    ["TranscodingUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/universal?container=flac&audioCodec=flac",
                     ["Type"] = "Default",
                     ["Container"] = "flac",
                     ["Size"] = (song.Duration ?? 180) * 1337 * 128,

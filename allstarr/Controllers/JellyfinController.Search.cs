@@ -5,6 +5,7 @@ using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
@@ -200,6 +201,19 @@ public partial class JellyfinController
             // Include MediaSources only for audio-oriented browse requests (bitrate needs).
             // Album/artist browse requests should stay as close to raw Jellyfin responses as possible.
             var queryString = Request.QueryString.Value ?? "";
+            var browseQueryParams = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryString);
+            if (!browseQueryParams.TryGetValue("IncludeItemTypes", out var browseTypes) ||
+                string.IsNullOrWhiteSpace(browseTypes.ToString()))
+            {
+                var constrained = browseQueryParams.ToDictionary(
+                    pair => pair.Key,
+                    pair => pair.Value.ToString(),
+                    StringComparer.OrdinalIgnoreCase);
+                constrained["IncludeItemTypes"] = JellyfinMusicEndpointPolicy.DefaultMusicItemTypes;
+                queryString = "?" + string.Join("&", constrained.Select(pair =>
+                    $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
+                _logger.LogDebug("Constrained untyped browse request to music item types");
+            }
             var requestedTypes = ParseItemTypes(includeItemTypes);
             var shouldIncludeMediaSources = requestedTypes != null &&
                                             requestedTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase);

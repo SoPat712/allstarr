@@ -194,13 +194,15 @@ public partial class JellyfinController
                 quality != StreamQuality.Original ? quality : null,
                 HttpContext.RequestAborted);
 
-            var contentType = "audio/mpeg";
+            var contentType = downloadStream is IAudioContentStream typed
+                ? typed.ContentType
+                : "audio/mpeg";
             if (downloadStream is FileStream fs)
             {
                 contentType = GetContentType(fs.Name);
             }
 
-            return File(downloadStream, contentType, enableRangeProcessing: true);
+            return File(downloadStream, contentType, enableRangeProcessing: downloadStream.CanSeek);
         }
         catch (Exception ex)
         {

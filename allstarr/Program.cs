@@ -752,9 +752,6 @@ app.UseWebSockets(new WebSocketOptions
     KeepAliveInterval = TimeSpan.FromSeconds(120)
 });
 
-// Add WebSocket proxy middleware (BEFORE routing)
-app.UseMiddleware<WebSocketProxyMiddleware>();
-
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -772,6 +769,15 @@ if (builder.Configuration.GetValue<bool>("HttpsRedirection:Enabled"))
 app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminStaticFilesMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminAuthenticationMiddleware>();
+
+if (backendType == BackendType.Jellyfin)
+{
+    app.UseMiddleware<JellyfinMusicEndpointPolicyMiddleware>();
+}
+
+// Proxy authenticated Jellyfin client sockets only after the public API policy
+// has classified the request as part of the supported music-client surface.
+app.UseMiddleware<WebSocketProxyMiddleware>();
 
 app.UseAuthorization();
 

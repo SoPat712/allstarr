@@ -146,7 +146,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     }
 
 
-    public async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
+    public virtual async Task<Stream> DownloadAndStreamAsync(string externalProvider, string externalId, StreamQuality? qualityOverride = null, CancellationToken cancellationToken = default)
     {
         // If a quality override is requested (not Original), use the quality override path
         // This downloads to a temp file at the requested quality and streams it without caching

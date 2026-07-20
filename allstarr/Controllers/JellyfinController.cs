@@ -1438,7 +1438,6 @@ public partial class JellyfinController : ControllerBase
             "library/refresh",          // Library scan (expensive operation)
             "library/virtualfolders",   // Library folder management
             "branding/",                // Branding configuration
-            "displaypreferences/",      // Display preferences (if not user-specific)
             "notifications/admin"       // Admin notifications
         };
 
@@ -1508,7 +1507,7 @@ public partial class JellyfinController : ControllerBase
 
             _logger.LogDebug("Using transparent Jellyfin passthrough for non-injected playlist {PlaylistId}",
                 playlistItemsRequestId);
-            return await ProxyJsonPassthroughAsync(playlistItemsPath);
+            return await ProxyMusicItemsResponseAsync(playlistItemsPath);
         }
 
         // Handle non-JSON responses (images, robots.txt, etc.)
