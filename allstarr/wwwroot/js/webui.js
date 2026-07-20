@@ -3242,10 +3242,10 @@ class AllstarrApp extends LitElement {
           </div>
         </header>
         <div class="table-wrap">
-          <table>
+          ${files.length ? html`<table>
             <thead><tr><th>Artist</th><th>Album</th><th>File</th><th>Size</th><th></th></tr></thead>
             <tbody>
-              ${files.length ? files.map((file) => html`
+              ${files.map((file) => html`
                 <tr>
                   <td>${display(file.artist)}</td>
                   <td>${display(file.album)}</td>
@@ -3253,9 +3253,9 @@ class AllstarrApp extends LitElement {
                   <td>${display(file.sizeFormatted)}</td>
                   <td><button class="danger" @click=${async () => { await API.deleteDownload(file.path); await this.loadDownloads(); this.toast("Download deleted"); }}>Delete</button></td>
                 </tr>
-              `) : html`<tr><td colspan="5"><div class="empty">No kept downloads. Tracks you keep will appear here.</div></td></tr>`}
+              `)}
             </tbody>
-          </table>
+          </table>` : emptyState("No kept downloads. Tracks you keep will appear here.")}
         </div>
       </section>
     `;
