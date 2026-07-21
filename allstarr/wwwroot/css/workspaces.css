@@ -530,3 +530,254 @@
     color: var(--text-muted);
     font-weight: 500;
 }
+
+/* Library workspace navigation uses compact pills, never the generic underline tabs. */
+.library-tabs {
+    gap: 8px;
+    min-height: 40px;
+    padding: 0;
+    overflow-x: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.library-tabs > a,
+.library-tabs > a.active {
+    display: inline-flex;
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    box-shadow: none;
+}
+
+.library-tabs > a:hover {
+    border-color: transparent;
+    background: var(--surface-raised);
+    color: var(--text-primary);
+}
+
+.library-tabs > a.active {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--signal) 18%, var(--surface-raised));
+    color: var(--text-primary);
+}
+
+.library-tabs > a.active .ui-icon {
+    color: var(--signal);
+}
+
+.library-tabs > a:focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+}
+
+/* Injected playlists share one semantic table column model. */
+.injected-playlist-table {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    overflow: visible;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-card);
+}
+
+.injected-table-wrap {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    border-radius: 14px 14px 0 0;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.injected-data-table {
+    width: 100%;
+    min-width: 1100px;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+}
+
+.injected-data-table .select-col { width: 44px; }
+.injected-data-table .playlist-col { width: 220px; }
+.injected-data-table .tracks-col { width: 70px; }
+.injected-data-table .matched-col { width: 82px; }
+.injected-data-table .unmatched-col { width: 92px; }
+.injected-data-table .schedule-col { width: 160px; }
+.injected-data-table .status-col { width: 150px; }
+.injected-data-table .last-sync-col { width: 105px; }
+.injected-data-table .actions-col { width: 177px; }
+
+.injected-data-table th {
+    height: 64px;
+    padding: 14px 12px;
+    background: var(--surface-raised);
+    color: var(--text-muted);
+    font-size: .72rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-align: left;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.injected-data-table th:first-child { border-top-left-radius: 14px; }
+.injected-data-table th:last-child { border-top-right-radius: 14px; }
+
+.injected-data-table td {
+    min-width: 0;
+    padding: 16px 12px;
+    border-top: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.injected-data-table tbody tr:first-child td { border-top: 0; }
+.injected-data-table tbody tr:hover td { background: color-mix(in srgb, var(--signal), transparent 94%); }
+.injected-data-table tbody tr:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.injected-data-table td > strong,
+.injected-data-table td > small { display: block; }
+.injected-data-table td > small { margin-top: 3px; color: var(--text-muted); }
+
+.injected-data-table .playlist-cell {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+}
+
+.injected-data-table .playlist-cell > span { min-width: 0; }
+.injected-data-table .playlist-cell strong,
+.injected-data-table .playlist-cell small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.injected-data-table .schedule-cell {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+}
+
+.injected-data-table .schedule-cell small {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+}
+
+.playlist-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.playlist-row-actions > .primary {
+    flex: 1 1 auto;
+    min-width: 112px;
+}
+
+.playlist-action-menu {
+    position: relative;
+    flex: 0 0 36px;
+}
+
+.playlist-action-menu > summary {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    list-style: none;
+}
+
+.playlist-action-menu > summary::-webkit-details-marker { display: none; }
+.playlist-action-menu > summary:hover,
+.playlist-action-menu[open] > summary {
+    border-color: var(--border);
+    background: var(--surface-raised);
+}
+
+.playlist-action-menu > summary .ui-icon { transform: rotate(90deg); }
+
+.playlist-action-menu[open] > div {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    display: grid;
+    width: 190px;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-modal);
+}
+
+.playlist-action-menu[open] > div button {
+    justify-content: flex-start;
+    width: 100%;
+    min-height: 36px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+    box-shadow: none;
+}
+
+.playlist-action-menu[open] > div button:hover { background: var(--accent-soft); }
+
+/* Settings disclosures are compact rows; expanded content keeps its own inset. */
+.settings-view {
+    gap: 14px;
+}
+
+.settings-view > details.content-disclosure.panel {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border-radius: 14px;
+    box-shadow: none;
+}
+
+.settings-view > details.content-disclosure.panel > summary {
+    min-height: 56px;
+    padding: 8px 16px;
+}
+
+.settings-view > details.content-disclosure.panel > summary:hover {
+    background: var(--surface-raised);
+}
+
+.settings-view > details.content-disclosure.panel[open] {
+    padding: 0 20px 20px;
+}
+
+.settings-view > details.content-disclosure.panel[open] > summary {
+    width: calc(100% + 40px);
+    margin: 0 -20px 12px;
+}
+
+.panel > .provider-priority-intro {
+    margin: 0;
+}
+
+.panel > .provider-priority-intro + .grid {
+    margin-top: 16px;
+}

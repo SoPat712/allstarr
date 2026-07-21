@@ -468,3 +468,19 @@
         display: none;
     }
 }
+
+@media (max-width: 700px) {
+    .library-tabs > a,
+    .library-tabs > a.active {
+        flex: 0 0 145px;
+    }
+
+    .injected-data-table {
+        min-width: 1040px;
+    }
+
+    .settings-view > details.content-disclosure.panel > summary {
+        min-height: 52px;
+        padding: 8px 12px;
+    }
+}
