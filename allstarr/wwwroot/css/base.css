@@ -1852,8 +1852,12 @@ fieldset.form-row > label small {
     font-size: 0.78rem;
 }
 
-.provider-priority-intro {
-    margin: 0 0 16px;
+.panel > .provider-priority-intro {
+    margin: 0;
+}
+
+.panel > .provider-priority-intro + .grid {
+    margin-top: 16px;
 }
 
 .priority-drag-handle {
@@ -5663,6 +5667,7 @@ section.settings-view.view-stack {
 section.settings-view > details.content-disclosure.panel {
     min-height: 0 !important;
     margin: 0;
+    padding: 0 !important;
     border-radius: 14px;
     box-shadow: none;
 }
@@ -5674,6 +5679,15 @@ section.settings-view > details.content-disclosure.panel > summary {
 
 section.settings-view > details.content-disclosure.panel > summary:hover {
     background: var(--surface-elevated);
+}
+
+section.settings-view > details.content-disclosure.panel[open] {
+    padding: 0 20px 20px !important;
+}
+
+section.settings-view > details.content-disclosure.panel[open] > summary {
+    width: calc(100% + 40px);
+    margin: 0 -20px 12px;
 }
 
 @media (max-width: 700px) {
