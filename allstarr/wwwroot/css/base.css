@@ -1852,6 +1852,10 @@ fieldset.form-row > label small {
     font-size: 0.78rem;
 }
 
+.provider-priority-intro {
+    margin: 0 0 16px;
+}
+
 .priority-drag-handle {
     color: var(--text-muted);
     font-size: 1.1rem;
@@ -5649,6 +5653,34 @@ button.setup-choice {
 
 @media (max-width: 700px) {
     .injected-data-table { min-width: 1040px; }
+}
+
+/* Settings disclosures are compact rows, not feature cards. */
+section.settings-view.view-stack {
+    gap: 14px;
+}
+
+section.settings-view > details.content-disclosure.panel {
+    min-height: 0 !important;
+    margin: 0;
+    border-radius: 14px;
+    box-shadow: none;
+}
+
+section.settings-view > details.content-disclosure.panel > summary {
+    min-height: 64px !important;
+    padding: 12px 20px !important;
+}
+
+section.settings-view > details.content-disclosure.panel > summary:hover {
+    background: var(--surface-elevated);
+}
+
+@media (max-width: 700px) {
+    section.settings-view > details.content-disclosure.panel > summary {
+        min-height: 56px !important;
+        padding: 8px 16px !important;
+    }
 }
 
 /* Reference-aligned Extensions workspace */

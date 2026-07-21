@@ -4266,7 +4266,7 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="panel">
         <h3>Provider priority</h3>
-        <p class="muted">Local library is always tried first. The lists below control which provider fills a missing track.</p>
+        <p class="muted provider-priority-intro">Local library is always tried first. The lists below control which provider fills a missing track.</p>
         <div class="grid">
           ${asArray(this.schema?.priorityGroups).map((group) => html`
             <div class="card">
@@ -4316,7 +4316,9 @@ class AllstarrApp extends LitElement {
 
   renderPinnedProviderToken(pinned) {
     if (!pinned) return nothing;
-    const logoUrl = providerLogoUrl({ id: pinned.id, name: pinned.name });
+    const isJellyfinLibrary = String(pinned.name || "").toLowerCase().includes("jellyfin");
+    const logoUrl = providerLogoUrl({ id: pinned.id, name: pinned.name })
+      || (isJellyfinLibrary ? "/images/providers/jellyfin.svg" : "");
     return html`
       <span class="provider-token provider-token-pinned" title=${pinned.reason || ""}>
         <span class="provider-token-logo provider-${String(pinned.id).toLowerCase()} pinned">
