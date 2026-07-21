@@ -1677,6 +1677,25 @@ tbody tr:hover {
     padding: 0;
 }
 
+.settings-view {
+    gap: var(--space-4);
+}
+
+.settings-disclosure > summary {
+    min-height: 50px;
+    padding: var(--space-2) var(--space-4);
+    gap: var(--space-3);
+}
+
+.settings-disclosure .disclosure-body {
+    padding: var(--space-4);
+    gap: var(--space-3);
+}
+
+.settings-disclosure > .config-grid.disclosure-body {
+    gap: var(--space-3);
+}
+
 .disclosure-body {
     display: grid;
     gap: var(--space-5);
@@ -1807,10 +1826,41 @@ fieldset.form-row > label small {
     opacity: 0.45;
 }
 
+.priority-item-pinned {
+    cursor: default;
+    border-style: dashed;
+    background: color-mix(in srgb, var(--accent-soft, var(--surface-elevated)), transparent 35%);
+    border-color: color-mix(in srgb, var(--accent), var(--border) 50%);
+}
+
+.priority-item-pinned:hover,
+.priority-item-pinned:focus-visible {
+    background: color-mix(in srgb, var(--accent-soft, var(--surface-elevated)), transparent 25%);
+    border-color: var(--accent);
+}
+
+.priority-item-pinned .priority-drag-handle {
+    color: var(--accent);
+}
+
+.priority-item-pinned .priority-drag-handle svg {
+    display: block;
+}
+
+.priority-description {
+    margin: 0 0 var(--space-2);
+    font-size: 0.78rem;
+}
+
 .priority-drag-handle {
     color: var(--text-muted);
     font-size: 1.1rem;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
 }
 
 .priority-position {
@@ -2775,7 +2825,10 @@ fieldset.form-row > label small {
 .injected-playlist-dialog {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    width: min(760px, 100%);
+    width: min(760px, calc(100vw - 24px));
+    height: min(760px, calc(100vh - (2 * var(--space-5))));
+    max-height: min(760px, calc(100vh - (2 * var(--space-5))));
+    height: min(760px, calc(100dvh - (2 * var(--space-5))));
     max-height: min(760px, calc(100dvh - (2 * var(--space-5))));
     overflow: hidden;
     border-color: color-mix(in srgb, var(--accent), var(--border) 68%);
@@ -3628,6 +3681,17 @@ button.setup-choice {
         padding: var(--space-4);
     }
 
+    .settings-disclosure > summary {
+        min-height: 46px;
+        padding: var(--space-2) var(--space-3);
+        gap: var(--space-2);
+    }
+
+    .settings-disclosure .disclosure-body {
+        padding: var(--space-3);
+        gap: var(--space-3);
+    }
+
     .content-disclosure > summary {
         min-height: 58px;
         padding: var(--space-3) var(--space-4);
@@ -3682,9 +3746,11 @@ button.setup-choice {
     }
 
     .injected-playlist-dialog {
-        width: 100%;
-        height: 100dvh;
-        max-height: 100dvh;
+        width: calc(100vw - 24px);
+        height: calc(100vh - 24px);
+        max-height: calc(100vh - 24px);
+        height: calc(100dvh - 24px);
+        max-height: calc(100dvh - 24px);
         border: 0;
         border-radius: 0;
     }
@@ -4131,6 +4197,18 @@ button.setup-choice {
 
 .provider-logo.provider-qobuz {
     background: #f7f8fa;
+}
+
+.provider-token-logo.provider-qobuz,
+.provider-logo.provider-qobuz {
+    background: #f7f8fa;
+    border-color: #d5d7dc;
+}
+
+.provider-token-logo.provider-qobuz img,
+.provider-logo.provider-qobuz img {
+    max-width: 54px;
+    max-height: 18px;
 }
 
 .provider-logo.provider-jellyfin {
@@ -5159,6 +5237,44 @@ button.setup-choice {
     align-items: center;
     gap: 8px;
     justify-self: end;
+    white-space: nowrap;
+}
+
+.sources-page-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.sources-page-header > .sources-page-title {
+    min-width: 0;
+}
+
+.sources-page-header > .sources-page-title h2 {
+    margin: 0;
+}
+
+.sources-page-header > .sources-page-title p {
+    margin: var(--space-1) 0 0;
+    color: var(--text-secondary);
+    max-width: 72ch;
+}
+
+.sources-page-actions {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-self: end;
+    white-space: nowrap;
+}
+
+.sources-page-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     white-space: nowrap;
 }
 

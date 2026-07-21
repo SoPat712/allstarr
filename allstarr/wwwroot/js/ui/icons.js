@@ -5,6 +5,7 @@ const iconNames = new Set([
   "shield", "playlist", "tasks", "server", "clock", "check", "warning", "more",
   "filter", "logout", "user", "close", "chevronLeft", "chevronRight", "extensions",
   "metadata", "download", "streaming", "lyrics", "externalApi", "edit", "upload", "link",
+  "lock", "pin",
 ]);
 
 export function icon(name, size = 18) {

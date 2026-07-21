@@ -18,16 +18,20 @@ public sealed class LegacyMappingReadinessContractTests
     {
         var matcher = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
+        var walker = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Services", "Spotify", "PerProviderTrackMatcher.cs"));
         var providers = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Services", "Common", "MultiProviderMetadataService.cs"));
 
-        Assert.Contains("SearchPlayableSongsAsync(metadataService", matcher, StringComparison.Ordinal);
-        Assert.Contains("FindPlayableSongByIsrcAsync", matcher, StringComparison.Ordinal);
         Assert.Contains("GetEnabledPlaybackProviders()", providers, StringComparison.Ordinal);
         Assert.Contains("requirePlayableExtensions: true", providers, StringComparison.Ordinal);
         Assert.Contains("playbackProviderRanks", matcher, StringComparison.Ordinal);
-        Assert.Contains("fuzzy-local-library", matcher, StringComparison.Ordinal);
         Assert.Contains("candidate.MatchedSong.IsLocal", matcher, StringComparison.Ordinal);
+        Assert.Contains("PerProviderTrackWalker", matcher, StringComparison.Ordinal);
+        Assert.Contains("WalkProvidersForTrackAsync", matcher, StringComparison.Ordinal);
+        Assert.Contains("InjectedSourceTrack", walker, StringComparison.Ordinal);
+        Assert.Contains("PerProviderAcceptThresholds", walker, StringComparison.Ordinal);
+        Assert.Contains("CanUseForPlayback", walker, StringComparison.Ordinal);
         Assert.DoesNotContain("usedJellyfinIds", matcher, StringComparison.Ordinal);
         Assert.DoesNotContain("usedSongIds", matcher, StringComparison.Ordinal);
     }

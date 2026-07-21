@@ -45,6 +45,17 @@
         grid-template-columns: 110px minmax(0, 1fr);
     }
 
+    .playlist-track-head,
+    .playlist-track-row {
+        min-width: min(850px, calc(100vw - 24px));
+    }
+
+    .playlist-track-table {
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
     :root {
         --rail-width: 76px;
         --page-gutter: 20px;
@@ -238,6 +249,15 @@
         justify-self: start;
     }
 
+    .sources-page-header,
+    .settings-page-header {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .sources-page-actions {
+        justify-self: start;
+    }
+
     .extensions-page-header,
     .extensions-page-title,
     .extensions-page-title > div,
@@ -323,6 +343,12 @@
 
     .injected-playlist-scroll {
         padding: 12px 16px 16px;
+    }
+
+    .playlist-track-head,
+    .playlist-track-row {
+        grid-template-columns: 28px minmax(0, 1.2fr) minmax(130px, .9fr) minmax(150px, 1fr) minmax(115px, .7fr) 40px;
+        min-width: min(700px, calc(100vw - 24px));
     }
 
     .track-details-dialog {

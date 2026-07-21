@@ -1,0 +1,457 @@
+using allstarr.Models.Domain;
+using allstarr.Services.Common;
+using Microsoft.Extensions.Logging;
+
+namespace allstarr.Services.Spotify;
+
+/// <summary>
+/// Provider-agnostic descriptor for a single source track coming from any
+/// injected playlist provider (Spotify today, Apple MusicKit in the works,
+/// Deezer/Qobuz/extension playlists later). The injected matcher only needs
+/// these fields — it does not care whether the source is a Spotify track,
+/// an Apple MusicKit song, or anything else.
+/// </summary>
+public sealed record InjectedSourceTrack(
+    string SourceId,
+    string SourceProvider,
+    string Title,
+    IReadOnlyList<string> Artists,
+    string? Isrc,
+    int? DurationMs,
+    string? Album = null,
+    string? AlbumArtUrl = null,
+    int Position = 0);
+
+/// <summary>
+/// Outcome of a per-provider match walk for a single injected source track.
+/// </summary>
+public sealed record PerProviderMatchResult(
+    Song? MatchedSong,
+    string? MatchType,
+    string? ProviderUsed,
+    double Score,
+    IReadOnlyList<PerProviderAttempt> Walked);
+
+/// <summary>
+/// One step in a per-provider walk. The outcome describes why the matcher
+/// moved on (typed miss, low score, or a provider that was not callable).
+/// </summary>
+public sealed record PerProviderAttempt(
+    string Provider,
+    string Query,
+    int CandidateCount,
+    double? TopScore,
+    string Outcome,
+    string? ReasonCode);
+
+/// <summary>
+/// Per-track, per-provider matcher for injected playlist tracks. Walks the
+/// configured playback priority list in order and stops on the first
+/// verified identity (ISRC) or score above the per-provider accept
+/// threshold. Local library is the implicit first stop and the caller is
+/// expected to pass `hasLocalMatch=true` when the local pass already won.
+///
+/// The walker is intentionally provider-agnostic. The injected source
+/// describes itself through <see cref="InjectedSourceTrack"/>; the host
+/// (Spotify, Apple MusicKit, etc.) decides which concrete metadata
+/// services to register with the resolver.
+/// </summary>
+public static class PerProviderTrackMatcher
+{
+    public const string MatchTypeLocal = "fuzzy-local";
+    public const string MatchTypeIsrc = "isrc";
+    public const string MatchTypeProviderFuzzy = "fuzzy-provider";
+    public const string MatchTypeTitleOnly = "title-only";
+    public const string MatchTypeNone = "none";
+
+    public const string OutcomeAccepted = "accepted";
+    public const string OutcomeMissNotFound = "miss:not-found";
+    public const string OutcomeMissNotPlayable = "miss:not-playable";
+    public const string OutcomeLowScore = "miss:low-score";
+    public const string OutcomeNoService = "miss:no-service";
+    public const string OutcomeError = "miss:error";
+    public const string OutcomeEmpty = "miss:empty-results";
+    public const string OutcomeSkipped = "skip:isrc-disabled";
+
+    public static PerProviderMatchResult NoMatch(IReadOnlyList<PerProviderAttempt> walked) =>
+        new(null, null, null, 0.0, walked);
+
+    public static PerProviderMatchResult FromLocal(Song song, double score) =>
+        new(song, MatchTypeLocal, "local", score, Array.Empty<PerProviderAttempt>());
+
+    public static PerProviderMatchResult FromProvider(
+        Song song,
+        string matchType,
+        string provider,
+        double score,
+        IReadOnlyList<PerProviderAttempt> walked) =>
+        new(song, matchType, provider, score, walked);
+}
+
+/// <summary>
+/// Per-provider accept thresholds and helper scoring logic. Centralized so
+/// providers can be tuned without touching the walk loop.
+/// </summary>
+public sealed class PerProviderAcceptThresholds
+{
+    public double ProviderAcceptScore { get; init; } = 40;
+    public double ArtistOverrideScore { get; init; } = 70;
+    public double ArtistOverrideTitleScore { get; init; } = 30;
+    public double TitleSubstringScore { get; init; } = 85;
+    public int TitleOnlyProviderCount { get; init; } = 2;
+}
+
+public static class PerProviderTrackScorer
+{
+    public static (double TotalScore, int TitleScore, double ArtistScore) Score(
+        Song candidate,
+        string title,
+        IReadOnlyList<string> artists)
+    {
+        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, candidate.Title);
+        var artistList = artists is List<string> list ? list : artists.ToList();
+        var contributors = candidate.Contributors is List<string> contribs
+            ? contribs
+            : candidate.Contributors.ToList();
+        var artistScore = FuzzyMatcher.CalculateArtistMatchScore(artistList, candidate.Artist, contributors);
+        var total = (titleScore * 0.7) + (artistScore * 0.3);
+        return (total, titleScore, artistScore);
+    }
+
+    public static bool IsAcceptable(
+        (double TotalScore, int TitleScore, double ArtistScore) score,
+        PerProviderAcceptThresholds thresholds)
+    {
+        if (score.TotalScore >= thresholds.ProviderAcceptScore)
+        {
+            return true;
+        }
+
+        if (score.ArtistScore >= thresholds.ArtistOverrideScore
+            && score.TitleScore >= thresholds.ArtistOverrideTitleScore)
+        {
+            return true;
+        }
+
+        if (score.TitleScore >= thresholds.TitleSubstringScore)
+        {
+            return true;
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
+/// Resolves a provider id (e.g. "deezer", "applemusic", "spotiflac-tidal-web")
+/// to a concrete metadata service so a walk step can call a single provider
+/// without fanning out to every enabled provider at once.
+/// </summary>
+public static class PerProviderServiceResolver
+{
+    public static IConcreteMetadataService? Resolve(
+        IEnumerable<IConcreteMetadataService> services,
+        string providerId)
+    {
+        var normalized = providerId.Trim().ToLowerInvariant();
+        return services.FirstOrDefault(service =>
+            Resolves(service, normalized));
+    }
+
+    private static bool Resolves(IConcreteMetadataService service, string normalized)
+    {
+        var typeName = service.GetType().Name;
+        if (normalized == "applemusic" || normalized == "apple-download")
+        {
+            return typeName.StartsWith("AppleMusic", StringComparison.OrdinalIgnoreCase);
+        }
+        if (normalized == "squidwtf")
+        {
+            return typeName.StartsWith("SquidWTF", StringComparison.OrdinalIgnoreCase);
+        }
+        return typeName.StartsWith(normalized, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>
+/// Per-track, per-provider walk for an injected source track. This is the
+/// shared engine that Spotify, Apple MusicKit, and any future injected
+/// source use. Local library is always the implicit first stop. The walker
+/// stops on the first verified identity (ISRC) or per-provider accept and
+/// only falls back to title-only retries when no provider crossed the
+/// threshold.
+/// </summary>
+public sealed class PerProviderTrackWalker
+{
+    private readonly IReadOnlyList<IConcreteMetadataService> _concreteServices;
+    private readonly PerProviderAcceptThresholds _thresholds;
+    private readonly ILogger _logger;
+    private readonly int _searchLimit;
+
+    public PerProviderTrackWalker(
+        IReadOnlyList<IConcreteMetadataService> concreteServices,
+        PerProviderAcceptThresholds thresholds,
+        ILogger logger,
+        int searchLimit = 24)
+    {
+        _concreteServices = concreteServices;
+        _thresholds = thresholds;
+        _logger = logger;
+        _searchLimit = searchLimit;
+    }
+
+    /// <summary>
+    /// Walks the configured playback priority list for one source track.
+    /// Pass `localMatch` when the local pass already won to short-circuit
+    /// the walk. Returns the accepted match, if any, and a list of every
+    /// provider step that was attempted.
+    /// </summary>
+    public async Task<PerProviderMatchResult> WalkAsync(
+        InjectedSourceTrack source,
+        IReadOnlyList<string> playbackProviders,
+        Song? localMatch,
+        double? localMatchScore,
+        CancellationToken cancellationToken)
+    {
+        var walked = new List<PerProviderAttempt>();
+
+        if (localMatch != null)
+        {
+            return PerProviderTrackMatcher.FromLocal(localMatch, localMatchScore ?? 100);
+        }
+
+        var titleStripped = FuzzyMatcher.StripDecorators(source.Title);
+        var primaryArtist = source.Artists.FirstOrDefault() ?? string.Empty;
+        var artistQuery = $"{titleStripped} {primaryArtist}".Trim();
+        var titleOnlyQuery = titleStripped;
+
+        // 1. Per-provider walk in configured order.
+        // We try each provider's own concrete search directly so the walk is
+        // deterministic and we can short-circuit on the first accept.
+        for (var index = 0; index < playbackProviders.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var providerId = playbackProviders[index];
+            var normalizedProvider = providerId.Trim().ToLowerInvariant();
+
+            if (normalizedProvider == "jellyfin-local" || normalizedProvider == "subsonic-local")
+            {
+                walked.Add(new PerProviderAttempt(
+                    providerId, artistQuery, 0, null,
+                    PerProviderTrackMatcher.OutcomeNoService,
+                    "pinned-local"));
+                continue;
+            }
+
+            var providerService = PerProviderServiceResolver.Resolve(_concreteServices, providerId);
+            if (providerService == null)
+            {
+                walked.Add(new PerProviderAttempt(
+                    providerId, artistQuery, 0, null,
+                    PerProviderTrackMatcher.OutcomeNoService,
+                    "no-concrete-service"));
+                continue;
+            }
+
+            // ISRC verified identity on this provider's catalog, if the source has one.
+            if (!string.IsNullOrWhiteSpace(source.Isrc))
+            {
+                var isrcStep = await TryIsrcStepAsync(
+                    providerService, providerId, source.Isrc!, cancellationToken);
+                walked.Add(isrcStep.Attempt);
+
+                if (isrcStep.AcceptedSong != null)
+                {
+                    return PerProviderTrackMatcher.FromProvider(
+                        isrcStep.AcceptedSong,
+                        PerProviderTrackMatcher.MatchTypeIsrc,
+                        providerId,
+                        100,
+                        walked);
+                }
+            }
+
+            // Fuzzy search on this provider only.
+            var stepResult = await StepProviderAsync(
+                providerService,
+                providerId,
+                artistQuery,
+                source,
+                cancellationToken);
+            walked.Add(stepResult.Attempt);
+
+            if (stepResult.AcceptedSong != null)
+            {
+                return PerProviderTrackMatcher.FromProvider(
+                    stepResult.AcceptedSong,
+                    stepResult.MatchType ?? PerProviderTrackMatcher.MatchTypeProviderFuzzy,
+                    providerId,
+                    stepResult.Score,
+                    walked);
+            }
+        }
+
+        // 2. Title-only retry on the first N providers when no fuzzy search crossed the threshold.
+        var titleOnlyRetry = 0;
+        foreach (var providerId in playbackProviders)
+        {
+            if (titleOnlyRetry >= _thresholds.TitleOnlyProviderCount) break;
+            titleOnlyRetry++;
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var normalizedProvider = providerId.Trim().ToLowerInvariant();
+            if (normalizedProvider == "jellyfin-local" || normalizedProvider == "subsonic-local") continue;
+
+            var providerService = PerProviderServiceResolver.Resolve(_concreteServices, providerId);
+            if (providerService == null) continue;
+
+            var stepResult = await StepProviderAsync(
+                providerService,
+                providerId,
+                titleOnlyQuery,
+                source,
+                cancellationToken,
+                matchType: PerProviderTrackMatcher.MatchTypeTitleOnly);
+            // Record the title-only attempt but do not double-log steps that were
+            // already walked above — title-only adds an "extended" attempt for
+            // observability.
+            if (stepResult.AcceptedSong != null)
+            {
+                walked.Add(stepResult.Attempt);
+                return PerProviderTrackMatcher.FromProvider(
+                    stepResult.AcceptedSong,
+                    PerProviderTrackMatcher.MatchTypeTitleOnly,
+                    providerId,
+                    stepResult.Score,
+                    walked);
+            }
+        }
+
+        return PerProviderTrackMatcher.NoMatch(walked);
+    }
+
+    private async Task<PerProviderStepResult> StepProviderAsync(
+        IConcreteMetadataService service,
+        string providerId,
+        string query,
+        InjectedSourceTrack source,
+        CancellationToken cancellationToken,
+        string matchType = PerProviderTrackMatcher.MatchTypeProviderFuzzy)
+    {
+        try
+        {
+            var results = await service.SearchSongsAsync(query, _searchLimit, cancellationToken);
+            var candidates = results
+                .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
+                .ToList();
+
+            if (candidates.Count == 0)
+            {
+                return new PerProviderStepResult(
+                    AcceptedSong: null,
+                    Score: 0,
+                    MatchType: matchType,
+                    Attempt: new PerProviderAttempt(
+                        providerId, query, 0, null,
+                        PerProviderTrackMatcher.OutcomeEmpty, null));
+            }
+
+            var scored = candidates
+                .Select(song => (Song: song, Score: PerProviderTrackScorer.Score(song, source.Title, source.Artists)))
+                .OrderByDescending(entry => entry.Score.TotalScore)
+                .ToList();
+
+            var top = scored[0];
+            if (PerProviderTrackScorer.IsAcceptable(top.Score, _thresholds))
+            {
+                return new PerProviderStepResult(
+                    AcceptedSong: top.Song,
+                    Score: top.Score.TotalScore,
+                    MatchType: matchType,
+                    Attempt: new PerProviderAttempt(
+                        providerId, query, candidates.Count, top.Score.TotalScore,
+                        PerProviderTrackMatcher.OutcomeAccepted, null));
+            }
+
+            return new PerProviderStepResult(
+                AcceptedSong: null,
+                Score: top.Score.TotalScore,
+                MatchType: matchType,
+                Attempt: new PerProviderAttempt(
+                    providerId, query, candidates.Count, top.Score.TotalScore,
+                    PerProviderTrackMatcher.OutcomeLowScore,
+                    $"top={top.Score.TotalScore:F1}"));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Per-provider search failed for {Provider} on query '{Query}'",
+                providerId, query);
+            return new PerProviderStepResult(
+                AcceptedSong: null,
+                Score: 0,
+                MatchType: matchType,
+                Attempt: new PerProviderAttempt(
+                    providerId, query, 0, null,
+                    PerProviderTrackMatcher.OutcomeError, ex.GetType().Name));
+        }
+    }
+
+    private async Task<PerProviderStepResult> TryIsrcStepAsync(
+        IConcreteMetadataService service,
+        string providerId,
+        string isrc,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var isrcSong = await service.FindSongByIsrcAsync(isrc, cancellationToken);
+            if (isrcSong != null
+                && ExternalTrackPlaybackPolicy.CanUseForPlayback(isrcSong.ExternalProvider, isrcSong.Id))
+            {
+                return new PerProviderStepResult(
+                    AcceptedSong: isrcSong,
+                    Score: 100,
+                    MatchType: PerProviderTrackMatcher.MatchTypeIsrc,
+                    Attempt: new PerProviderAttempt(
+                        providerId, $"isrc:{isrc}", 1, 100,
+                        PerProviderTrackMatcher.OutcomeAccepted, null));
+            }
+
+            return new PerProviderStepResult(
+                AcceptedSong: null,
+                Score: 0,
+                MatchType: PerProviderTrackMatcher.MatchTypeIsrc,
+                Attempt: new PerProviderAttempt(
+                    providerId, $"isrc:{isrc}", 0, null,
+                    PerProviderTrackMatcher.OutcomeMissNotFound, null));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "ISRC lookup failed for {Provider}",
+                providerId);
+            return new PerProviderStepResult(
+                AcceptedSong: null,
+                Score: 0,
+                MatchType: PerProviderTrackMatcher.MatchTypeIsrc,
+                Attempt: new PerProviderAttempt(
+                    providerId, $"isrc:{isrc}", 0, null,
+                    PerProviderTrackMatcher.OutcomeError, ex.GetType().Name));
+        }
+    }
+
+    private readonly record struct PerProviderStepResult(
+        Song? AcceptedSong,
+        double Score,
+        string? MatchType,
+        PerProviderAttempt Attempt);
+}

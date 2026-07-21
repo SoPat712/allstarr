@@ -232,6 +232,7 @@ function providerLogoUrl(provider) {
   if (supplied) return String(supplied);
   const id = String(provider?.id || provider?.Id || provider?.name || provider?.Name || "").toLowerCase();
   const logoAliases = {
+    squidwtf: "squidwtf",
     "apple-download": "applemusic",
     "apple-musickit": "applemusic",
     "spotiflac-amazon": "amazonmusic",
@@ -248,13 +249,13 @@ function providerLogoUrl(provider) {
     "last.fm": "lastfm",
     "listen-brainz": "listenbrainz",
   };
-  const logos = new Set(["spotify", "applemusic", "amazonmusic", "deezer", "qobuz", "musicbrainz", "jellyfin", "soundcloud", "tidal", "youtubemusic", "lastfm", "listenbrainz"]);
+  const logos = new Set(["spotify", "applemusic", "amazonmusic", "deezer", "qobuz", "musicbrainz", "jellyfin", "soundcloud", "tidal", "youtubemusic", "lastfm", "listenbrainz", "squidwtf"]);
   const nameId = String(provider?.name || provider?.Name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const logoId = logoAliases[id] || (logos.has(id) ? id : logoAliases[nameId] || nameId);
   return logos.has(logoId) ? `/images/providers/${logoId}.svg` : "";
 }
 
-const providersWithoutCardMark = new Set(["lyricsplus", "squidwtf", "lrclib"]);
+const providersWithoutCardMark = new Set(["lyricsplus", "lrclib"]);
 
 function providerDisplayName(providerId, providers = []) {
   const provider = asArray(providers).find((item) =>
@@ -2952,7 +2953,7 @@ class AllstarrApp extends LitElement {
                 <span>${asArray(track.artists).join(", ") || "Unknown artist"}</span>
                 <span>${display(track.album)}</span>
                 <span><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
-                <span @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track)}</span>
+                <span @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track, index)}</span>
               </div>`) : html`<div class="empty compact">No tracks match this filter.</div>`}
             </div>
             <div class="playlist-track-summary">${query ? `Showing ${filtered.length} of ${tracks.length} tracks` : `All ${tracks.length} tracks`}</div>
@@ -3050,19 +3051,29 @@ class AllstarrApp extends LitElement {
     </div>`;
   }
 
-  renderInjectedTrackMenu(track) {
-    const spotifyId = String(track.spotifyId || "");
-    const open = this.injectedTrackMenuId === spotifyId;
+  renderInjectedTrackMenu(track, index = 0) {
+    const spotifyId = String(track?.spotifyId || track?.SpotifyId || track?.backendItemId || track?.backend_id || track?.id || track?.Id || "").trim();
+    const menuId = spotifyId || `track-${index}`;
+    const open = this.injectedTrackMenuId === menuId;
+    const toggleMenu = () => { this.injectedTrackMenuId = open ? "" : menuId; };
     return html`<div class="track-action-menu">
-      <button class="track-action-trigger" aria-label="Actions for ${display(track.title, "track")}" aria-haspopup="menu"
+      <button class="track-action-trigger" type="button" aria-label="Actions for ${display(track.title, "track")}" aria-haspopup="menu"
         aria-expanded=${open ? "true" : "false"}
-        @click=${() => { this.injectedTrackMenuId = open ? "" : spotifyId; }}>&#8942;</button>
-      ${open ? html`<div class="track-action-popover" role="menu">
-        <button role="menuitem" @click=${() => this.openInjectedTrackEditor(track, "local")}>Search local library</button>
-        <button role="menuitem" @click=${() => this.openInjectedTrackEditor(track, "external")}>Search music providers</button>
-        <button role="menuitem" @click=${() => this.rematchInjectedTrack(track)}>Rematch automatically</button>
+        @click=${(event) => { event.preventDefault(); event.stopPropagation(); toggleMenu(); }}
+        @keydown=${(event) => {
+          if (!(["Enter", " ", "Spacebar"].includes(event.key))) return;
+          event.preventDefault();
+          event.stopPropagation();
+          toggleMenu();
+        }}>
+        &#8942;
+      </button>
+      ${open ? html`<div class="track-action-popover" role="menu" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>
+        <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.openInjectedTrackEditor(track, "local"); }}>Search local library</button>
+        <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.openInjectedTrackEditor(track, "external"); }}>Search music providers</button>
+        <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.rematchInjectedTrack(track); }}>Rematch automatically</button>
         <button role="menuitem" class="danger-text" ?disabled=${track.isLocal == null && !track.isManualMapping}
-          @click=${() => this.clearInjectedTrackMapping(track)}>Clear match</button>
+          @click=${(event) => { event.stopPropagation(); this.clearInjectedTrackMapping(track); }}>Clear match</button>
       </div>` : nothing}
     </div>`;
   }
@@ -3494,9 +3505,12 @@ class AllstarrApp extends LitElement {
     if (!this.isAdministrator()) {
       return html`
         <section class="view-stack">
-          <div class="view-header">
-          <div><h2>Sources</h2><p>See which music and metadata services are available to Allstarr.</p></div>
-          ${canManageAccounts ? html`<div class="actions"><button class="primary" @click=${() => this.navigate("/settings")}>Manage accounts</button></div>` : nothing}
+          <div class="view-header sources-page-header">
+            <div class="sources-page-title">
+              <h2>Sources</h2>
+              <p>See which music and metadata services are available to Allstarr.</p>
+            </div>
+            ${canManageAccounts ? html`<div class="sources-page-actions"><button class="primary icon-label" @click=${() => this.navigate("/settings")}>${icon("settings", 16)}<span>Manage accounts</span></button></div>` : nothing}
           </div>
           <div class="empty">Provider configuration is managed from Settings.</div>
         </section>
@@ -3513,14 +3527,14 @@ class AllstarrApp extends LitElement {
     const helperProviders = orderedProviders.filter((provider) => !musicProviders.includes(provider));
     return html`
       <section class="view-stack sources-view" data-testid="sources-workspace">
-        <div class="view-header">
-          <div>
+        <div class="view-header sources-page-header">
+          <div class="sources-page-title">
             <h2>Sources</h2>
             <p>Connect and manage music providers, download helpers, metadata, and lyrics services.</p>
           </div>
-          <div class="actions">
-            ${canManageAccounts ? html`<button @click=${() => this.navigate("/settings")}>Manage accounts</button>` : nothing}
-            <button class="primary icon-label" @click=${() => { this.sourceCatalogOpen = true; }}>${icon("plus")}Add source</button>
+          <div class="sources-page-actions">
+            ${canManageAccounts ? html`<button class="icon-label" @click=${() => this.navigate("/settings")}>${icon("settings", 16)}<span>Manage accounts</span></button>` : nothing}
+            <button class="primary icon-label" @click=${() => { this.sourceCatalogOpen = true; }}>${icon("plus", 16)}<span>Add source</span></button>
           </div>
         </div>
         ${this.renderProviderSection("music", "Music providers", musicProviders)}
@@ -4218,12 +4232,27 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="panel">
         <h3>Provider priority</h3>
+        <p class="muted">Local library is always tried first. The lists below control which provider fills a missing track.</p>
         <div class="grid">
           ${asArray(this.schema?.priorityGroups).map((group) => html`
             <div class="card">
               <h3>${group.label}</h3>
-              <p class="muted priority-help">Drag providers into order. With the keyboard, use Alt + Up or Alt + Down.</p>
+              ${group.description ? html`<p class="muted priority-description">${group.description}</p>` : nothing}
+              <p class="muted priority-help">Drag providers top-to-bottom to set order. Keyboard: Alt + Up or Alt + Down.</p>
               <div class="priority-list" role="list" aria-label=${group.label}>
+                ${group.pinnedProvider ? html`
+                  <div
+                    class="priority-item priority-item-pinned"
+                    role="listitem"
+                    aria-label=${`${group.pinnedProvider.name}, fixed at position 1 of ${(group.providers?.length ?? 0) + 1}`}
+                    data-priority-group=${group.id}
+                    data-priority-pinned="true"
+                  >
+                    <span class="priority-drag-handle" aria-hidden="true">${icon("lock", 14)}</span>
+                    ${this.renderPinnedProviderToken(group.pinnedProvider)}
+                    <span class="priority-position">1</span>
+                  </div>
+                ` : nothing}
                 ${asArray(group.providers).map((provider, index) => html`
                   <div
                     class="priority-item ${this.priorityDrag?.groupId === group.id && this.priorityDrag?.index === index ? "dragging" : ""}"
@@ -4231,7 +4260,7 @@ class AllstarrApp extends LitElement {
                     draggable="true"
                     tabindex="0"
                     data-priority-group=${group.id}
-                    aria-label=${`${providerDisplayName(provider, providers)}, position ${index + 1} of ${group.providers.length}`}
+                    aria-label=${`${providerDisplayName(provider, providers)}, position ${index + 2} of ${(group.providers?.length ?? 0) + (group.pinnedProvider ? 1 : 0)}`}
                     @dragstart=${(event) => this.startPriorityDrag(event, group, index)}
                     @dragover=${(event) => this.allowPriorityDrop(event, group)}
                     @drop=${(event) => this.dropPriority(event, group, index)}
@@ -4240,7 +4269,7 @@ class AllstarrApp extends LitElement {
                   >
                     <span class="priority-drag-handle" aria-hidden="true">⠿</span>
                     ${this.renderProviderToken(provider, providers)}
-                    <span class="priority-position">${index + 1}</span>
+                    <span class="priority-position">${index + (group.pinnedProvider ? 2 : 1)}</span>
                   </div>
                 `)}
               </div>
@@ -4248,6 +4277,19 @@ class AllstarrApp extends LitElement {
           `)}
         </div>
       </div>
+    `;
+  }
+
+  renderPinnedProviderToken(pinned) {
+    if (!pinned) return nothing;
+    const logoUrl = providerLogoUrl({ id: pinned.id, name: pinned.name });
+    return html`
+      <span class="provider-token provider-token-pinned" title=${pinned.reason || ""}>
+        <span class="provider-token-logo provider-${String(pinned.id).toLowerCase()} pinned">
+          ${logoUrl ? html`<img src="${logoUrl}" alt="">` : providerMark({ id: pinned.id, name: pinned.name }).slice(0, 2)}
+        </span>
+        <span>${pinned.name}</span>
+      </span>
     `;
   }
 
@@ -4737,21 +4779,22 @@ class AllstarrApp extends LitElement {
           <div class="section-heading">
             <div>
               <h3 id="provider-routing-heading">Provider routing</h3>
-              <p>Allstarr tries local library tracks first. Unresolved tracks then follow these provider orders.</p>
+              <p>Allstarr tries local library tracks first. Remaining tracks follow each provider order from top to bottom.</p>
+              <p class="muted">This section is at: <strong>Settings → Provider routing</strong>.</p>
             </div>
           </div>
           ${this.renderPriorityGroups()}
         </section>
         ${this.renderProviderAccountModal()}
         ${asArray(this.schema?.configSections).map((section) => html`
-          <details class="content-disclosure panel">
+          <details class="content-disclosure panel settings-disclosure">
             <summary><span><strong>${section.label}</strong><small>Show configuration</small></span></summary>
             <div class="config-grid disclosure-body">
               ${asArray(section.fields).map((field) => this.renderConfigField(field))}
             </div>
           </details>
         `)}
-        <details class="content-disclosure panel">
+        <details class="content-disclosure panel settings-disclosure">
           <summary><span><strong>Backup and restore</strong><small>Database backups and bootstrap export</small></span></summary>
           <div class="disclosure-body">
             <div class="stat-list compact">
@@ -4765,7 +4808,7 @@ class AllstarrApp extends LitElement {
             <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
           </div>
         </details>
-        <details class="content-disclosure panel" open>
+        <details class="content-disclosure panel settings-disclosure" open>
           <summary><span><strong>Media diagnostics</strong><small>Verify metadata and album artwork through Allstarr</small></span></summary>
           <div class="disclosure-body">
             <p class="muted">Runs a read-only check against a small sample from your active media server. It does not reveal track names, IDs, credentials, or server addresses.</p>
@@ -4784,7 +4827,7 @@ class AllstarrApp extends LitElement {
               </div>` : nothing}
           </div>
         </details>
-        <details class="content-disclosure panel" open>
+        <details class="content-disclosure panel settings-disclosure" open>
           <summary><span><strong>Playlist diagnostics</strong><small>Verify restored playlists and playable entries</small></span></summary>
           <div class="disclosure-body">
             <p class="muted">Checks configured playlists, cached provider data, and the final items shown to players. It does not reveal playlist or track names.</p>
@@ -4808,7 +4851,7 @@ class AllstarrApp extends LitElement {
           <button @click=${() => this.openSetupGuide()}>Open setup guide</button>
         </div>
         ${this.renderEnvMigrationWizard()}
-        <details class="content-disclosure panel danger-disclosure">
+        <details class="content-disclosure panel danger-disclosure settings-disclosure">
           <summary><span><strong>Maintenance actions</strong><small>Cache and restart controls</small></span></summary>
           <div class="actions disclosure-body">
             <button class="danger" @click=${async () => { if (confirm("Clear cache?")) { await API.clearCache(); this.toast("Cache clear requested"); } }}>Clear cache</button>

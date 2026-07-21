@@ -1966,14 +1966,27 @@ public class PlaylistController : ControllerBase
         }
 
         var normalizedProvider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedProvider == "apple-download")
+        {
+            normalizedProvider = "applemusic";
+        }
+
+        var extensionPlaybackProviders = HttpContext.RequestServices
+            .GetService<ExtensionManager>()?
+            .GetActiveExtensions()
+            .Where(extension => extension.Types.Any(IsPlaybackCapability))
+            .Select(extension => extension.Id.ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            .AsEnumerable();
+
+        if (!IsSupportedExternalTrackProvider(normalizedProvider, extensionPlaybackProviders))
+        {
+            return BadRequest(new { error = $"{provider} is unsupported for this search" });
+        }
+
         if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(normalizedProvider))
         {
             return BadRequest(new { error = $"{provider} is metadata-only and cannot be used as a playable track mapping" });
-        }
-
-        if (normalizedProvider != "deezer" && normalizedProvider != "qobuz" && normalizedProvider != "applemusic")
-        {
-            return BadRequest(new { error = "Unsupported provider" });
         }
 
         try
@@ -1986,8 +1999,7 @@ public class PlaylistController : ControllerBase
 
             var results = songs
                 .Where(s => !string.IsNullOrWhiteSpace(s.ExternalId))
-                .Where(s => string.IsNullOrWhiteSpace(s.ExternalProvider) ||
-                            string.Equals(s.ExternalProvider, normalizedProvider, StringComparison.OrdinalIgnoreCase))
+                .Where(s => string.Equals(s.ExternalProvider, normalizedProvider, StringComparison.OrdinalIgnoreCase))
                 .GroupBy(s => s.ExternalId!, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .Select(song => new
@@ -2009,6 +2021,20 @@ public class PlaylistController : ControllerBase
             _logger.LogError(ex, "Failed to search external tracks for provider {Provider}", provider);
             return StatusCode(500, new { error = "Failed to search external tracks" });
         }
+    }
+
+    private static bool IsPlaybackCapability(string capability) =>
+        capability.Equals("stream", StringComparison.OrdinalIgnoreCase) ||
+        capability.Equals("streaming", StringComparison.OrdinalIgnoreCase) ||
+        capability.Equals("download", StringComparison.OrdinalIgnoreCase) ||
+        capability.Equals("downloads", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSupportedExternalTrackProvider(
+        string provider,
+        IEnumerable<string>? extensionProviderIds)
+    {
+        return provider is "deezer" or "qobuz" or "squidwtf" or "applemusic" or "apple-download" ||
+               extensionProviderIds?.Contains(provider, StringComparer.OrdinalIgnoreCase) == true;
     }
 
     /// <summary>

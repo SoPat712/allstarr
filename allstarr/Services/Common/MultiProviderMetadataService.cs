@@ -482,10 +482,28 @@ public class MultiProviderMetadataService : IMusicMetadataService
             : [
                 _configuration["Providers:MetadataOrder"] ?? _configuration["MULTI_PROVIDER_METADATA_ORDER"] ?? "apple-download,deezer,qobuz"
               ];
-        return values
+
+        var configuredOrder = values
             .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Select(value => value.ToLowerInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!playbackOnly)
+        {
+            return configuredOrder;
+        }
+
+        var extensionPlaybackProviders = _extensionManager
+            .GetActiveExtensions()
+            .Where(ext => ext.Types.Any(IsPlaybackCapability))
+            .Select(ext => ext.Id.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id)
+            .ToList();
+
+        return configuredOrder
+            .Concat(extensionPlaybackProviders.Where(id => !configuredOrder.Contains(id, StringComparer.OrdinalIgnoreCase)))
             .ToList();
     }
 

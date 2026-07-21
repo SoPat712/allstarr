@@ -340,7 +340,7 @@ public sealed class WebUiResponsiveContractTests
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
         Assert.Contains(
-            "const providersWithoutCardMark = new Set([\"lyricsplus\", \"squidwtf\", \"lrclib\"]);",
+            "const providersWithoutCardMark = new Set([\"lyricsplus\", \"lrclib\"]);",
             script,
             StringComparison.Ordinal);
         Assert.Contains("renderProviderLogo(providerId, \"large\")", script, StringComparison.Ordinal);
@@ -348,7 +348,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("class=\"source-card-footer\"", script, StringComparison.Ordinal);
         Assert.Contains("icon(\"plus\", 17)}<span>Add account</span>", script, StringComparison.Ordinal);
         Assert.Contains("provider-account-dialog", script, StringComparison.Ordinal);
-        Assert.Contains("this.navigate(\"/settings\")}>Manage accounts", script, StringComparison.Ordinal);
+        Assert.Contains("this.navigate(\"/settings\")}>${icon(\"settings\", 16)}<span>Manage accounts</span>", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Add or enable a provider account above", script, StringComparison.Ordinal);
         Assert.Contains("Accounts are managed separately so Sources stays focused on routing and health.", script, StringComparison.Ordinal);
     }

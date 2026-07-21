@@ -53,6 +53,7 @@ public class ProviderStatusManager
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWtfEndpointCatalog _squidWtfCatalog;
+    private readonly ExtensionManager? _extensionManager;
     private readonly DurableProviderHealthStore? _durableHealth;
     private readonly IAppleDownloadEndpointDiscovery? _appleDownloadDiscovery;
     private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot;
@@ -69,6 +70,7 @@ public class ProviderStatusManager
         IOptions<QobuzSettings> qobuzSettings,
         IOptions<SquidWTFSettings> squidWtfSettings,
         SquidWtfEndpointCatalog squidWtfCatalog,
+        ExtensionManager? extensionManager = null,
         DurableProviderHealthStore? durableHealth = null,
         IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null)
     {
@@ -80,6 +82,7 @@ public class ProviderStatusManager
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
         _squidWtfCatalog = squidWtfCatalog;
+        _extensionManager = extensionManager;
         _durableHealth = durableHealth;
         _appleDownloadDiscovery = appleDownloadDiscovery;
     }
@@ -110,15 +113,25 @@ public class ProviderStatusManager
 
     public IReadOnlyList<string> GetEnabledDownloadProviders()
     {
-        return GetDownloadOrder()
-            .Where(provider => GetStatus(provider, ProviderCapabilities.Download).CanAttempt)
+        var configured = GetDownloadOrder();
+        var extensionProviders = ActiveExtensionProviders(IsDownloadCapability);
+        return configured
+            .Where(provider => IsKnownBuiltInProvider(provider)
+                ? GetStatus(provider, ProviderCapabilities.Download).CanAttempt
+                : extensionProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
+            .Concat(extensionProviders.Except(configured, StringComparer.OrdinalIgnoreCase))
             .ToList();
     }
 
     public IReadOnlyList<string> GetEnabledStreamingProviders()
     {
-        return GetStreamingOrder()
-            .Where(provider => GetStatus(provider, ProviderCapabilities.Streaming).CanAttempt)
+        var configured = GetStreamingOrder();
+        var extensionProviders = ActiveExtensionProviders(IsStreamingCapability);
+        return configured
+            .Where(provider => IsKnownBuiltInProvider(provider)
+                ? GetStatus(provider, ProviderCapabilities.Streaming).CanAttempt
+                : extensionProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
+            .Concat(extensionProviders.Except(configured, StringComparer.OrdinalIgnoreCase))
             .ToList();
     }
 
@@ -132,6 +145,32 @@ public class ProviderStatusManager
             .Concat(GetEnabledDownloadProviders())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    private List<string> ActiveExtensionProviders(Func<string, bool> canPlay)
+    {
+        if (_extensionManager is null)
+        {
+            return [];
+        }
+
+        return _extensionManager.GetActiveExtensions()
+            .Where(extension => extension.Types.Any(capability => canPlay(capability)))
+            .Select(extension => extension.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private bool IsKnownBuiltInProvider(string providerId) =>
+        KnownCapabilities.Any(capability => string.Equals(capability.Provider, providerId, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsStreamingCapability(string capability) =>
+        capability.Equals("stream", StringComparison.OrdinalIgnoreCase) ||
+        capability.Equals("streaming", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDownloadCapability(string capability) =>
+        capability.Equals("download", StringComparison.OrdinalIgnoreCase) ||
+        capability.Equals("downloads", StringComparison.OrdinalIgnoreCase);
 
     public IReadOnlyList<string> GetEnabledLyricsProviders()
     {

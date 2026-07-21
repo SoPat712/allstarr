@@ -42,6 +42,7 @@ public class SpotifyTrackMatchingService : BackgroundService
     private readonly IConfiguration _configuration;
     private const int DelayBetweenSearchesMs = 150; // 150ms = ~6.6 searches/second to avoid rate limiting
     private const int BatchSize = 11; // Number of parallel searches (matches SquidWTF provider count)
+    private const int MatchingSearchLimit = 24;
     private static readonly TimeSpan ExternalProviderSearchTimeout = TimeSpan.FromSeconds(30);
 
     // Track last run time per playlist to prevent duplicate runs
@@ -839,6 +840,22 @@ public class SpotifyTrackMatchingService : BackgroundService
         _logger.LogInformation("🔍 Searching external providers for {Count} unmatched tracks",
             unmatchedSpotifyTracks.Count);
 
+        // Snapshot the playback provider order once per phase so each track's
+        // per-provider walk uses the same list. This matches the priority the
+        // settings page advertises and keeps the walk deterministic.
+        var playbackProviderList = _serviceProvider
+            .GetRequiredService<ProviderStatusManager>()
+            .GetEnabledPlaybackProviders();
+        var playbackProviderRanks = playbackProviderList
+            .Select((provider, index) => (provider, index))
+            .ToDictionary(item => item.provider, item => item.index, StringComparer.OrdinalIgnoreCase);
+
+        // Concrete services for the per-provider walk. Resolved once per
+        // phase so each track's walk uses the same set of providers.
+        var concreteServices = _serviceProvider
+            .GetServices<IConcreteMetadataService>()
+            .ToList();
+
         var matchedTracks = new List<MatchedTrack>();
         var isrcMatches = 0;
         var fuzzyMatches = 0;
@@ -905,55 +922,45 @@ public class SpotifyTrackMatchingService : BackgroundService
                         }
                     }
 
-                    // Try ISRC match
-                    if (_spotifyApiSettings.PreferIsrcMatching && !string.IsNullOrEmpty(spotifyTrack.Isrc))
-                    {
-                        try
-                        {
-                            var isrcSong = await TryMatchByIsrcAsync(
-                                spotifyTrack.Isrc,
-                                metadataService,
-                                trackCancellationToken);
-
-                            if (isrcSong != null &&
-                                ExternalTrackPlaybackPolicy.CanUseForPlayback(isrcSong.ExternalProvider, isrcSong.Id))
-                            {
-                                candidates.Add((isrcSong, 100.0, "isrc"));
-                            }
-                        }
-                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(
-                                ex,
-                                "ISRC lookup failed for {Playlist} track #{Position}: {Title} by {Artist}",
-                                playlistName,
-                                spotifyTrack.Position,
-                                spotifyTrack.Title,
-                                primaryArtist);
-                        }
-                    }
-
-                    // Fuzzy search external providers
-                    var fuzzySongs = await TryMatchByFuzzyMultipleAsync(
-                        spotifyTrack.Title,
-                        spotifyTrack.Artists,
+                    // Per-provider walk in configured playback priority order.
+                    // Local library is the implicit first stop; the fuzzy multiple
+                    // search above already covered the local pass. We now walk the
+                    // playback provider list, stop on the first acceptable match,
+                    // and only fall back to title-only retries when no provider
+                    // crossed the accept threshold.
+                    var injectedSource = BuildInjectedSourceTrack(spotifyTrack);
+                    var walk = await WalkProvidersForTrackAsync(
+                        injectedSource,
+                        spotifyTrack,
+                        playbackProviderList,
+                        concreteServices,
                         metadataService,
+                        localFuzzy: null,
+                        localFuzzyScore: null,
                         trackCancellationToken);
 
-                    foreach (var (song, score) in fuzzySongs)
+                    if (walk.MatchedSong != null && walk.MatchType != null && walk.ProviderUsed != null)
                     {
-                        if (song.IsLocal)
-                        {
-                            candidates.Add((song, score, "fuzzy-local-library"));
-                        }
-                        else if (ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id))
-                        {
-                            candidates.Add((song, score, "fuzzy-external"));
-                        }
+                        candidates.Add((walk.MatchedSong, walk.Score, walk.MatchType));
+                        _logger.LogDebug(
+                            "Per-provider walk accepted {Playlist} track #{Position}: {Title} → {Provider} ({MatchType}, score {Score:F1}, walked {Steps} step(s))",
+                            playlistName,
+                            spotifyTrack.Position,
+                            spotifyTrack.Title,
+                            walk.ProviderUsed,
+                            walk.MatchType,
+                            walk.Score,
+                            walk.Walked.Count);
+                    }
+                    else if (walk.Walked.Count > 0)
+                    {
+                        _logger.LogDebug(
+                            "Per-provider walk produced no accept for {Playlist} track #{Position}: {Title} (walked {Steps} provider(s): {Reasons})",
+                            playlistName,
+                            spotifyTrack.Position,
+                            spotifyTrack.Title,
+                            walk.Walked.Count,
+                            string.Join(", ", walk.Walked.Select(step => $"{step.Provider}={step.Outcome}")));
                     }
 
                     trackStopwatch.Stop();
@@ -1050,12 +1057,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                 });
         }
 
-        var playbackProviderOrder = _serviceProvider
-            .GetRequiredService<ProviderStatusManager>()
-            .GetEnabledPlaybackProviders();
-        var playbackProviderRanks = playbackProviderOrder
-            .Select((provider, index) => (provider, index))
-            .ToDictionary(item => item.provider, item => item.index, StringComparer.OrdinalIgnoreCase);
+        // playbackProviderRanks is computed once at the start of phase 3 above.
 
         foreach (var (spotifyTrack, song, score, matchType) in allCandidates
                      .Where(candidate => !candidate.MatchedSong.IsLocal)
@@ -1341,7 +1343,25 @@ public class SpotifyTrackMatchingService : BackgroundService
         cancellationToken.ThrowIfCancellationRequested();
 
         // STEP 2: Only search EXTERNAL if no good local match found
-        var externalResults = await SearchPlayableSongsAsync(metadataService, query, 10, cancellationToken);
+        var externalResults = await SearchPlayableSongsAsync(metadataService, query, MatchingSearchLimit, cancellationToken);
+        if (externalResults.Count < MatchingSearchLimit / 2 && !string.Equals(query, title, StringComparison.Ordinal))
+        {
+            var existingSongKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var existing in externalResults)
+            {
+                existingSongKeys.Add(GetExternalMatchKey(existing));
+            }
+
+            var titleOnlyResults = await SearchPlayableSongsAsync(
+                metadataService, title, MatchingSearchLimit, cancellationToken);
+            foreach (var song in titleOnlyResults)
+            {
+                if (existingSongKeys.Add(GetExternalMatchKey(song)))
+                {
+                    externalResults.Add(song);
+                }
+            }
+        }
 
         if (externalResults.Count > 0)
         {
@@ -1432,7 +1452,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             var titleStripped = FuzzyMatcher.StripDecorators(title);
             var query = $"{titleStripped} {primaryArtist}";
 
-            var results = await SearchPlayableSongsAsync(metadataService, query, 10);
+            var results = await SearchPlayableSongsAsync(metadataService, query, MatchingSearchLimit);
 
             if (results.Count == 0) return null;
 
@@ -1727,21 +1747,120 @@ public class SpotifyTrackMatchingService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Adapter that converts a <see cref="SpotifyPlaylistTrack"/> into a
+    /// provider-agnostic <see cref="InjectedSourceTrack"/>. The matching
+    /// walker only needs the source descriptor; it does not care whether
+    /// the source is Spotify, Apple MusicKit, or any other injected
+    /// provider.
+    /// </summary>
+    private static InjectedSourceTrack BuildInjectedSourceTrack(SpotifyPlaylistTrack track) =>
+        new(
+            SourceId: track.SpotifyId ?? string.Empty,
+            SourceProvider: "spotify",
+            Title: track.Title ?? string.Empty,
+            Artists: track.Artists is { Count: > 0 }
+                ? track.Artists
+                : new List<string> { track.PrimaryArtist ?? string.Empty },
+            Isrc: string.IsNullOrWhiteSpace(track.Isrc) ? null : track.Isrc,
+            DurationMs: track.DurationMs,
+            Album: track.Album,
+            AlbumArtUrl: track.AlbumArtUrl,
+            Position: track.Position);
+
+    /// <summary>
+    /// Per-track, per-provider walk for an unmatched source track. Wraps
+    /// the provider-agnostic <see cref="PerProviderTrackWalker"/> with the
+    /// concrete services available in this scope and the snapshot of the
+    /// configured playback provider list. The Spotify path uses this
+    /// directly; Apple MusicKit (and any future injected source) can use
+    /// the same walker.
+    /// </summary>
+    private async Task<PerProviderMatchResult> WalkProvidersForTrackAsync(
+        InjectedSourceTrack source,
+        SpotifyPlaylistTrack spotifyTrack,
+        IReadOnlyList<string> playbackProviders,
+        IReadOnlyList<IConcreteMetadataService> concreteServices,
+        IMusicMetadataService metadataService,
+        Song? localFuzzy,
+        double? localFuzzyScore,
+        CancellationToken cancellationToken)
+    {
+        var walker = new PerProviderTrackWalker(
+            concreteServices,
+            new PerProviderAcceptThresholds(),
+            _logger,
+            MatchingSearchLimit);
+
+        return await walker.WalkAsync(
+            source,
+            playbackProviders,
+            localFuzzy,
+            localFuzzyScore,
+            cancellationToken);
+    }
+
     private async Task<List<Song>> SearchPlayableSongsAsync(
         IMusicMetadataService metadataService,
         string query,
         int limit,
         CancellationToken cancellationToken = default)
     {
-        var scoped = await _playableSearch.SearchAsync(query, limit, cancellationToken);
-        if (scoped != null)
+        var requestedLimit = Math.Max(1, limit);
+
+        var scoped = await _playableSearch.SearchAsync(query, requestedLimit, cancellationToken);
+        if (scoped is null)
         {
-            return scoped.ToList();
+            return metadataService is MultiProviderMetadataService multiProvider
+                ? await multiProvider.SearchPlayableSongsAsync(query, requestedLimit, cancellationToken)
+                : await SearchAndFilterPlayableSongsAsync(metadataService, query, requestedLimit, cancellationToken);
         }
 
-        return metadataService is MultiProviderMetadataService multiProvider
-            ? await multiProvider.SearchPlayableSongsAsync(query, limit, cancellationToken)
-            : await SearchAndFilterPlayableSongsAsync(metadataService, query, limit, cancellationToken);
+        var scopedResults = scoped.ToList();
+        if (scopedResults.Count >= requestedLimit || metadataService is not MultiProviderMetadataService)
+        {
+            return scopedResults;
+        }
+
+        var fallback = await ((MultiProviderMetadataService)metadataService).SearchPlayableSongsAsync(
+            query, requestedLimit, cancellationToken);
+        if (fallback.Count == 0)
+        {
+            return scopedResults;
+        }
+
+        var merged = MergeUniqueByExternalIdentity(scopedResults, fallback)
+            .Take(requestedLimit)
+            .ToList();
+        if (merged.Count != scopedResults.Count)
+        {
+            _logger.LogDebug("Playlist search fallback enriched scoped results for '{Query}' with {Added} additional candidates",
+                query, merged.Count - scopedResults.Count);
+        }
+        return merged;
+
+        static List<Song> MergeUniqueByExternalIdentity(List<Song> first, List<Song> second)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var merged = new List<Song>(first.Count + second.Count);
+            foreach (var song in first.Concat(second))
+            {
+                var key = GetExternalMatchKey(song);
+                if (seen.Add(key))
+                {
+                    merged.Add(song);
+                }
+            }
+            return merged;
+        }
+    }
+
+    private static string GetExternalMatchKey(Song song)
+    {
+        var provider = (song.ExternalProvider ?? "unknown").Trim().ToLowerInvariant();
+        var externalId = song.ExternalId ?? string.Empty;
+        var fallbackId = song.Id ?? string.Empty;
+        return $"{provider}:{(!string.IsNullOrWhiteSpace(externalId) ? externalId : fallbackId)}";
     }
 
     private static async Task<List<Song>> SearchAndFilterPlayableSongsAsync(

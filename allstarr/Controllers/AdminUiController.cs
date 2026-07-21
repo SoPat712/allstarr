@@ -105,7 +105,7 @@ public class AdminUiController : ControllerBase
                 {
                     Id = "metadata",
                     Label = "Metadata and search",
-                    Description = "Enabled metadata extensions participate through the provider router.",
+                    Description = "Discovery only (titles, artists, albums, ISRCs). Playable selection always uses Streaming + Download order.",
                     Supported = true
                 },
                 new()
@@ -542,26 +542,85 @@ public class AdminUiController : ControllerBase
         return "available";
     }
 
-    private List<AdminUiPriorityGroup> BuildPriorityGroups() =>
-    [
-        Priority("metadata", "Metadata search priority", "MULTI_PROVIDER_METADATA_ORDER", "MULTI_PROVIDER_ENABLED_SEARCH",
-            "apple-download,deezer,qobuz"),
-        Priority("download", "Download priority", "MULTI_PROVIDER_DOWNLOAD_ORDER", null,
-            "apple-download,deezer,qobuz"),
-        Priority("streaming", "Streaming priority", "MULTI_PROVIDER_STREAMING_ORDER", null,
-            "apple-download,deezer,qobuz"),
-        Priority("playlist", "Playlist discovery priority", "MULTI_PROVIDER_PLAYLIST_ORDER", "MULTI_PROVIDER_ENABLED_PLAYLIST",
-            "spotify,deezer,qobuz"),
-        Priority("lyrics", "Lyrics priority", "MULTI_PROVIDER_LYRICS_ORDER", null,
-            "spotify,apple-download,lyricsplus,lrclib")
-    ];
+    private List<AdminUiPriorityGroup> BuildPriorityGroups()
+    {
+        var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
+        var pinnedLocalProvider = BuildPinnedLocalProvider(activeBackend);
+        return
+        [
+            Priority(
+                "metadata",
+                "Metadata search order",
+                "Used only for discovery (titles, artists, albums, ISRCs). Playback uses Streaming and Download order below.",
+                "MULTI_PROVIDER_METADATA_ORDER",
+                "MULTI_PROVIDER_ENABLED_SEARCH",
+                "apple-download,deezer,qobuz",
+                pinnedProvider: null),
+            Priority(
+                "download",
+                "Download priority",
+                "Download routes after the local library. Drag to change which provider fills a missing track.",
+                "MULTI_PROVIDER_DOWNLOAD_ORDER",
+                null,
+                "apple-download,deezer,qobuz",
+                pinnedProvider: pinnedLocalProvider),
+            Priority(
+                "streaming",
+                "Streaming priority",
+                "Stream routes after the local library. Drag to change which provider plays a missing track.",
+                "MULTI_PROVIDER_STREAMING_ORDER",
+                null,
+                "apple-download,deezer,qobuz",
+                pinnedProvider: pinnedLocalProvider),
+            Priority(
+                "playlist",
+                "Playlist discovery priority",
+                "Order used when fetching playlists and playlist tracks from each source provider.",
+                "MULTI_PROVIDER_PLAYLIST_ORDER",
+                "MULTI_PROVIDER_ENABLED_PLAYLIST",
+                "spotify,deezer,qobuz",
+                pinnedProvider: null),
+            Priority(
+                "lyrics",
+                "Lyrics priority",
+                "Order used for lyrics lookup when a song is played or requested.",
+                "MULTI_PROVIDER_LYRICS_ORDER",
+                null,
+                "spotify,apple-download,lyricsplus,lrclib",
+                pinnedProvider: null)
+        ];
+    }
+
+    private AdminUiPinnedProvider? BuildPinnedLocalProvider(string activeBackend)
+    {
+        if (string.Equals(activeBackend, "Subsonic", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AdminUiPinnedProvider
+            {
+                Id = "subsonic-local",
+                Name = "Subsonic / Navidrome library",
+                Icon = "subsonic",
+                Reason = "Local library is always checked first. This entry is fixed."
+            };
+        }
+
+        return new AdminUiPinnedProvider
+        {
+            Id = "jellyfin-local",
+            Name = "Jellyfin library",
+            Icon = "jellyfin",
+            Reason = "Local library is always checked first. This entry is fixed."
+        };
+    }
 
     private AdminUiPriorityGroup Priority(
         string id,
         string label,
+        string description,
         string envKey,
         string? enabledEnvKey,
-        string fallback)
+        string fallback,
+        AdminUiPinnedProvider? pinnedProvider)
     {
         var value = _configuration[envKey] ?? fallback;
         var providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -580,9 +639,11 @@ public class AdminUiController : ControllerBase
         {
             Id = id,
             Label = label,
+            Description = description,
             EnvKey = envKey,
             EnabledEnvKey = enabledEnvKey,
-            Providers = providers
+            Providers = providers,
+            PinnedProvider = pinnedProvider
         };
     }
 

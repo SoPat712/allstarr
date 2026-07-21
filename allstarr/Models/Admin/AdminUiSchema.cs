@@ -175,6 +175,9 @@ public sealed class AdminUiPriorityGroup
     [JsonPropertyName("label")]
     public string Label { get; set; } = string.Empty;
 
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
     [JsonPropertyName("envKey")]
     public string EnvKey { get; set; } = string.Empty;
 
@@ -183,6 +186,24 @@ public sealed class AdminUiPriorityGroup
 
     [JsonPropertyName("providers")]
     public List<string> Providers { get; set; } = [];
+
+    [JsonPropertyName("pinnedProvider")]
+    public AdminUiPinnedProvider? PinnedProvider { get; set; }
+}
+
+public sealed class AdminUiPinnedProvider
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("icon")]
+    public string Icon { get; set; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public sealed class AdminUiConfigSection

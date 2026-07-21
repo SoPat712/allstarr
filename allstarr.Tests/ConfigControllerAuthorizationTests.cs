@@ -458,6 +458,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
             Options.Create(new QobuzSettings()),
             Options.Create(new SquidWTFSettings()),
             new SquidWtfEndpointCatalog([], []),
+            extensionManager: null,
             healthStore);
         var effectiveSecretStore = secretStore ?? CreateSecretStore();
         var clock = new SystemPlatformClock();
