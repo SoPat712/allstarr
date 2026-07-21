@@ -2118,7 +2118,6 @@ class AllstarrApp extends LitElement {
         </div>
         <nav class="nav-list" aria-label="Primary">
           <div class="nav-section">
-            <span class="nav-heading">Music</span>
             ${primaryRoutes.map(renderNavLink)}
             ${otherRoutes.map(renderNavLink)}
           </div>
@@ -2589,7 +2588,7 @@ class AllstarrApp extends LitElement {
       ["kept", "Kept", "check"],
     ];
     return html`
-      <nav class="subnav" data-testid="library-tabs">
+      <nav class="subnav library-tabs" data-testid="library-tabs">
         ${items.map(([id, label, iconName]) => html`<a class=${active === id ? "active" : ""} href="#/library/${id}">${icon(iconName, 16)}<span>${label}</span></a>`)}
       </nav>
     `;

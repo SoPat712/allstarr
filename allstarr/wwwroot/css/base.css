@@ -5399,6 +5399,81 @@ button.setup-choice {
     }
 }
 
+/* Library navigation uses the same contained, surface-based treatment as the rest of the workspace. */
+.library-tabs {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    max-width: none;
+    gap: 0;
+    margin-top: -8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--surface-card), transparent 4%);
+    padding: 0;
+}
+
+.library-tabs a,
+.library-tabs a.active {
+    display: inline-flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 56px;
+    border: 0;
+    border-right: 1px solid var(--border);
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 12px 16px 10px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.library-tabs a:last-child {
+    border-right: 0;
+}
+
+.library-tabs a:hover {
+    background: color-mix(in srgb, var(--surface-elevated), transparent 30%);
+    color: var(--text-primary);
+}
+
+.library-tabs a.active {
+    border-bottom-color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft), var(--surface-card) 42%);
+    color: var(--text-primary);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent), transparent 74%);
+}
+
+.library-tabs a .ui-icon {
+    flex: 0 0 auto;
+    color: currentColor;
+}
+
+@media (max-width: 700px) {
+    .library-tabs {
+        justify-content: flex-start;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .library-tabs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .library-tabs a,
+    .library-tabs a.active {
+        flex: 0 0 148px;
+        min-height: 52px;
+        padding-inline: 12px;
+    }
+}
+
 /* Reference-aligned Extensions workspace */
 .extensions-view {
     gap: 20px;
