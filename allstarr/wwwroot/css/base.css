@@ -5224,6 +5224,127 @@ button.setup-choice {
     .now-progress-labels { grid-template-columns: 1fr 1fr; }
 }
 
+/* Keep the settings accordions compact even though their markup uses the shared disclosure class. */
+.settings-view > .content-disclosure > summary {
+    min-height: 0;
+    padding: 10px 16px;
+    gap: 10px;
+}
+
+.settings-view > .content-disclosure > summary strong {
+    line-height: 1.2;
+}
+
+.settings-view > .content-disclosure > summary small {
+    line-height: 1.15;
+}
+
+.settings-view > .content-disclosure > .disclosure-body {
+    padding: 16px;
+    gap: 12px;
+}
+
+/* Keep the playlist table aligned at desktop widths and scroll it as one unit when it cannot fit. */
+.injected-table-wrap {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.injected-playlist-table {
+    min-width: 0;
+    width: 100%;
+    overflow: visible;
+}
+
+.injected-table-head,
+.injected-table-row {
+    grid-template-columns:
+        32px
+        minmax(190px, 2fr)
+        58px
+        68px
+        68px
+        minmax(125px, 1.2fr)
+        minmax(155px, 1.35fr)
+        minmax(95px, .9fr)
+        120px;
+    min-width: 0;
+}
+
+.injected-table-row > * {
+    min-width: 0;
+}
+
+.injected-table-row > :nth-child(2) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.injected-table-row > :nth-child(7) {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.injected-table-row > :nth-child(7) > * {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.injected-table-row > :nth-child(8) {
+    white-space: nowrap;
+}
+
+.injected-table-row > :nth-child(9).row-actions {
+    display: grid;
+    align-content: center;
+    justify-items: stretch;
+    gap: 6px;
+    min-width: 0;
+}
+
+.injected-table-row .row-actions > .primary {
+    width: 100%;
+    min-width: 0;
+    white-space: nowrap;
+}
+
+.injected-table-row .row-actions > .action-menu {
+    justify-self: end;
+}
+
+.injected-table-row .row-actions > .action-menu > summary {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+}
+
+.injected-table-row .row-actions > .action-menu > summary .ui-icon {
+    transform: rotate(90deg);
+}
+
+@media (max-width: 1100px) {
+    .injected-table-head,
+    .injected-table-row {
+        min-width: 1056px;
+    }
+}
+
+@media (max-width: 700px) {
+    .settings-view > .content-disclosure > summary {
+        padding: 8px 14px;
+    }
+
+    .settings-view > .content-disclosure > .disclosure-body {
+        padding: 12px 14px;
+    }
+
+}
+
 /* Reference-aligned Extensions workspace */
 .extensions-view {
     gap: 20px;
