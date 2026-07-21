@@ -4603,6 +4603,12 @@ button.setup-choice {
     overflow: visible;
 }
 
+.injected-table-wrap {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
 .injected-table-head,
 .injected-table-row {
     display: grid;
@@ -4611,6 +4617,7 @@ button.setup-choice {
     gap: 12px;
     min-height: 72px;
     padding: 10px 16px;
+    min-width: min(900px, calc(100vw - 24px));
 }
 
 .injected-table-row + .injected-table-row {

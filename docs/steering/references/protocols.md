@@ -192,3 +192,7 @@ Required behavior:
 - Jellyfin library refresh uses the configured API key. Subsonic/Navidrome refresh uses a tenant-scoped encrypted credential reference; neither credential belongs in a durable payload or response.
 - Keep client compatibility tests near protocol adapters. Cover Jellyfin response/error shapes and Subsonic GET/POST plus XML/JSON behavior, then add core parity tests for shared capabilities.
 - Test playlist reconcile and recreate against both backend families, including order, existing-item reuse, skipped unmatched tracks, description/artwork support, target conflicts, interruption, and duplicate-safe retry.
+
+## Search Parallelization
+
+External metadata searches (tracks, albums, artists, playlists) are fanned out concurrently across all candidates via `Task.WhenAll` to ensure low latency. Since this creates concurrent burst requests, operators should monitor provider rate limits if a large number of providers are enabled.

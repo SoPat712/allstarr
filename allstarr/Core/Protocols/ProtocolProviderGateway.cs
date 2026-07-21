@@ -110,25 +110,36 @@ public sealed class ProtocolProviderGateway(
             sourceTrackId: null));
 
         var routed = new SearchResult();
-        foreach (var candidate in plan.Candidates)
+        var searchTasks = plan.Candidates.Select(async candidate =>
         {
             var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(fetchLimit));
-            var songs = candidate.Implementation.SearchTracksAsync(candidate.Context, request);
-            var albums = candidate.Implementation.SearchAlbumsAsync(candidate.Context, request);
-            var artists = candidate.Implementation.SearchArtistsAsync(candidate.Context, request);
-            await Task.WhenAll(songs, albums, artists);
+            var songsTask = candidate.Implementation.SearchTracksAsync(candidate.Context, request);
+            var albumsTask = candidate.Implementation.SearchAlbumsAsync(candidate.Context, request);
+            var artistsTask = candidate.Implementation.SearchArtistsAsync(candidate.Context, request);
+            await Task.WhenAll(songsTask, albumsTask, artistsTask);
+            return new
+            {
+                SongsResult = await songsTask,
+                AlbumsResult = await albumsTask,
+                ArtistsResult = await artistsTask
+            };
+        }).ToList();
 
-            if ((await songs).IsSuccess)
+        var searchOutcomes = await Task.WhenAll(searchTasks);
+
+        foreach (var outcome in searchOutcomes)
+        {
+            if (outcome.SongsResult.IsSuccess)
             {
-                routed.Songs.AddRange((await songs).RequireValue().Items.Select(Map));
+                routed.Songs.AddRange(outcome.SongsResult.RequireValue().Items.Select(Map));
             }
-            if ((await albums).IsSuccess)
+            if (outcome.AlbumsResult.IsSuccess)
             {
-                routed.Albums.AddRange((await albums).RequireValue().Items.Select(Map));
+                routed.Albums.AddRange(outcome.AlbumsResult.RequireValue().Items.Select(Map));
             }
-            if ((await artists).IsSuccess)
+            if (outcome.ArtistsResult.IsSuccess)
             {
-                routed.Artists.AddRange((await artists).RequireValue().Items.Select(Map));
+                routed.Artists.AddRange(outcome.ArtistsResult.RequireValue().Items.Select(Map));
             }
         }
 
@@ -248,12 +259,18 @@ public sealed class ProtocolProviderGateway(
             "protocol-playlist-search",
             providerIds: providerOrder,
             sourceTrackId: null));
-        var routed = new List<ExternalPlaylist>();
-        foreach (var candidate in plan.Candidates)
+        var playlistTasks = plan.Candidates.Select(async candidate =>
         {
-            var outcome = await candidate.Implementation.SearchPlaylistsAsync(
+            return await candidate.Implementation.SearchPlaylistsAsync(
                 candidate.Context,
                 new ProviderPlaylistSearchRequest(query, new ProviderPageRequest(limit)));
+        }).ToList();
+
+        var playlistOutcomes = await Task.WhenAll(playlistTasks);
+        var routed = new List<ExternalPlaylist>();
+
+        foreach (var outcome in playlistOutcomes)
+        {
             if (outcome.IsSuccess)
             {
                 routed.AddRange(outcome.RequireValue().Items.Select(Map));

@@ -4,8 +4,28 @@ namespace allstarr.Services.Common;
 /// Provides fuzzy string matching for search result scoring.
 /// OPTIMAL ORDER: 1. Strip decorators → 2. Substring matching → 3. Levenshtein → 4. Greedy assignment
 /// </summary>
-public static class FuzzyMatcher
+public static partial class FuzzyMatcher
 {
+    private const int StackallocLevenshteinLimit = 128;
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]?\s*(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FeatDecoratorRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*from\s+[""']?[^""']+[""']?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*(remaster|radio edit|single version|album version|extended|original mix)[^\-]*", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex VersionDecoratorRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(](remix|remaster|live|acoustic|radio edit|explicit|clean|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"[^\w\s]")]
+    private static partial System.Text.RegularExpressions.Regex PunctuationRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex WhitespaceRegex();
+
     /// <summary>
     /// STEP 1: Strips common decorators from track titles to improve matching.
     /// Removes: (feat. X), (with Y), (ft. Z), - From "Album", [Remix], etc.
@@ -20,35 +40,11 @@ public static class FuzzyMatcher
 
         var cleaned = title;
 
-        // Remove (feat. ...), (ft. ...), (with ...), (featuring ...)
-        cleaned = System.Text.RegularExpressions.Regex.Replace(
-            cleaned,
-            @"\s*[\(\[]?\s*(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?",
-            "",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        cleaned = FeatDecoratorRegex().Replace(cleaned, "");
+        cleaned = FromAlbumDecoratorRegex().Replace(cleaned, "");
+        cleaned = VersionDecoratorRegex().Replace(cleaned, "");
+        cleaned = TypeDecoratorRegex().Replace(cleaned, "");
 
-        // Remove - From "Album Name" or - From Album Name
-        cleaned = System.Text.RegularExpressions.Regex.Replace(
-            cleaned,
-            @"\s*-\s*from\s+[""']?[^""']+[""']?",
-            "",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        // Remove - Remastered, - Radio Edit, etc.
-        cleaned = System.Text.RegularExpressions.Regex.Replace(
-            cleaned,
-            @"\s*-\s*(remaster|radio edit|single version|album version|extended|original mix)[^\-]*",
-            "",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        // Remove [Remix], [Remaster], [Live], [Explicit], etc.
-        cleaned = System.Text.RegularExpressions.Regex.Replace(
-            cleaned,
-            @"\s*[\[\(](remix|remaster|live|acoustic|radio edit|explicit|clean|official|audio|video|lyric)[^\]\)]*[\]\)]",
-            "",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-        // Remove trailing/leading whitespace and normalize
         cleaned = cleaned.Trim();
 
         return cleaned;
@@ -214,12 +210,8 @@ public static class FuzzyMatcher
     }
 
     /// <summary>
-    /// Normalizes a string for matching by:
-    /// - Converting to lowercase
-    /// - Removing accents/diacritics
-    /// - Converting hyphens/underscores to spaces (for word separation)
-    /// - Removing other punctuation (periods, apostrophes, commas, etc.)
-    /// - Removing extra whitespace
+    /// Normalizes a string for matching by lowercasing, stripping accents, converting
+    /// punctuation to spaces/removing it, and cleaning extra whitespace.
     /// </summary>
     private static string NormalizeForMatching(string text)
     {
@@ -230,18 +222,11 @@ public static class FuzzyMatcher
 
         var normalized = text.ToLowerInvariant().Trim();
 
-        // Remove accents/diacritics (é -> e, ñ -> n, etc.)
         normalized = RemoveDiacritics(normalized);
-
-        // Replace hyphens and underscores with spaces (for word separation)
-        // This ensures "Dua-Lipa" becomes "Dua Lipa" not "DuaLipa"
         normalized = normalized.Replace('-', ' ').Replace('_', ' ');
 
-        // Remove all other punctuation: periods, apostrophes, commas, etc.
-        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"[^\w\s]", "");
-
-        // Normalize whitespace
-        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ").Trim();
+        normalized = PunctuationRegex().Replace(normalized, "");
+        normalized = WhitespaceRegex().Replace(normalized, " ").Trim();
 
         return normalized;
     }
@@ -268,7 +253,8 @@ public static class FuzzyMatcher
     }
 
     /// <summary>
-    /// Calculates Levenshtein distance between two strings.
+    /// Calculates Levenshtein distance between two strings using a space-optimized
+    /// rolling buffer (O(min(m, n))) and stackalloc when strings are under 128 characters.
     /// </summary>
     private static int LevenshteinDistance(string source, string target)
     {
@@ -284,30 +270,42 @@ public static class FuzzyMatcher
 
         var sourceLength = source.Length;
         var targetLength = target.Length;
-        var distance = new int[sourceLength + 1, targetLength + 1];
 
-        for (var i = 0; i <= sourceLength; i++)
+        if (sourceLength < targetLength)
         {
-            distance[i, 0] = i;
+            return LevenshteinDistance(target, source);
         }
+
+        // Allocate rows on stack for typical song lengths (<128 chars) to avoid GC pressure
+        Span<int> previousRow = targetLength + 1 <= StackallocLevenshteinLimit
+            ? stackalloc int[targetLength + 1]
+            : new int[targetLength + 1];
+
+        Span<int> currentRow = targetLength + 1 <= StackallocLevenshteinLimit
+            ? stackalloc int[targetLength + 1]
+            : new int[targetLength + 1];
 
         for (var j = 0; j <= targetLength; j++)
         {
-            distance[0, j] = j;
+            previousRow[j] = j;
         }
 
         for (var i = 1; i <= sourceLength; i++)
         {
+            currentRow[0] = i;
             for (var j = 1; j <= targetLength; j++)
             {
                 var cost = target[j - 1] == source[i - 1] ? 0 : 1;
-                distance[i, j] = Math.Min(
-                    Math.Min(distance[i - 1, j] + 1, distance[i, j - 1] + 1),
-                    distance[i - 1, j - 1] + cost);
+                currentRow[j] = Math.Min(
+                    Math.Min(currentRow[j - 1] + 1, previousRow[j] + 1),
+                    previousRow[j - 1] + cost);
             }
+            // currentRow is the freshly-computed row; copying it into previousRow is
+            // safe because the next i reads previousRow before writing currentRow.
+            currentRow.CopyTo(previousRow);
         }
 
-        return distance[sourceLength, targetLength];
+        return previousRow[targetLength];
     }
 
     /// <summary>

@@ -444,23 +444,53 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var entries = await db.PlaylistSourceEntries.AsNoTracking().Where(item =>
             item.TenantId == link.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id)
             .OrderBy(item => item.SourcePosition).ToListAsync(cancellationToken);
+        var externalIds = entries.Select(entry => entry.ExternalMetadataSnapshotId).ToList();
+
         var externals = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
-            entries.Select(entry => entry.ExternalMetadataSnapshotId).Contains(item.Id) && item.TenantId == link.TenantId)
+            externalIds.Contains(item.Id) && item.TenantId == link.TenantId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+
         var candidates = await db.LibraryTracks.AsNoTracking().Where(item =>
             item.TenantId == link.TenantId && item.OwnerUserId == link.OwnerUserId &&
             item.LibraryScopeId == link.LibraryScopeId && item.BackendInstanceId == link.TargetBackendInstanceId)
             .ToListAsync(cancellationToken);
+
+        // Optimization: Map candidates once outside the loop instead of doing it N times
+        var mappedCandidates = candidates.Select(ToCandidate).ToArray();
+        var candidateById = candidates.ToDictionary(item => item.Id);
+
+        // Optimization: Bulk load all matching stored track matches
+        var allStoredMatches = await db.TrackMatches.Where(item =>
+                item.TenantId == link.TenantId &&
+                item.OwnerUserId == link.OwnerUserId &&
+                item.LibraryScopeId == link.LibraryScopeId &&
+                externalIds.Contains(item.ExternalSnapshotId))
+            .ToListAsync(cancellationToken);
+
+        var storedByExternalId = allStoredMatches
+            .GroupBy(item => item.ExternalSnapshotId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(item => item.DecisionVersion).First());
+
+        // Optimization: Bulk load all active manual overrides
+        var allManualOverrides = await db.ManualTrackOverrides.AsNoTracking().Where(item =>
+                item.TenantId == link.TenantId &&
+                item.OwnerUserId == link.OwnerUserId &&
+                item.LibraryScopeId == link.LibraryScopeId &&
+                externalIds.Contains(item.ExternalSnapshotId) &&
+                item.RevokedAt == null)
+            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+
         var decisions = new List<PersistedPlaylistMatchDecision>(entries.Count);
-        var decisionIds = new Dictionary<Guid, Guid?>();
+        var decisionIds = new Dictionary<Guid, Guid?>(entries.Count);
+        var newMatchesToSave = new List<TrackMatchRecord>();
+
         foreach (var entry in entries)
         {
             var external = externals[entry.ExternalMetadataSnapshotId];
-            var stored = await db.TrackMatches.Where(item => item.TenantId == link.TenantId &&
-                    item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId &&
-                    item.ExternalSnapshotId == external.Id)
-                .OrderByDescending(item => item.DecisionVersion).FirstOrDefaultAsync(cancellationToken);
-            if (stored == null)
+
+            if (!storedByExternalId.TryGetValue(external.Id, out var stored))
             {
                 using var payload = JsonDocument.Parse(external.PayloadJson);
                 var root = payload.RootElement;
@@ -472,9 +502,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     root.TryGetProperty("durationSeconds", out var duration) && duration.ValueKind == JsonValueKind.Number ? (int?)Math.Round(duration.GetDouble()) : null,
                     root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
                     root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null);
-                var match = _matcher.Decide(new TrackMatchScope(link.TenantId, link.OwnerUserId,
-                        link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
-                    source, candidates.Select(ToCandidate).ToArray());
+
+                var match = _matcher.Decide(
+                    new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
+                    source,
+                    mappedCandidates);
+
                 stored = new TrackMatchRecord
                 {
                     Id = Guid.CreateVersion7(),
@@ -482,7 +515,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     OwnerUserId = link.OwnerUserId,
                     ExternalSnapshotId = external.Id,
                     LibraryTrackId = match.SelectedLibraryTrackId,
-                    CanonicalRecordingId = candidates.SingleOrDefault(item => item.Id == match.SelectedLibraryTrackId)?.CanonicalRecordingId,
+                    CanonicalRecordingId = match.SelectedLibraryTrackId.HasValue && candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCand) 
+                        ? matchedCand.CanonicalRecordingId 
+                        : null,
                     LibraryScopeId = link.LibraryScopeId,
                     State = ToStorageState(match.State),
                     Confidence = match.Confidence,
@@ -495,13 +530,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     CorrelationId = snapshot.CorrelationId,
                     DecidedAt = _clock.UtcNow
                 };
-                db.TrackMatches.Add(stored);
-                await db.SaveChangesAsync(cancellationToken);
+
+                newMatchesToSave.Add(stored);
+                storedByExternalId[external.Id] = stored;
             }
-            var manual = await db.ManualTrackOverrides.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.TenantId == link.TenantId && item.OwnerUserId == link.OwnerUserId &&
-                item.LibraryScopeId == link.LibraryScopeId && item.ExternalSnapshotId == external.Id &&
-                item.RevokedAt == null, cancellationToken);
+
+            allManualOverrides.TryGetValue(external.Id, out var manual);
+
             var effectiveLibraryTrackId = manual?.Decision == ManualOverrideDecision.Pin
                 ? manual.LibraryTrackId
                 : manual?.Decision == ManualOverrideDecision.Reject
@@ -513,14 +548,34 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 ManualOverrideDecision.Reject => TrackMatchReviewState.Rejected,
                 _ => ToReviewState(stored.State)
             };
-            var library = effectiveLibraryTrackId.HasValue
-                ? candidates.SingleOrDefault(item => item.Id == effectiveLibraryTrackId)
+
+            // O(1) lookup dictionary instead of O(candidates) linear scan
+            var library = effectiveLibraryTrackId.HasValue && candidateById.TryGetValue(effectiveLibraryTrackId.Value, out var libCand)
+                ? libCand
                 : null;
+
             decisions.Add(new PersistedPlaylistMatchDecision(entry.Id, external.Id, effectiveState,
                 effectiveLibraryTrackId, library?.BackendItemId, library?.BackendInstanceId, stored.Confidence,
                 stored.Threshold, stored.DecisionVersion, DeserializeStrings(stored.ReasonsJson), DeserializeStrings(stored.WarningsJson)));
-            decisionIds[entry.Id] = stored.Id;
         }
+
+        // Optimization: Save all new matches in a single batch SaveChangesAsync call outside the loop!
+        if (newMatchesToSave.Count > 0)
+        {
+            db.TrackMatches.AddRange(newMatchesToSave);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        // Populate decision IDs only after successful save to ensure durability
+        foreach (var entry in entries)
+        {
+            var external = externals[entry.ExternalMetadataSnapshotId];
+            if (storedByExternalId.TryGetValue(external.Id, out var stored))
+            {
+                decisionIds[entry.Id] = stored.Id;
+            }
+        }
+
         return (new ImmutablePlaylistSourceSnapshot(snapshot.Id, link.Id, snapshot.ProviderRevision, snapshot.Name,
             entries.Select(entry => new ImmutablePlaylistSourceEntry(entry.Id, entry.SourcePosition,
                 entry.ExternalMetadataSnapshotId, externals[entry.ExternalMetadataSnapshotId].ExternalIdHash)),

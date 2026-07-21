@@ -159,4 +159,25 @@ public class FuzzyMatcherTests
         Assert.True(score >= 90, $"Expected high score for accented characters, got {score}");
     }
 
+    [Fact]
+    public void LevenshteinDistance_ReturnsCorrectDistance_ForDifferentLengths()
+    {
+        // Test stackalloc branch (length < 128)
+        Assert.Equal(42, FuzzyMatcher.CalculateSimilarity("kitten", "sitting")); // 42% similarity (scaled to 75 max)
+
+        // Test edge lengths
+        var str64_1 = new string('a', 63) + "b";
+        var str64_2 = new string('a', 63) + "c";
+        Assert.True(FuzzyMatcher.CalculateSimilarity(str64_1, str64_2) > 0);
+
+        var str127_1 = new string('a', 126) + "b";
+        var str127_2 = new string('a', 126) + "c";
+        Assert.True(FuzzyMatcher.CalculateSimilarity(str127_1, str127_2) > 0);
+
+        // Test heap allocation fallback branch (length >= 128)
+        var str130_1 = new string('a', 129) + "b";
+        var str130_2 = new string('a', 129) + "c";
+        Assert.True(FuzzyMatcher.CalculateSimilarity(str130_1, str130_2) > 0);
+    }
 }
+

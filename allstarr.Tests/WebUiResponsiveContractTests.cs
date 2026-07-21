@@ -464,6 +464,22 @@ public sealed class WebUiResponsiveContractTests
         Assert.DoesNotContain("SpotifyMappingService", orchestration, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void InjectedTable_StaysScrollableWhenStatusChipWouldOverlapLastSync()
+    {
+        var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+        var responsive = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "responsive.css"));
+        var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
+
+        Assert.Contains(".injected-table-wrap", css, StringComparison.Ordinal);
+        Assert.Contains("overflow-x: auto", css, StringComparison.Ordinal);
+        Assert.Contains(".injected-table-row", css, StringComparison.Ordinal);
+        Assert.Contains("min-width: min(900px", css, StringComparison.Ordinal);
+        Assert.Contains("injected-table-wrap", responsive, StringComparison.Ordinal);
+        Assert.Contains("class=\"injected-table-wrap\"", script, StringComparison.Ordinal);
+        Assert.Contains("role=\"region\"", script, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

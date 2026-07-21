@@ -2819,30 +2819,32 @@ class AllstarrApp extends LitElement {
       </div>
       ${this.renderInjectedPlaylistDetails()}
       <div class="table-wrap injected-playlist-table">
-        <div class="injected-table-head"><span><input type="checkbox" aria-label="Select visible playlists" .checked=${visible.length > 0 && visible.every((item) => selected.has(item.name))} @change=${(event) => { const next = new Set(selected); visible.forEach((item) => event.target.checked ? next.add(item.name) : next.delete(item.name)); this.selectedInjectedPlaylists = next; }}></span><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Unmatched</span><span>Schedule</span><span>Status</span><span>Last sync</span><span>Actions</span></div>
-        ${visible.length ? visible.map((playlist) => {
-          const matched = Number(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0));
-          const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
-          const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
-          const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matched === 0 ? "needs_matching" : "partial");
-          const openRow = (event) => {
-            if (event.target.closest("button, input, details, summary, a, select")) return;
-            this.openInjectedPlaylist(playlist.name);
-          };
-          return html`<div class="injected-table-row injected-table-row-interactive" role="link" tabindex="0"
-            aria-label="Open ${playlist.name} playlist details" @click=${openRow}
-            @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
-            <span><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></span>
-            <span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span>
-            <span>${display(playlist.trackCount, 0)}</span>
-            <span><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></span>
-            <span><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></span>
-            <span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span>
-            <span><span class="status-chip ${status}">${titleCase(status)}</span></span>
-            <span>${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</span>
-            <span class="row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></span>
-          </div>`;
-        }) : html`<div class="empty">No playlists match these filters.</div>`}
+        <div class="injected-table-wrap" role="region" aria-label="Injected playlists">
+          <div class="injected-table-head"><span><input type="checkbox" aria-label="Select visible playlists" .checked=${visible.length > 0 && visible.every((item) => selected.has(item.name))} @change=${(event) => { const next = new Set(selected); visible.forEach((item) => event.target.checked ? next.add(item.name) : next.delete(item.name)); this.selectedInjectedPlaylists = next; }}></span><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Unmatched</span><span>Schedule</span><span>Status</span><span>Last sync</span><span>Actions</span></div>
+          ${visible.length ? visible.map((playlist) => {
+            const matched = Number(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0));
+            const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
+            const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
+            const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matched === 0 ? "needs_matching" : "partial");
+            const openRow = (event) => {
+              if (event.target.closest("button, input, details, summary, a, select")) return;
+              this.openInjectedPlaylist(playlist.name);
+            };
+            return html`<div class="injected-table-row injected-table-row-interactive" role="link" tabindex="0"
+              aria-label="Open ${playlist.name} playlist details" @click=${openRow}
+              @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
+              <span><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></span>
+              <span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span>
+              <span>${display(playlist.trackCount, 0)}</span>
+              <span><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></span>
+              <span><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></span>
+              <span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span>
+              <span><span class="status-chip ${status}">${titleCase(status)}</span></span>
+              <span>${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</span>
+              <span class="row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></span>
+            </div>`;
+          }) : html`<div class="empty">No playlists match these filters.</div>`}
+        </div>
         <div class="table-pagination"><span>Showing ${filtered.length ? (page - 1) * this.injectedPageSize + 1 : 0}–${Math.min(page * this.injectedPageSize, filtered.length)} of ${filtered.length} playlists</span><div><button class="icon-button" ?disabled=${page <= 1} @click=${() => { this.injectedPage = page - 1; }}>${icon("chevronLeft")}</button><span class="page-number">${page}</span><button class="icon-button" ?disabled=${page >= pageCount} @click=${() => { this.injectedPage = page + 1; }}>${icon("chevronRight")}</button></div></div>
       </div>
       ${this.renderInjectedAddModal()}

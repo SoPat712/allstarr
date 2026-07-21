@@ -71,8 +71,7 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
         _snapshot = BuildSnapshot(validated);
     }
 
-    public IReadOnlyList<ProviderDescriptor> Providers => Array.AsReadOnly(Volatile.Read(ref _snapshot).Providers.Values
-        .OrderBy(item => item.Id, StringComparer.Ordinal).ToArray());
+    public IReadOnlyList<ProviderDescriptor> Providers => Volatile.Read(ref _snapshot).SortedProviders;
 
     private static RegistrySnapshot BuildSnapshot(
         IEnumerable<ProviderRegistration> registrations)
@@ -86,8 +85,11 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
                 Implementation = implementation
             }))
             .ToDictionary(item => item.Key, item => item.Implementation);
+
+        var sortedProviders = Array.AsReadOnly(providers.Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray());
+
         return new RegistrySnapshot(
-            values.ToDictionary(item => item.Descriptor.Id, StringComparer.Ordinal), providers, implementations);
+            values.ToDictionary(item => item.Descriptor.Id, StringComparer.Ordinal), providers, sortedProviders, implementations);
     }
 
     public void RegisterOrReplaceExtension(ProviderRegistration registration)
@@ -197,6 +199,7 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
     private sealed record RegistrySnapshot(
         IReadOnlyDictionary<string, ProviderRegistration> Registrations,
         IReadOnlyDictionary<string, ProviderDescriptor> Providers,
+        IReadOnlyList<ProviderDescriptor> SortedProviders,
         IReadOnlyDictionary<(string ProviderId, ProviderCapabilityKind Capability), IProviderCapability> Implementations);
 }
 
