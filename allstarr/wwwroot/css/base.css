@@ -5261,6 +5261,8 @@ button.setup-choice {
 
 .injected-table-head,
 .injected-table-row {
+    width: 100%;
+    box-sizing: border-box;
     grid-template-columns:
         32px
         minmax(190px, 2fr)
@@ -5272,6 +5274,10 @@ button.setup-choice {
         minmax(95px, .9fr)
         120px;
     min-width: 0;
+}
+
+.injected-table-head {
+    background: var(--surface-elevated);
 }
 
 .injected-table-row > * {
@@ -5299,21 +5305,22 @@ button.setup-choice {
 }
 
 .injected-table-row > :nth-child(9).row-actions {
-    display: grid;
-    align-content: center;
-    justify-items: stretch;
-    gap: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
     min-width: 0;
 }
 
 .injected-table-row .row-actions > .primary {
-    width: 100%;
+    width: auto;
+    flex: 1 1 auto;
     min-width: 0;
     white-space: nowrap;
 }
 
 .injected-table-row .row-actions > .action-menu {
-    justify-self: end;
+    flex: 0 0 32px;
 }
 
 .injected-table-row .row-actions > .action-menu > summary {
@@ -5343,6 +5350,53 @@ button.setup-choice {
         padding: 12px 14px;
     }
 
+}
+
+.table-pagination-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.table-pagination-controls .page-number {
+    display: inline-grid;
+    place-items: center;
+    min-width: 40px;
+    height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-weight: 700;
+}
+
+.table-pagination-controls .page-number:not(:disabled):hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.table-pagination-controls .page-number.active,
+.table-pagination-controls .page-number:disabled {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--text-primary);
+    cursor: default;
+    opacity: 1;
+}
+
+@media (max-width: 700px) {
+    .table-pagination {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .table-pagination-controls {
+        justify-content: flex-start;
+        width: 100%;
+    }
 }
 
 /* Reference-aligned Extensions workspace */

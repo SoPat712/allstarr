@@ -2845,7 +2845,22 @@ class AllstarrApp extends LitElement {
             </div>`;
           }) : html`<div class="empty">No playlists match these filters.</div>`}
         </div>
-        <div class="table-pagination"><span>Showing ${filtered.length ? (page - 1) * this.injectedPageSize + 1 : 0}–${Math.min(page * this.injectedPageSize, filtered.length)} of ${filtered.length} playlists</span><div><button class="icon-button" ?disabled=${page <= 1} @click=${() => { this.injectedPage = page - 1; }}>${icon("chevronLeft")}</button><span class="page-number">${page}</span><button class="icon-button" ?disabled=${page >= pageCount} @click=${() => { this.injectedPage = page + 1; }}>${icon("chevronRight")}</button></div></div>
+        <div class="table-pagination">
+          <span>Showing ${filtered.length ? (page - 1) * this.injectedPageSize + 1 : 0}–${Math.min(page * this.injectedPageSize, filtered.length)} of ${filtered.length} playlists</span>
+          <div class="table-pagination-controls" aria-label="Playlist pages">
+            <button class="icon-button" aria-label="Previous page" ?disabled=${page <= 1} @click=${() => { this.injectedPage = page - 1; }}>${icon("chevronLeft")}</button>
+            ${Array.from({ length: pageCount }, (_, index) => index + 1).map((pageNumber) => html`
+              <button
+                class="page-number ${pageNumber === page ? "active" : ""}"
+                aria-label="Page ${pageNumber}"
+                aria-current=${pageNumber === page ? "page" : nothing}
+                ?disabled=${pageNumber === page}
+                @click=${() => { this.injectedPage = pageNumber; }}
+              >${pageNumber}</button>
+            `)}
+            <button class="icon-button" aria-label="Next page" ?disabled=${page >= pageCount} @click=${() => { this.injectedPage = page + 1; }}>${icon("chevronRight")}</button>
+          </div>
+        </div>
       </div>
       ${this.renderInjectedAddModal()}
     `;
