@@ -5400,74 +5400,83 @@ button.setup-choice {
 }
 
 /* Library navigation uses the same contained, surface-based treatment as the rest of the workspace. */
-.library-tabs {
+.subnav.library-tabs {
     display: flex;
     align-items: center;
     width: 100%;
     max-width: none;
-    gap: 6px;
+    gap: 8px;
     margin-top: -8px;
     overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--surface-card);
-    padding: 6px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
     scrollbar-width: none;
 }
 
-.library-tabs::-webkit-scrollbar { display: none; }
+.subnav.library-tabs::-webkit-scrollbar { display: none; }
 
-.library-tabs a,
-.library-tabs a.active {
+.subnav.library-tabs > a,
+.subnav.library-tabs > a.active {
     display: inline-flex;
     flex: 1 1 0;
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: 8px;
     min-width: 0;
-    min-height: 48px;
+    min-height: 40px;
     border: 1px solid transparent;
-    border-radius: 9px;
+    border-radius: 10px;
     background: transparent;
     color: var(--text-secondary);
-    padding: 10px 14px;
+    padding: 8px 12px;
     text-align: center;
     white-space: nowrap;
+    box-shadow: none;
 }
 
-.library-tabs a:hover {
-    border-color: var(--border);
+.subnav.library-tabs > a:hover {
+    border-color: transparent;
     background: var(--surface-elevated);
     color: var(--text-primary);
 }
 
-.library-tabs a.active {
-    border-color: color-mix(in srgb, var(--accent), transparent 58%);
-    background: var(--accent-soft);
+.subnav.library-tabs > a.active {
+    border-color: transparent;
+    border-bottom-color: transparent;
+    background: color-mix(in srgb, var(--signal), var(--surface-card) 82%);
     color: var(--text-primary);
-    box-shadow: 0 7px 20px color-mix(in srgb, var(--accent), transparent 86%);
+    box-shadow: none;
 }
 
-.library-tabs a .ui-icon {
+.subnav.library-tabs > a.active .ui-icon { color: var(--signal); }
+
+.subnav.library-tabs > a:focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+}
+
+.subnav.library-tabs > a .ui-icon {
     flex: 0 0 auto;
     color: currentColor;
 }
 
 @media (max-width: 700px) {
-    .library-tabs {
+    .subnav.library-tabs {
         justify-content: flex-start;
         overflow-x: auto;
         scrollbar-width: none;
     }
 
-    .library-tabs::-webkit-scrollbar {
+    .subnav.library-tabs::-webkit-scrollbar {
         display: none;
     }
 
-    .library-tabs a,
-    .library-tabs a.active {
+    .subnav.library-tabs > a,
+    .subnav.library-tabs > a.active {
         flex: 0 0 145px;
-        min-height: 48px;
+        min-height: 40px;
         padding-inline: 12px;
     }
 }
