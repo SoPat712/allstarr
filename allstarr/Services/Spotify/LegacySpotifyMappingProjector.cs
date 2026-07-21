@@ -52,7 +52,7 @@ public sealed class LegacySpotifyMappingProjector(
     internal async Task<int> ProjectAllAsync(CancellationToken cancellationToken)
     {
         var projected = 0;
-        for (var skip = 0;; skip += 200)
+        for (var skip = 0; ; skip += 200)
         {
             var page = await mappings.GetAllMappingsAsync(skip, 200);
             if (page.Count == 0) break;
@@ -134,8 +134,11 @@ public sealed class LegacySpotifyMappingProjector(
                 var now = DateTimeOffset.UtcNow;
                 var canonical = new CanonicalRecordingRecord
                 {
-                    Id = Guid.CreateVersion7(), TenantId = owner.TenantId, CreatedByUserId = owner.Id,
-                    CreatedAt = now, UpdatedAt = now
+                    Id = Guid.CreateVersion7(),
+                    TenantId = owner.TenantId,
+                    CreatedByUserId = owner.Id,
+                    CreatedAt = now,
+                    UpdatedAt = now
                 };
                 db.CanonicalRecordings.Add(canonical);
                 db.ProviderTrackIdentities.Add(CreateIdentity(owner.TenantId, canonical.Id, "spotify", sourceId, now));
@@ -181,8 +184,11 @@ public sealed class LegacySpotifyMappingProjector(
                 var now = DateTimeOffset.UtcNow;
                 canonical = new CanonicalRecordingRecord
                 {
-                    Id = Guid.CreateVersion7(), TenantId = owner.TenantId, CreatedByUserId = owner.Id,
-                    CreatedAt = now, UpdatedAt = now
+                    Id = Guid.CreateVersion7(),
+                    TenantId = owner.TenantId,
+                    CreatedByUserId = owner.Id,
+                    CreatedAt = now,
+                    UpdatedAt = now
                 };
                 db.CanonicalRecordings.Add(canonical);
                 db.ProviderTrackIdentities.Add(CreateIdentity(owner.TenantId, canonical.Id, "spotify", mapping.SpotifyId, now));
@@ -241,13 +247,23 @@ public sealed class LegacySpotifyMappingProjector(
 
     private static ProviderTrackIdentityRecord CreateIdentity(
         Guid tenantId, Guid canonicalId, string provider, string externalId, DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(), TenantId = tenantId, CanonicalRecordingId = canonicalId,
-        ProviderId = provider, ResourceKind = ProviderResourceKind.Track, CatalogNamespace = "default",
-        Scope = ProviderIdentityScope.Catalog, ExternalId = externalId, ExternalIdHash = Hash(externalId),
-        Verification = ProviderIdentityVerification.Verified, VerificationMethod = "legacy-projector",
-        DecisionVersion = 1, VerifiedAt = now, CreatedAt = now, UpdatedAt = now
-    };
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            CanonicalRecordingId = canonicalId,
+            ProviderId = provider,
+            ResourceKind = ProviderResourceKind.Track,
+            CatalogNamespace = "default",
+            Scope = ProviderIdentityScope.Catalog,
+            ExternalId = externalId,
+            ExternalIdHash = Hash(externalId),
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "legacy-projector",
+            DecisionVersion = 1,
+            VerifiedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
 
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

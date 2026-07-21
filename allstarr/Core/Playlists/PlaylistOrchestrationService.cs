@@ -515,8 +515,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     OwnerUserId = link.OwnerUserId,
                     ExternalSnapshotId = external.Id,
                     LibraryTrackId = match.SelectedLibraryTrackId,
-                    CanonicalRecordingId = match.SelectedLibraryTrackId.HasValue && candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCand) 
-                        ? matchedCand.CanonicalRecordingId 
+                    CanonicalRecordingId = match.SelectedLibraryTrackId.HasValue && candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCand)
+                        ? matchedCand.CanonicalRecordingId
                         : null,
                     LibraryScopeId = link.LibraryScopeId,
                     State = ToStorageState(match.State),
