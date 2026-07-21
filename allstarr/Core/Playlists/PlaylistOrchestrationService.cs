@@ -566,7 +566,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        // Populate decision IDs only after successful save to ensure durability
+        // Populate decision IDs only after successful save to ensure durability.
+        // Populate decision IDs only after the batch save so callers can rely
+        // on every decisionIds[entry.Id] being backed by a durable TrackMatchRecord.
+        // Two-loop pattern (decisions first, then decisionIds) keeps the ID durable.
         foreach (var entry in entries)
         {
             var external = externals[entry.ExternalMetadataSnapshotId];

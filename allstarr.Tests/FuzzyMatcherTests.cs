@@ -160,24 +160,20 @@ public class FuzzyMatcherTests
     }
 
     [Fact]
-    public void LevenshteinDistance_ReturnsCorrectDistance_ForDifferentLengths()
+    public void CalculateSimilarity_StackallocAndHeapBranches_ReturnConsistentResults()
     {
-        // Test stackalloc branch (length < 128)
-        Assert.Equal(42, FuzzyMatcher.CalculateSimilarity("kitten", "sitting")); // 42% similarity (scaled to 75 max)
+        // stackalloc branch: targetLength + 1 <= 128
+        Assert.Equal(42, FuzzyMatcher.CalculateSimilarity("kitten", "sitting"));
 
-        // Test edge lengths
-        var str64_1 = new string('a', 63) + "b";
-        var str64_2 = new string('a', 63) + "c";
-        Assert.True(FuzzyMatcher.CalculateSimilarity(str64_1, str64_2) > 0);
+        // 127-char string -> 128 -> stackalloc (pure Levenshtein max is scaled to 75)
+        var str127 = new string('a', 126) + "x";
+        var str127b = new string('a', 126) + "y";
+        Assert.True(FuzzyMatcher.CalculateSimilarity(str127, str127b) > 70);
 
-        var str127_1 = new string('a', 126) + "b";
-        var str127_2 = new string('a', 126) + "c";
-        Assert.True(FuzzyMatcher.CalculateSimilarity(str127_1, str127_2) > 0);
-
-        // Test heap allocation fallback branch (length >= 128)
-        var str130_1 = new string('a', 129) + "b";
-        var str130_2 = new string('a', 129) + "c";
-        Assert.True(FuzzyMatcher.CalculateSimilarity(str130_1, str130_2) > 0);
+        // 130-char string -> 131 -> heap fallback
+        var str130 = new string('a', 129) + "x";
+        var str130b = new string('a', 129) + "y";
+        Assert.True(FuzzyMatcher.CalculateSimilarity(str130, str130b) > 70);
     }
 }
 

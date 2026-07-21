@@ -4612,7 +4612,7 @@ button.setup-choice {
 .injected-table-head,
 .injected-table-row {
     display: grid;
-    grid-template-columns: 32px minmax(210px, 1.65fr) .45fr .6fr .6fr .9fr .72fr .65fr minmax(138px, auto);
+    grid-template-columns: 32px minmax(180px, 1.65fr) minmax(45px, .45fr) minmax(60px, .6fr) minmax(60px, .6fr) minmax(90px, .9fr) minmax(80px, .72fr) minmax(85px, .65fr) minmax(120px, auto);
     align-items: center;
     gap: 12px;
     min-height: 72px;

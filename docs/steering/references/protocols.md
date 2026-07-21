@@ -195,4 +195,4 @@ Required behavior:
 
 ## Search Parallelization
 
-External metadata searches (tracks, albums, artists, playlists) are fanned out concurrently across all candidates via `Task.WhenAll` to ensure low latency. Since this creates concurrent burst requests, operators should monitor provider rate limits if a large number of providers are enabled.
+External metadata searches (tracks, albums, artists, playlists) are fanned out concurrently across all candidates via `Task.WhenAll` to ensure low latency. Since this creates concurrent burst requests, operators should monitor provider rate limits if a large number of providers are enabled. A planned follow-up change is to introduce a configurable `MaxConcurrentProviders` safeguard limit (or bounding semaphore) to prevent thundering herds on systems with many providers.

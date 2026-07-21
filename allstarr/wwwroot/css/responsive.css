@@ -106,12 +106,6 @@
     .config-grid {
         grid-template-columns: minmax(0, 1fr);
     }
-
-    .injected-table-row,
-    .injected-table-head {
-        grid-template-columns: 28px minmax(0, 1.2fr) minmax(130px, .9fr) minmax(150px, 1fr) minmax(115px, .7fr) 40px;
-        min-width: min(760px, calc(100vw - 24px));
-    }
 }
 
 @media (max-width: 620px) {

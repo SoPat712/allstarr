@@ -226,6 +226,7 @@ public static partial class FuzzyMatcher
         normalized = normalized.Replace('-', ' ').Replace('_', ' ');
 
         normalized = PunctuationRegex().Replace(normalized, "");
+        // Collapse internal whitespace sequences to a single space, then trim edge whitespace
         normalized = WhitespaceRegex().Replace(normalized, " ").Trim();
 
         return normalized;
