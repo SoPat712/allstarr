@@ -496,8 +496,8 @@
     width: 32px;
     height: 32px;
     place-items: center;
-    border-radius: var(--radius-sm);
-    background: var(--surface-raised);
+    border-radius: 10px;
+    background: var(--surface-elevated);
     color: var(--signal);
 }
 
@@ -565,16 +565,16 @@
 
 .library-tabs > a.active {
     border-color: transparent;
-    background: color-mix(in srgb, var(--signal) 18%, var(--surface-raised));
+    background: var(--accent-soft);
     color: var(--text-primary);
 }
 
 .library-tabs > a.active .ui-icon {
-    color: var(--signal);
+    color: var(--accent);
 }
 
 .library-tabs > a:focus-visible {
-    outline: 2px solid var(--signal);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 
@@ -619,7 +619,7 @@
 .injected-data-table th {
     height: 64px;
     padding: 14px 12px;
-    background: var(--surface-raised);
+    background: var(--surface-elevated);
     color: var(--text-muted);
     font-size: .72rem;
     font-weight: 800;
@@ -640,8 +640,8 @@
 }
 
 .injected-data-table tbody tr:first-child td { border-top: 0; }
-.injected-data-table tbody tr:hover td { background: color-mix(in srgb, var(--signal), transparent 94%); }
-.injected-data-table tbody tr:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.injected-data-table tbody tr:hover td { background: color-mix(in srgb, var(--accent), transparent 94%); }
+.injected-data-table tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .injected-data-table td > strong,
 .injected-data-table td > small { display: block; }
 .injected-data-table td > small { margin-top: 3px; color: var(--text-muted); }
@@ -700,7 +700,7 @@
     place-items: center;
     padding: 0;
     border: 1px solid transparent;
-    border-radius: var(--radius-sm);
+    border-radius: 10px;
     cursor: pointer;
     list-style: none;
 }
@@ -709,7 +709,7 @@
 .playlist-action-menu > summary:hover,
 .playlist-action-menu[open] > summary {
     border-color: var(--border);
-    background: var(--surface-raised);
+    background: var(--surface-elevated);
 }
 
 .playlist-action-menu > summary .ui-icon { transform: rotate(90deg); }
@@ -725,7 +725,7 @@
     padding: 6px;
     border: 1px solid var(--border-strong);
     border-radius: 12px;
-    background: var(--surface-raised);
+    background: var(--surface-elevated);
     box-shadow: var(--shadow-modal);
 }
 
@@ -762,7 +762,7 @@
 }
 
 .settings-view > details.content-disclosure.panel > summary:hover {
-    background: var(--surface-raised);
+    background: var(--surface-elevated);
 }
 
 .settings-view > details.content-disclosure.panel[open] {
