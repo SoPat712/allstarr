@@ -533,13 +533,13 @@
 
 /* Library workspace navigation uses compact pills, never the generic underline tabs. */
 .library-tabs {
-    gap: 8px;
-    min-height: 40px;
-    padding: 0;
+    gap: 4px;
+    min-height: 48px;
+    padding: 4px;
     overflow-x: auto;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-card);
 }
 
 .library-tabs > a,
@@ -551,7 +551,7 @@
     min-height: 40px;
     padding: 8px 12px;
     border: 1px solid transparent;
-    border-radius: var(--radius-sm);
+    border-radius: 10px;
     background: transparent;
     color: var(--text-secondary);
     box-shadow: none;
@@ -559,7 +559,7 @@
 
 .library-tabs > a:hover {
     border-color: transparent;
-    background: var(--surface-raised);
+    background: var(--surface-elevated);
     color: var(--text-primary);
 }
 
