@@ -534,12 +534,21 @@
 /* Library workspace navigation uses compact pills, never the generic underline tabs. */
 .library-tabs {
     gap: 4px;
-    min-height: 48px;
+    height: 50px;
+    min-height: 50px;
+    margin-top: -6px;
     padding: 4px;
     overflow-x: auto;
+    overflow-y: hidden;
     border: 1px solid var(--border);
     border-radius: 14px;
     background: var(--surface-card);
+    scrollbar-width: none;
+}
+
+.library-tabs::-webkit-scrollbar {
+    width: 0;
+    height: 0;
 }
 
 .library-tabs > a,
