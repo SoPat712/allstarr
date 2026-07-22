@@ -434,6 +434,9 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("Copy description", script, StringComparison.Ordinal);
         Assert.Contains("Copy artwork", script, StringComparison.Ordinal);
         Assert.Contains("/api/admin/playlist-links/backend-credentials", script, StringComparison.Ordinal);
+        Assert.Contains("No personal playlist account is ready.", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("externalPlaylistSearch", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("renderExternalPlaylistExplorer", script, StringComparison.Ordinal);
         Assert.Contains("createPlaylistBackendCredential", script, StringComparison.Ordinal);
         Assert.Contains("rotatePlaylistBackendCredential", script, StringComparison.Ordinal);
         Assert.Contains("type=\"password\"", script, StringComparison.Ordinal);
