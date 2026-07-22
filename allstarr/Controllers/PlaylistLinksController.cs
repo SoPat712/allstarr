@@ -317,8 +317,11 @@ public sealed class PlaylistLinksController(
                 .ToListAsync(cancellationToken);
             var snapshotsByLink = snapshots.ToDictionary(item => item.PlaylistLinkId);
             var runsByLink = runs.ToDictionary(item => item.PlaylistLinkId);
-            return Ok(new { playlistLinks = links.Select(link => ToListDto(link,
-                snapshotsByLink.GetValueOrDefault(link.Id), runsByLink.GetValueOrDefault(link.Id))) });
+            return Ok(new
+            {
+                playlistLinks = links.Select(link => ToListDto(link,
+                snapshotsByLink.GetValueOrDefault(link.Id), runsByLink.GetValueOrDefault(link.Id)))
+            });
         });
     }
 

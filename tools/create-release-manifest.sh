@@ -54,7 +54,7 @@ test -n "${version}" || {
 
 commit="unavailable"
 tag="unavailable"
-dirty="unknown"
+dirty="null"
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     commit="$(git rev-parse HEAD)"
     tag="$(git describe --tags --exact-match 2>/dev/null || printf 'untagged')"

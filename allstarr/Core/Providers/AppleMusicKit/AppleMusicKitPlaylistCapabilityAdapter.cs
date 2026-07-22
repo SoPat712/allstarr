@@ -232,7 +232,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
             using var response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
             if (response.RequestMessage?.RequestUri is { } finalUri && !IsAllowedArtworkHost(finalUri.Host))
                 return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.PermanentFailure));
-            if (!response.IsSuccessStatusCode) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(Error(response));
+            if (!response.IsSuccessStatusCode) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(Error(response, accountBound: false));
             var contentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
             if (contentType is not ("image/jpeg" or "image/png" or "image/webp") ||
                 response.Content.Headers.ContentLength > maximumBytes)
@@ -312,10 +312,11 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
         return null;
     }
 
-    private static ProviderError Error(HttpResponseMessage response) => response.StatusCode switch
+    private static ProviderError Error(HttpResponseMessage response, bool accountBound = true) => response.StatusCode switch
     {
-        HttpStatusCode.Unauthorized => new(ProviderErrorKind.AccountNeedsReauthentication),
-        HttpStatusCode.Forbidden => new(ProviderErrorKind.AccountNeedsReauthentication),
+        HttpStatusCode.Unauthorized when accountBound => new(ProviderErrorKind.AccountNeedsReauthentication),
+        HttpStatusCode.Forbidden when accountBound => new(ProviderErrorKind.AccountNeedsReauthentication),
+        HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(ProviderErrorKind.PermanentFailure),
         HttpStatusCode.NotFound => new(ProviderErrorKind.NotFound),
         HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited, response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30)),
         >= HttpStatusCode.InternalServerError => new(ProviderErrorKind.TransientFailure),

@@ -1,7 +1,9 @@
 import json
+import os
 import pathlib
 import re
 import subprocess
+import tempfile
 import unittest
 
 
@@ -40,6 +42,28 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(expected_digests, set(manifest["digests"]))
         for digest in manifest["digests"].values():
             self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_manifest_remains_valid_json_when_git_metadata_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fake_git = pathlib.Path(temporary_directory) / "git"
+            fake_git.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+            fake_git.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temporary_directory}:{environment['PATH']}"
+
+            completed = subprocess.run(
+                ["bash", "tools/create-release-manifest.sh"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        manifest = json.loads(completed.stdout)
+        self.assertEqual("unavailable", manifest["git"]["commit"])
+        self.assertEqual("unavailable", manifest["git"]["tag"])
+        self.assertIsNone(manifest["git"]["trackedFilesDirty"])
 
 
 if __name__ == "__main__":

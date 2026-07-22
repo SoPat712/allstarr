@@ -484,11 +484,11 @@
 
     .settings-view > details.content-disclosure.panel > summary {
         min-height: 42px;
-        padding: 6px 12px;
+        padding: 8px 12px;
     }
 
     .settings-view > details.content-disclosure.panel > .disclosure-body {
-        padding: 10px 12px 12px;
+        padding: 12px;
     }
 }
 

@@ -101,6 +101,10 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         handler.ArtworkBytes = new byte[17];
         var oversized = await adapter.ResolveArtworkAsync(Context(), new(reference, 16));
         Assert.Equal(ProviderErrorKind.PermanentFailure, oversized.Error!.Kind);
+
+        handler.ArtworkFailure = HttpStatusCode.Forbidden;
+        var forbidden = await adapter.ResolveArtworkAsync(Context(), new(reference, 16));
+        Assert.Equal(ProviderErrorKind.PermanentFailure, forbidden.Error!.Kind);
     }
 
     [Theory]
@@ -157,6 +161,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     private sealed class AppleHandler : HttpMessageHandler
     {
         public HttpStatusCode? Failure { get; set; }
+        public HttpStatusCode? ArtworkFailure { get; set; }
         public List<string> Paths { get; } = [];
         public List<string> Authorization { get; } = [];
         public List<string> UserTokens { get; } = [];
@@ -165,7 +170,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         {
             Paths.Add(request.RequestUri!.PathAndQuery);
             if (request.RequestUri.Host == "is1-ssl.mzstatic.com")
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(ArtworkFailure ?? HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(ArtworkBytes)
                     {

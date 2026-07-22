@@ -789,7 +789,7 @@
 
 /* Settings disclosures are compact rows; expanded content keeps its own inset. */
 .settings-view {
-    gap: 10px;
+    gap: 12px;
 }
 
 .settings-view > details.content-disclosure.panel {
@@ -806,8 +806,8 @@
     box-sizing: border-box;
     min-height: 44px;
     height: auto;
-    gap: 10px;
-    padding: 6px 14px;
+    gap: 12px;
+    padding: 8px 12px;
 }
 
 .settings-view > details.content-disclosure.panel > summary strong {
@@ -832,7 +832,7 @@
 }
 
 .settings-view > details.content-disclosure.panel > .disclosure-body {
-    padding: 12px 14px 14px;
+    padding: 12px;
     gap: 12px;
 }
 
