@@ -82,6 +82,7 @@ The following concepts have one implementation each:
 | --- | --- |
 | Workspace tab rail | Rounded container, active underline/fill from the design contract, keyboard navigation, horizontal mobile scroll |
 | Page header | Identity and description on the left, one primary action on the right |
+| Form control | Shared typography, dimensions, inset, states, validation, and touch behavior for its control type |
 | Data surface | Semantic desktop table and mobile cards from one normalized row model |
 | Playlist picker | Search, cursor pagination, artwork, provider identity, track count, loading/error/empty states, ID/URL fallback |
 | Provider/account picker | Capability-filtered accounts, provider icon, account state, disabled reason |
@@ -95,6 +96,31 @@ The following concepts have one implementation each:
 
 Pages may compose these primitives but may not redefine their spacing, states,
 icons, or keyboard behavior.
+
+### App shell navigation
+
+- The primary navigation has exactly five destinations in this order: Home, Library, Sources, Event Log, and Settings.
+- Primary destinations are direct links. They never live inside a disclosure,
+  overflow menu, or route-local navigation group.
+- Expanded desktop, collapsed rail, and mobile overlay use the same route model,
+  icon, label, active state, focus state, and ordering.
+- Additional workflows are reached from their owning workspace. Adding a sixth
+  primary destination requires updating both WebUI contracts and the visual
+  design contract.
+
+### Form-control ownership
+
+- Every native input, select, textarea, checkbox, radio, and button inherits its
+  metrics from the shared control tokens. Page grids may change width, not font,
+  height, inset, border, radius, or interaction states.
+- The normal control is `40px` high, uses the body control font at `14px`, and
+  has `12px` horizontal inset. Compact and primary-action sizes must be explicit
+  named variants; they cannot arise from selector specificity or browser defaults.
+- Labels, ownership badges, helper text, validation, and controls align to one
+  field rhythm. Optional metadata may wrap but cannot change the paired control's
+  dimensions or baseline.
+- Native controls must be verified with long values, browser zoom, coarse input,
+  dark/light/system themes, and every documented responsive width.
 
 ### Compact disclosure ownership
 

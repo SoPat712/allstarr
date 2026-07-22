@@ -76,7 +76,6 @@
     .brand-status > :not(.status-dot),
     .nav-heading,
     .nav-link > span,
-    .nav-group summary > span,
     .user-summary > span:last-child,
     .sidebar-footer button > span {
         display: none;
@@ -174,7 +173,6 @@
     .sidebar.open .brand-status > :not(.status-dot),
     .sidebar.open .nav-heading,
     .sidebar.open .nav-link > span,
-    .sidebar.open .nav-group summary > span,
     .sidebar.open .user-summary > span:last-child,
     .sidebar.open .sidebar-footer button > span {
         display: grid;

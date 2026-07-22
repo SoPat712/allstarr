@@ -60,6 +60,24 @@ textarea {
     font: inherit;
 }
 
+input:not(:is([type="checkbox"], [type="radio"], [type="range"], [type="color"])),
+select {
+    height: var(--control-height);
+    min-height: var(--control-height);
+    padding-block: 0;
+    padding-inline: var(--control-padding-inline);
+    font-family: var(--font-body);
+    font-size: var(--control-font-size);
+    line-height: 1.25;
+}
+
+textarea {
+    padding: 9px var(--control-padding-inline);
+    font-family: var(--font-body);
+    font-size: var(--control-font-size);
+    line-height: 1.5;
+}
+
 button,
 a,
 summary,

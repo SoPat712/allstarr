@@ -2279,15 +2279,9 @@ class AllstarrApp extends LitElement {
     const routes = asArray(this.schema?.routes);
     const administrator = this.isAdministrator();
     const routeById = new Map(routes.map((route) => [String(route.id || route.zone || "").toLowerCase(), route]));
-    const primaryRoutes = ["home", "library", "sources", "intelligence"]
+    const primaryRoutes = ["home", "library", "sources", "activity", "settings"]
       .map((id) => routeById.get(id))
       .filter(Boolean);
-    const systemRoutes = ["activity", "settings", "architecture"]
-      .map((id) => routeById.get(id))
-      .filter(Boolean);
-    const groupedRoutes = new Set([...primaryRoutes, ...systemRoutes]);
-    const otherRoutes = routes.filter((route) => !groupedRoutes.has(route));
-    const systemActive = systemRoutes.some((route) => this.isRouteActive(route.path));
     const renderNavLink = (route) => html`
       <a class="nav-link ${this.isRouteActive(route.path) ? "active" : ""}" href=${route.path} title=${route.label} aria-label=${route.label}>
         ${icon(route.id)}<span>${route.label}</span>
@@ -2331,15 +2325,7 @@ class AllstarrApp extends LitElement {
           </div>
         </div>
         <nav class="nav-list" aria-label="Primary">
-          <div class="nav-section">
-            ${primaryRoutes.map(renderNavLink)}
-            ${otherRoutes.map(renderNavLink)}
-          </div>
-          ${systemRoutes.length ? html`
-            <details class="nav-group" ?open=${systemActive || this.sidebarCollapsed}>
-              <summary title="System">${icon("settings")}<span>System</span></summary>
-              <div class="nav-section">${systemRoutes.map(renderNavLink)}</div>
-            </details>` : nothing}
+          <div class="nav-section">${primaryRoutes.map(renderNavLink)}</div>
         </nav>
         <div class="sidebar-footer">
           <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>

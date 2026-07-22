@@ -41,6 +41,8 @@
     --radius: var(--radius-md);
     --radius-lg: 14px;
     --control-height: 40px;
+    --control-font-size: 0.875rem;
+    --control-padding-inline: 12px;
     --rail-width: 248px;
     --now-playing-height: 76px;
 }

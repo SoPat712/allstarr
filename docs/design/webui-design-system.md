@@ -148,6 +148,23 @@ One primary action per visual region. Secondary actions are neutral. Destructive
 actions are red and isolated in a danger zone or overflow menu. Icon-only buttons
 must have accessible labels and visible icons.
 
+### Form controls
+
+- Inputs, selects, and textareas use one shared type scale, border, background,
+  radius, focus ring, and horizontal inset. Native browser typography must never
+  leak into a workspace.
+- Normal single-line controls are `40px` high with `14px` text and `12px`
+  horizontal inset. Compact controls are `34px`; primary actions are `44px`.
+  A size difference is always an explicit named variant.
+- Labels use the metadata scale and sit on one baseline across a form row.
+  Ownership or requirement badges share that label row without increasing the
+  neighboring control's height.
+- Helper and validation text live below the control. Form columns align from the
+  label edge, while helper text may increase only its own row height.
+- Checkboxes, radios, toggles, search fields, and select chevrons use shared
+  assets and states. Disabled, read-only, loading, invalid, hover, focus, and
+  pressed states remain recognizable without relying on color alone.
+
 ### Tables
 
 Tables use one containing surface, a tinted header row, `56–64px` data rows,

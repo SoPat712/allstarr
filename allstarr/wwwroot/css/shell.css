@@ -246,7 +246,6 @@
 .sidebar-collapsed .brand-status > :not(.status-dot),
 .sidebar-collapsed .nav-heading,
 .sidebar-collapsed .nav-link > span,
-.sidebar-collapsed .nav-group summary > span,
 .sidebar-collapsed .user-summary > span:last-child,
 .sidebar-collapsed .sidebar-footer button > span {
     display: none;
