@@ -784,6 +784,8 @@ class AllstarrApp extends LitElement {
     this.playlists = null;
     this.playlistLinks = [];
     this.playlistSources = [];
+    this.playlistSourceBlockedAccounts = [];
+    this.playlistSourceProviders = [];
     this.mediaTargets = [];
     this.sourcePlaylistResults = [];
     this.targetPlaylistResults = [];
@@ -1517,6 +1519,8 @@ class AllstarrApp extends LitElement {
   async loadPlaylistDiscovery() {
     const [sources, targets] = await Promise.all([API.playlistSources(), API.mediaTargets()]);
     this.playlistSources = asArray(sources?.accounts || sources?.Accounts);
+    this.playlistSourceBlockedAccounts = asArray(sources?.blockedAccounts || sources?.BlockedAccounts);
+    this.playlistSourceProviders = asArray(sources?.providers || sources?.Providers);
     this.mediaTargets = asArray(targets?.targets || targets?.Targets);
   }
 
@@ -2862,15 +2866,19 @@ class AllstarrApp extends LitElement {
 
   renderPlaylistSourceStep() {
     const draft = this.playlistWizard;
-    return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose the source playlist</h4><p class="muted">Only connected accounts that can read playlists are shown.</p></div>
+    const blocked = this.playlistSourceBlockedAccounts;
+    const providerNames = this.playlistSourceProviders.map((provider) => provider.displayName || provider.DisplayName).filter(Boolean);
+    return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose the source playlist</h4><p class="muted">Every connected provider or extension that exposes the Playlist capability can appear here.</p></div>
       ${draft.legacyHandoff ? html`<div class="callout"><strong>Imported from Allstarr 2.x</strong><p>Choose the Spotify account that owns <strong>${draft.legacyHandoff.name || draft.legacyHandoff.Name}</strong>. Allstarr will select source ID <span class="mono">${draft.legacyHandoff.sourcePlaylistId || draft.legacyHandoff.SourcePlaylistId}</span> when that account can see it.</p></div>` : nothing}
       ${this.playlistSources.length ? html`<div class="choice-grid account-choice-grid">
         ${this.playlistSources.map((account) => {
           const id = String(account.id || account.Id);
           const provider = account.providerId || account.ProviderId;
-          return html`<button class="choice-card ${draft.sourceAccountId === id ? "selected" : ""}" @click=${() => this.choosePlaylistSourceAccount(id)}><span class="provider-choice-icon">${this.renderProviderLogo(provider, "tiny")}</span><span><strong>${account.displayName || account.DisplayName}</strong><small>${providerDisplayName(provider, this.schema?.providers)}</small></span></button>`;
+          const access = account.accessLabel || account.AccessLabel || titleCase(account.scope || account.Scope || "account");
+          return html`<button class="choice-card ${draft.sourceAccountId === id ? "selected" : ""}" @click=${() => this.choosePlaylistSourceAccount(id)}><span class="provider-choice-icon">${this.renderProviderLogo(provider, "tiny")}</span><span><strong>${account.displayName || account.DisplayName}</strong><small>${providerDisplayName(provider, this.schema?.providers)} · ${access}</small></span></button>`;
         })}
-      </div>` : html`<div class="empty playlist-source-empty"><strong>No personal playlist account is ready.</strong><span>Connect Spotify or Apple MusicKit in Settings. Imported global credentials are not used for personal playlists.</span><button @click=${() => this.navigate("/settings")}>Open Settings</button></div>`}
+      </div>` : blocked.length ? html`<div class="inline-alert warning playlist-source-policy"><strong>Shared playlist credentials are configured but disabled by policy.</strong><span>${blocked.map((account) => `${providerDisplayName(account.providerId || account.ProviderId, this.schema?.providers)} (${account.displayName || account.DisplayName})`).join(", ")}</span><small>Enable shared credentials for personal playlist operations in deployment settings, or connect a personal provider account.</small><button @click=${() => this.navigate("/settings")}>Review Settings</button></div>` : html`<div class="empty playlist-source-empty"><strong>No playlist source is connected.</strong><span>Connect any provider or extension with Playlist capability${providerNames.length ? `. Available now: ${providerNames.join(", ")}.` : "."}</span><button @click=${() => this.navigate("/sources")}>Open Sources</button></div>`}
+      ${this.playlistSources.length && blocked.length ? html`<div class="inline-alert warning playlist-source-policy"><strong>${blocked.length} shared source${blocked.length === 1 ? " is" : "s are"} hidden by policy.</strong><span>Use a personal or library-shared account, or explicitly allow deployment-shared credentials.</span></div>` : nothing}
       ${draft.sourceAccountId ? html`<div class="picker-search"><input aria-label="Search source playlists" placeholder="Search playlists" .value=${draft.sourceQuery} @input=${(event) => this.updatePlaylistWizard({ sourceQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchSourcePlaylists(); }}><button @click=${() => this.searchSourcePlaylists()}>Search</button></div>${this.renderPlaylistChoices(this.sourcePlaylistResults, draft.sourcePlaylist, (playlist) => this.updatePlaylistWizard({ sourcePlaylist: playlist }), "source")}${draft.sourceNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreSourcePlaylists()}>Load more playlists</button>` : nothing}` : nothing}
     </div>`;
   }

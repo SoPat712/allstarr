@@ -849,6 +849,16 @@
     gap: 20px;
 }
 
+.playlist-source-policy {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+}
+
+.playlist-source-policy button {
+    margin-top: 4px;
+}
+
 .wizard-steps {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));

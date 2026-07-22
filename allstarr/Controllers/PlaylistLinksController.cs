@@ -42,8 +42,7 @@ public sealed class PlaylistLinksController(
         {
             var supportedProviders = providerRegistry
                 .FindByCapability(ProviderCapabilityKind.Playlist, includeNonOperational: false)
-                .Select(item => item.Id)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var accounts = await db.ProviderAccounts.AsNoTracking()
                 .Where(item => item.Enabled &&
@@ -52,22 +51,38 @@ public sealed class PlaylistLinksController(
                 .OrderBy(item => item.ProviderId)
                 .ThenBy(item => item.DisplayName)
                 .ToListAsync(cancellationToken);
+            var capableAccounts = accounts.Where(item =>
+            {
+                if (!supportedProviders.TryGetValue(item.ProviderId, out var provider)) return false;
+                var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
+                return capability.AllowedAccountScopes.Contains(item.Scope);
+            }).ToArray();
+            var availableAccounts = capableAccounts
+                .Where(item => item.Scope != ProviderAccountScope.Global || providerPolicy.AllowGlobalPersonalAccounts)
+                .ToArray();
+            var blockedAccounts = capableAccounts.Except(availableAccounts).ToArray();
             return Ok(new
             {
-                accounts = accounts
-                    .Where(item => supportedProviders.Contains(item.ProviderId))
-                    .Where(item => item.Scope != ProviderAccountScope.Global || providerPolicy.AllowGlobalPersonalAccounts)
-                    .Select(item => new
+                accounts = availableAccounts.Select(item => ToPlaylistSourceAccountDto(item, true, null)),
+                blockedAccounts = blockedAccounts.Select(item => ToPlaylistSourceAccountDto(
+                    item,
+                    false,
+                    "shared-playlist-credentials-disabled")),
+                providers = supportedProviders.Values.Select(provider =>
+                {
+                    var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
+                    return new
                     {
-                        id = item.Id,
-                        providerId = item.ProviderId,
-                        displayName = item.DisplayName,
-                        libraryScopeId = item.LibraryScopeId,
-                        scope = item.Scope.ToString().ToLowerInvariant(),
-                        revision = item.Revision,
-                        capability = "playlist",
-                        enabled = item.Enabled
-                    })
+                        id = provider.Id,
+                        displayName = provider.DisplayName,
+                        origin = provider.Origin.ToString().ToLowerInvariant(),
+                        accountRequirement = capability.AccountRequirement.ToString().ToLowerInvariant()
+                    };
+                }),
+                policy = new
+                {
+                    allowSharedPlaylistCredentials = providerPolicy.AllowGlobalPersonalAccounts
+                }
             });
         });
     }
@@ -644,6 +659,29 @@ public sealed class PlaylistLinksController(
             cancellationToken: cancellationToken));
         return plan.Candidates.FirstOrDefault();
     }
+
+    private static object ToPlaylistSourceAccountDto(
+        ProviderAccountRecord account,
+        bool available,
+        string? reasonCode) => new
+        {
+            id = account.Id,
+            providerId = account.ProviderId,
+            displayName = account.DisplayName,
+            libraryScopeId = account.LibraryScopeId,
+            scope = account.Scope.ToString().ToLowerInvariant(),
+            accessLabel = account.Scope switch
+            {
+                ProviderAccountScope.User => "Personal account",
+                ProviderAccountScope.Library => "Library-shared account",
+                _ => "Deployment-shared account"
+            },
+            revision = account.Revision,
+            capability = "playlist",
+            enabled = account.Enabled,
+            available,
+            reasonCode
+        };
 
     private async Task<bool> CredentialReferenceAllowed(ProtocolExecutionContext context, Guid? id, CancellationToken cancellationToken)
     {
