@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg">
   <symbol id="home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></symbol>
+  <symbol id="headphones" viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><path d="M4 14h3v7H5a1 1 0 0 1-1-1zM20 14h-3v7h2a1 1 0 0 0 1-1z"/></symbol>
   <symbol id="library" viewBox="0 0 24 24"><path d="M4 4h5v16H4z"/><path d="M9 6h5v14H9z"/><path d="m14 5 4-1 3 15-4 1z"/></symbol>
   <symbol id="sources" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 7.5 11 16M16 7.5 13 16M8 6h8"/></symbol>
   <symbol id="activity" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>

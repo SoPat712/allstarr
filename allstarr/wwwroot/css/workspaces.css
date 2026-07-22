@@ -1453,18 +1453,35 @@
 
 .event-log-entry {
   display: grid;
-  grid-template-columns: 2.25rem minmax(0, 1fr) auto minmax(5rem, auto);
+  grid-template-columns: 2.25rem minmax(0, 1fr) auto auto minmax(5rem, auto) 1rem;
   align-items: center;
   gap: 0.75rem;
   padding: 0.8rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.event-log-entry::-webkit-details-marker {
+  display: none;
+}
+
+.event-log-group {
   border-bottom: 1px solid var(--border);
 }
 
-.event-log-entry:last-child {
+.event-log-group:last-child {
   border-bottom: 0;
 }
 
-.event-log-entry > div {
+.event-log-group[open] > .event-log-entry {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.event-log-group[open] > .event-log-entry > .ui-icon:last-child {
+  transform: rotate(90deg);
+}
+
+.event-log-summary-copy {
   display: grid;
   min-width: 0;
   gap: 0.15rem;
@@ -1483,6 +1500,58 @@
   font-size: 0.72rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.event-log-group-count {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.event-log-details {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 0.8rem 0.8rem 3.8rem;
+}
+
+.event-log-detail {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  background: var(--surface-raised, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.event-log-detail > div,
+.event-log-detail dl {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.event-log-detail dl {
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  margin: 0;
+}
+
+.event-log-detail dl > div {
+  min-width: 0;
+}
+
+.event-log-detail dt,
+.event-log-detail time {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.event-log-detail dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.event-log-collapse {
+  justify-self: start;
 }
 
 .event-kind {
@@ -1507,11 +1576,26 @@
   }
 
   .event-log-entry {
-    grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+    grid-template-columns: 2.25rem minmax(0, 1fr) auto 1rem;
+  }
+
+  .event-log-group-count,
+  .event-log-entry .status-chip {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .event-log-entry time {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .event-log-entry > .ui-icon:last-child {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .event-log-details {
+    padding-left: 0.8rem;
   }
 }

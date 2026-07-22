@@ -247,6 +247,31 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.DecidedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
+        var externalSnapshotIds = matches.Select(item => item.ExternalSnapshotId).Distinct().ToArray();
+        var externalSnapshots = externalSnapshotIds.Length == 0
+            ? new Dictionary<Guid, ExternalMetadataSnapshotRecord>()
+            : await context.ExternalMetadataSnapshots.AsNoTracking()
+                .Where(item => externalSnapshotIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var providerIdentityIds = externalSnapshots.Values
+            .Where(item => item.ProviderTrackIdentityId.HasValue)
+            .Select(item => item.ProviderTrackIdentityId!.Value)
+            .Distinct()
+            .ToArray();
+        var providerIdentities = providerIdentityIds.Length == 0
+            ? new Dictionary<Guid, ProviderTrackIdentityRecord>()
+            : await context.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => providerIdentityIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var libraryTrackIds = matches.Where(item => item.LibraryTrackId.HasValue)
+            .Select(item => item.LibraryTrackId!.Value)
+            .Distinct()
+            .ToArray();
+        var libraryTracks = libraryTrackIds.Length == 0
+            ? new Dictionary<Guid, LibraryTrackRecord>()
+            : await context.LibraryTracks.AsNoTracking()
+                .Where(item => libraryTrackIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
         var audits = await context.AuditEvents.AsNoTracking()
             .Where(item => item.TenantId == tenantId && (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
@@ -296,16 +321,25 @@ public class AdminUiController : ControllerBase
             Severity: SeverityForState(item.State.ToString()),
             PlaylistLinkId: item.PlaylistLinkId.ToString("N"),
             PlaylistName: playlistNames.GetValueOrDefault(item.PlaylistLinkId, "Playlist"))));
-        activity.AddRange(matches.Select(item => new AdminUiActivityItem(
-            item.Id.ToString("N"),
-            "matching",
-            "matching",
-            "Track match evaluated",
-            item.State.ToString().ToLowerInvariant(),
-            $"{Math.Round(item.Confidence * 100, 1)}% confidence",
-            item.DecidedAt,
-            item.CorrelationId,
-            SeverityForState(item.State.ToString()))));
+        activity.AddRange(matches.Select(item =>
+        {
+            externalSnapshots.TryGetValue(item.ExternalSnapshotId, out var snapshot);
+            var identity = snapshot?.ProviderTrackIdentityId is { } identityId
+                ? providerIdentities.GetValueOrDefault(identityId)
+                : null;
+            var providerId = identity?.ProviderId ?? snapshot?.ProviderId ?? "matching";
+            return new AdminUiActivityItem(
+                item.Id.ToString("N"),
+                "matching",
+                providerId,
+                MatchActivityLabel(item.State),
+                item.State.ToString().ToLowerInvariant(),
+                MatchActivityDetail(item, snapshot, identity, libraryTracks.GetValueOrDefault(item.LibraryTrackId ?? Guid.Empty)),
+                item.DecidedAt,
+                item.CorrelationId,
+                SeverityForState(item.State.ToString()),
+                providerId);
+        }));
         activity.AddRange(audits.Select(AuditActivity));
 
         var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
@@ -363,6 +397,40 @@ public class AdminUiController : ControllerBase
             normalized.Contains("conflict", StringComparison.Ordinal) || normalized.Contains("retry", StringComparison.Ordinal) ||
             normalized.Contains("ambiguous", StringComparison.Ordinal) || normalized.Contains("partial", StringComparison.Ordinal)) return "warning";
         return "info";
+    }
+
+    private static string MatchActivityLabel(TrackMatchState state) => state switch
+    {
+        TrackMatchState.Accepted or TrackMatchState.Pinned => "Track matched",
+        TrackMatchState.Suggested => "Track match suggested",
+        TrackMatchState.Ambiguous => "Track match needs review",
+        TrackMatchState.Rejected => "Track match rejected",
+        _ => "Track remains unmatched"
+    };
+
+    private static string MatchActivityDetail(
+        TrackMatchRecord match,
+        ExternalMetadataSnapshotRecord? snapshot,
+        ProviderTrackIdentityRecord? identity,
+        LibraryTrackRecord? libraryTrack)
+    {
+        var sourceTitle = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "title");
+        var sourceArtist = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "artist");
+        var source = TrackLabel(sourceTitle, sourceArtist)
+            ?? (identity == null ? null : $"{identity.ProviderId}:{identity.ExternalId}")
+            ?? "External track";
+        var target = libraryTrack == null ? "no local track" : TrackLabel(libraryTrack.Title, libraryTrack.Artist) ?? libraryTrack.BackendItemId;
+        var isrc = snapshot == null ? libraryTrack?.Isrc : AuditDetail(snapshot.PayloadJson, "isrc") ?? libraryTrack?.Isrc;
+        var parts = new List<string> { $"{source} matched to {target}" };
+        if (!string.IsNullOrWhiteSpace(isrc)) parts.Add($"ISRC {isrc}");
+        parts.Add($"{Math.Round(match.Confidence * 100, 1)}% confidence");
+        return string.Join(" · ", parts);
+    }
+
+    private static string? TrackLabel(string? title, string? artist)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        return string.IsNullOrWhiteSpace(artist) ? title.Trim() : $"{artist.Trim()} - {title.Trim()}";
     }
 
     private static string TrackDetail(string json)

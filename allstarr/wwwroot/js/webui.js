@@ -5220,6 +5220,27 @@ class AllstarrApp extends LitElement {
       return [entry.label, entry.Label, entry.source, entry.Source, entry.detail, entry.Detail, entry.state, entry.State, entry.correlationId, entry.CorrelationId]
         .filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
     });
+    const eventIcon = (kind) => ({
+      administration: "settings",
+      job: "tasks",
+      library: "library",
+      matching: "search",
+      playlist: "playlist",
+      provider_health: "activity",
+      scrobble: "headphones",
+      streaming: "streaming",
+    })[kind] || "activity";
+    const eventStatusClass = (state) => ["accepted", "delivered", "healthy", "pinned", "succeeded", "success"].includes(String(state).toLowerCase())
+      ? "configured"
+      : state;
+    const groups = [];
+    for (const entry of items) {
+      const key = [entry.kind || entry.Kind, entry.source || entry.Source, entry.label || entry.Label, entry.state || entry.State]
+        .map((value) => String(value || "").toLowerCase()).join("|");
+      const previous = groups[groups.length - 1];
+      if (previous?.key === key) previous.entries.push(entry);
+      else groups.push({ key, entries: [entry] });
+    }
     return html`<section class="panel event-log-panel" aria-labelledby="event-log-heading">
       <div class="section-heading"><div><h3 id="event-log-heading">Recent events</h3><p>Matching, playlists, providers, jobs, and administrative changes.</p></div><span class="chip">${items.length} shown</span></div>
       <div class="event-log-filters">
@@ -5234,17 +5255,39 @@ class AllstarrApp extends LitElement {
         <label><span>Search</span><input type="search" .value=${this.eventLogQuery || ""} placeholder="Event, provider, correlation ID" @input=${(event) => { this.eventLogQuery = event.target.value; this.requestUpdate(); }}></label>
       </div>
       <div class="event-log-list" role="list">
-        ${items.length ? items.map((entry) => {
+        ${groups.length ? groups.map((group) => {
+          const entry = group.entries[0];
           const kind = entry.kind || entry.Kind || "event";
           const state = entry.state || entry.State || "unknown";
-          const correlation = entry.correlationId || entry.CorrelationId;
           const severity = entry.severity || entry.Severity || "info";
-          return html`<article class="event-log-entry" role="listitem">
-            <span class=${`event-kind event-${kind}`}>${icon(kind === "matching" ? "search" : kind === "playlist" ? "library" : kind === "provider_health" ? "activity" : kind === "administration" ? "settings" : "activity", 17)}</span>
-            <div><strong>${entry.label || entry.Label || titleCase(kind)}</strong><small>${entry.source || entry.Source || "system"} · ${entry.detail || entry.Detail || "No additional detail"}</small>${correlation ? html`<code title="Correlation ID">${correlation}</code>` : nothing}</div>
-            <span class=${`status-chip ${state}`} title=${`${titleCase(severity)} severity`}>${titleCase(state)}</span>
-            <time datetime=${entry.occurredAt || entry.OccurredAt}>${formatRelativeTime(entry.occurredAt || entry.OccurredAt)}</time>
-          </article>`;
+          const sourceName = providerDisplayName(entry.source || entry.Source || "system", this.schema?.providers);
+          return html`<details class="event-log-group" role="listitem">
+            <summary class="event-log-entry">
+              <span class=${`event-kind event-${kind}`}>${icon(eventIcon(kind), 17)}</span>
+              <span class="event-log-summary-copy"><strong>${titleCase(entry.label || entry.Label || kind)}</strong><small>${sourceName} · ${entry.detail || entry.Detail || "No additional detail"}</small></span>
+              ${group.entries.length > 1 ? html`<span class="event-log-group-count">${group.entries.length} events</span>` : nothing}
+              <span class=${`status-chip ${eventStatusClass(state)}`} title=${`${titleCase(severity)} severity`}>${titleCase(state)}</span>
+              <time datetime=${entry.occurredAt || entry.OccurredAt}>${formatRelativeTime(entry.occurredAt || entry.OccurredAt)}</time>
+              ${icon("chevronRight", 16)}
+            </summary>
+            <div class="event-log-details">
+              ${group.entries.map((item) => {
+                const correlation = item.correlationId || item.CorrelationId;
+                const provider = item.providerId || item.ProviderId;
+                const playlist = item.playlistName || item.PlaylistName;
+                return html`<article class="event-log-detail">
+                  <div><strong>${item.detail || item.Detail || "No additional detail"}</strong><time datetime=${item.occurredAt || item.OccurredAt}>${formatDate(item.occurredAt || item.OccurredAt)}</time></div>
+                  <dl>
+                    <div><dt>Source</dt><dd>${providerDisplayName(item.source || item.Source || "system", this.schema?.providers)}</dd></div>
+                    ${provider ? html`<div><dt>Provider</dt><dd>${providerDisplayName(provider, this.schema?.providers)}</dd></div>` : nothing}
+                    ${playlist ? html`<div><dt>Playlist</dt><dd>${playlist}</dd></div>` : nothing}
+                    ${correlation ? html`<div><dt>Correlation ID</dt><dd><code>${correlation}</code></dd></div>` : nothing}
+                  </dl>
+                </article>`;
+              })}
+              ${group.entries.length > 1 ? html`<button class="event-log-collapse" @click=${(event) => event.currentTarget.closest("details")?.removeAttribute("open")}>Collapse ${group.entries.length} events</button>` : nothing}
+            </div>
+          </details>`;
         }) : html`<div class="empty">No events match these filters.</div>`}
       </div>
       ${this.eventLogHasMore ? html`<div class="event-log-pagination"><button ?disabled=${this.eventLogLoading} @click=${() => this.loadEarlierEvents()}>${this.eventLogLoading ? "Loading…" : "Load earlier events"}</button></div>` : nothing}
