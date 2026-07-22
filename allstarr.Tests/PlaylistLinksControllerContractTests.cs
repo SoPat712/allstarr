@@ -81,6 +81,16 @@ public sealed class PlaylistLinksControllerContractTests
     }
 
     [Fact]
+    public void SourceDiscovery_ExcludesNonOperationalAndUnapprovedGlobalPersonalAccounts()
+    {
+        var source = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "PlaylistLinksController.cs"));
+
+        Assert.Contains("includeNonOperational: false", source, StringComparison.Ordinal);
+        Assert.Contains("providerPolicy.AllowGlobalPersonalAccounts", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BackendCredentialEndpoint_RequiresLinkedSessionAndRequestDoesNotRenderPassword()
     {
         var request = new BackendCredentialRequest
@@ -97,8 +107,22 @@ public sealed class PlaylistLinksControllerContractTests
     private static PlaylistLinksController Controller()
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
+    }
+
+
+    private static string FindRepositoryFile(params string[] segments)
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current != null)
+        {
+            var candidate = Path.Combine(new[] { current.FullName }.Concat(segments).ToArray());
+            if (File.Exists(candidate)) return candidate;
+            current = current.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not find {Path.Combine(segments)} from {AppContext.BaseDirectory}.");
     }
 }

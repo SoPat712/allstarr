@@ -14,6 +14,8 @@ public sealed class WebUiPriorityOrderingContractTests
         Assert.Contains("@drop=", _script, StringComparison.Ordinal);
         Assert.Contains("Alt + Up or Alt + Down", _script, StringComparison.Ordinal);
         Assert.Contains("handlePriorityKeydown", _script, StringComparison.Ordinal);
+        Assert.Contains("position ${index + (group.pinnedProvider ? 2 : 1)}", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("position ${index + 2}", _script, StringComparison.Ordinal);
         Assert.Contains("reorderPriority", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("this.movePriority", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("provider-enabled-list", _script, StringComparison.Ordinal);

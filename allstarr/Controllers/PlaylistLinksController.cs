@@ -30,7 +30,8 @@ public sealed class PlaylistLinksController(
     IProviderRegistry providerRegistry,
     IProviderRouter providerRouter,
     IBackendPlaylistTargetResolver targetResolver,
-    IPlatformClock clock) : ControllerBase
+    IPlatformClock clock,
+    ProviderPolicyOptions providerPolicy) : ControllerBase
 {
     private const string SubsonicCredentialPurpose = "playlist-backend:subsonic";
 
@@ -40,7 +41,7 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             var supportedProviders = providerRegistry
-                .FindByCapability(ProviderCapabilityKind.Playlist, includeNonOperational: true)
+                .FindByCapability(ProviderCapabilityKind.Playlist, includeNonOperational: false)
                 .Select(item => item.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -55,6 +56,7 @@ public sealed class PlaylistLinksController(
             {
                 accounts = accounts
                     .Where(item => supportedProviders.Contains(item.ProviderId))
+                    .Where(item => item.Scope != ProviderAccountScope.Global || providerPolicy.AllowGlobalPersonalAccounts)
                     .Select(item => new
                     {
                         id = item.Id,

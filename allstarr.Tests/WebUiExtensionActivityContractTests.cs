@@ -10,6 +10,11 @@ public sealed class WebUiExtensionActivityContractTests
         Assert.Contains("entry.summary || entry.Summary || \"Extension event\"", source, StringComparison.Ordinal);
         Assert.DoesNotContain("titleCase(entry.eventCode", source, StringComparison.Ordinal);
         Assert.DoesNotContain("title=${entry.eventCode", source, StringComparison.Ordinal);
+
+        var controller = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "allstarr", "Controllers", "ExtensionController.cs"));
+        Assert.Contains("Provider search", controller, StringComparison.Ordinal);
+        Assert.Contains("failed ({badResponse.Groups[\"status\"].Value})", controller, StringComparison.Ordinal);
     }
 
     private static string RepositoryRoot()

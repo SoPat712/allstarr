@@ -593,12 +593,6 @@ const API = {
     requestJson(`/api/admin/playlist-links/matches/${encodeURIComponent(externalSnapshotId)}/override`, jsonBody(payload), "Failed to save match review"),
   deleteMapping: (overrideId, expectedRevision = 0) =>
     requestJson(`/api/admin/playlist-links/matches/overrides/${encodeURIComponent(overrideId)}?expectedRevision=${encodeURIComponent(expectedRevision)}`, { method: "DELETE" }, "Failed to clear match review"),
-  externalPlaylistSearch: (query, provider, limit = 20) => {
-    const params = new URLSearchParams({ query, provider, limit: String(limit) });
-    return requestJson(`/api/admin/external/playlists/search?${params}`, {}, "Failed to search playlists");
-  },
-  externalPlaylistTracks: (provider, externalId, limit = 50) =>
-    requestJson(`/api/admin/external/playlists/${encodeURIComponent(provider)}/${encodeURIComponent(externalId)}/tracks?limit=${limit}`, {}, "Failed to load external playlist tracks"),
   extensionStore: () => requestJson("/api/admin/extensions/store", {}, "Failed to load extension store"),
   extensionRegistries: () => requestJson("/api/admin/extensions/registries", { cache: "no-store" }, "Failed to load extension registries"),
   createExtensionRegistry: (payload) =>
@@ -721,8 +715,6 @@ class AllstarrApp extends LitElement {
     endpointUsage: { state: true },
     mappings: { state: true },
     legacyMappings: { state: true },
-    externalPlaylists: { state: true },
-    externalPlaylistTracks: { state: true },
     extensionStore: { state: true },
     extensionRegistries: { state: true },
     extensionPackages: { state: true },
@@ -830,8 +822,6 @@ class AllstarrApp extends LitElement {
     this.endpointUsage = null;
     this.mappings = null;
     this.legacyMappings = null;
-    this.externalPlaylists = null;
-    this.externalPlaylistTracks = new Map();
     this.extensionStore = null;
     this.extensionRegistries = [];
     this.extensionPackages = [];
@@ -883,8 +873,6 @@ class AllstarrApp extends LitElement {
     this.selectedInjectedPlaylists = new Set();
     this.playlistLinkFilters = { libraryScopeId: "" };
     this.mappingFilters = { page: 1, pageSize: 50, state: "", libraryScopeId: "", search: "" };
-    this.externalPlaylistProvider = "deezer";
-    this.externalPlaylistQuery = "";
     this.activitySource = null;
     this.routeLoadKey = "";
     this.envMigrationExpiryTimer = null;
@@ -2890,13 +2878,13 @@ class AllstarrApp extends LitElement {
     const draft = this.playlistWizard;
     return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose the source playlist</h4><p class="muted">Only connected accounts that can read playlists are shown.</p></div>
       ${draft.legacyHandoff ? html`<div class="callout"><strong>Imported from Allstarr 2.x</strong><p>Choose the Spotify account that owns <strong>${draft.legacyHandoff.name || draft.legacyHandoff.Name}</strong>. Allstarr will select source ID <span class="mono">${draft.legacyHandoff.sourcePlaylistId || draft.legacyHandoff.SourcePlaylistId}</span> when that account can see it.</p></div>` : nothing}
-      <div class="choice-grid account-choice-grid">
+      ${this.playlistSources.length ? html`<div class="choice-grid account-choice-grid">
         ${this.playlistSources.map((account) => {
           const id = String(account.id || account.Id);
           const provider = account.providerId || account.ProviderId;
           return html`<button class="choice-card ${draft.sourceAccountId === id ? "selected" : ""}" @click=${() => this.choosePlaylistSourceAccount(id)}><span class="provider-choice-icon">${this.renderProviderLogo(provider, "tiny")}</span><span><strong>${account.displayName || account.DisplayName}</strong><small>${providerDisplayName(provider, this.schema?.providers)}</small></span></button>`;
         })}
-      </div>
+      </div>` : html`<div class="empty playlist-source-empty"><strong>No personal playlist account is ready.</strong><span>Connect Spotify or Apple MusicKit in Settings. Imported global credentials are not used for personal playlists.</span><button @click=${() => this.navigate("/settings")}>Open Settings</button></div>`}
       ${draft.sourceAccountId ? html`<div class="picker-search"><input aria-label="Search source playlists" placeholder="Search playlists" .value=${draft.sourceQuery} @input=${(event) => this.updatePlaylistWizard({ sourceQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchSourcePlaylists(); }}><button @click=${() => this.searchSourcePlaylists()}>Search</button></div>${this.renderPlaylistChoices(this.sourcePlaylistResults, draft.sourcePlaylist, (playlist) => this.updatePlaylistWizard({ sourcePlaylist: playlist }), "source")}${draft.sourceNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreSourcePlaylists()}>Load more playlists</button>` : nothing}` : nothing}
     </div>`;
   }
@@ -3945,76 +3933,6 @@ class AllstarrApp extends LitElement {
     `;
   }
 
-  renderExternalPlaylistExplorer() {
-    const results = asArray(this.externalPlaylists?.results || this.externalPlaylists?.Results);
-    return html`
-      <div class="panel">
-        <div class="section-heading"><div><h3>Browse provider playlists</h3><p>Find a playlist at one provider, preview its tracks, then create a link using that single source account.</p></div></div>
-        <div class="toolbar">
-          <div class="form-row">
-            <label>Provider</label>
-            <select .value=${this.externalPlaylistProvider} @change=${(event) => { this.externalPlaylistProvider = event.target.value; }}>
-              <option value="deezer">Deezer</option>
-              <option value="qobuz">Qobuz</option>
-              <option value="applemusic">Apple Music</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label>Query</label>
-            <input .value=${this.externalPlaylistQuery} @input=${(event) => { this.externalPlaylistQuery = event.target.value; }} @keydown=${(event) => { if (event.key === "Enter") this.searchExternalPlaylists(); }}>
-          </div>
-          <button class="primary" @click=${() => this.searchExternalPlaylists()}>Search</button>
-        </div>
-      </div>
-      <div class="provider-grid">
-        ${results.length ? results.map((playlist) => this.renderExternalPlaylistCard(playlist)) : html`<div class="empty">No external playlists loaded.</div>`}
-      </div>
-    `;
-  }
-
-  async searchExternalPlaylists() {
-    if (!this.externalPlaylistQuery.trim()) {
-      return;
-    }
-    this.externalPlaylists = await API.externalPlaylistSearch(this.externalPlaylistQuery.trim(), this.externalPlaylistProvider);
-  }
-
-  renderExternalPlaylistCard(playlist) {
-    const provider = playlist.externalProvider || playlist.Provider;
-    const externalId = playlist.externalId || playlist.ExternalId;
-    const key = `${provider}:${externalId}`;
-    const tracks = this.externalPlaylistTracks.get(key);
-    return html`
-      <div class="card provider-card">
-        <div class="provider-head">
-          <div class="provider-title">
-            <strong>${playlist.name || playlist.Name}</strong>
-            <span>${display(playlist.curatorName || playlist.CuratorName, provider)}</span>
-          </div>
-          <span class="status-chip configured">${provider}</span>
-        </div>
-        <div class="stat-list">
-          <div class="stat-row"><span>Tracks</span><strong>${display(playlist.trackCount || playlist.TrackCount)}</strong></div>
-          <div class="stat-row"><span>ID</span><span class="mono">${display(externalId)}</span></div>
-        </div>
-        <button @click=${async () => {
-          const data = await API.externalPlaylistTracks(provider, externalId, 25);
-          this.externalPlaylistTracks = new Map([...this.externalPlaylistTracks, [key, data]]);
-        }}>Preview tracks</button>
-        ${tracks ? html`
-          <div class="activity-list">
-            ${asArray(tracks.results || tracks.Results).slice(0, 5).map((track) => html`
-              <div class="activity-item">
-                <strong>${track.title || track.Title}</strong>
-                <span class="muted">${track.artist || track.Artist}</span>
-              </div>
-            `)}
-          </div>
-        ` : nothing}
-      </div>
-    `;
-  }
-
   renderSources() {
     const canManageAccounts = this.canManageProviderAccounts();
     if (!this.isAdministrator()) {
@@ -4843,7 +4761,7 @@ class AllstarrApp extends LitElement {
                     draggable="true"
                     tabindex="0"
                     data-priority-group=${group.id}
-                    aria-label=${`${providerDisplayName(provider, providers)}, position ${index + 2} of ${(group.providers?.length ?? 0) + (group.pinnedProvider ? 1 : 0)}`}
+                    aria-label=${`${providerDisplayName(provider, providers)}, position ${index + (group.pinnedProvider ? 2 : 1)} of ${(group.providers?.length ?? 0) + (group.pinnedProvider ? 1 : 0)}`}
                     @dragstart=${(event) => this.startPriorityDrag(event, group, index)}
                     @dragover=${(event) => this.allowPriorityDrop(event, group)}
                     @drop=${(event) => this.dropPriority(event, group, index)}

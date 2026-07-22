@@ -6,6 +6,7 @@ using allstarr.Core.Extensions;
 using allstarr.Middleware;
 using allstarr.Services.Admin;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace allstarr.Controllers;
 
@@ -532,7 +533,7 @@ public class ExtensionController : ControllerBase
     {
         var code = eventCode?.Trim().ToLowerInvariant();
         if (code == "runtime.log" && !string.IsNullOrWhiteSpace(message))
-            return message.Trim();
+            return RuntimeLogSummary(message);
 
         return code switch
         {
@@ -552,6 +553,27 @@ public class ExtensionController : ControllerBase
             _ => string.Join(' ', code.Split('.', StringSplitOptions.RemoveEmptyEntries)
                 .Select(part => char.ToUpperInvariant(part[0]) + part[1..]))
         };
+    }
+
+    private static string RuntimeLogSummary(string message)
+    {
+        var value = message.Trim();
+        var badResponse = Regex.Match(value,
+            "^(?<operation>[A-Za-z][A-Za-z0-9]*) bad response (?<status>[1-5][0-9]{2})$",
+            RegexOptions.CultureInvariant);
+        if (!badResponse.Success) return value;
+
+        var operation = badResponse.Groups["operation"].Value switch
+        {
+            "performSearchSync" => "Provider search",
+            "performGetTrackSync" => "Track lookup",
+            "performGetAlbumSync" => "Album lookup",
+            "performGetArtistSync" => "Artist lookup",
+            "performLyricsSync" => "Lyrics lookup",
+            "performDownloadSync" => "Download",
+            _ => "Extension request"
+        };
+        return $"{operation} failed ({badResponse.Groups["status"].Value})";
     }
 }
 
