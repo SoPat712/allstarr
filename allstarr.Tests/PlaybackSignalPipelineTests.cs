@@ -227,6 +227,26 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ScopedDelivery_SummarizesMultipleTargetsIntoOneAuditEvent()
+    {
+        var delivery = new ScopedPlaybackScrobbleDelivery(
+            factory,
+            [new Target("lastfm", true), new Target("listenbrainz", true)],
+            new Checkpoints());
+
+        await delivery.DeliverAsync(Payload(), default);
+
+        await using var database = await factory.CreateDbContextAsync();
+        var audit = Assert.Single(await database.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "scrobble" && item.Action == "delivered")
+            .ToListAsync());
+        using var details = System.Text.Json.JsonDocument.Parse(audit.DetailsJson);
+        Assert.Equal(2, details.RootElement.GetProperty("providerCount").GetInt32());
+        Assert.Equal(["lastfm", "listenbrainz"], details.RootElement.GetProperty("providerIds")
+            .EnumerateArray().Select(item => item.GetString()));
+    }
+
+    [Fact]
     public async Task ScopedDelivery_FirstUnauthorizedProviderDoesNotBlockHealthyProvider()
     {
         var rejected = new Target("lastfm", true) { Reject = true };

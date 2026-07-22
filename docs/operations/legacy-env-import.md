@@ -1,5 +1,8 @@
 # Legacy `.env` Import Contract
 
+The migration rehearsal and release evidence required for `v3.1.0-beta.1` are
+tracked by the [version 3.1 beta release checklist](beta-release-checklist.md).
+
 This document defines the boundary for the pre-overhaul `.env` migration wizard. It does not turn startup into a migration path. Version 3 still starts from a fresh Compose deployment and a fresh durable database, then an administrator can bring forward the safe parts of a 2.x configuration through the WebUI.
 
 The wizard is an explicit, one-shot administrator action. It accepts an uploaded file or pasted contents, produces a short-lived administrator preview, requires confirmation, writes through durable services, and leaves the source file unchanged. Values are visible to the authenticated administrator by default so the import can be verified. Turn on **Redact for sharing** in the sidebar before taking screenshots; operators can make that the initial browser default with `ADMIN_REDACT_SENSITIVE_VALUES=true`. Startup and normal schema migrations never scan or import a legacy `.env`. The old wholesale `/api/admin/import-env` replacement endpoint is retired.

@@ -25,7 +25,7 @@ public sealed class WebUiExtensionControlPlaneContractTests
     public void Extensions_PresentDedicatedStoreAndModalSafetyFlows()
     {
         Assert.Contains("Install extension", _script, StringComparison.Ordinal);
-        Assert.Contains("Extension installed and enabled", _script, StringComparison.Ordinal);
+        Assert.Contains("Extension ${updating ? \"updated\" : \"installed\"} and enabled", _script, StringComparison.Ordinal);
         Assert.Contains("Review permissions", _script, StringComparison.Ordinal);
         Assert.Contains("Allow all requested access", _script, StringComparison.Ordinal);
         Assert.Contains("Save choices and enable", _script, StringComparison.Ordinal);

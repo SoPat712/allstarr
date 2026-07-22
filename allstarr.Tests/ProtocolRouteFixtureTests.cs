@@ -1169,12 +1169,6 @@ public sealed class ProtocolRouteFixtureTests
                         new() { Id = "artist-2", Name = "two", ExternalProvider = "deezer" }
                     ]
                 });
-            gateway.Setup(service => service.SearchPlaylistsAsync(
-                    It.IsAny<ProtocolExecutionContext>(),
-                    "window",
-                    2))
-                .ReturnsAsync([]);
-
             using var factory = new ProtocolFactory(
                 "Subsonic",
                 request =>

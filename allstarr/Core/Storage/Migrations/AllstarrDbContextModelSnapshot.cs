@@ -2059,6 +2059,10 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<long>("CreatedAt");
 
+                    b.Property<bool>("Enabled")
+                        .ValueGeneratedOnAdd()
+                        .HasDefaultValue(true);
+
                     b.Property<string>("LibraryScopeId")
                         .IsRequired()
                         .HasMaxLength(300);

@@ -9,6 +9,9 @@ This document is the visual and interaction contract for the WebUI. Reference
 images define the intended information hierarchy; this document turns that
 hierarchy into reusable rules. New screens must use these primitives instead of
 introducing page-specific spacing, card, button, status, or modal systems.
+Implementation architecture, Lit state ownership, API access, responsive data
+rendering, and the definition of done are normative in
+[`../steering/webui-engineering.md`](../steering/webui-engineering.md).
 
 ## Product principles
 
@@ -117,6 +120,21 @@ border or filled compact pill, not both. Tabs do not live inside another card.
 - Do not nest a full card inside another full card. Use an inset panel only for
   a cohesive metric strip, warning, or form section.
 - Repeated rows share a header and dividers rather than independent outlines.
+
+### Disclosures
+
+- Disclosures expose advanced configuration inside an existing workspace; they
+  are not navigation cards or page sections.
+- Closed settings disclosures use a compact row with `8px 12px` inset, no
+  shadow, and no inherited card minimum height. Adjacent rows use the compact
+  row gap.
+- Title and helper text form one tight identity block. The expand marker stays
+  aligned at the far edge and does not reserve a second action column.
+- Expanded content begins below a divider with `12px` inset. Its controls use
+  the normal form rhythm; do not increase the closed summary to match the open
+  body.
+- Desktop and mobile use the same compact density. Mobile may wrap helper text,
+  but must not add vertical card padding.
 
 ### Status
 

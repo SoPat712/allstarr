@@ -27,6 +27,7 @@
         overscroll-behavior-inline: contain;
         -webkit-overflow-scrolling: touch;
     }
+
     .injected-table-row,
     .injected-table-head {
         min-width: min(900px, calc(100vw - 24px));
@@ -291,7 +292,7 @@
         overflow-wrap: anywhere;
     }
 
-    .extension-tabs {
+    .workspace-tabs {
         width: 100%;
         min-width: 0;
     }
@@ -471,7 +472,9 @@
 
 @media (max-width: 700px) {
     .library-tabs > a,
-    .library-tabs > a.active {
+    .library-tabs > a.active,
+    .workspace-tabs > button,
+    .workspace-tabs > button.active {
         flex: 0 0 145px;
     }
 
@@ -480,7 +483,50 @@
     }
 
     .settings-view > details.content-disclosure.panel > summary {
-        min-height: 52px;
-        padding: 8px 12px;
+        min-height: 42px;
+        padding: 6px 12px;
+    }
+
+    .settings-view > details.content-disclosure.panel > .disclosure-body {
+        padding: 10px 12px 12px;
+    }
+}
+
+@media (max-width: 760px) {
+    .wizard-steps {
+        grid-template-columns: repeat(4, max-content);
+        overflow-x: auto;
+        padding-bottom: 4px;
+    }
+
+    .wizard-steps li {
+        min-width: 116px;
+    }
+
+    .choice-grid,
+    .playlist-choice-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .playlist-review-pair {
+        grid-template-columns: 1fr;
+    }
+
+    .review-arrow {
+        justify-self: center;
+        transform: rotate(90deg);
+    }
+
+    .review-facts {
+        grid-template-columns: 1fr;
+    }
+
+    .wizard-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+
+    .wizard-actions .action-spacer {
+        display: none;
     }
 }

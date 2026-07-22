@@ -55,6 +55,44 @@ public sealed class ProtocolPlaylistGatewayTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task PlaylistSearch_ReturnsEmptyWhileLegacyExternalPlaylistsAreDisabled(
+        ProtocolKind protocolKind)
+    {
+        var tenant = Guid.CreateVersion7();
+        var user = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var context = Context(protocolKind, tenant, user);
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        capability.Setup(item => item.SearchPlaylistsAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderPlaylistSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
+                new(ProviderErrorKind.AccountNeedsReauthentication)));
+        var descriptor = Descriptor(hasImplementation: true);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(
+                request,
+                descriptor,
+                capability.Object,
+                new ProviderAccountContext(
+                    accountId, "spotify", ProviderAccountScope.User, 1,
+                    tenantId: tenant, ownerUserId: user)));
+        var legacy = new Mock<IMusicMetadataService>(MockBehavior.Strict);
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object), legacy.Object);
+
+        var playlists = await gateway.SearchPlaylistsAsync(context, "road", 10);
+
+        Assert.Empty(playlists);
+        legacy.VerifyNoOtherCalls();
+        capability.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task PlaylistRead_UsesExactResolvedActorAccountAndNeverLegacy(ProtocolKind protocolKind)
     {
         var tenant = Guid.CreateVersion7();

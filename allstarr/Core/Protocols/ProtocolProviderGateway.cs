@@ -75,6 +75,7 @@ public sealed class ProtocolProviderGateway(
     IConfiguration? configuration = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
+    private const int ProviderSearchConcurrency = 4;
 
     public IReadOnlyList<string> GetProviderOrder(ProviderCapabilityKind capability) =>
         ResolveProviderOrder(capability);
@@ -110,19 +111,28 @@ public sealed class ProtocolProviderGateway(
             sourceTrackId: null));
 
         var routed = new SearchResult();
+        using var metadataSearchGate = new SemaphoreSlim(ProviderSearchConcurrency);
         var searchTasks = plan.Candidates.Select(async candidate =>
         {
-            var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(fetchLimit));
-            var songsTask = candidate.Implementation.SearchTracksAsync(candidate.Context, request);
-            var albumsTask = candidate.Implementation.SearchAlbumsAsync(candidate.Context, request);
-            var artistsTask = candidate.Implementation.SearchArtistsAsync(candidate.Context, request);
-            await Task.WhenAll(songsTask, albumsTask, artistsTask);
-            return new
+            await metadataSearchGate.WaitAsync(protocol.CancellationToken);
+            try
             {
-                SongsResult = await songsTask,
-                AlbumsResult = await albumsTask,
-                ArtistsResult = await artistsTask
-            };
+                var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(fetchLimit));
+                var songsTask = candidate.Implementation.SearchTracksAsync(candidate.Context, request);
+                var albumsTask = candidate.Implementation.SearchAlbumsAsync(candidate.Context, request);
+                var artistsTask = candidate.Implementation.SearchArtistsAsync(candidate.Context, request);
+                await Task.WhenAll(songsTask, albumsTask, artistsTask);
+                return new
+                {
+                    SongsResult = await songsTask,
+                    AlbumsResult = await albumsTask,
+                    ArtistsResult = await artistsTask
+                };
+            }
+            finally
+            {
+                metadataSearchGate.Release();
+            }
         }).ToList();
 
         var searchOutcomes = await Task.WhenAll(searchTasks);
@@ -259,11 +269,20 @@ public sealed class ProtocolProviderGateway(
             "protocol-playlist-search",
             providerIds: providerOrder,
             sourceTrackId: null));
+        using var playlistSearchGate = new SemaphoreSlim(ProviderSearchConcurrency);
         var playlistTasks = plan.Candidates.Select(async candidate =>
         {
-            return await candidate.Implementation.SearchPlaylistsAsync(
-                candidate.Context,
-                new ProviderPlaylistSearchRequest(query, new ProviderPageRequest(limit)));
+            await playlistSearchGate.WaitAsync(protocol.CancellationToken);
+            try
+            {
+                return await candidate.Implementation.SearchPlaylistsAsync(
+                    candidate.Context,
+                    new ProviderPlaylistSearchRequest(query, new ProviderPageRequest(limit)));
+            }
+            finally
+            {
+                playlistSearchGate.Release();
+            }
         }).ToList();
 
         var playlistOutcomes = await Task.WhenAll(playlistTasks);
@@ -616,7 +635,8 @@ public sealed class ProtocolProviderGateway(
     {
         ProviderErrorKind.NotFound => new FileNotFoundException(error.SafeMessage),
         ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden or
-            ProviderErrorKind.AccountNeedsConfiguration => new UnauthorizedAccessException(error.SafeMessage),
+            ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication =>
+            new UnauthorizedAccessException(error.SafeMessage),
         ProviderErrorKind.Canceled => new OperationCanceledException(error.SafeMessage),
         ProviderErrorKind.RateLimited => new HttpRequestException(error.SafeMessage, null,
             System.Net.HttpStatusCode.TooManyRequests),

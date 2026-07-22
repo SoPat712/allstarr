@@ -158,6 +158,7 @@ public sealed partial class AllstarrDbContext
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.TenantId, item.Id });
             entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.Enabled).HasDefaultValue(true);
             Required(entity.Property(item => item.LibraryScopeId), 300);
             Required(entity.Property(item => item.SourceProviderId), 100);
             Required(entity.Property(item => item.SourcePlaylistId), 500);

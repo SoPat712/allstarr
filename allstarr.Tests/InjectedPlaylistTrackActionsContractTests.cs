@@ -132,12 +132,12 @@ public sealed class InjectedPlaylistTrackActionsContractTests
     public void InjectedPlaylistRows_AreWholeRowInteractiveWithoutHijackingControls()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
-        var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+        var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "workspaces.css"));
 
-        Assert.Contains("injected-table-row injected-table-row-interactive", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"injected-table-row-interactive\"", script, StringComparison.Ordinal);
         Assert.Contains("button, input, details, summary, a, select", script, StringComparison.Ordinal);
         Assert.Contains("injected-heading-actions", script, StringComparison.Ordinal);
-        Assert.Contains(".injected-table-row-interactive:hover", styles, StringComparison.Ordinal);
+        Assert.Contains(".injected-data-table tbody tr:hover td", styles, StringComparison.Ordinal);
     }
 
     [Fact]

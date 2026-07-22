@@ -99,6 +99,17 @@ secret references.
 settings, including the legacy Spotify playlist and user-cookie flows. Do not send new provider-neutral settings,
 playlist links, account secrets, or job state through that compatibility path.
 
+### Provider Workload Bounds
+
+Provider discovery and metadata search are bounded independently from per-provider HTTP timeouts. The
+`Providers:MetadataFanoutConcurrency` setting defaults to `4` and is clamped to `1`-`16`. It is one shared gate
+across built-in metadata providers and active extensions, so concurrent requests cannot each consume the full
+limit. Set `Providers__MetadataFanoutConcurrency` in Compose or the environment to override it.
+
+Endpoint health checks, startup benchmarks, and endpoint-backed parallel work use a fixed maximum of eight active
+endpoint operations. Every configured endpoint remains eligible for fallback; the cap limits simultaneous network
+pressure rather than truncating the endpoint list.
+
 ## Hosted Services
 
 Startup and long-running services currently include:
@@ -116,8 +127,29 @@ Startup and long-running services currently include:
 - `DurableOutboxDispatcher`
 - `DurableProviderHealthInitializer`
 - `SidecarHealthMonitor`
+- `AuditEventRetentionService`
 
 When changing a feature that has a hosted service, inspect both the controller path and the background-service path.
+
+### Event Log Retention
+
+`AuditEventRetentionService` bounds the durable operator event log by both age and total row count. It removes
+unreferenced records in fixed-size oldest-first batches and never deletes audit events referenced by a legacy import
+record. Cleanup runs once when the worker starts and then at the configured interval; failures are logged and retried
+without failing the application host.
+
+The settings below use normal ASP.NET configuration binding, so Compose and environment variables replace `:` with
+`__` (for example, `Operations__EventLog__RetentionDays`):
+
+| Key | Default | Allowed range | Purpose |
+| --- | ---: | ---: | --- |
+| `Operations:EventLog:RetentionDays` | `30` | `1`-`3650` | Maximum age for unreferenced events. |
+| `Operations:EventLog:MaximumRows` | `250000` | `1000`-`5000000` | Hard global row ceiling after age cleanup. |
+| `Operations:EventLog:CleanupBatchSize` | `1000` | `100`-`10000` | Maximum records removed per database transaction. |
+| `Operations:EventLog:CleanupIntervalMinutes` | `360` | `5`-`10080` | Delay between cleanup cycles. |
+
+These controls bound storage; they do not turn the audit table into request tracing. High-volume producers should
+still summarize or sample repetitive success events and always retain failures and state transitions.
 
 ## Editing Guardrails
 

@@ -51,7 +51,8 @@ public sealed record ProviderPlaylistSnapshotRequest(
 
 public sealed class ProviderPlaylistSnapshotCollector
 {
-    private const int MaximumPages = 10_000;
+    private const int MaximumPages = 1_000;
+    private const int MaximumEntries = 100_000;
 
     public async Task<PlaylistSnapshotCollectionResult> CollectAsync(
         IProviderPlaylistCapability capability,
@@ -95,7 +96,10 @@ public sealed class ProviderPlaylistSnapshotCollector
                     return Failure(outcome.Error!, request.LastKnownGood, pagesRead, context, playlistIdHash);
 
                 var page = outcome.RequireValue();
-                ValidatePage(capability.ProviderId, request.PlaylistId, page, summary, pageSnapshotVersion, entries);
+                if (page.Playlist.TrackCount > MaximumEntries ||
+                    page.Tracks.Items.Count > MaximumEntries - entries.Count)
+                    return Failure(new ProviderError(ProviderErrorKind.PermanentFailure), request.LastKnownGood, pagesRead, context, playlistIdHash);
+                ValidatePage(capability.ProviderId, request.PlaylistId, page, summary, pageSnapshotVersion, entries, request.PageSize);
                 if (summary == null && request.ExpectedSourceRevision != null &&
                     request.ExpectedSourceRevision != page.Playlist.SourceRevision)
                     throw new InvalidProviderPageException();
@@ -146,10 +150,12 @@ public sealed class ProviderPlaylistSnapshotCollector
         ProviderPlaylistTrackPage page,
         ProviderPlaylistSummary? firstSummary,
         string? firstPageVersion,
-        IReadOnlyList<CollectedPlaylistSourceEntry> collected)
+        IReadOnlyList<CollectedPlaylistSourceEntry> collected,
+        int requestedPageSize)
     {
         if (!page.Playlist.Id.Equals(requestedPlaylist) ||
-            !page.Tracks.ProviderId.Equals(providerId, StringComparison.Ordinal))
+            !page.Tracks.ProviderId.Equals(providerId, StringComparison.Ordinal) ||
+            page.Tracks.Items.Count > requestedPageSize)
             throw new InvalidProviderPageException();
         if (firstSummary != null &&
             (firstSummary.SourceRevision != page.Playlist.SourceRevision ||

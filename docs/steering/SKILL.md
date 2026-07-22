@@ -40,6 +40,7 @@ Read [INTRODUCTION.md](INTRODUCTION.md) and [ARCHITECTURE.md](ARCHITECTURE.md) f
 - `Services/Common/RedisCacheService.cs`, `Cache*`: [CACHING.md](CACHING.md)
 - `Services/Common/*`, `Services/Admin/*`: [UTILITIES.md](UTILITIES.md)
 - `wwwroot/js/*`, `wwwroot/index.html`, JS architecture tests: [ARCHITECTURE.md](ARCHITECTURE.md) and [TESTING.md](TESTING.md)
+- WebUI components, Lit state, API access, responsive rendering, and shared interaction primitives: [webui-engineering.md](webui-engineering.md) and [../design/webui-design-system.md](../design/webui-design-system.md)
 - `allstarr.Tests/*`: [TESTING.md](TESTING.md)
 - Repo-wide context, directory ownership, background services, and data model conventions: [INTRODUCTION.md](INTRODUCTION.md) and [ARCHITECTURE.md](ARCHITECTURE.md)
 

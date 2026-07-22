@@ -118,6 +118,16 @@ public sealed record BackendPlaylistSnapshot(
     }
 }
 
+public sealed record BackendPlaylistSummary(
+    string BackendPlaylistId,
+    string Name,
+    int? TrackCount = null,
+    string? Description = null,
+    string? ArtworkReference = null,
+    bool Writable = true);
+
+public sealed record BackendPlaylistArtwork(byte[] Bytes, string ContentType);
+
 public sealed record BackendPlaylistMetadata(
     string Name,
     string? Description = null,
@@ -193,6 +203,34 @@ public interface IBackendPlaylistTarget
 {
     BackendPlaylistFamily Family { get; }
     BackendPlaylistTargetCapabilities Capabilities { get; }
+
+    Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(
+        BackendPlaylistTargetContext context,
+        string? query,
+        int limit,
+        CancellationToken cancellationToken);
+
+    async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListPageAsync(
+        BackendPlaylistTargetContext context,
+        string? query,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        offset = Math.Max(0, offset);
+        limit = Math.Clamp(limit, 1, 200);
+        var requested = Math.Min(10_000, checked(offset + limit));
+        var result = await ListAsync(context, query, requested, cancellationToken);
+        return !result.IsSuccess || result.Value == null
+            ? result
+            : result with { Value = result.Value.Skip(offset).Take(limit).ToArray() };
+    }
+
+    Task<BackendPlaylistTargetResult<BackendPlaylistArtwork>> ReadArtworkAsync(
+        BackendPlaylistTargetContext context,
+        string backendPlaylistId,
+        string? artworkReference,
+        CancellationToken cancellationToken);
 
     Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(
         BackendPlaylistTargetContext context,

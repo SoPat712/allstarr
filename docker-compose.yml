@@ -52,7 +52,7 @@ services:
       - no-new-privileges:true
 
   allstarr:
-    image: ${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.0.0-beta.1}
+    image: ${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.1.0-beta.1}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -81,6 +81,11 @@ services:
       Identity__Mode: ${ALLSTARR_MULTI_USER_MODE:-Hybrid}
       Identity__BackendInstanceId: ${ALLSTARR_BACKEND_INSTANCE_ID:-primary}
       ProviderAccounts__ManagementMode: ${ALLSTARR_PROVIDER_ACCOUNT_MANAGEMENT_MODE:-Hybrid}
+      Providers__MetadataFanoutConcurrency: ${PROVIDER_METADATA_FANOUT_CONCURRENCY:-4}
+      Operations__EventLog__RetentionDays: ${EVENT_LOG_RETENTION_DAYS:-30}
+      Operations__EventLog__MaximumRows: ${EVENT_LOG_MAXIMUM_ROWS:-250000}
+      Operations__EventLog__CleanupBatchSize: ${EVENT_LOG_CLEANUP_BATCH_SIZE:-1000}
+      Operations__EventLog__CleanupIntervalMinutes: ${EVENT_LOG_CLEANUP_INTERVAL_MINUTES:-360}
       Readiness__RequireSecretKeyRing: "true"
       Readiness__RequiredDirectories__0: /app/state
       Readiness__RequiredDirectories__1: /app/downloads
@@ -89,11 +94,12 @@ services:
       Redis__ConnectionString: valkey:6379
       Redis__Enabled: ${REDIS_ENABLED:-false}
       Subsonic__Url: ${SUBSONIC_URL:-http://host.docker.internal:4533}
-      Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-true}
+      Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}
       Jellyfin__Url: ${JELLYFIN_URL:-http://host.docker.internal:8096}
       Jellyfin__ApiKey: ${JELLYFIN_API_KEY:-}
       Jellyfin__UserId: ${JELLYFIN_USER_ID:-}
       Jellyfin__LibraryId: ${JELLYFIN_LIBRARY_ID:-}
+      Jellyfin__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}
 
       Library__DownloadPath: /app/downloads
       Library__KeptPath: /app/kept

@@ -227,6 +227,7 @@ public interface IPlaylistPersistenceService
     Task<IReadOnlyList<PlaylistLinkRecord>> ListLinksAsync(ProtocolExecutionContext context, string? libraryScopeId = null, CancellationToken cancellationToken = default);
     Task<PlaylistLinkRecord> GetLinkAsync(ProtocolExecutionContext context, Guid linkId, CancellationToken cancellationToken = default);
     Task<PlaylistLinkRecord> UpdateLinkAsync(ProtocolExecutionContext context, Guid linkId, PlaylistLinkUpdate update, CancellationToken cancellationToken = default);
+    Task DeleteLinkAsync(ProtocolExecutionContext context, Guid linkId, long expectedRevision, CancellationToken cancellationToken = default);
     Task<PlaylistSourceSnapshotRecord> CaptureSourceSnapshotAsync(ProtocolExecutionContext context, Guid linkId, PlaylistSourceSnapshotInput input, CancellationToken cancellationToken = default);
     Task<PlaylistPreview> ReadPreviewAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, CancellationToken cancellationToken = default);
     Task<PlaylistSyncRunRecord> RecordRunAsync(ProtocolExecutionContext context, Guid linkId, PlaylistRunInput input, IReadOnlyList<PlaylistRunEntryInput> results, CancellationToken cancellationToken = default);
@@ -255,6 +256,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             OwnerUserId = actor.EffectiveUserId!.Value,
             ProviderAccountId = account.Account.Id,
             ScheduleId = input.ScheduleId,
+            Enabled = true,
             LibraryScopeId = input.LibraryScopeId,
             SourceProviderId = account.Account.ProviderId,
             SourcePlaylistId = PersistenceGuard.Required(input.SourcePlaylistId, nameof(input.SourcePlaylistId)),
@@ -308,6 +310,66 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         await db.SaveChangesAsync(cancellationToken); return record;
     }
 
+    public async Task DeleteLinkAsync(
+        ProtocolExecutionContext context, Guid linkId, long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = context.RequireActor();
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var record = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
+            item.Id == linkId && item.TenantId == actor.TenantId, cancellationToken)
+            ?? throw new KeyNotFoundException("Playlist link not found.");
+        PersistenceGuard.RequireOwner(actor, record.OwnerUserId);
+        PersistenceGuard.RequireLibrary(context, record.LibraryScopeId);
+        if (record.Revision != expectedRevision)
+            throw new DbUpdateConcurrencyException("The playlist link changed before it could be removed.");
+
+        var snapshotIds = await db.PlaylistSourceSnapshots
+            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == linkId)
+            .Select(item => item.Id).ToListAsync(cancellationToken);
+        var sourceEntryIds = await db.PlaylistSourceEntries
+            .Where(item => item.TenantId == actor.TenantId && snapshotIds.Contains(item.PlaylistSourceSnapshotId))
+            .Select(item => item.Id).ToListAsync(cancellationToken);
+        var runIds = await db.PlaylistSyncRuns
+            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == linkId)
+            .Select(item => item.Id).ToListAsync(cancellationToken);
+
+        await db.PlaylistSyncEntryResults
+            .Where(item => item.TenantId == actor.TenantId &&
+                (runIds.Contains(item.PlaylistSyncRunId) || sourceEntryIds.Contains(item.PlaylistSourceEntryId)))
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.PlaylistTargetMemberships
+            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == linkId)
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.PlaylistSyncRuns
+            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == linkId)
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.PlaylistSourceEntries
+            .Where(item => item.TenantId == actor.TenantId && snapshotIds.Contains(item.PlaylistSourceSnapshotId))
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.PlaylistSourceSnapshots
+            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == linkId)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        if (record.ScheduleId is { } scheduleId &&
+            !await db.PlaylistLinks.AnyAsync(item => item.Id != linkId && item.TenantId == actor.TenantId && item.ScheduleId == scheduleId, cancellationToken))
+        {
+            var schedule = await db.JobSchedules.SingleOrDefaultAsync(item =>
+                item.Id == scheduleId && item.TenantId == actor.TenantId, cancellationToken);
+            if (schedule != null)
+            {
+                schedule.Enabled = false;
+                schedule.NextRunAt = null;
+                schedule.Revision++;
+            }
+        }
+
+        db.PlaylistLinks.Remove(record);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<PlaylistSourceSnapshotRecord> CaptureSourceSnapshotAsync(ProtocolExecutionContext context, Guid linkId, PlaylistSourceSnapshotInput input, CancellationToken cancellationToken = default)
     {
         var actor = context.RequireActor(); if (input.SnapshotVersion <= 0 || input.Entries.Select((entry, index) => entry.Position == index).Any(valid => !valid)) throw new ArgumentException("Snapshot entries must use contiguous source order.", nameof(input));
@@ -325,8 +387,44 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     public async Task<PlaylistPreview> ReadPreviewAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, CancellationToken cancellationToken = default)
     {
         var actor = context.RequireActor(); await using var db = await _factory.CreateDbContextAsync(cancellationToken); var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == linkId && item.TenantId == actor.TenantId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found."); PersistenceGuard.RequireOwner(actor, link.OwnerUserId); PersistenceGuard.RequireLibrary(context, link.LibraryScopeId); var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking().SingleOrDefaultAsync(item => item.Id == snapshotId && item.TenantId == actor.TenantId && item.PlaylistLinkId == link.Id, cancellationToken) ?? throw new KeyNotFoundException("Playlist snapshot not found.");
-        var entries = await db.PlaylistSourceEntries.AsNoTracking().Where(item => item.TenantId == actor.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id).OrderBy(item => item.SourcePosition).ToListAsync(cancellationToken); var result = new List<PersistedPlaylistPreviewEntry>(entries.Count);
-        foreach (var entry in entries) { var manual = await db.ManualTrackOverrides.AsNoTracking().Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId && item.ExternalSnapshotId == entry.ExternalMetadataSnapshotId && item.RevokedAt == null).SingleOrDefaultAsync(cancellationToken); var match = await db.TrackMatches.AsNoTracking().Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId && item.ExternalSnapshotId == entry.ExternalMetadataSnapshotId).OrderByDescending(item => item.DecisionVersion).FirstOrDefaultAsync(cancellationToken); result.Add(new PersistedPlaylistPreviewEntry(entry.SourcePosition, entry.ExternalMetadataSnapshotId, manual?.Decision == ManualOverrideDecision.Pin ? TrackMatchState.Pinned : manual?.Decision == ManualOverrideDecision.Reject ? TrackMatchState.Rejected : match?.State ?? TrackMatchState.Unresolved, manual?.LibraryTrackId ?? match?.LibraryTrackId, manual?.Decision)); }
+        var entries = await db.PlaylistSourceEntries.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id)
+            .OrderBy(item => item.SourcePosition)
+            .ToListAsync(cancellationToken);
+        var externalSnapshotIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
+        var manualOverrides = (await db.ManualTrackOverrides.AsNoTracking()
+                .Where(item => item.TenantId == actor.TenantId &&
+                    item.OwnerUserId == link.OwnerUserId &&
+                    item.LibraryScopeId == link.LibraryScopeId &&
+                    externalSnapshotIds.Contains(item.ExternalSnapshotId) &&
+                    item.RevokedAt == null)
+                .ToListAsync(cancellationToken))
+            .ToDictionary(item => item.ExternalSnapshotId);
+        var latestMatches = (await db.TrackMatches.AsNoTracking()
+                .Where(item => item.TenantId == actor.TenantId &&
+                    item.OwnerUserId == link.OwnerUserId &&
+                    item.LibraryScopeId == link.LibraryScopeId &&
+                    externalSnapshotIds.Contains(item.ExternalSnapshotId))
+                .OrderByDescending(item => item.DecisionVersion)
+                .ToListAsync(cancellationToken))
+            .GroupBy(item => item.ExternalSnapshotId)
+            .ToDictionary(group => group.Key, group => group.First());
+        var result = new List<PersistedPlaylistPreviewEntry>(entries.Count);
+        foreach (var entry in entries)
+        {
+            manualOverrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
+            latestMatches.TryGetValue(entry.ExternalMetadataSnapshotId, out var match);
+            result.Add(new PersistedPlaylistPreviewEntry(
+                entry.SourcePosition,
+                entry.ExternalMetadataSnapshotId,
+                manual?.Decision == ManualOverrideDecision.Pin
+                    ? TrackMatchState.Pinned
+                    : manual?.Decision == ManualOverrideDecision.Reject
+                        ? TrackMatchState.Rejected
+                        : match?.State ?? TrackMatchState.Unresolved,
+                manual?.LibraryTrackId ?? match?.LibraryTrackId,
+                manual?.Decision));
+        }
         return new PlaylistPreview(link.Id, snapshot.Id, snapshot.Name, snapshot.Description, snapshot.ArtworkReferenceKey, result);
     }
 

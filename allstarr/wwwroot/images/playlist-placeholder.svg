@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Playlist artwork</title>
+  <desc id="description">A stylized playlist with a music note.</desc>
+  <defs>
+    <linearGradient id="background" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#232b3a"/>
+      <stop offset="1" stop-color="#111722"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="150" y1="120" x2="390" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7c8cff"/>
+      <stop offset="1" stop-color="#48d1b5"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="72" fill="url(#background)"/>
+  <rect x="34" y="34" width="444" height="444" rx="50" fill="none" stroke="#303b4e" stroke-width="4"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M132 166h146M132 238h118M132 310h90" stroke="#d8deea" stroke-width="24"/>
+    <path d="M326 156v168" stroke="url(#accent)" stroke-width="28"/>
+    <path d="M326 170l92-22v150" stroke="url(#accent)" stroke-width="28"/>
+  </g>
+  <circle cx="286" cy="342" r="47" fill="url(#accent)"/>
+  <circle cx="378" cy="316" r="47" fill="url(#accent)"/>
+</svg>

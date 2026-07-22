@@ -300,6 +300,8 @@ public class ExtensionController : ControllerBase
                 item.Level,
                 item.EventCode,
                 item.Message,
+                summary = ExtensionLogSummary(item.EventCode, item.Message),
+                category = "extension",
                 item.CorrelationId,
                 item.CreatedAt
             }));
@@ -523,6 +525,32 @@ public class ExtensionController : ControllerBase
             item.ActivatedAt,
             item.DisabledAt,
             item.Revision
+        };
+    }
+
+    private static string ExtensionLogSummary(string? eventCode, string? message)
+    {
+        var code = eventCode?.Trim().ToLowerInvariant();
+        if (code == "runtime.log" && !string.IsNullOrWhiteSpace(message))
+            return message.Trim();
+
+        return code switch
+        {
+            "package.staged" => "Extension package staged",
+            "package.reviewed" => "Extension permissions reviewed",
+            "package.activated" => "Extension activated",
+            "package.disabled" => "Extension disabled",
+            "package.uninstalled" => "Extension uninstalled",
+            "package.rollback" or "package.rolled_back" => "Extension rolled back",
+            "session.started" => "Extension sign-in started",
+            "session.granted" => "Extension sign-in completed",
+            "session.cleared" => "Extension sign-in cleared",
+            "runtime.started" => "Extension runtime started",
+            "runtime.stopped" => "Extension runtime stopped",
+            "runtime.failed" => "Extension runtime failed",
+            null or "" => "Extension event",
+            _ => string.Join(' ', code.Split('.', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => char.ToUpperInvariant(part[0]) + part[1..]))
         };
     }
 }

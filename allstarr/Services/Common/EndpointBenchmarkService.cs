@@ -8,6 +8,7 @@ namespace allstarr.Services.Common;
 /// </summary>
 public class EndpointBenchmarkService
 {
+    private const int MaximumConcurrentEndpointOperations = 8;
     private readonly ILogger<EndpointBenchmarkService> _logger;
     private readonly Dictionary<string, EndpointMetrics> _metrics = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -32,63 +33,75 @@ public class EndpointBenchmarkService
     {
         _logger.LogDebug("🏁 Benchmarking {Count} endpoints with {Pings} pings each...", endpoints.Count, pingCount);
 
+        using var endpointGate = new SemaphoreSlim(MaximumConcurrentEndpointOperations);
         var tasks = endpoints.Select(async endpoint =>
         {
-            var sw = Stopwatch.StartNew();
-            var successCount = 0;
-            var totalMs = 0L;
-
-            for (int i = 0; i < pingCount; i++)
-            {
-                try
-                {
-                    var pingStart = Stopwatch.GetTimestamp();
-                    var success = await testFunc(endpoint, cancellationToken);
-                    var pingMs = Stopwatch.GetElapsedTime(pingStart).TotalMilliseconds;
-
-                    if (success)
-                    {
-                        successCount++;
-                        totalMs += (long)pingMs;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Benchmark ping failed for {Endpoint}", endpoint);
-                }
-
-                // Small delay between pings
-                if (i < pingCount - 1)
-                {
-                    await Task.Delay(100, cancellationToken);
-                }
-            }
-
-            sw.Stop();
-
-            var avgMs = successCount > 0 ? totalMs / successCount : long.MaxValue;
-            var metrics = new EndpointMetrics
-            {
-                Endpoint = endpoint,
-                AverageResponseMs = avgMs,
-                SuccessRate = (double)successCount / pingCount,
-                LastBenchmark = DateTime.UtcNow
-            };
-
-            await _lock.WaitAsync(cancellationToken);
+            await endpointGate.WaitAsync(cancellationToken);
             try
             {
-                _metrics[endpoint] = metrics;
+                var sw = Stopwatch.StartNew();
+                var successCount = 0;
+                var totalMs = 0L;
+
+                for (int i = 0; i < pingCount; i++)
+                {
+                    try
+                    {
+                        var pingStart = Stopwatch.GetTimestamp();
+                        var success = await testFunc(endpoint, cancellationToken);
+                        var pingMs = Stopwatch.GetElapsedTime(pingStart).TotalMilliseconds;
+
+                        if (success)
+                        {
+                            successCount++;
+                            totalMs += (long)pingMs;
+                        }
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Benchmark ping failed for {Endpoint}", endpoint);
+                    }
+
+                    if (i < pingCount - 1)
+                    {
+                        await Task.Delay(100, cancellationToken);
+                    }
+                }
+
+                sw.Stop();
+
+                var avgMs = successCount > 0 ? totalMs / successCount : long.MaxValue;
+                var metrics = new EndpointMetrics
+                {
+                    Endpoint = endpoint,
+                    AverageResponseMs = avgMs,
+                    SuccessRate = (double)successCount / pingCount,
+                    LastBenchmark = DateTime.UtcNow
+                };
+
+                await _lock.WaitAsync(cancellationToken);
+                try
+                {
+                    _metrics[endpoint] = metrics;
+                }
+                finally
+                {
+                    _lock.Release();
+                }
+
+                _logger.LogDebug("  {Endpoint}: {AvgMs}ms avg, {SuccessRate:P0} success rate",
+                    endpoint, avgMs, metrics.SuccessRate);
+
+                return metrics;
             }
             finally
             {
-                _lock.Release();
+                endpointGate.Release();
             }
-
-            _logger.LogDebug("  {Endpoint}: {AvgMs}ms avg, {SuccessRate:P0} success rate",
-                endpoint, avgMs, metrics.SuccessRate);
-
-            return metrics;
         }).ToList();
 
         var results = await Task.WhenAll(tasks);

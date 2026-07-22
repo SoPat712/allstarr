@@ -191,6 +191,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
+        if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before synchronizing.");
 
         var snapshot = request.SourceSnapshotId.HasValue
             ? await LoadSnapshotAsync(initial, link, request.SourceSnapshotId.Value, cancellationToken)
@@ -307,6 +308,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
+        if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before refreshing.");
         var snapshot = await CollectAndPersistAsync(execution, link, jobId, cancellationToken);
         _ = await MatchAndLoadAsync(link, snapshot, cancellationToken);
         return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision);
@@ -457,6 +459,18 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
 
         // Optimization: Map candidates once outside the loop instead of doing it N times
         var mappedCandidates = candidates.Select(ToCandidate).ToArray();
+        var candidatesByIsrc = mappedCandidates
+            .Where(item => NormalizeIsrc(item.Isrc) != null)
+            .GroupBy(item => NormalizeIsrc(item.Isrc)!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<LocalTrackMatchCandidate>)group.ToArray(), StringComparer.Ordinal);
+        var candidatesByMatchKey = mappedCandidates
+            .SelectMany(candidate => BuildMatchKeys(candidate.Title, candidate.Artist)
+                .Select(key => new { Key = key, Candidate = candidate }))
+            .GroupBy(item => item.Key, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key,
+                group => (IReadOnlyList<LocalTrackMatchCandidate>)group
+                    .Select(item => item.Candidate).DistinctBy(item => item.LibraryTrackId).ToArray(),
+                StringComparer.Ordinal);
         var candidateById = candidates.ToDictionary(item => item.Id);
 
         // Optimization: Bulk load all matching stored track matches
@@ -503,10 +517,15 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
                     root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null);
 
+                var sourceIsrc = NormalizeIsrc(source.Isrc);
+                var matchCandidates = sourceIsrc != null && candidatesByIsrc.TryGetValue(sourceIsrc, out var exactIsrcCandidates)
+                    ? exactIsrcCandidates
+                    : SelectMatchCandidates(source, candidatesByMatchKey);
+
                 var match = _matcher.Decide(
                     new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
                     source,
-                    mappedCandidates);
+                    matchCandidates);
 
                 stored = new TrackMatchRecord
                 {
@@ -607,10 +626,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         db.PlaylistSyncEntryResults.AddRange(ToRunEntries(link.TenantId, run.Id, plan, decisionIds));
         var included = plan.Entries.Where(item => item.Status == PlaylistPreviewEntryStatus.Included && item.LibraryTrackId.HasValue).ToArray();
         var memberships = await db.PlaylistTargetMemberships.Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id).ToListAsync(cancellationToken);
+        var membershipByLibraryTrack = memberships.ToDictionary(item => item.LibraryTrackId);
+        var includedLibraryTrackIds = included.Select(item => item.LibraryTrackId!.Value).ToHashSet();
         foreach (var entry in included)
         {
-            var membership = memberships.SingleOrDefault(item => item.LibraryTrackId == entry.LibraryTrackId);
-            if (membership == null)
+            if (!membershipByLibraryTrack.TryGetValue(entry.LibraryTrackId!.Value, out var membership))
             {
                 membership = new PlaylistTargetMembershipRecord
                 {
@@ -623,12 +643,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     CreatedAt = _clock.UtcNow
                 };
                 db.PlaylistTargetMemberships.Add(membership);
+                membershipByLibraryTrack.Add(membership.LibraryTrackId, membership);
             }
             membership.LastKnownPosition = entry.TargetPosition!.Value; membership.Active = true;
             membership.UpdatedAt = _clock.UtcNow; membership.Revision++;
         }
         if (link.MirrorStaleEntries)
-            foreach (var stale in memberships.Where(item => item.Active && included.All(entry => entry.LibraryTrackId != item.LibraryTrackId)))
+            foreach (var stale in memberships.Where(item => item.Active && !includedLibraryTrackIds.Contains(item.LibraryTrackId)))
             { stale.Active = false; stale.UpdatedAt = _clock.UtcNow; stale.Revision++; }
         var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.TenantId == link.TenantId, cancellationToken);
         trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
@@ -723,6 +744,91 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     };
     private static IReadOnlyList<string> DeserializeStrings(string json) =>
         JsonSerializer.Deserialize<string[]>(json) ?? [];
+    private static string? NormalizeIsrc(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = value.Replace("-", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
+        return normalized.Length == 12 && normalized.All(char.IsLetterOrDigit) ? normalized : null;
+    }
+
+    private static IReadOnlyList<LocalTrackMatchCandidate> SelectMatchCandidates(
+        ExternalTrackMatchSnapshot source,
+        IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> candidatesByMatchKey)
+    {
+        var keys = BuildMatchKeys(source.Title, source.Artist).ToArray();
+        if (keys.Length == 0) return [];
+
+        var exactTitleArtist = keys.FirstOrDefault(key => key.StartsWith("title-artist:", StringComparison.Ordinal));
+        if (exactTitleArtist != null && candidatesByMatchKey.TryGetValue(exactTitleArtist, out var exactPair))
+            return exactPair;
+
+        var exactTitle = keys.FirstOrDefault(key => key.StartsWith("title:", StringComparison.Ordinal));
+        if (exactTitle != null && candidatesByMatchKey.TryGetValue(exactTitle, out var exactTitleCandidates))
+            return exactTitleCandidates;
+
+        var selected = new Dictionary<Guid, LocalTrackMatchCandidate>();
+        foreach (var key in keys.Where(key => key.StartsWith("token-pair:", StringComparison.Ordinal)))
+        {
+            if (!candidatesByMatchKey.TryGetValue(key, out var candidates)) continue;
+            foreach (var candidate in candidates)
+            {
+                selected.TryAdd(candidate.LibraryTrackId, candidate);
+                if (selected.Count >= 300) return selected.Values.ToArray();
+            }
+        }
+        foreach (var key in keys.Where(key => key.StartsWith("title-token:", StringComparison.Ordinal)))
+        {
+            if (!candidatesByMatchKey.TryGetValue(key, out var candidates)) continue;
+            foreach (var candidate in candidates)
+            {
+                selected.TryAdd(candidate.LibraryTrackId, candidate);
+                if (selected.Count >= 300) return selected.Values.ToArray();
+            }
+        }
+        return selected.Values.ToArray();
+    }
+
+    private static IEnumerable<string> BuildMatchKeys(string? titleValue, string? artistValue)
+    {
+        var title = NormalizeMatchText(titleValue);
+        var artist = NormalizeMatchText(artistValue);
+        if (title.Length == 0) yield break;
+        yield return $"title:{title}";
+        if (artist.Length > 0) yield return $"title-artist:{title}|{artist}";
+
+        var titleTokens = title.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(IsMeaningfulMatchToken).Distinct(StringComparer.Ordinal).Take(8).ToArray();
+        var artistTokens = artist.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(IsMeaningfulMatchToken).Distinct(StringComparer.Ordinal).Take(4).ToArray();
+        foreach (var token in titleTokens) yield return $"title-token:{token}";
+        foreach (var titleToken in titleTokens)
+            foreach (var artistToken in artistTokens)
+                yield return $"token-pair:{titleToken}|{artistToken}";
+    }
+
+    private static string NormalizeMatchText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var builder = new StringBuilder(value.Length);
+        var pendingSpace = false;
+        foreach (var character in value.Normalize().ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                if (pendingSpace && builder.Length > 0) builder.Append(' ');
+                builder.Append(character);
+                pendingSpace = false;
+            }
+            else
+            {
+                pendingSpace = true;
+            }
+        }
+        return builder.ToString();
+    }
+
+    private static bool IsMeaningfulMatchToken(string token) => token.Length >= 3 && token is not
+        ("the" or "and" or "feat" or "with" or "from" or "remaster" or "remastered" or "version" or "edit" or "mix");
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
 
@@ -757,6 +863,7 @@ public sealed class PlaylistMaterializationJobHandler(
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == payload.PlaylistLinkId &&
             item.TenantId == context.Claim.TenantId && item.OwnerUserId == context.Claim.OwnerUserId, cancellationToken);
         if (link == null) return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
+        if (!link.Enabled) return DurableJobCompletion.Success();
         var identity = await db.BackendIdentities.AsNoTracking().FirstOrDefaultAsync(item => item.TenantId == link.TenantId &&
             item.UserId == link.OwnerUserId && item.BackendType == link.TargetProtocol &&
             item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken);

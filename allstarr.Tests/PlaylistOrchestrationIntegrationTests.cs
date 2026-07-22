@@ -330,6 +330,10 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         public int TotalCalls => FindCalls + ReadCalls + WriteCalls;
         public BackendPlaylistWriteRequest? LastWrite { get; private set; }
         public List<BackendPlaylistTargetContext> Contexts { get; } = [];
+        public Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(BackendPlaylistTargetContext context, string? query, int limit, CancellationToken cancellationToken) =>
+            Task.FromResult(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>(BackendPlaylistTargetStatus.Success, []));
+        public Task<BackendPlaylistTargetResult<BackendPlaylistArtwork>> ReadArtworkAsync(BackendPlaylistTargetContext context, string backendPlaylistId, string? artworkReference, CancellationToken cancellationToken) =>
+            Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistArtwork>(BackendPlaylistTargetStatus.NotFound));
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(BackendPlaylistTargetContext context, string name, CancellationToken cancellationToken)
         {
             FindCalls++; Contexts.Add(context);

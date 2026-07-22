@@ -1,5 +1,9 @@
 # Deployment profiles
 
+Beta release candidates must satisfy the
+[version 3.1 beta release checklist](beta-release-checklist.md) before their
+image is published or promoted.
+
 `allstarr.sh` is the normal Compose entry point. It keeps Standard small, remembers optional services, validates the
 merged Compose model before starting it, and never deletes volumes.
 

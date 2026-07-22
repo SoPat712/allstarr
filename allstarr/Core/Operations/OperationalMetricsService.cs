@@ -148,19 +148,29 @@ public sealed class OperationalMetricsService
         }
 
         var rollups = await context.ProviderHealthRollups.AsNoTracking()
+            .Join(
+                context.ProviderAccounts.AsNoTracking(),
+                rollup => rollup.ProviderAccountId,
+                account => account.Id,
+                (rollup, account) => new
+                {
+                    account.ProviderId,
+                    rollup.ProviderAccountId,
+                    rollup.Capability,
+                    rollup.WindowStart,
+                    rollup.SuccessRate,
+                    rollup.P50LatencyMilliseconds,
+                    rollup.P95LatencyMilliseconds
+                })
             .OrderByDescending(item => item.WindowStart)
             .Take(5000)
             .ToListAsync(cancellationToken);
-        var accountProviders = await context.ProviderAccounts.AsNoTracking()
-            .Where(item => rollups.Select(rollup => rollup.ProviderAccountId).Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, item => item.ProviderId, cancellationToken);
         var latestRollups = rollups
             .GroupBy(item => new { item.ProviderAccountId, item.Capability })
             .Select(group => group.OrderByDescending(item => item.WindowStart).First())
-            .Where(item => accountProviders.ContainsKey(item.ProviderAccountId))
             .GroupBy(item => new
             {
-                ProviderId = accountProviders[item.ProviderAccountId],
+                item.ProviderId,
                 item.Capability
             })
             .ToList();

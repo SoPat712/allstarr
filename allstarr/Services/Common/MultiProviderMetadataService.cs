@@ -13,6 +13,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     private readonly ExtensionManager _extensionManager;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MultiProviderMetadataService> _logger;
+    private readonly SemaphoreSlim _fanOutGate;
 
     public MultiProviderMetadataService(
         IEnumerable<IConcreteMetadataService> services,
@@ -26,6 +27,8 @@ public class MultiProviderMetadataService : IMusicMetadataService
         _extensionManager = extensionManager;
         _configuration = configuration;
         _logger = logger;
+        _fanOutGate = new SemaphoreSlim(Math.Clamp(
+            configuration.GetValue("Providers:MetadataFanoutConcurrency", 4), 1, 16));
     }
 
     public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
@@ -60,7 +63,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         CancellationToken cancellationToken)
     {
 
-        var tasks = providers.Select(async p =>
+        var tasks = providers.Select(p => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(p);
             if (service == null) return new List<Song>();
@@ -74,14 +77,14 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchSongsAsync failed for provider: {Provider}", p);
                 return new List<Song>();
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var extensions = includeExtensions
             ? _extensionManager.GetActiveExtensions()
                 .Where(extension => !requirePlayableExtensions || extension.Types.Any(IsPlaybackCapability))
                 .ToList()
             : [];
-        var extensionTasks = extensions.Select(async ext =>
+        var extensionTasks = extensions.Select(ext => RunFanOutAsync(async () =>
         {
             try
             {
@@ -94,7 +97,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchSongsAsync failed for extension: {ExtensionId}", ext.Id);
                 return new List<Song>();
             }
-        });
+        }, cancellationToken));
 
         var providerResults = await Task.WhenAll(tasks);
         var extensionResults = await Task.WhenAll(extensionTasks);
@@ -115,7 +118,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         CancellationToken cancellationToken = default)
     {
         var providers = _statusManager.GetEnabledPlaybackProviders().ToList();
-        var tasks = providers.Select(async provider =>
+        var tasks = providers.Select(provider => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(provider);
             if (service == null) return null;
@@ -129,12 +132,12 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogWarning(ex, "ISRC lookup failed for playback provider: {Provider}", provider);
                 return null;
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var extensions = _extensionManager.GetActiveExtensions()
             .Where(extension => extension.Types.Any(IsPlaybackCapability))
             .ToList();
-        var extensionTasks = extensions.Select(async extension =>
+        var extensionTasks = extensions.Select(extension => RunFanOutAsync(async () =>
         {
             try
             {
@@ -147,7 +150,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogWarning(ex, "ISRC lookup failed for playback extension: {ExtensionId}", extension.Id);
                 return null;
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var providerResults = await Task.WhenAll(tasks);
         var extensionResults = await Task.WhenAll(extensionTasks);
@@ -163,7 +166,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     {
         var providers = _statusManager.GetEnabledSearchProviders();
 
-        var tasks = providers.Select(async p =>
+        var tasks = providers.Select(p => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(p);
             if (service == null) return new List<Album>();
@@ -177,10 +180,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchAlbumsAsync failed for provider: {Provider}", p);
                 return new List<Album>();
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var extensions = _extensionManager.GetActiveExtensions();
-        var extensionTasks = extensions.Select(async ext =>
+        var extensionTasks = extensions.Select(ext => RunFanOutAsync(async () =>
         {
             try
             {
@@ -193,7 +196,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchAlbumsAsync failed for extension: {ExtensionId}", ext.Id);
                 return new List<Album>();
             }
-        });
+        }, cancellationToken));
 
         var providerResults = await Task.WhenAll(tasks);
         var extensionResults = await Task.WhenAll(extensionTasks);
@@ -206,7 +209,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     {
         var providers = _statusManager.GetEnabledSearchProviders();
 
-        var tasks = providers.Select(async p =>
+        var tasks = providers.Select(p => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(p);
             if (service == null) return new List<Artist>();
@@ -220,10 +223,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchArtistsAsync failed for provider: {Provider}", p);
                 return new List<Artist>();
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var extensions = _extensionManager.GetActiveExtensions();
-        var extensionTasks = extensions.Select(async ext =>
+        var extensionTasks = extensions.Select(ext => RunFanOutAsync(async () =>
         {
             try
             {
@@ -236,7 +239,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchArtistsAsync failed for extension: {ExtensionId}", ext.Id);
                 return new List<Artist>();
             }
-        });
+        }, cancellationToken));
 
         var providerResults = await Task.WhenAll(tasks);
         var extensionResults = await Task.WhenAll(extensionTasks);
@@ -249,7 +252,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     {
         var providers = _statusManager.GetEnabledSearchProviders();
 
-        var tasks = providers.Select(async p =>
+        var tasks = providers.Select(p => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(p);
             if (service == null) return null;
@@ -263,10 +266,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchAllAsync failed for provider: {Provider}", p);
                 return null;
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var extensions = _extensionManager.GetActiveExtensions();
-        var extensionTasks = extensions.Select(async ext =>
+        var extensionTasks = extensions.Select(ext => RunFanOutAsync(async () =>
         {
             try
             {
@@ -278,7 +281,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchAllAsync failed for extension: {ExtensionId}", ext.Id);
                 return new SearchResult();
             }
-        });
+        }, cancellationToken));
 
         var providerResults = await Task.WhenAll(tasks);
         var extensionResults = await Task.WhenAll(extensionTasks);
@@ -320,7 +323,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
     {
         var providers = _statusManager.GetEnabledSearchProviders();
 
-        var tasks = providers.Select(async p =>
+        var tasks = providers.Select(p => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(p);
             if (service == null) return null;
@@ -332,10 +335,10 @@ public class MultiProviderMetadataService : IMusicMetadataService
             {
                 return null;
             }
-        }).ToList();
+        }, cancellationToken)).ToList();
 
         var extensions = _extensionManager.GetActiveExtensions();
-        var extensionTasks = extensions.Select(async ext =>
+        var extensionTasks = extensions.Select(ext => RunFanOutAsync(async () =>
         {
             try
             {
@@ -346,7 +349,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
             {
                 return null;
             }
-        });
+        }, cancellationToken));
 
         var results = await Task.WhenAll(tasks);
         var extResults = await Task.WhenAll(extensionTasks);
@@ -402,7 +405,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
         var providers = _statusManager.GetEnabledPlaylistProviders();
         if (providers.Count == 0) return new List<ExternalPlaylist>();
 
-        var tasks = providers.Select(async p =>
+        var tasks = providers.Select(p => RunFanOutAsync(async () =>
         {
             var service = GetMetadataServiceByName(p);
             if (service == null) return new List<ExternalPlaylist>();
@@ -416,7 +419,7 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 _logger.LogError(ex, "SearchPlaylistsAsync failed for provider: {Provider}", p);
                 return new List<ExternalPlaylist>();
             }
-        });
+        }, cancellationToken));
 
         var results = await Task.WhenAll(tasks);
         return InterleaveLists(results.ToList()).Take(Math.Max(0, limit)).ToList();
@@ -514,5 +517,18 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (configuredOrder[index].Equals(providerId, StringComparison.OrdinalIgnoreCase)) return index;
         }
         return configuredOrder.Count;
+    }
+
+    private async Task<T> RunFanOutAsync<T>(Func<Task<T>> operation, CancellationToken cancellationToken)
+    {
+        await _fanOutGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await operation();
+        }
+        finally
+        {
+            _fanOutGate.Release();
+        }
     }
 }

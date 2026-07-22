@@ -1,3 +1,5 @@
+ARG ALLSTARR_VERSION=development
+
 # Build stage
 FROM mcr.microsoft.com/dotnet/sdk:10.0.301@sha256:ea8bde36c11b6e7eec2656d0e59101d4462f6bd630730f2c8201ed0572b295d5 AS build
 WORKDIR /src
@@ -16,6 +18,8 @@ COPY .env.example /app/publish/
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.9@sha256:7644f992230d35cf230017189d4038c0ae0f7388b13f4f7ae1900a155bafb597
+ARG ALLSTARR_VERSION
+LABEL org.opencontainers.image.version="${ALLSTARR_VERSION}"
 WORKDIR /app
 
 # curl powers container health checks; PostgreSQL 18 pg_dump/pg_restore match the

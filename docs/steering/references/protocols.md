@@ -195,4 +195,12 @@ Required behavior:
 
 ## Search Parallelization
 
-External metadata searches (tracks, albums, artists, playlists) are fanned out concurrently across all candidates via `Task.WhenAll` to ensure low latency. Since this creates concurrent burst requests, operators should monitor provider rate limits if a large number of providers are enabled. A planned follow-up change is to introduce a configurable `MaxConcurrentProviders` safeguard limit (or bounding semaphore) to prevent thundering herds on systems with many providers.
+External metadata searches (tracks, albums, artists, playlists) fan out across
+eligible built-in and extension providers through a shared bounded semaphore.
+`ProviderRouting:MaxConcurrentProviders` controls the process-wide provider
+fan-out limit; every request shares that budget rather than creating its own
+unbounded `Task.WhenAll` burst. Preserve result ordering independently from
+completion ordering, honor cancellation while waiting for a slot, and release
+the slot in `finally`. Endpoint health probes, provider benchmarks, and deep
+diagnostics use their own documented bounds so administrative tests cannot
+starve user-facing metadata or playback work.

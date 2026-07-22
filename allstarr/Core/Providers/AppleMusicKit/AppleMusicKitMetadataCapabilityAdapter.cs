@@ -285,8 +285,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
 
     private static ProviderError Error(HttpResponseMessage response) => response.StatusCode switch
     {
-        HttpStatusCode.Unauthorized => new(ProviderErrorKind.Unauthorized),
-        HttpStatusCode.Forbidden => new(ProviderErrorKind.Forbidden),
+        HttpStatusCode.Unauthorized => new(ProviderErrorKind.AccountNeedsReauthentication),
+        HttpStatusCode.Forbidden => new(ProviderErrorKind.AccountNeedsReauthentication),
         HttpStatusCode.NotFound => new(ProviderErrorKind.NotFound),
         HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited,
             response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30)),

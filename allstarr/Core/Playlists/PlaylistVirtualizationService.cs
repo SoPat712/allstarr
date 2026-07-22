@@ -1,3 +1,5 @@
+using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -72,7 +74,7 @@ public sealed class PlaylistVirtualizationService(
             (context.Protocol == ProtocolKind.Jellyfin
                 ? item.TargetProtocol == "jellyfin"
                 : item.TargetProtocol == "subsonic" || item.TargetProtocol == "opensubsonic" || item.TargetProtocol == "navidrome") &&
-            (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid),
+            item.Enabled && (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid),
             cancellationToken);
         if (link == null || context.LibraryScopeId is { Length: > 0 } requestedLibrary &&
             !requestedLibrary.Equals(link.LibraryScopeId, StringComparison.Ordinal))
@@ -90,6 +92,19 @@ public sealed class PlaylistVirtualizationService(
             .OrderBy(item => item.SourcePosition)
             .ToListAsync(cancellationToken);
         var externalIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
+        var externalSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId && externalIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var providerIdentityIds = externalSnapshots.Values
+            .Where(item => item.ProviderTrackIdentityId.HasValue)
+            .Select(item => item.ProviderTrackIdentityId!.Value)
+            .Distinct()
+            .ToArray();
+        var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId && providerIdentityIds.Contains(item.Id) &&
+                           (item.Verification == ProviderIdentityVerification.Verified ||
+                            item.Verification == ProviderIdentityVerification.Pinned))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
         var overrides = await db.ManualTrackOverrides.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId &&
                            item.LibraryScopeId == link.LibraryScopeId && item.RevokedAt == null &&
@@ -118,9 +133,13 @@ public sealed class PlaylistVirtualizationService(
                 : state == TrackMatchState.Accepted && decision!.Confidence >= decision.Threshold
                     ? decision.LibraryTrackId
                     : null;
-            return (Entry: entry, State: state, TrackId: trackId);
-        }).Where(item => item.TrackId.HasValue).ToList();
-        var libraryIds = selected.Select(item => item.TrackId!.Value).Distinct().ToArray();
+            ProviderTrackIdentityRecord? providerIdentity = null;
+            if (!trackId.HasValue && externalSnapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external) &&
+                external.ProviderTrackIdentityId.HasValue)
+                providerIdentities.TryGetValue(external.ProviderTrackIdentityId.Value, out providerIdentity);
+            return (Entry: entry, State: state, TrackId: trackId, ProviderIdentity: providerIdentity);
+        }).Where(item => item.TrackId.HasValue || item.ProviderIdentity != null).ToList();
+        var libraryIds = selected.Where(item => item.TrackId.HasValue).Select(item => item.TrackId!.Value).Distinct().ToArray();
         var libraryTracks = await db.LibraryTracks.AsNoTracking().Where(item =>
                 libraryIds.Contains(item.Id) && item.TenantId == actor.TenantId &&
                 item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId &&
@@ -131,16 +150,73 @@ public sealed class PlaylistVirtualizationService(
             .ToDictionaryAsync(item => item.Id, cancellationToken);
 
         var tracks = selected
-            .Where(item => libraryTracks.ContainsKey(item.TrackId!.Value))
             .Select(item =>
             {
-                var track = libraryTracks[item.TrackId!.Value];
-                return new VirtualPlaylistTrack(item.Entry.SourcePosition, track.BackendItemId,
-                    track.Title, track.Artist, track.Album, track.AlbumArtist,
-                    track.DurationMilliseconds, track.CoverArtReference, item.State);
-            }).ToList();
+                if (item.TrackId.HasValue && libraryTracks.TryGetValue(item.TrackId.Value, out var track))
+                    return new VirtualPlaylistTrack(item.Entry.SourcePosition, track.BackendItemId,
+                        track.Title, track.Artist, track.Album, track.AlbumArtist,
+                        track.DurationMilliseconds, track.CoverArtReference, item.State);
+
+                if (item.ProviderIdentity != null &&
+                    externalSnapshots.TryGetValue(item.Entry.ExternalMetadataSnapshotId, out var external))
+                    return ToProviderTrack(item.Entry.SourcePosition, item.ProviderIdentity, external, item.State);
+
+                return null;
+            })
+            .Where(item => item != null)
+            .Select(item => item!)
+            .ToList();
         return new VirtualPlaylistReadModel(protocolId, link.Id, snapshot.Id, snapshot.Name,
             snapshot.Description, snapshot.ArtworkReferenceKey, link.SourceProviderId,
             snapshot.ProviderRevision, link.Mode, tracks);
     }
+
+    private static VirtualPlaylistTrack? ToProviderTrack(
+        int position,
+        ProviderTrackIdentityRecord identity,
+        ExternalMetadataSnapshotRecord snapshot,
+        TrackMatchState state)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(snapshot.PayloadJson);
+            var root = document.RootElement;
+            var title = Text(root, "Title") ?? Text(root, "title");
+            var artists = Array(root, "Artists");
+            if (artists.Count == 0) artists = Array(root, "artists");
+            var artist = artists.FirstOrDefault() ?? Text(root, "Artist") ?? Text(root, "artist");
+            if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist)) return null;
+            var durationSeconds = Number(root, "durationSeconds") ?? Number(root, "DurationSeconds");
+            return new VirtualPlaylistTrack(
+                position,
+                $"ext-{identity.ProviderId}-song-{identity.ExternalId}",
+                title,
+                artist,
+                Text(root, "Album") ?? Text(root, "album"),
+                Text(root, "AlbumArtist") ?? Text(root, "albumArtist"),
+                durationSeconds.HasValue ? checked((long)Math.Round(durationSeconds.Value * 1000d)) : 0,
+                null,
+                state);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? Text(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static IReadOnlyList<string> Array(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()).Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item!).ToArray()
+            : [];
+
+    private static double? Number(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)
+            ? number
+            : null;
 }

@@ -1029,16 +1029,22 @@ public class ConfigController : ControllerBase
                 return BadRequest(new { success = false, error = "This provider capability has no endpoint probe" });
             }
 
+            var globalTimer = System.Diagnostics.Stopwatch.StartNew();
             var testedGlobal = await statusManager.TestProviderCapabilityAsync(
                 normalizedProvider,
                 capability,
                 cancellationToken: HttpContext.RequestAborted);
+            globalTimer.Stop();
+            var globalLatencyMs = globalTimer.ElapsedMilliseconds;
             return Ok(new
             {
                 success = testedGlobal.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
                 provider = testedGlobal.Provider,
                 capability = testedGlobal.Capability,
                 health = testedGlobal.Health.ToString().ToLowerInvariant(),
+                latencyMs = globalLatencyMs,
+                bars = ConnectivityQuality.Bars(globalLatencyMs, testedGlobal.Health == allstarr.Services.Common.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
+                metric = "api-latency",
                 testedAt = testedGlobal.TestedAt,
                 reasonCode = testedGlobal.ReasonCode
             });
@@ -1075,11 +1081,14 @@ public class ConfigController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(capability))
         {
+            var connectionTimer = System.Diagnostics.Stopwatch.StartNew();
             var healthy = await statusManager.TestManagedProviderConnectionAsync(
                 normalizedProvider,
                 account.Id,
                 accountSecrets,
                 HttpContext.RequestAborted);
+            connectionTimer.Stop();
+            var connectionLatencyMs = connectionTimer.ElapsedMilliseconds;
             var failedCapabilities = statusManager.GetAllManagedStatuses(
                     normalizedProvider,
                     account.Id,
@@ -1093,6 +1102,9 @@ public class ConfigController : ControllerBase
                 provider = normalizedProvider,
                 providerAccountId = account.Id,
                 healthy,
+                latencyMs = connectionLatencyMs,
+                bars = ConnectivityQuality.Bars(connectionLatencyMs, healthy, ConnectivityMetric.ApiLatency),
+                metric = "api-latency",
                 reasonCode = failedCapabilities.FirstOrDefault()?.reasonCode,
                 failedCapabilities
             });
@@ -1114,12 +1126,15 @@ public class ConfigController : ControllerBase
             });
         }
 
+        var capabilityTimer = System.Diagnostics.Stopwatch.StartNew();
         var tested = await statusManager.TestManagedProviderCapabilityAsync(
             normalizedProvider,
             capability,
             account.Id,
             accountSecrets,
             HttpContext.RequestAborted);
+        capabilityTimer.Stop();
+        var capabilityLatencyMs = capabilityTimer.ElapsedMilliseconds;
         return Ok(new
         {
             success = tested.Health == allstarr.Services.Common.ProviderHealthState.Healthy,
@@ -1127,6 +1142,9 @@ public class ConfigController : ControllerBase
             providerAccountId = account.Id,
             capability = tested.Capability,
             health = tested.Health.ToString().ToLowerInvariant(),
+            latencyMs = capabilityLatencyMs,
+            bars = ConnectivityQuality.Bars(capabilityLatencyMs, tested.Health == allstarr.Services.Common.ProviderHealthState.Healthy, ConnectivityMetric.ApiLatency),
+            metric = "api-latency",
             testedAt = tested.TestedAt,
             reasonCode = tested.ReasonCode
         });

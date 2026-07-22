@@ -263,6 +263,22 @@ function providerDisplayName(providerId, providers = []) {
   return provider?.name || provider?.Name || providerMark({ id: providerId });
 }
 
+function compareExtensionVersions(left, right) {
+  const parts = (value) => String(value || "0").replace(/^v/i, "").split(/[.+-]/).map((part) => /^\d+$/.test(part) ? Number(part) : part.toLowerCase());
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const av = a[index] ?? 0;
+    const bv = b[index] ?? 0;
+    if (av === bv) continue;
+    if (typeof av === "number" && typeof bv === "number") return av - bv;
+    if (typeof av === "number") return 1;
+    if (typeof bv === "number") return -1;
+    return String(av).localeCompare(String(bv));
+  }
+  return 0;
+}
+
 function appleLoginState(value) {
   const rawState = value?.login_state || value?.account?.state || value?.auth?.state || value?.state || "";
   const state = String(rawState).trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
@@ -379,7 +395,12 @@ const API = {
   logout: () => requestJson("/api/admin/auth/logout", { method: "POST" }, "Logout failed"),
   schema: () => requestJson("/api/admin/ui/schema", { cache: "no-store" }, "Failed to load UI schema"),
   providerSummaries: () => requestJson("/api/admin/ui/provider-summaries", { cache: "no-store" }, "Failed to load provider summaries"),
-  dashboardActivity: (limit = 20) => requestJson(`/api/admin/ui/activity?limit=${limit}`, { cache: "no-store" }, "Failed to load dashboard activity"),
+  dashboardActivity: (limit = 20, before = "", beforeId = "") => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (before) params.set("before", before);
+    if (beforeId) params.set("beforeId", beforeId);
+    return requestJson(`/api/admin/ui/activity?${params}`, { cache: "no-store" }, "Failed to load dashboard activity");
+  },
   status: () => requestJson("/api/admin/status", { cache: "no-store" }, "Failed to load status"),
   mediaProbe: () => requestJson("/api/admin/media-probe", { cache: "no-store" }, "Media pipeline test failed"),
   playlistReadiness: () => requestJson("/api/admin/playlist-readiness", { cache: "no-store" }, "Playlist readiness test failed"),
@@ -450,10 +471,30 @@ const API = {
     const suffix = libraryScopeId ? `?libraryScopeId=${encodeURIComponent(libraryScopeId)}` : "";
     return requestJson(`/api/admin/playlist-links${suffix}`, { cache: "no-store" }, "Failed to load playlist links");
   },
+  playlistSources: () =>
+    requestJson("/api/admin/playlist-sources", { cache: "no-store" }, "Failed to load playlist sources"),
+  sourcePlaylists: (accountId, query = "", cursor = "") => {
+    const params = new URLSearchParams({ limit: "30" });
+    if (query) params.set("query", query);
+    if (cursor) params.set("cursor", cursor);
+    return requestJson(`/api/admin/playlist-sources/${encodeURIComponent(accountId)}/playlists?${params}`, { cache: "no-store" }, "Failed to browse source playlists");
+  },
+  mediaTargets: () =>
+    requestJson("/api/admin/media-targets", { cache: "no-store" }, "Failed to load media targets"),
+  targetPlaylists: (targetId, query = "", cursor = "") => {
+    const params = new URLSearchParams({ limit: "30" });
+    if (query) params.set("query", query);
+    if (cursor) params.set("cursor", cursor);
+    return requestJson(`/api/admin/media-targets/${encodeURIComponent(targetId)}/playlists?${params}`, { cache: "no-store" }, "Failed to browse target playlists");
+  },
   createPlaylistLink: (payload) =>
     requestJson("/api/admin/playlist-links", jsonBody(payload), "Failed to create playlist link"),
   updatePlaylistLink: (id, payload) =>
     requestJson(`/api/admin/playlist-links/${encodeURIComponent(id)}`, jsonBody(payload, "PUT"), "Failed to update playlist link"),
+  deletePlaylistLink: (id, expectedRevision) =>
+    requestJson(`/api/admin/playlist-links/${encodeURIComponent(id)}`, jsonBody({ expectedRevision }, "DELETE"), "Failed to remove playlist"),
+  setPlaylistLinkEnabled: (id, expectedRevision, enabled) =>
+    requestJson(`/api/admin/playlist-links/${encodeURIComponent(id)}/state`, jsonBody({ expectedRevision, enabled }, "PATCH"), "Failed to update playlist state"),
   refreshPlaylistLink: (id) =>
     requestJson(`/api/admin/playlist-links/${encodeURIComponent(id)}/refresh`, { method: "POST" }, "Failed to refresh source playlist"),
   playlistLinkPreview: (id, snapshotId = "") => {
@@ -575,8 +616,8 @@ const API = {
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/disable`, jsonBody({ expectedRevision }), "Failed to disable extension"),
   rollbackExtensionPackage: (packageId, expectedRevision) =>
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/rollback`, jsonBody({ expectedRevision }), "Failed to roll back extension"),
-  uninstallExtensionPackage: (packageId, expectedRevision) =>
-    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}`, jsonBody({ expectedRevision, retainProviderAccounts: true }, "DELETE"), "Failed to uninstall extension package"),
+  uninstallExtensionPackage: (packageId, expectedRevision, retainProviderAccounts = true) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}`, jsonBody({ expectedRevision, retainProviderAccounts }, "DELETE"), "Failed to uninstall extension package"),
   extensionLogs: (packageId = "", limit = 100) => {
     const query = new URLSearchParams({ limit: String(limit) });
     if (packageId) query.set("packageId", packageId);
@@ -645,8 +686,14 @@ class AllstarrApp extends LitElement {
     activity: { state: true },
     playlists: { state: true },
     playlistLinks: { state: true },
+    playlistSources: { state: true },
+    mediaTargets: { state: true },
+    sourcePlaylistResults: { state: true },
+    targetPlaylistResults: { state: true },
+    playlistWizard: { state: true },
     playlistLinkPreview: { state: true },
     selectedPlaylistLinkId: { state: true },
+    editingPlaylistLink: { state: true },
     selectedInjectedPlaylist: { state: true },
     injectedPlaylistDetails: { state: true },
     injectedTrackMenuId: { state: true },
@@ -660,7 +707,17 @@ class AllstarrApp extends LitElement {
     providerHealth: { state: true },
     providerSummaries: { state: true },
     dashboardActivity: { state: true },
+    eventLogCursor: { state: true },
+    eventLogCursorId: { state: true },
+    eventLogHasMore: { state: true },
+    eventLogLoading: { state: true },
+    eventLogTime: { state: true },
+    eventLogSeverity: { state: true },
+    eventLogProvider: { state: true },
+    eventLogPlaylist: { state: true },
+    eventLogCorrelation: { state: true },
     providerTests: { state: true },
+    providerTestResults: { state: true },
     endpointUsage: { state: true },
     mappings: { state: true },
     legacyMappings: { state: true },
@@ -734,8 +791,14 @@ class AllstarrApp extends LitElement {
     this.activity = [];
     this.playlists = null;
     this.playlistLinks = [];
+    this.playlistSources = [];
+    this.mediaTargets = [];
+    this.sourcePlaylistResults = [];
+    this.targetPlaylistResults = [];
+    this.playlistWizard = this.newPlaylistWizardDraft();
     this.playlistLinkPreview = null;
     this.selectedPlaylistLinkId = "";
+    this.editingPlaylistLink = null;
     this.selectedInjectedPlaylist = "";
     this.injectedPlaylistDetails = null;
     this.injectedTrackMenuId = "";
@@ -749,7 +812,21 @@ class AllstarrApp extends LitElement {
     this.providerHealth = [];
     this.providerSummaries = [];
     this.dashboardActivity = [];
+    this.eventLogCursor = "";
+    this.eventLogCursorId = "";
+    this.eventLogHasMore = false;
+    this.eventLogLoading = false;
+    this.eventLogTime = "all";
+    this.eventLogSeverity = "all";
+    this.eventLogProvider = "all";
+    this.eventLogPlaylist = "all";
+    this.eventLogCorrelation = "";
+    this.eventLogCategory = "all";
+    this.eventLogSource = "all";
+    this.eventLogState = "all";
+    this.eventLogQuery = "";
     this.providerTests = new Set();
+    this.providerTestResults = new Map();
     this.endpointUsage = null;
     this.mappings = null;
     this.legacyMappings = null;
@@ -1084,7 +1161,7 @@ class AllstarrApp extends LitElement {
     const readiness = this.serviceResults.readiness;
     const affectedPlaylists = asArray(readiness?.affectedPlaylists);
     if (!affectedPlaylists.length) {
-      this.navigate("/library/injected");
+      this.navigate("/library/playlists");
       return;
     }
 
@@ -1102,7 +1179,7 @@ class AllstarrApp extends LitElement {
     this.toast(failed
       ? `Rematching started for ${matched} ${matched === 1 ? "playlist" : "playlists"}; ${failed} could not be started.`
       : `Rematching started for ${matched} ${matched === 1 ? "playlist" : "playlists"}.`);
-    this.navigate("/library/injected");
+    this.navigate("/library/playlists");
   };
 
   recordLoadFailure(key, label, error) {
@@ -1183,10 +1260,8 @@ class AllstarrApp extends LitElement {
     const [zone, sub] = routeParts(this.route);
     try {
       if (zone === "library") {
-        if (!sub || sub === "link") {
-          await this.loadPlaylistLinks();
-        } else if (!sub || sub === "link" || sub === "injected") {
-          await this.loadPlaylists();
+        if (!sub || ["playlists", "link", "injected", "external"].includes(sub)) {
+          await Promise.all([this.loadPlaylistLinks(), this.loadPlaylists()]);
         } else if (sub === "mappings") {
           await this.loadMappings();
         } else if (sub === "missing" || sub === "migration") {
@@ -1213,7 +1288,7 @@ class AllstarrApp extends LitElement {
           await this.loadProviderAccounts();
         }
       } else if (zone === "activity") {
-        await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs(), this.loadProviderAccounts()]);
+        await Promise.all([this.loadDashboardPresentation(), this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs(), this.loadProviderAccounts()]);
       } else if (zone === "home" || !zone) {
         await Promise.all([
           this.loadProviderAccounts(),
@@ -1369,10 +1444,31 @@ class AllstarrApp extends LitElement {
   async loadDashboardPresentation() {
     const [summaries, activity] = await Promise.all([
       API.providerSummaries().catch(() => ({ providers: [] })),
-      API.dashboardActivity(24).catch(() => ({ items: [] })),
+      API.dashboardActivity(100).catch(() => ({ items: [] })),
     ]);
     this.providerSummaries = asArray(summaries?.providers || summaries?.Providers);
     this.dashboardActivity = asArray(activity?.items || activity?.Items);
+    this.eventLogCursor = activity?.nextCursor || activity?.NextCursor || "";
+    this.eventLogCursorId = activity?.nextCursorId || activity?.NextCursorId || "";
+    this.eventLogHasMore = Boolean(activity?.hasMore ?? activity?.HasMore);
+  }
+
+  async loadEarlierEvents() {
+    if (this.eventLogLoading || !this.eventLogHasMore || !this.eventLogCursor) return;
+    this.eventLogLoading = true;
+    try {
+      const response = await API.dashboardActivity(100, this.eventLogCursor, this.eventLogCursorId);
+      const incoming = asArray(response?.items || response?.Items);
+      const known = new Set(this.dashboardActivity.map((entry) => String(entry.id || entry.Id)));
+      this.dashboardActivity = [...this.dashboardActivity, ...incoming.filter((entry) => !known.has(String(entry.id || entry.Id)))];
+      this.eventLogCursor = response?.nextCursor || response?.NextCursor || "";
+      this.eventLogCursorId = response?.nextCursorId || response?.NextCursorId || "";
+      this.eventLogHasMore = Boolean(response?.hasMore ?? response?.HasMore);
+    } catch (error) {
+      this.toast(error.message || "Earlier events could not be loaded", "error");
+    } finally {
+      this.eventLogLoading = false;
+    }
   }
 
   async loadPlaylistLinks() {
@@ -1388,9 +1484,139 @@ class AllstarrApp extends LitElement {
       if (!this.providerAccounts.length) {
         await this.loadProviderAccounts();
       }
+      if (!this.playlistSources.length || !this.mediaTargets.length) {
+        await this.loadPlaylistDiscovery();
+      }
     } catch (error) {
-      this.recordLoadFailure("playlistLinks", "Playlist links", error);
+      this.recordLoadFailure("playlistLinks", "Playlists", error);
       throw error;
+    }
+  }
+
+  newPlaylistWizardDraft() {
+    return {
+      step: 0,
+      sourceAccountId: "",
+      sourceQuery: "",
+      sourceNextCursor: "",
+      sourcePlaylist: null,
+      targetIdentityId: "",
+      targetQuery: "",
+      targetNextCursor: "",
+      targetPlaylist: null,
+      createTarget: false,
+      mode: "virtual",
+      materializationMode: "reconcile",
+      trigger: "manual",
+      cronExpression: "0 8 * * *",
+      timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      syncName: true,
+      syncDescription: true,
+      syncArtwork: true,
+      preserveManualEntries: true,
+      mirrorStaleEntries: false,
+      legacyHandoff: null,
+      loading: false,
+      error: "",
+    };
+  }
+
+  updatePlaylistWizard(patch) {
+    this.playlistWizard = { ...this.playlistWizard, ...patch, error: "" };
+    if (!Object.hasOwn(patch, "loading")) this.playlistDryRunPreview = null;
+  }
+
+  async loadPlaylistDiscovery() {
+    const [sources, targets] = await Promise.all([API.playlistSources(), API.mediaTargets()]);
+    this.playlistSources = asArray(sources?.accounts || sources?.Accounts);
+    this.mediaTargets = asArray(targets?.targets || targets?.Targets);
+  }
+
+  async choosePlaylistSourceAccount(accountId) {
+    this.updatePlaylistWizard({ sourceAccountId: accountId, sourcePlaylist: null, sourceQuery: "", sourceNextCursor: "", loading: true });
+    this.sourcePlaylistResults = [];
+    try {
+      const response = await API.sourcePlaylists(accountId);
+      this.sourcePlaylistResults = asArray(response?.items || response?.Items);
+      const preferredId = this.playlistWizard.legacyHandoff?.sourcePlaylistId || this.playlistWizard.legacyHandoff?.SourcePlaylistId;
+      const preferred = preferredId
+        ? this.sourcePlaylistResults.find((item) => String(item.id || item.Id) === String(preferredId))
+        : null;
+      this.updatePlaylistWizard({ loading: false, sourcePlaylist: preferred || null, sourceNextCursor: response?.nextCursor || response?.NextCursor || "" });
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+    }
+  }
+
+  async searchSourcePlaylists() {
+    const draft = this.playlistWizard;
+    if (!draft.sourceAccountId) return;
+    this.updatePlaylistWizard({ loading: true });
+    try {
+      const response = await API.sourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim());
+      this.sourcePlaylistResults = asArray(response?.items || response?.Items);
+      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "" });
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+    }
+  }
+
+  async loadMoreSourcePlaylists() {
+    const draft = this.playlistWizard;
+    if (!draft.sourceAccountId || !draft.sourceNextCursor || draft.loading) return;
+    this.updatePlaylistWizard({ loading: true });
+    try {
+      const response = await API.sourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim(), draft.sourceNextCursor);
+      const incoming = asArray(response?.items || response?.Items);
+      const existing = new Set(this.sourcePlaylistResults.map((item) => String(item.id || item.Id)));
+      this.sourcePlaylistResults = [...this.sourcePlaylistResults, ...incoming.filter((item) => !existing.has(String(item.id || item.Id)))];
+      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "" });
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+    }
+  }
+
+  async chooseMediaTarget(identityId) {
+    this.updatePlaylistWizard({ targetIdentityId: identityId, targetPlaylist: null, targetQuery: "", targetNextCursor: "", createTarget: false, loading: true });
+    this.targetPlaylistResults = [];
+    try {
+      const response = await API.targetPlaylists(identityId);
+      this.targetPlaylistResults = asArray(response?.items || response?.Items);
+      const preferredId = this.playlistWizard.legacyHandoff?.jellyfinTargetPlaylistId || this.playlistWizard.legacyHandoff?.JellyfinTargetPlaylistId;
+      const preferred = preferredId
+        ? this.targetPlaylistResults.find((item) => String(item.id || item.Id) === String(preferredId))
+        : null;
+      this.updatePlaylistWizard({ loading: false, targetPlaylist: preferred || null, targetNextCursor: response?.nextCursor || response?.NextCursor || "" });
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+    }
+  }
+
+  async searchTargetPlaylists() {
+    const draft = this.playlistWizard;
+    if (!draft.targetIdentityId) return;
+    this.updatePlaylistWizard({ loading: true });
+    try {
+      const response = await API.targetPlaylists(draft.targetIdentityId, draft.targetQuery.trim());
+      this.targetPlaylistResults = asArray(response?.items || response?.Items);
+      this.updatePlaylistWizard({ loading: false, targetNextCursor: response?.nextCursor || response?.NextCursor || "" });
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+    }
+  }
+
+  async loadMoreTargetPlaylists() {
+    const draft = this.playlistWizard;
+    if (!draft.targetIdentityId || !draft.targetNextCursor || draft.loading) return;
+    this.updatePlaylistWizard({ loading: true });
+    try {
+      const response = await API.targetPlaylists(draft.targetIdentityId, draft.targetQuery.trim(), draft.targetNextCursor);
+      const incoming = asArray(response?.items || response?.Items);
+      const existing = new Set(this.targetPlaylistResults.map((item) => String(item.id || item.Id)));
+      this.targetPlaylistResults = [...this.targetPlaylistResults, ...incoming.filter((item) => !existing.has(String(item.id || item.Id)))];
+      this.updatePlaylistWizard({ loading: false, targetNextCursor: response?.nextCursor || response?.NextCursor || "" });
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
     }
   }
 
@@ -1591,9 +1817,9 @@ class AllstarrApp extends LitElement {
     this.appleMusicStatus = await API.appleMusicStatus();
   }
 
-  async installExtension(item) {
+  async installExtension(item, updating = false) {
     const key = item.id || item.Id || item.displayName || item.DisplayName;
-    this.extensionActions = { ...this.extensionActions, [key]: "Installing" };
+    this.extensionActions = { ...this.extensionActions, [key]: updating ? "Updating" : "Installing" };
     try {
       const installed = await API.installExtension(item);
       const packageId = installed.packageId || installed.PackageId;
@@ -1606,9 +1832,9 @@ class AllstarrApp extends LitElement {
       if (state === "reviewrequired" && packageId) {
         const extensionPackage = asArray(this.extensionPackages).find((entry) => String(entry.id || entry.Id) === String(packageId));
         if (extensionPackage) await this.loadExtensionPermissions(extensionPackage);
-        this.toast("Review permissions to finish installing");
+        this.toast(`Review permissions to finish ${updating ? "updating" : "installing"}`);
       } else {
-        this.toast("Extension installed and enabled");
+        this.toast(`Extension ${updating ? "updated" : "installed"} and enabled`);
       }
     } catch (error) {
       this.toast(error.message || "Extension installation failed", "error");
@@ -2201,7 +2427,7 @@ class AllstarrApp extends LitElement {
       kind: "Source", label: provider.name, detail: titleCase(this.providerStatus(provider)), path: "#/sources",
     }));
     const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists).map((playlist) => ({
-      kind: "Playlist", label: playlist.name, detail: `${display(playlist.trackCount, 0)} tracks`, path: "#/library/injected", playlist: playlist.name,
+      kind: "Playlist", label: playlist.name, detail: `${display(playlist.trackCount, 0)} tracks`, path: "#/library/playlists", playlist: playlist.name,
     }));
     const results = query
       ? [...routes, ...providers, ...playlists].filter((item) => `${item.label} ${item.kind} ${item.detail}`.toLowerCase().includes(query)).slice(0, 8)
@@ -2345,7 +2571,7 @@ class AllstarrApp extends LitElement {
           </div>
           <div class="card overview-card">
             <span class="overview-icon playlists">${icon("playlist", 22)}</span>
-            <div><span class="metric-label">Injected playlists</span><span class="metric-value">${display(playlists.length || spotifyImport.playlistCount || 0)}</span></div>
+            <div><span class="metric-label">Managed playlists</span><span class="metric-value">${display(playlists.length || spotifyImport.playlistCount || 0)}</span></div>
             <small class="health-line info"><span></span>Total in library</small>
           </div>
           <div class="card overview-card">
@@ -2372,7 +2598,7 @@ class AllstarrApp extends LitElement {
             </div>` : nothing}
           ` : html`<div class="readiness-empty">${icon("shield", 20)}<span>Run the check after an update, provider change, or player problem.</span></div>`}
           ${readiness?.state === "warning" ? html`<div class="actions">
-            ${readiness.affectedPlaylists?.length ? html`<button class="primary" ?disabled=${readiness.rematching} @click=${this.rematchUnavailablePlaylists}>${readiness.rematching ? "Starting rematch..." : "Rematch with available providers"}</button><button @click=${() => this.navigate("/library/injected")}>Review affected playlists</button>` : html`<button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button>`}
+            ${readiness.affectedPlaylists?.length ? html`<button class="primary" ?disabled=${readiness.rematching} @click=${this.rematchUnavailablePlaylists}>${readiness.rematching ? "Starting rematch..." : "Rematch with available providers"}</button><button @click=${() => this.navigate("/library/playlists")}>Review affected playlists</button>` : html`<button class="primary" @click=${() => this.navigate("/sources")}>Fix source connections</button>`}
             <button @click=${() => this.navigate("/settings")}>Open detailed diagnostics</button>
           </div>` : nothing}
         </div>
@@ -2420,7 +2646,7 @@ class AllstarrApp extends LitElement {
   renderDashboardActivity() {
     const items = asArray(this.dashboardActivity).slice(0, 8);
     return html`<div class="panel dashboard-activity">
-      <div class="section-heading"><div><h3>Activity feed</h3><p>Recent provider checks and background work.</p></div><button class="ghost" @click=${() => this.navigate("/activity")}>View activity</button></div>
+      <div class="section-heading"><div><h3>Event log</h3><p>Recent matching, playlist, provider, and administrative events.</p></div><button class="ghost" @click=${() => this.navigate("/activity")}>View event log</button></div>
       ${items.length ? html`<div class="activity-table" role="table" aria-label="Recent activity">
         <div class="activity-table-head" role="row"><span>Time</span><span>Source</span><span>Event</span><span>Details</span></div>
         ${items.map((item) => html`<div class="activity-table-row" role="row">
@@ -2435,11 +2661,11 @@ class AllstarrApp extends LitElement {
 
   renderHomeLibraryOverview(playlists) {
     return html`<div class="panel home-library-overview">
-      <div class="section-heading"><div><h3>Library overview</h3><p>Your recently synchronized injected playlists.</p></div><button @click=${() => this.navigate("/library/injected")}>View all playlists ${icon("chevronRight", 16)}</button></div>
+      <div class="section-heading"><div><h3>Library overview</h3><p>Your recently synchronized playlists.</p></div><button @click=${() => this.navigate("/library/playlists")}>View all playlists ${icon("chevronRight", 16)}</button></div>
       ${playlists.length ? html`<div class="compact-playlist-table">
         <div class="compact-playlist-head"><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Provider</span><span>Last sync</span><span>Status</span></div>
-        ${playlists.slice(0, 6).map((playlist) => html`<button class="compact-playlist-row" @click=${() => { this.navigate("/library/injected"); window.setTimeout(() => this.openInjectedPlaylist(playlist.name), 0); }}>
-          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span>
+        ${playlists.slice(0, 6).map((playlist) => html`<button class="compact-playlist-row" @click=${() => { this.navigate("/library/playlists"); window.setTimeout(() => this.openInjectedPlaylist(playlist.name), 0); }}>
+          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Managed playlist"}</small></span></span>
           <span>${display(playlist.trackCount, 0)}</span>
           <span>${display(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0), 0)} <small>${display(playlist.matchPercent, 0)}%</small></span>
           <span class="provider-row-label">${playlist.sourceProvider ? this.renderProviderLogo(playlist.sourceProvider, "tiny") : icon("warning", 15)}<span>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Unknown source"}</span></span>
@@ -2562,29 +2788,27 @@ class AllstarrApp extends LitElement {
 
   renderLibrary() {
     const [, requestedSub] = routeParts(this.route);
-    const sub = requestedSub || "link";
+    const sub = !requestedSub || ["playlists", "link", "injected", "external"].includes(requestedSub)
+      ? "playlists"
+      : requestedSub;
     return html`
       <section class="view-stack" data-testid="library-workspace">
         ${pageHeader("Library", "Match provider playlists to your local library, keep their order, and choose where they show up.")}
         ${this.renderLibraryNav(sub)}
-        ${sub === "link" ? this.renderLinkPlaylists() :
-          sub === "injected" ? this.renderInjectedPlaylists() :
+        ${sub === "playlists" ? this.renderPlaylistsWorkspace() :
           sub === "mappings" ? this.renderMappings() :
           sub === "missing" ? this.renderMissingTracks() :
           sub === "migration" ? this.renderSongMigration() :
           sub === "kept" ? this.renderKeptDownloads() :
-          sub === "external" ? this.renderExternalPlaylistExplorer() :
-          this.renderLinkPlaylists()}
+          this.renderPlaylistsWorkspace()}
       </section>
     `;
   }
 
   renderLibraryNav(active) {
     const items = [
-      ["link", "Playlist links", "playlist"],
-      ["injected", "Injected", "library"],
+      ["playlists", "Playlists", "playlist"],
       ["mappings", "Mappings", "sources"],
-    ["external", "External playlists", "playlist"],
       ["kept", "Kept", "check"],
     ];
     return html`
@@ -2597,17 +2821,13 @@ class AllstarrApp extends LitElement {
   renderLibraryOverview() {
     return html`
       <div class="grid">
-        <button class="card" @click=${() => this.navigate("/library/link")}>
-          <h3>Link playlists</h3>
-          <p class="muted">Connect provider playlists to Jellyfin or Navidrome using songs already in your local library.</p>
+        <button class="card" @click=${() => this.navigate("/library/playlists")}>
+          <h3>Playlists</h3>
+          <p class="muted">Bring a provider playlist into Jellyfin or Navidrome and keep it synchronized.</p>
         </button>
         <button class="card" @click=${() => this.navigate("/library/mappings")}>
           <h3>Track mappings</h3>
           <p class="muted">Review the canonical Postgres track map from any source provider to local and playable provider identities.</p>
-        </button>
-        <button class="card" @click=${() => this.navigate("/library/external")}>
-          <h3>External playlists</h3>
-          <p class="muted">Browse playlists from playback-capable providers such as Deezer, Qobuz, and Apple Music.</p>
         </button>
         <button class="card" @click=${() => this.navigate("/library/kept")}>
           <h3>Kept downloads</h3>
@@ -2617,50 +2837,215 @@ class AllstarrApp extends LitElement {
     `;
   }
 
+  renderPlaylistsWorkspace() {
+    const imported = asArray(this.playlists);
+    return html`
+      ${this.renderLinkPlaylists()}
+      ${imported.length ? html`<section class="legacy-playlist-section">
+        <div class="section-heading"><div><span class="eyebrow">Imported configuration</span><h3>Existing playlists</h3><p>These playlists were created by the earlier injected-playlist workflow. They remain fully manageable while you move them into the unified workflow.</p></div></div>
+        ${this.renderInjectedPlaylists()}
+      </section>` : nothing}
+    `;
+  }
+
   renderLinkPlaylists() {
     const links = asArray(this.playlistLinks);
     return html`
       <div class="playlist-link-layout">
         <div class="view-stack">
-          <form class="panel form-stack" aria-label="Create playlist link" @submit=${this.createPlaylistLink}>
-            <div><h3>New playlist link</h3><p class="muted">Choose exactly one source provider account for this playlist. Allstarr can still resolve each track through any enabled playback provider and never moves local music files.</p></div>
-            <div class="playlist-link-form-grid">
-              <div class="form-row"><label for="playlist-provider-account">Provider account</label><select id="playlist-provider-account" name="providerAccountId" required><option value="">Choose an account</option>${this.providerAccounts.map((account) => html`<option value=${account.id || account.Id}>${providerDisplayName(account.providerId || account.ProviderId, this.schema?.providers)} · ${account.displayName || account.DisplayName || "Account"}</option>`)}</select></div>
-              <div class="form-row"><label for="playlist-source-id">Source playlist ID</label><input id="playlist-source-id" name="sourcePlaylistId" required autocomplete="off" placeholder="Playlist ID or stable provider reference"></div>
-              <div class="form-row"><label for="playlist-library-scope">Library scope ID</label><input id="playlist-library-scope" name="libraryScopeId" required autocomplete="off" placeholder="Local music library ID"></div>
-              <div class="form-row"><label for="playlist-target-backend">Target</label><select id="playlist-target-backend" name="targetProtocol" required @change=${(event) => { event.currentTarget.form.querySelector("[data-backend-credentials]").hidden = event.target.value !== "subsonic"; }}><option value="jellyfin">Jellyfin</option><option value="subsonic">Navidrome / Subsonic</option></select></div>
-              <div class="form-row"><label for="playlist-target-instance">Backend instance ID</label><input id="playlist-target-instance" name="targetBackendInstanceId" required autocomplete="off"></div>
-              <div class="form-row"><label for="playlist-target-id">Existing target playlist ID <span class="muted">(optional)</span></label><input id="playlist-target-id" name="targetPlaylistId" autocomplete="off"></div>
-              <div class="form-row" data-backend-credentials hidden><label for="playlist-target-username">Navidrome / Subsonic username</label><input id="playlist-target-username" name="targetUsername" autocomplete="username"><label for="playlist-target-password">Password</label><input id="playlist-target-password" name="targetPassword" type="password" autocomplete="new-password"><p class="muted">Stored encrypted when you submit. The password is never shown again.</p></div>
-              <div class="form-row"><label for="playlist-mode">How it should appear</label><select id="playlist-mode" name="mode"><option value="virtual">Virtual</option><option value="materialized">Filled in locally</option><option value="hybrid">Both</option></select></div>
-              <div class="form-row"><label for="playlist-write-mode">Update behavior</label><select id="playlist-write-mode" name="materializationMode"><option value="reconcile">Keep in sync</option><option value="recreate">Recreate each run</option></select></div>
-              <div class="form-row"><label for="playlist-trigger">Run</label><select id="playlist-trigger" name="trigger" @change=${(event) => { event.currentTarget.form.querySelector("[data-schedule]").hidden = event.target.value !== "scheduled"; }}><option value="manual">Manually</option><option value="scheduled">On a schedule</option></select></div>
-              <div class="form-row" data-schedule hidden><label for="playlist-cron">Schedule (cron)</label><input id="playlist-cron" name="cronExpression" value="0 8 * * *" inputmode="text"><label for="playlist-timezone">Time zone</label><input id="playlist-timezone" name="timeZoneId" value=${Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"}></div>
-            </div>
-            <div class="playlist-link-options" role="group" aria-label="Playlist update rules"><label class="inline-check"><input type="checkbox" name="syncName" checked> Copy name</label><label class="inline-check"><input type="checkbox" name="syncDescription" checked> Copy description</label><label class="inline-check"><input type="checkbox" name="syncArtwork" checked> Copy artwork</label><label class="inline-check"><input type="checkbox" name="preserveManualEntries" checked> Keep manually added songs</label><label class="inline-check"><input type="checkbox" name="mirrorStaleEntries"> Remove stale synced songs</label></div>
-            <div class="actions"><button class="primary" type="submit">Create link</button><button type="button" @click=${() => this.loadPlaylistLinks()}>Refresh</button></div>
-          </form>
+          ${this.renderPlaylistLinkWizard()}
 
           <div class="table-wrap"><table><thead><tr><th>Playlist</th><th>Source</th><th>Target</th><th>Mode</th><th>Last run</th><th></th></tr></thead><tbody>
-            ${links.length ? links.map((link) => this.renderPlaylistLinkRow(link)) : html`<tr><td colspan="6"><div class="empty">No playlist links yet.</div></td></tr>`}
+            ${links.length ? links.map((link) => this.renderPlaylistLinkRow(link)) : html`<tr><td colspan="6"><div class="empty">No synchronized playlists yet.</div></td></tr>`}
           </tbody></table></div>
         </div>
       </div>
-      ${this.renderPlaylistLinkPreview()}`;
+      ${this.renderPlaylistLinkPreview()}${this.renderPlaylistBehaviorDialog()}`;
+  }
+
+  renderPlaylistLinkWizard() {
+    const draft = this.playlistWizard;
+    const steps = ["Source", "Target", "Behavior", "Review"];
+    return html`<section class="panel playlist-link-wizard" aria-labelledby="playlist-wizard-title">
+      <header class="section-heading"><div><h3 id="playlist-wizard-title">Add a playlist</h3><p>Choose a source playlist and where it should appear. Allstarr handles the connection and matching.</p></div></header>
+      <ol class="wizard-steps" aria-label="Playlist link progress">
+        ${steps.map((label, index) => html`<li class=${index === draft.step ? "current" : index < draft.step ? "complete" : ""} aria-current=${index === draft.step ? "step" : nothing}><span>${index + 1}</span>${label}</li>`)}
+      </ol>
+      ${draft.error ? html`<div class="inline-alert error" role="alert">${draft.error}</div>` : nothing}
+      <div class="wizard-body">
+        ${draft.step === 0 ? this.renderPlaylistSourceStep() :
+          draft.step === 1 ? this.renderPlaylistTargetStep() :
+          draft.step === 2 ? this.renderPlaylistBehaviorStep() :
+          this.renderPlaylistReviewStep()}
+      </div>
+      <footer class="actions wizard-actions">
+        ${draft.step > 0 ? html`<button @click=${() => this.updatePlaylistWizard({ step: draft.step - 1 })}>Back</button>` : html`<button class="ghost" @click=${() => { this.playlistWizard = this.newPlaylistWizardDraft(); this.sourcePlaylistResults = []; this.targetPlaylistResults = []; }}>Reset</button>`}
+        <span class="action-spacer"></span>
+        ${draft.step < 3 ? html`<button class="primary" ?disabled=${!this.playlistWizardStepComplete()} @click=${() => this.updatePlaylistWizard({ step: draft.step + 1 })}>Continue</button>` : html`<button class="primary" ?disabled=${draft.loading} @click=${() => this.createPlaylistLink(false)}>Add playlist</button><button ?disabled=${draft.loading} @click=${() => this.createPlaylistLink(true)}>Add and sync now</button>`}
+      </footer>
+    </section>`;
+  }
+
+  renderPlaylistSourceStep() {
+    const draft = this.playlistWizard;
+    return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose the source playlist</h4><p class="muted">Only connected accounts that can read playlists are shown.</p></div>
+      ${draft.legacyHandoff ? html`<div class="callout"><strong>Imported from Allstarr 2.x</strong><p>Choose the Spotify account that owns <strong>${draft.legacyHandoff.name || draft.legacyHandoff.Name}</strong>. Allstarr will select source ID <span class="mono">${draft.legacyHandoff.sourcePlaylistId || draft.legacyHandoff.SourcePlaylistId}</span> when that account can see it.</p></div>` : nothing}
+      <div class="choice-grid account-choice-grid">
+        ${this.playlistSources.map((account) => {
+          const id = String(account.id || account.Id);
+          const provider = account.providerId || account.ProviderId;
+          return html`<button class="choice-card ${draft.sourceAccountId === id ? "selected" : ""}" @click=${() => this.choosePlaylistSourceAccount(id)}><span class="provider-choice-icon">${this.renderProviderLogo(provider, "tiny")}</span><span><strong>${account.displayName || account.DisplayName}</strong><small>${providerDisplayName(provider, this.schema?.providers)}</small></span></button>`;
+        })}
+      </div>
+      ${draft.sourceAccountId ? html`<div class="picker-search"><input aria-label="Search source playlists" placeholder="Search playlists" .value=${draft.sourceQuery} @input=${(event) => this.updatePlaylistWizard({ sourceQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchSourcePlaylists(); }}><button @click=${() => this.searchSourcePlaylists()}>Search</button></div>${this.renderPlaylistChoices(this.sourcePlaylistResults, draft.sourcePlaylist, (playlist) => this.updatePlaylistWizard({ sourcePlaylist: playlist }), "source")}${draft.sourceNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreSourcePlaylists()}>Load more playlists</button>` : nothing}` : nothing}
+    </div>`;
+  }
+
+  renderPlaylistTargetStep() {
+    const draft = this.playlistWizard;
+    return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose where it should appear</h4><p class="muted">Credentials and backend IDs come from your connected media-server account.</p></div>
+      ${draft.legacyHandoff?.jellyfinTargetPlaylistId || draft.legacyHandoff?.JellyfinTargetPlaylistId ? html`<div class="callout"><strong>Existing Jellyfin target found</strong><p>After you choose the correct Jellyfin connection, Allstarr will look for target playlist <span class="mono">${draft.legacyHandoff.jellyfinTargetPlaylistId || draft.legacyHandoff.JellyfinTargetPlaylistId}</span>.</p></div>` : nothing}
+      <div class="choice-grid account-choice-grid">
+        ${this.mediaTargets.map((target) => {
+          const id = String(target.id || target.Id);
+          const protocol = target.protocol || target.Protocol;
+          return html`<button class="choice-card ${draft.targetIdentityId === id ? "selected" : ""}" @click=${() => this.chooseMediaTarget(id)}><span class="provider-choice-icon">${protocol === "jellyfin" ? this.renderProviderLogo("jellyfin", "tiny") : icon("library", 22)}</span><span><strong>${target.displayName || target.DisplayName || (protocol === "jellyfin" ? "Jellyfin" : "Navidrome / Subsonic")}</strong><small>${protocol === "jellyfin" ? "Jellyfin" : "Navidrome / Subsonic"}</small></span></button>`;
+        })}
+      </div>
+      ${draft.targetIdentityId ? html`<div class="picker-search"><input aria-label="Search target playlists" placeholder="Search existing playlists" .value=${draft.targetQuery} @input=${(event) => this.updatePlaylistWizard({ targetQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchTargetPlaylists(); }}><button @click=${() => this.searchTargetPlaylists()}>Search</button></div><button class="choice-card create-choice ${draft.createTarget ? "selected" : ""}" @click=${() => this.updatePlaylistWizard({ createTarget: true, targetPlaylist: null })}>${icon("plus")}<span><strong>Create a new playlist</strong><small>Use the source playlist name and artwork</small></span></button>${this.renderPlaylistChoices(this.targetPlaylistResults, draft.targetPlaylist, (playlist) => this.updatePlaylistWizard({ targetPlaylist: playlist, createTarget: false }), "target")}${draft.targetNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreTargetPlaylists()}>Load more playlists</button>` : nothing}` : nothing}
+    </div>`;
+  }
+
+  renderPlaylistChoices(items, selected, choose, side) {
+    if (this.playlistWizard.loading) return html`<div class="empty">Loading playlists…</div>`;
+    if (!items.length) return html`<div class="empty">No playlists found. Try a search or choose another account.</div>`;
+    return html`<div class="playlist-choice-grid">${items.map((playlist) => {
+      const id = String(playlist.id || playlist.Id);
+      return html`<button class="playlist-choice ${String(selected?.id || selected?.Id) === id ? "selected" : ""}" @click=${() => choose(playlist)}>${this.renderPlaylistArtwork(playlist, side)}<span><strong>${playlist.name || playlist.Name}</strong><small>${display(playlist.owner || playlist.Owner, `${display(playlist.trackCount || playlist.TrackCount, 0)} tracks`)}</small></span></button>`;
+    })}</div>`;
+  }
+
+  playlistArtworkUrl(playlist) {
+    return playlist?.artworkUrl || playlist?.ArtworkUrl
+      || playlist?.imageUrl || playlist?.ImageUrl
+      || playlist?.iconUrl || playlist?.IconUrl
+      || playlist?.coverUrl || playlist?.CoverUrl
+      || "";
+  }
+
+  renderPlaylistArtwork(playlist, side, large = false, providerOverride = "") {
+    const artwork = this.playlistArtworkUrl(playlist);
+    if (artwork) return html`<img src=${artwork} alt="" loading="lazy">`;
+    const draft = this.playlistWizard;
+    const source = this.playlistSources.find((item) => String(item.id || item.Id) === draft.sourceAccountId);
+    const target = this.mediaTargets.find((item) => String(item.id || item.Id) === draft.targetIdentityId);
+    const provider = providerOverride || (side === "source"
+      ? source?.providerId || source?.ProviderId
+      : target?.protocol || target?.Protocol);
+    const mark = String(provider).toLowerCase() === "jellyfin"
+      ? this.renderProviderLogo("jellyfin", large ? "hero" : "tiny")
+      : side === "source" && provider
+        ? this.renderProviderLogo(provider, large ? "hero" : "tiny")
+        : icon("library", large ? 28 : 20);
+    return html`<span class="playlist-art-fallback ${large ? "large" : ""}">${mark}</span>`;
+  }
+
+  renderPlaylistBehaviorStep() {
+    const draft = this.playlistWizard;
+    const check = (key, label) => html`<label class="inline-check"><input type="checkbox" .checked=${draft[key]} @change=${(event) => this.updatePlaylistWizard({ [key]: event.target.checked })}> ${label}</label>`;
+    return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose synchronization behavior</h4><p class="muted">These settings can be changed after the link is created.</p></div><div class="playlist-link-form-grid">
+      <div class="form-row"><label>Playback behavior</label><select .value=${draft.mode} @change=${(event) => this.updatePlaylistWizard({ mode: event.target.value })}><option value="virtual">Stream matched tracks</option><option value="materialized">Use local tracks only</option><option value="hybrid">Both</option></select></div>
+      <div class="form-row"><label>Update behavior</label><select .value=${draft.materializationMode} @change=${(event) => this.updatePlaylistWizard({ materializationMode: event.target.value })}><option value="reconcile">Keep synchronized</option><option value="recreate">Rebuild target each run</option></select></div>
+      <div class="form-row"><label>Run</label><select .value=${draft.trigger} @change=${(event) => this.updatePlaylistWizard({ trigger: event.target.value })}><option value="manual">Manually</option><option value="scheduled">On a schedule</option></select></div>
+      ${draft.trigger === "scheduled" ? html`<div class="form-row"><label>Schedule (cron)</label><input .value=${draft.cronExpression} @input=${(event) => this.updatePlaylistWizard({ cronExpression: event.target.value })}><label>Time zone</label><input .value=${draft.timeZoneId} @input=${(event) => this.updatePlaylistWizard({ timeZoneId: event.target.value })}></div>` : nothing}
+    </div><div class="playlist-link-options">${check("syncName", "Copy name")}${check("syncDescription", "Copy description")}${check("syncArtwork", "Copy artwork")}${check("preserveManualEntries", "Keep manually added songs")}${check("mirrorStaleEntries", "Remove stale synchronized songs")}</div></div>`;
+  }
+
+  async runPlaylistDryRunPreview() {
+    if (this.playlistDryRunBusy) return;
+    const draft = this.playlistWizard;
+    const account = this.playlistSources.find((item) => String(item.id || item.Id) === draft.sourceAccountId);
+    const target = this.mediaTargets.find((item) => String(item.id || item.Id) === draft.targetIdentityId);
+    if (!account || !target || !draft.sourcePlaylist || (!draft.createTarget && !draft.targetPlaylist)) {
+      this.toast("Choose both a source and target playlist before previewing", "error");
+      return;
+    }
+    const protocol = target.protocol || target.Protocol;
+    const backendInstanceId = target.backendInstanceId || target.BackendInstanceId;
+    this.playlistDryRunBusy = true;
+    this.playlistDryRunPreview = null;
+    this.requestUpdate();
+    try {
+      this.playlistDryRunPreview = await requestJson("/api/admin/playlist-preview", jsonBody({
+        providerAccountId: account.id || account.Id,
+        playlistId: draft.sourcePlaylist.id || draft.sourcePlaylist.Id,
+        libraryScopeId: account.libraryScopeId || account.LibraryScopeId || `${protocol}:${backendInstanceId}`,
+        targetPlaylistId: draft.createTarget ? null : draft.targetPlaylist.id || draft.targetPlaylist.Id,
+      }), "Failed to preview playlist");
+    } catch (error) {
+      this.toast(error?.message || "Failed to preview playlist", "error");
+    } finally {
+      this.playlistDryRunBusy = false;
+      this.requestUpdate();
+    }
+  }
+
+  renderPlaylistDryRunResult() {
+    const preview = this.playlistDryRunPreview;
+    if (!preview) return nothing;
+    const summary = preview.summary || preview.Summary || {};
+    const entries = asArray(preview.entries || preview.Entries);
+    return html`<section class="playlist-dry-run" aria-live="polite">
+      <div class="playlist-dry-run-heading"><div><span class="eyebrow">No-write preview</span><h4>${preview.source?.name || preview.Source?.Name || "Playlist preview"}</h4></div><span class="chip success">No changes made</span></div>
+      <div class="playlist-dry-run-metrics">
+        ${[["Tracks", summary.total], ["Local matches", summary.localMatches], ["Provider matches", summary.providerMatches], ["Suggested", summary.suggested], ["Ambiguous", summary.ambiguous], ["Unresolved", summary.unresolved], ["Estimated adds", summary.estimatedAdds]].map(([label, value]) => html`<div><strong>${value ?? "-"}</strong><span>${label}</span></div>`)}
+      </div>
+      ${summary.providerMatches == null ? html`<p class="playlist-dry-run-note">Provider fallback availability is evaluated separately and is not counted as a local match.</p>` : nothing}
+      ${entries.length ? html`<div class="playlist-dry-run-entries" role="list" aria-label="Previewed track decisions">
+        ${entries.map((entry) => html`<div role="listitem"><span class="playlist-dry-run-position">${Number(entry.position ?? 0) + 1}</span><div><strong>${entry.title || "Unknown track"}</strong><small>${asArray(entry.artists).join(", ") || "Unknown artist"}</small></div><span class=${`chip ${entry.state || "unresolved"}`}>${titleCase(entry.state || "unresolved")}</span></div>`)}
+      </div>${preview.entriesTruncated ? html`<p class="playlist-dry-run-note">Showing the first ${preview.returnedEntries} decisions.</p>` : nothing}` : nothing}
+    </section>`;
+  }
+
+  renderPlaylistReviewStep() {
+    const draft = this.playlistWizard;
+    const sourceAccount = this.playlistSources.find((item) => String(item.id || item.Id) === draft.sourceAccountId);
+    const target = this.mediaTargets.find((item) => String(item.id || item.Id) === draft.targetIdentityId);
+    return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Review the playlist</h4><p class="muted">Allstarr will match in your configured provider order and preserve source ordering.</p></div><div class="playlist-review-pair">
+      ${this.renderPlaylistReviewCard("Source", draft.sourcePlaylist, sourceAccount?.providerId || sourceAccount?.ProviderId, "source")}
+      <span class="review-arrow">→</span>
+      ${this.renderPlaylistReviewCard("Target", draft.createTarget ? { ...draft.sourcePlaylist, name: draft.sourcePlaylist?.name || draft.sourcePlaylist?.Name } : draft.targetPlaylist, target?.protocol || target?.Protocol, "target")}
+    </div><dl class="review-facts"><div><dt>Playback</dt><dd>${draft.mode === "virtual" ? "Stream matched tracks" : draft.mode === "materialized" ? "Local tracks only" : "Streaming and local"}</dd></div><div><dt>Updates</dt><dd>${draft.materializationMode === "recreate" ? "Rebuild target" : "Keep synchronized"}</dd></div><div><dt>Run</dt><dd>${draft.trigger === "scheduled" ? `${draft.cronExpression} · ${draft.timeZoneId}` : "Manually"}</dd></div></dl>
+      <div class="playlist-preview-actions"><button class="secondary" ?disabled=${this.playlistDryRunBusy} @click=${() => this.runPlaylistDryRunPreview()}>${this.playlistDryRunBusy ? "Previewing..." : "Run no-write preview"}</button></div>
+      ${this.renderPlaylistDryRunResult()}
+    </div>`;
+  }
+
+  renderPlaylistReviewCard(label, playlist, provider, side) {
+    return html`<article class="playlist-review-card"><span class="eyebrow">${label}</span>${this.renderPlaylistArtwork(playlist, side, true, provider)}<div><strong>${playlist?.name || playlist?.Name || "New playlist"}</strong><small>${providerDisplayName(provider || "media server", this.schema?.providers)}</small></div></article>`;
+  }
+
+  playlistWizardStepComplete() {
+    const draft = this.playlistWizard;
+    if (draft.step === 0) return Boolean(draft.sourceAccountId && draft.sourcePlaylist);
+    if (draft.step === 1) return Boolean(draft.targetIdentityId && (draft.createTarget || draft.targetPlaylist));
+    if (draft.step === 2) return draft.trigger !== "scheduled" || Boolean(draft.cronExpression.trim() && draft.timeZoneId.trim());
+    return true;
   }
 
   renderPlaylistLinkRow(link) {
     const id = link.id || link.Id;
     const provider = link.provider || link.Provider || link.providerId || link.ProviderId || "provider";
     const target = link.targetProtocol || link.TargetProtocol || link.targetBackendType || link.TargetBackendType || link.backendType || link.BackendType;
-    const state = link.lastRunState || link.LastRunState || link.state || link.State || "ready";
+    const enabled = Boolean(link.enabled ?? link.Enabled ?? true);
+    const state = enabled ? link.lastRunState || link.LastRunState || link.state || link.State || "ready" : "paused";
     return html`<tr>
-      <td><strong>${link.name || link.Name || "Untitled playlist"}</strong><div class="muted mono">${display(id)}</div></td>
-      <td>${providerDisplayName(provider, this.schema?.providers)}<div class="muted mono">${display(link.sourcePlaylistId || link.SourcePlaylistId)}</div></td>
+      <td><div class="provider-brand">${this.renderPlaylistArtwork(link, "source", false, provider)}<div><strong>${link.name || link.Name || "Playlist"}</strong>${link.description || link.Description ? html`<small>${link.description || link.Description}</small>` : nothing}</div></div></td>
+      <td>${providerDisplayName(provider, this.schema?.providers)}</td>
       <td>${String(target).toLowerCase() === "subsonic" ? "Navidrome / Subsonic" : display(target)}</td>
       <td>${titleCase(link.mode || link.Mode)} · ${titleCase(link.materializationMode || link.MaterializationMode)}</td>
       <td><span class="status-chip ${String(state).toLowerCase()}">${titleCase(state)}</span><div class="muted">${formatDate(link.lastRunAt || link.LastRunAt)}</div></td>
-      <td class="row-actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button><button class="primary" @click=${() => this.runPlaylistLink(id)}>Run now</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}</td>
+      <td class="row-actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
     </tr>`;
   }
 
@@ -2698,36 +3083,49 @@ class AllstarrApp extends LitElement {
     </li>`;
   }
 
-  createPlaylistLink = async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const account = this.providerAccounts.find((item) => String(item.id || item.Id) === String(data.get("providerAccountId")));
-    const payload = {
-      providerAccountId: data.get("providerAccountId"), sourceProviderId: String(account?.providerId || account?.ProviderId || "").toLowerCase(),
-      sourcePlaylistId: data.get("sourcePlaylistId").trim(), libraryScopeId: data.get("libraryScopeId").trim(),
-      targetProtocol: data.get("targetProtocol"), targetBackendInstanceId: data.get("targetBackendInstanceId").trim(),
-      mode: data.get("mode"), materializationMode: data.get("materializationMode"),
-      targetPlaylistId: data.get("targetPlaylistId").trim() || null,
-      targetCredentialReferenceId: null,
-      mirrorStaleEntries: data.get("mirrorStaleEntries") === "on", preserveManualEntries: data.get("preserveManualEntries") === "on",
-      syncName: data.get("syncName") === "on", syncDescription: data.get("syncDescription") === "on", syncArtwork: data.get("syncArtwork") === "on",
-    };
-    if (payload.targetProtocol === "subsonic") {
-      const username = String(data.get("targetUsername") || "").trim();
-      const password = String(data.get("targetPassword") || "");
-      if (!username || !password) throw new Error("Navidrome / Subsonic username and password are required");
-      const credential = await API.createPlaylistBackendCredential({ targetProtocol: "subsonic", username, password });
-      payload.targetCredentialReferenceId = credential.referenceId || credential.ReferenceId;
+  createPlaylistLink = async (runNow = false) => {
+    const draft = this.playlistWizard;
+    const account = this.playlistSources.find((item) => String(item.id || item.Id) === draft.sourceAccountId);
+    const target = this.mediaTargets.find((item) => String(item.id || item.Id) === draft.targetIdentityId);
+    if (!account || !target || !draft.sourcePlaylist || (!draft.createTarget && !draft.targetPlaylist)) {
+      this.playlistWizard = { ...draft, error: "Choose both a source and target playlist before creating the link." };
+      return;
     }
-    const created = await API.createPlaylistLink(payload);
-    const linkId = created.id || created.Id || created.playlistLink?.id || created.PlaylistLink?.Id;
-    if (data.get("trigger") === "scheduled" && linkId) {
-      await API.createPlaylistSchedule(linkId, { cronExpression: data.get("cronExpression").trim(), timeZoneId: data.get("timeZoneId").trim(), overlapPolicy: "skip", misfirePolicy: "runOnce", enabled: true });
+    this.updatePlaylistWizard({ loading: true });
+    try {
+      const protocol = target.protocol || target.Protocol;
+      const backendInstanceId = target.backendInstanceId || target.BackendInstanceId;
+      const payload = {
+        providerAccountId: account.id || account.Id,
+        sourceProviderId: String(account.providerId || account.ProviderId).toLowerCase(),
+        sourcePlaylistId: draft.sourcePlaylist.id || draft.sourcePlaylist.Id,
+        libraryScopeId: account.libraryScopeId || account.LibraryScopeId || `${protocol}:${backendInstanceId}`,
+        targetProtocol: protocol,
+        targetBackendInstanceId: backendInstanceId,
+        mode: draft.mode,
+        materializationMode: draft.materializationMode,
+        targetPlaylistId: draft.createTarget ? null : draft.targetPlaylist.id || draft.targetPlaylist.Id,
+        targetCredentialReferenceId: target.credentialReferenceId || target.CredentialReferenceId || null,
+        mirrorStaleEntries: draft.mirrorStaleEntries,
+        preserveManualEntries: draft.preserveManualEntries,
+        syncName: draft.syncName,
+        syncDescription: draft.syncDescription,
+        syncArtwork: draft.syncArtwork,
+      };
+      const created = await API.createPlaylistLink(payload);
+      const linkId = created.id || created.Id || created.playlistLink?.id || created.PlaylistLink?.Id;
+      if (draft.trigger === "scheduled" && linkId) {
+        await API.createPlaylistSchedule(linkId, { cronExpression: draft.cronExpression.trim(), timeZoneId: draft.timeZoneId.trim(), overlapPolicy: "skip", misfirePolicy: "runOnce", enabled: true });
+      }
+      if (runNow && linkId) await API.runPlaylistLink(linkId);
+      this.playlistWizard = this.newPlaylistWizardDraft();
+      this.sourcePlaylistResults = [];
+      this.targetPlaylistResults = [];
+      await this.loadPlaylistLinks();
+      this.toast(runNow ? "Playlist link created and sync queued" : "Playlist link created");
+    } catch (error) {
+      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
     }
-    form.reset();
-    await this.loadPlaylistLinks();
-    this.toast("Playlist link created");
   };
 
   async savePlaylistBackendCredential(link, event) {
@@ -2758,6 +3156,89 @@ class AllstarrApp extends LitElement {
     const response = await API.runPlaylistLink(id);
     await this.loadPlaylistLinks();
     this.toast(response?.message || response?.Message || "Playlist run queued");
+  }
+
+  async deletePlaylistLink(link) {
+    const id = link.id || link.Id;
+    const name = link.name || link.Name || "this playlist";
+    if (!id || !window.confirm(`Remove ${name}? This stops future synchronization and removes its Allstarr history. The target playlist and reusable track matches are kept.`)) return;
+    try {
+      await API.deletePlaylistLink(id, link.revision ?? link.Revision ?? 0);
+      if (String(this.selectedPlaylistLinkId) === String(id)) {
+        this.selectedPlaylistLinkId = "";
+        this.playlistLinkPreview = null;
+      }
+      await this.loadPlaylistLinks();
+      this.toast("Playlist removed; target playlist kept");
+    } catch (error) {
+      await this.loadPlaylistLinks().catch(() => {});
+      this.toast(error.message || "Playlist could not be removed", "error");
+    }
+  }
+
+  async togglePlaylistLink(link) {
+    const id = link.id || link.Id;
+    const enabled = Boolean(link.enabled ?? link.Enabled ?? true);
+    if (!id) return;
+    try {
+      await API.setPlaylistLinkEnabled(id, link.revision ?? link.Revision ?? 0, !enabled);
+      await this.loadPlaylistLinks();
+      this.toast(enabled ? "Playlist paused" : "Playlist resumed");
+    } catch (error) {
+      await this.loadPlaylistLinks().catch(() => {});
+      this.toast(error.message || "Playlist state could not be updated", "error");
+    }
+  }
+
+  async savePlaylistBehavior(event) {
+    event.preventDefault();
+    const link = this.editingPlaylistLink;
+    if (!link) return;
+    const data = new FormData(event.currentTarget);
+    try {
+      await API.updatePlaylistLink(link.id || link.Id, {
+        expectedRevision: link.revision ?? link.Revision ?? 0,
+        mode: String(data.get("mode") || "virtual"),
+        materializationMode: String(data.get("materializationMode") || "reconcile"),
+        scheduleId: link.scheduleId || link.ScheduleId || null,
+        targetPlaylistId: link.targetPlaylistId || link.TargetPlaylistId || null,
+        targetCredentialReferenceId: link.targetCredentialReferenceId || link.TargetCredentialReferenceId || null,
+        mirrorStaleEntries: data.has("mirrorStaleEntries"),
+        preserveManualEntries: data.has("preserveManualEntries"),
+        syncName: data.has("syncName"),
+        syncDescription: data.has("syncDescription"),
+        syncArtwork: data.has("syncArtwork"),
+        ruleVersion: link.ruleVersion || link.RuleVersion || "playlist-rules-v1",
+        policyVersion: link.policyVersion || link.PolicyVersion || "playlist-policy-v1",
+      });
+      this.editingPlaylistLink = null;
+      await this.loadPlaylistLinks();
+      this.toast("Playlist behavior updated");
+    } catch (error) {
+      await this.loadPlaylistLinks().catch(() => {});
+      this.toast(error.message || "Playlist behavior could not be updated", "error");
+    }
+  }
+
+  renderPlaylistBehaviorDialog() {
+    const link = this.editingPlaylistLink;
+    if (!link) return nothing;
+    const close = () => { this.editingPlaylistLink = null; };
+    const mode = String(link.mode || link.Mode || "virtual").toLowerCase();
+    const materialization = String(link.materializationMode || link.MaterializationMode || "reconcile").toLowerCase();
+    return html`<div class="modal-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
+      <section class="panel dialog" role="dialog" aria-modal="true" aria-labelledby="playlist-behavior-title" tabindex="-1">
+        <div class="dialog-header"><div><h3 id="playlist-behavior-title">Playlist behavior</h3><p>${link.name || link.Name || "Playlist"}</p></div><button class="icon-button ghost" type="button" aria-label="Close behavior editor" @click=${close}>${icon("close")}</button></div>
+        <form class="config-grid" @submit=${(event) => this.savePlaylistBehavior(event)}>
+          <label class="config-field"><span>Playback</span><select name="mode" .value=${mode}><option value="virtual">Stream matched tracks</option><option value="hybrid">Streaming and local tracks</option><option value="materialized">Local tracks only</option></select></label>
+          <label class="config-field"><span>Target updates</span><select name="materializationMode" .value=${materialization}><option value="reconcile">Keep synchronized</option><option value="recreate">Rebuild target each run</option></select></label>
+          <label class="toggle-row"><input type="checkbox" name="preserveManualEntries" .checked=${Boolean(link.preserveManualEntries ?? link.PreserveManualEntries)}><span>Keep manually added target tracks</span></label>
+          <label class="toggle-row"><input type="checkbox" name="mirrorStaleEntries" .checked=${Boolean(link.mirrorStaleEntries ?? link.MirrorStaleEntries)}><span>Remove tracks no longer in the source</span></label>
+          <fieldset class="config-field full-span"><legend>Keep target details synchronized</legend><label class="compact-check"><input type="checkbox" name="syncName" .checked=${Boolean(link.syncName ?? link.SyncName)}> Name</label><label class="compact-check"><input type="checkbox" name="syncDescription" .checked=${Boolean(link.syncDescription ?? link.SyncDescription)}> Description</label><label class="compact-check"><input type="checkbox" name="syncArtwork" .checked=${Boolean(link.syncArtwork ?? link.SyncArtwork)}> Artwork</label></fieldset>
+          <div class="dialog-actions full-span"><button type="button" @click=${close}>Cancel</button><button class="primary" type="submit">Save behavior</button></div>
+        </form>
+      </section>
+    </div>`;
   }
 
   async reviewPlaylistMatch(externalSnapshotId, decision, libraryTrackId = null) {
@@ -2793,7 +3274,7 @@ class AllstarrApp extends LitElement {
     };
     return html`
       <div class="injected-page-heading">
-        <div><h3>Injected playlists</h3><p>Playlists that Allstarr has injected into your media server.</p></div>
+        <div><h3>Imported playlists</h3><p>Playlists retained from the earlier configuration format.</p></div>
         <div class="actions injected-heading-actions"><button @click=${() => { this.injectedAddOpen = true; }}>${icon("plus")}<span>Add playlist</span></button><button class="primary" @click=${async () => {
           const names = selected.size ? [...selected] : playlists.map((item) => item.name);
           if (selected.size) {
@@ -2818,7 +3299,7 @@ class AllstarrApp extends LitElement {
       </div>
       ${this.renderInjectedPlaylistDetails()}
       <div class="table-wrap injected-playlist-table">
-        <div class="injected-table-wrap" role="region" aria-label="Injected playlists" tabindex="0">
+        <div class="injected-table-wrap" role="region" aria-label="Managed playlists" tabindex="0">
           <table class="injected-data-table">
             <colgroup>
               <col class="select-col">
@@ -2849,7 +3330,7 @@ class AllstarrApp extends LitElement {
               aria-label="Open ${playlist.name} playlist details" @click=${openRow}
               @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
               <td class="selection-cell"><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></td>
-              <td><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/placeholder.png"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.id}</small></span></span></td>
+              <td><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt=""><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
               <td>${display(playlist.trackCount, 0)}</td>
               <td><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
               <td><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>
@@ -2892,7 +3373,7 @@ class AllstarrApp extends LitElement {
   renderInjectedAddModal() {
     if (!this.injectedAddOpen) return nothing;
     const close = () => { this.injectedAddOpen = false; };
-    return html`<div class="modal-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}><section class="panel compact-dialog" role="dialog" aria-modal="true" aria-labelledby="add-injected-title" tabindex="-1"><div class="dialog-header"><div><h3 id="add-injected-title">Add an injected playlist</h3><p>Connect a Spotify playlist to your media server.</p></div><button class="icon-button ghost" @click=${close} aria-label="Close">${icon("close")}</button></div><form class="form-stack" @submit=${async (event) => { await this.addInjectedPlaylist(event); close(); }}><div class="form-row"><label>Name</label><input name="name" required autofocus></div><div class="form-row"><label>Spotify ID</label><input name="spotifyId" required></div><div class="actions dialog-actions"><button type="button" @click=${close}>Cancel</button><button class="primary">Add playlist</button></div></form></section></div>`;
+    return html`<div class="modal-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}><section class="panel compact-dialog" role="dialog" aria-modal="true" aria-labelledby="add-injected-title" tabindex="-1"><div class="dialog-header"><div><h3 id="add-injected-title">Add a playlist</h3><p>Connect a playlist to your media server.</p></div><button class="icon-button ghost" @click=${close} aria-label="Close">${icon("close")}</button></div><form class="form-stack" @submit=${async (event) => { await this.addInjectedPlaylist(event); close(); }}><div class="form-row"><label>Name</label><input name="name" required autofocus></div><div class="form-row"><label>Spotify ID</label><input name="spotifyId" required></div><div class="actions dialog-actions"><button type="button" @click=${close}>Cancel</button><button class="primary">Add playlist</button></div></form></section></div>`;
   }
 
   async openInjectedPlaylist(name) {
@@ -2950,7 +3431,7 @@ class AllstarrApp extends LitElement {
       <section class="panel injected-playlist-dialog redesigned-dialog" role="dialog" aria-modal="true" data-testid="playlist-dialog"
         aria-labelledby="injected-playlist-title" tabindex="-1">
         <div class="playlist-dialog-hero">
-          <img class="playlist-hero-art" src=${details?.artworkUrl || "/placeholder.png"} alt="">
+          <img class="playlist-hero-art" src=${details?.artworkUrl || "/images/playlist-placeholder.svg"} alt="">
           <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
             <div class="playlist-hero-stats">
               <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
@@ -3267,7 +3748,7 @@ class AllstarrApp extends LitElement {
       </div>
       ${legacyMappings.length ? html`<div class="panel legacy-mappings-panel">
         <div class="section-heading"><div><h3>Imported legacy decisions</h3><p class="muted">Your previous decisions are intact. Ready targets can play now; preserved targets stay visible until a safe replacement can be confirmed.</p></div><div class="actions"><span class="chip success">${playableLegacyMappings.length} ready</span>${reviewLegacyMappings.length ? html`<span class="chip warning">${reviewLegacyMappings.length} need review</span>` : nothing}</div></div>
-        ${reviewLegacyMappings.length ? html`<div class="callout warning"><strong>${reviewLegacyMappings.length} old ${reviewLegacyMappings.length === 1 ? "decision uses" : "decisions use"} an unavailable provider.</strong><span>Nothing was deleted or guessed. Open the affected playlist under Injected, choose Match, and select a playable Jellyfin or provider result.</span><button @click=${() => this.navigate("/library/injected")}>Review affected playlists</button></div>` : html`<div class="callout success"><strong>Every imported decision has a playable target.</strong></div>`}
+        ${reviewLegacyMappings.length ? html`<div class="callout warning"><strong>${reviewLegacyMappings.length} old ${reviewLegacyMappings.length === 1 ? "decision uses" : "decisions use"} an unavailable provider.</strong><span>Nothing was deleted or guessed. Open the affected playlist in Playlists, choose Match, and select a playable Jellyfin or provider result.</span><button @click=${() => this.navigate("/library/playlists")}>Review affected playlists</button></div>` : html`<div class="callout success"><strong>Every imported decision has a playable target.</strong></div>`}
         <div class="table-wrap"><table><thead><tr><th>Status</th><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => {
           const playable = mapping.playable ?? mapping.Playable ?? false;
           return html`<tr class=${playable ? "" : "mapping-needs-review"}><td><span class="chip ${playable ? "success" : "warning"}">${playable ? "Ready" : "Review"}</span></td><td>${display(mapping.playlist || mapping.Playlist)}</td><td class="mono">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td>${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td>${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`;
@@ -3676,6 +4157,10 @@ class AllstarrApp extends LitElement {
     if (providerId === "qobuz") return html`<div class="form-row"><label>User auth token</label><input name="userAuthToken" type="password" autocomplete="off" required></div><div class="form-row"><label>User ID</label><input name="userId" required></div>`;
     if (providerId === "lastfm") return html`<div class="form-row full-span"><div class="callout"><strong>One-time Last.fm application setup</strong><p>Last.fm no longer accepts the shared Jellyfin plugin key. Create a free API application, paste its key and shared secret below, then sign in normally. Allstarr exchanges the password for a session and does not save the password.</p><a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener noreferrer">Create a Last.fm API application</a></div></div><div class="form-row"><label>Application API key</label><input name="apiKey" type="password" autocomplete="off" required></div><div class="form-row"><label>Application shared secret</label><input name="sharedSecret" type="password" autocomplete="off" required></div><div class="form-row"><label>Last.fm username</label><input name="username" autocomplete="username" required></div><div class="form-row"><label>Last.fm password</label><input name="password" type="password" autocomplete="current-password" required><small>Used once to request a Last.fm session; never stored by Allstarr.</small></div>`;
     if (providerId === "listenbrainz") return html`<div class="form-row full-span"><label>ListenBrainz user token</label><input name="token" type="password" autocomplete="off" required></div>`;
+    if (providerId === "apple-musickit") return html`
+      <div class="form-row full-span"><div class="callout"><strong>Apple Music playlist access</strong><p>This account reads personal Apple Music playlists. It does not provide audio or lyrics; install and configure the relevant extension providers for metadata, search, lyrics, streaming, or downloads.</p></div></div>
+      <div class="form-row"><label>Apple developer token</label><input name="DeveloperToken" type="password" autocomplete="off" required><small>Developer token created by your Apple MusicKit integration.</small></div>
+      <div class="form-row"><label>Music User Token</label><input name="MusicUserToken" type="password" autocomplete="off" required><small>Per-user authorization token for personal playlist access.</small></div>`;
     const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === String(providerId).toLowerCase());
     const fields = asArray(provider?.accountSettings);
     return fields.length ? fields.map((field) => {
@@ -3781,7 +4266,66 @@ class AllstarrApp extends LitElement {
     const testKey = `${id}:${capabilityId}`;
     const testing = this.providerTests.has(testKey);
     const canTest = Boolean(capability.canTest ?? capability.CanTest);
-    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div>${canTest ? html`<button class="compact" ?disabled=${testing || !enabled} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Enable to test"}</button>` : html`<span class="muted">No probe</span>`}</div>`;
+    const ctsOpen = this.deepStreamDiagnosticTarget?.accountId === String(id);
+    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div>${this.renderConnectivityMeter(this.providerTestResults.get(testKey))}<span class="capability-test-actions">${canTest ? html`<button class="compact" ?disabled=${testing || !enabled} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Enable to test"}</button>` : html`<span class="muted">No probe</span>`}${capabilityId === "streaming" && enabled ? html`<button class="compact" @click=${() => this.toggleDeepStreamDiagnostic(id, providerId)}>${ctsOpen ? "Close CTS" : "Measure CTS"}</button>` : nothing}</span></div>${capabilityId === "streaming" && ctsOpen ? this.renderDeepStreamDiagnostic(id, providerId) : nothing}`;
+  }
+
+  renderConnectivityMeter(result) {
+    if (!result) return nothing;
+    const bars = Number(result.bars ?? result.Bars ?? 0);
+    const latency = Number(result.latencyMs ?? result.LatencyMs ?? 0);
+    const metric = result.metric || result.Metric || "api-latency";
+    const testedAt = result.testedAt || result.TestedAt || new Date().toISOString();
+    const label = `${bars} of 4 connectivity bars, ${latency} milliseconds ${metric === "cts" ? "click to stream" : "API latency"}, tested ${formatDate(testedAt)}`;
+    return html`<span class="connectivity-meter" role="img" aria-label=${label} title=${label}>${[1, 2, 3, 4].map((bar) => html`<i class=${bar <= bars ? "active" : ""}></i>`)}</span>`;
+  }
+
+  toggleDeepStreamDiagnostic(accountId, providerId) {
+    const key = String(accountId);
+    this.deepStreamDiagnosticTarget = this.deepStreamDiagnosticTarget?.accountId === key
+      ? null
+      : { accountId: key, providerId };
+    this.deepStreamDiagnosticResult = null;
+    this.requestUpdate();
+  }
+
+  renderDeepStreamDiagnostic(accountId, providerId) {
+    const result = this.deepStreamDiagnosticResult;
+    return html`<form class="deep-stream-diagnostic" @submit=${(event) => this.runDeepStreamDiagnostic(event, accountId, providerId)}>
+      <div class="deep-stream-copy"><strong>Real-track click-to-stream test</strong><p>Reads at most 256 KiB and keeps no media. Use a real track ID from this provider.</p></div>
+      <label><span>Provider track ID</span><input name="trackId" required autocomplete="off" placeholder="Track ID"></label>
+      <label><span>Track label (optional)</span><input name="trackLabel" autocomplete="off" placeholder="Artist - Title"></label>
+      <label><span>Quality</span><select name="quality"><option value="Any">Automatic</option><option value="Lossy">Lossy</option><option value="Lossless">Lossless</option><option value="HighResolution">High resolution</option></select></label>
+      <button class="primary" ?disabled=${this.deepStreamDiagnosticBusy}>${this.deepStreamDiagnosticBusy ? "Measuring..." : "Run CTS test"}</button>
+      ${result ? html`<div class="deep-stream-result" role="status">
+        ${this.renderConnectivityMeter({ bars: result.bars, latencyMs: result.clickToStreamMilliseconds, metric: "cts", testedAt: result.measuredAt })}
+        <dl><div><dt>Resolve</dt><dd>${result.resolveMilliseconds} ms</dd></div><div><dt>First byte</dt><dd>${result.firstByteMilliseconds} ms</dd></div><div><dt>Throughput</dt><dd>${result.throughputKbps} kbps</dd></div><div><dt>Sample</dt><dd>${formatBytes(result.sampleBytes)}</dd></div><div><dt>Cache</dt><dd>${titleCase(result.cacheState || "unknown")}</dd></div></dl>
+      </div>` : nothing}
+    </form>`;
+  }
+
+  async runDeepStreamDiagnostic(event, accountId, providerId) {
+    event.preventDefault();
+    if (this.deepStreamDiagnosticBusy) return;
+    const data = new FormData(event.currentTarget);
+    this.deepStreamDiagnosticBusy = true;
+    this.deepStreamDiagnosticResult = null;
+    this.requestUpdate();
+    try {
+      this.deepStreamDiagnosticResult = await requestJson("/api/admin/provider-diagnostics/deep-stream", jsonBody({
+        providerId,
+        providerAccountId: accountId,
+        trackId: String(data.get("trackId") || "").trim(),
+        trackLabel: String(data.get("trackLabel") || "").trim() || null,
+        quality: ({ Any: 0, Lossy: 1, Lossless: 2, HighResolution: 3 })[String(data.get("quality") || "Any")],
+      }), "Failed to measure click-to-stream time");
+      this.toast("Click-to-stream measurement completed");
+    } catch (error) {
+      this.toast(error?.message || "Click-to-stream measurement failed", "error");
+    } finally {
+      this.deepStreamDiagnosticBusy = false;
+      this.requestUpdate();
+    }
   }
 
   toggleProviderAccountConfiguration(id) {
@@ -3843,6 +4387,7 @@ class AllstarrApp extends LitElement {
         ${providerId === "qobuz" ? html`<label>User auth token<input name="userAuthToken" type="password" autocomplete="off" required></label><label>User ID<input name="userId" required></label>` : nothing}
         ${providerId === "listenbrainz" ? html`<label>New user token<input name="token" type="password" autocomplete="off" required></label>` : nothing}
         ${providerId === "lastfm" ? html`<div class="callout"><strong>Reconnect Last.fm</strong><p>Usually only your password is needed. It is used once to request a new session and is never stored.</p></div><label>Username (optional)<input name="username" autocomplete="username"><small>Leave blank to keep the saved username.</small></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><details><summary>Replace Last.fm application credentials</summary><p class="muted">Required if this account used the suspended Jellyfin plugin key.</p><label>New application API key<input name="apiKey" type="password" autocomplete="off"></label><label>New application shared secret<input name="sharedSecret" type="password" autocomplete="off"></label></details>` : nothing}
+        ${providerId === "apple-musickit" ? html`<div class="callout"><strong>Replace Apple Music playlist authorization</strong><p>Both tokens are replaced together. This account does not control the Apple metadata or lyrics extensions.</p></div>` : nothing}
         ${!["spotify", "deezer", "qobuz", "listenbrainz", "lastfm"].includes(providerId) ? this.renderExtensionCredentialEditor(providerId) : nothing}
         <div class="actions"><button class="primary">Save and test</button><button type="button" @click=${() => this.toggleProviderAccountConfiguration(account.id || account.Id)}>Cancel</button></div>
       </form>
@@ -3929,6 +4474,7 @@ class AllstarrApp extends LitElement {
     this.providerTests = new Set([...this.providerTests, testKey]);
     try {
       const result = await API.testProviderAccount(id, provider);
+      this.providerTestResults = new Map([...this.providerTestResults, [testKey, result]]);
       await this.loadProviderAccounts();
       const healthy = Boolean(result.healthy ?? result.success);
       this.toast(`${providerDisplayName(provider, this.schema?.providers)} connection ${healthy ? "passed" : "failed"}`, healthy ? "success" : "error");
@@ -3944,6 +4490,7 @@ class AllstarrApp extends LitElement {
     this.providerTests = new Set([...this.providerTests, testKey]);
     try {
       const result = await API.testProviderAccountCapability(accountId, provider, capability);
+      this.providerTestResults = new Map([...this.providerTestResults, [testKey, result]]);
       await this.loadProviderAccounts();
       this.toast(
         `${providerDisplayName(provider, this.schema?.providers)} ${titleCase(capability)} test ${result.success ? "passed" : "failed"}`,
@@ -4132,7 +4679,7 @@ class AllstarrApp extends LitElement {
         <div class="provider-detail-summary"><span class="status-chip ${status}">${this.providerStatusLabel(status)}</span>${asArray(provider.categories).map((category) => html`<span class="chip">${titleCase(category)}</span>`)}</div>
         ${capabilities.length ? html`<div class="runtime-capability-table" role="table" aria-label="Runtime capability status">
           <div class="runtime-capability-header" role="row"><span>Capability</span><span>Setup</span><span>Last check</span><span></span></div>
-          ${accountManaged ? capabilities.map((capability) => html`<div class="runtime-capability" role="row"><strong>${titleCase(capability.capability || capability.Capability)}</strong><span>${String(capability.configuration || capability.Configuration) === "configured" ? "Configured" : "Needs setup"}</span><span class="runtime-health runtime-${capability.health || capability.Health}">${titleCase(capability.health || capability.Health || "unknown")}<small>${formatDate(capability.testedAt || capability.TestedAt)}</small></span>${capability.canTest ?? capability.CanTest ? html`<button class="compact" @click=${() => this.testProviderAccountCapability(capability.providerAccountId || capability.ProviderAccountId, providerId, capability.capability || capability.Capability)}>Test</button>` : html`<span></span>`}</div>`) : capabilities.map((capability) => this.renderRuntimeCapability(provider, capability))}
+          ${accountManaged ? capabilities.map((capability) => { const capabilityId = capability.capability || capability.Capability; const key = `${capability.providerAccountId || capability.ProviderAccountId}:${capabilityId}`; return html`<div class="runtime-capability" role="row"><strong>${titleCase(capabilityId)}</strong><span>${String(capability.configuration || capability.Configuration) === "configured" ? "Configured" : "Needs setup"}</span><span class="runtime-health runtime-${capability.health || capability.Health}">${titleCase(capability.health || capability.Health || "unknown")}<small>${formatDate(capability.testedAt || capability.TestedAt)}</small></span>${this.renderConnectivityMeter(this.providerTestResults.get(key))}${capability.canTest ?? capability.CanTest ? html`<button class="compact" @click=${() => this.testProviderAccountCapability(capability.providerAccountId || capability.ProviderAccountId, providerId, capabilityId)}>Test</button>` : html`<span></span>`}</div>`; }) : capabilities.map((capability) => this.renderRuntimeCapability(provider, capability))}
         </div>` : html`<div class="empty compact">No automatic capability probes are available.</div>`}
         ${accountManaged ? html`<div class="provider-detail-cta"><div><strong>Account and credentials</strong><p>Accounts are managed separately so Sources stays focused on routing and health.</p></div><button class="primary" @click=${() => this.navigate("/settings")}>Open account settings</button></div>` : html`<div class="config-grid">${asArray(provider.configSchema).map((field) => this.renderConfigField(field))}</div>`}
         ${providerId === "apple-download" ? this.renderAppleMusicManager() : nothing}
@@ -4182,6 +4729,7 @@ class AllstarrApp extends LitElement {
       <strong>${titleCase(capability.id)}</strong>
       <span>${configurationLabel}</span>
       <span class="runtime-health runtime-${health}">${healthLabel}${capability.testedAt ? html`<small>${formatDate(capability.testedAt)}</small>` : nothing}</span>
+      ${this.renderConnectivityMeter(this.providerTestResults.get(testKey))}
       ${capability.canTest && capability.canAttempt ? html`<button class="compact" ?disabled=${testing} @click=${() => this.testProviderCapability(providerId, capability.id)}>${testing ? "Testing..." : "Test"}</button>` : nothing}
     </div>`;
   }
@@ -4191,6 +4739,7 @@ class AllstarrApp extends LitElement {
     this.providerTests = new Set([...this.providerTests, testKey]);
     try {
       const result = await API.testProviderCapability(provider, capability);
+      this.providerTestResults = new Map([...this.providerTestResults, [testKey, result]]);
       await this.loadSchema();
       this.toast(`${providerDisplayName(provider, this.schema?.providers)} ${titleCase(capability)} test ${result.success ? "passed" : "failed"}`, result.success ? "success" : "error");
     } catch (error) {
@@ -4453,7 +5002,7 @@ class AllstarrApp extends LitElement {
                 <div class="section-heading"><div><h4>Capabilities</h4><p>What this extension can provide to Allstarr.</p></div></div>
                 <div class="extension-capability-summary">
                   ${this.extensionCapabilities(item).length
-                    ? this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)
+                    ? this.extensionCapabilities(item).map((capability) => this.renderExtensionCapabilityChip(capability))
                     : html`<span class="muted">No provider capabilities declared.</span>`}
                 </div>
                 <div class="extension-runtime-summary">
@@ -4470,10 +5019,12 @@ class AllstarrApp extends LitElement {
                 ${state === "reviewrequired" ? html`<button class="primary" @click=${() => this.loadExtensionPermissions(item)}>Review permissions</button>` : nothing}
                 ${["staged", "disabled"].includes(state) ? html`<button class="primary" ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Enabling", () => API.activateExtensionPackage(id, revision), "Extension enabled")}>${action || "Enable extension"}</button>` : nothing}
                 ${state === "active" ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Disabling", () => API.disableExtensionPackage(id, revision), "Extension disabled")}>${action || "Disable extension"}</button>` : nothing}
-                ${state === "active" && previousPackageId ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Restoring", () => API.rollbackExtensionPackage(id, revision), "Previous extension version restored")}>Restore previous version</button>` : nothing}
-                ${state !== "active" ? html`<button class="danger" ?disabled=${Boolean(action)} @click=${() => { if (window.confirm("Remove this extension? Provider accounts and saved credentials will be retained.")) return this.runExtensionAction(item, "Removing", () => API.uninstallExtensionPackage(id, revision), "Extension removed; provider accounts retained"); }}>Remove extension</button>` : nothing}
-              </div></section>
-              <section class="extension-manage-section"><h4>Recent activity</h4><div class="extension-mini-log">${asArray(this.extensionLogs).slice(0, 5).map((entry) => html`<div><strong>${titleCase(entry.eventCode || entry.EventCode)}</strong><small>${formatDate(entry.createdAt || entry.CreatedAt)}</small></div>`)}</div></section>
+                ${state === "active" && previousPackageId ? html`<button ?disabled=${Boolean(action)} @click=${() => {
+                  if (!window.confirm("Restore the previous extension version? The current runtime will be replaced and provider requests may pause briefly.")) return;
+                  return this.runExtensionAction(item, "Restoring", () => API.rollbackExtensionPackage(id, revision), "Previous extension version restored");
+                }}>Restore previous version</button>` : nothing}
+              </div>${this.renderExtensionUninstallControl(item)}</section>
+              <section class="extension-manage-section"><h4>Recent activity</h4><div class="extension-mini-log">${asArray(this.extensionLogs).slice(0, 5).map((entry) => html`<div><strong>${entry.summary || entry.Summary || "Extension event"}</strong><small>${formatDate(entry.createdAt || entry.CreatedAt)}</small></div>`)}</div></section>
             </aside>
           </div>
         </section>
@@ -4504,6 +5055,23 @@ class AllstarrApp extends LitElement {
     return [...new Set(raw.map((value) => aliases[String(value).toLowerCase()] || String(value).toLowerCase()))];
   }
 
+  renderExtensionCapabilityChip(capability) {
+    const normalized = String(capability || "").toLowerCase();
+    const capabilityIcon = ({
+      metadata: "metadata",
+      playlist: "playlist",
+      streaming: "streaming",
+      stream: "streaming",
+      download: "download",
+      lyrics: "lyrics",
+      scrobbling: "activity",
+      scrobble: "activity",
+      externalapi: "externalApi",
+      library: "edit",
+    })[normalized] || "extensions";
+    return html`<span class="chip icon-label" title=${`${titleCase(normalized)} capability`}>${icon(capabilityIcon, 14)}<span>${titleCase(normalized)}</span></span>`;
+  }
+
   renderExtensionPermissionModal(item) {
     if (!item || this.extensionPackageState(item) !== "reviewrequired") return nothing;
     const id = item.id || item.Id;
@@ -4522,8 +5090,10 @@ class AllstarrApp extends LitElement {
         <div class="extension-permission-list">${permissions.map((review) => {
           const permissionId = review.id || review.Id;
           const decision = review.uiDecision;
+          const permissionKind = String(review.permissionKind || review.PermissionKind || "externalApi");
+          const permissionIcon = ({ network: "externalApi", filesystem: "download", secrets: "security", metadata: "metadata", playlist: "playlist", streaming: "streaming", download: "download", lyrics: "lyrics", library: "edit" })[permissionKind.toLowerCase()] || "security";
           return html`<div class="extension-permission-row">
-            <div><strong>${titleCase(review.permissionKind || review.PermissionKind)}</strong><small class="extension-value">${review.permissionValue || review.PermissionValue}</small>${(review.required ?? review.Required) ? html`<span class="chip warning">Required</span>` : nothing}</div>
+            <span class="extension-permission-icon" aria-hidden="true">${icon(permissionIcon, 18)}</span><div><strong>${titleCase(permissionKind)}</strong><small class="extension-value">${review.permissionValue || review.PermissionValue}</small>${(review.required ?? review.Required) ? html`<span class="chip warning">Required</span>` : nothing}</div>
             <div class="row-actions" role="group" aria-label="Permission decision"><button class=${decision === "approved" ? "primary" : ""} @click=${() => this.setExtensionPermissionDecision(id, permissionId, true)}>Allow</button><button class=${decision === "denied" ? "danger" : ""} @click=${() => this.setExtensionPermissionDecision(id, permissionId, false)}>Deny</button></div>
           </div>`;
         })}</div>
@@ -4537,18 +5107,22 @@ class AllstarrApp extends LitElement {
     if (!this.extensionInstallOpen) return nothing;
     const close = () => { this.extensionInstallOpen = false; };
     const query = this.extensionSearch.trim().toLowerCase();
-    const available = storeItems.filter((item) => !installedByExtension.has(String(item.id || item.Id || "").toLowerCase()))
+    const available = storeItems.filter((item) => {
+      const installed = installedByExtension.get(String(item.id || item.Id || "").toLowerCase());
+      return !installed || String(installed.version || installed.Version) !== String(item.version || item.Version);
+    })
       .filter((item) => !query || `${item.displayName || item.DisplayName} ${item.description || item.Description}`.toLowerCase().includes(query));
     return html`<div class="modal-backdrop extension-install-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
       <section class="panel extension-install-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-install-title" tabindex="-1">
         <div class="dialog-header"><div class="provider-brand"><span class="workspace-icon">${icon("extensions", 25)}</span><div><h3 id="extension-install-title">Install extension</h3><p>Add an extension from a registry or a verified package URL.</p></div></div><button class="icon-button ghost" aria-label="Close installer" @click=${close}>${icon("close")}</button></div>
-        <div class="extension-modal-tabs" role="tablist"><button class=${this.extensionInstallTab === "registry" ? "active" : ""} @click=${() => { this.extensionInstallTab = "registry"; }}>Registry</button><button class=${this.extensionInstallTab === "direct" ? "active" : ""} @click=${() => { this.extensionInstallTab = "direct"; }}>Direct URL</button></div>
+        <div class="workspace-tabs" role="tablist" aria-label="Extension installation method"><button role="tab" aria-selected=${this.extensionInstallTab === "registry"} tabindex=${this.extensionInstallTab === "registry" ? "0" : "-1"} class=${this.extensionInstallTab === "registry" ? "active" : ""} @keydown=${(event) => this.moveSegmentedTabFocus(event)} @click=${() => { this.extensionInstallTab = "registry"; }}>Registry</button><button role="tab" aria-selected=${this.extensionInstallTab === "direct"} tabindex=${this.extensionInstallTab === "direct" ? "0" : "-1"} class=${this.extensionInstallTab === "direct" ? "active" : ""} @keydown=${(event) => this.moveSegmentedTabFocus(event)} @click=${() => { this.extensionInstallTab = "direct"; }}>Direct URL</button></div>
         ${this.extensionInstallTab === "registry" ? html`
           <label class="extension-search">${icon("search", 17)}<input autofocus aria-label="Search extensions" placeholder="Search registry packages…" .value=${this.extensionSearch} @input=${(event) => { this.extensionSearch = event.target.value; }}></label>
           <div class="extension-install-results">${available.length ? available.map((item) => {
             const action = this.extensionActions[item.id || item.Id];
             const checksum = item.sha256 || item.Sha256;
-            return html`<article class="extension-install-result">${this.renderExtensionLogo(item, "large")}<div><strong>${item.displayName || item.DisplayName}</strong><small>v${item.version || item.Version}${item.author || item.Author ? ` · ${item.author || item.Author}` : ""}</small><p>${display(item.description || item.Description, "No description supplied.")}</p><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div></div><button class="primary" ?disabled=${!checksum || Boolean(action)} @click=${() => this.installExtension(item)}>${action || (checksum ? "Install" : "Unavailable")}</button></article>`;
+            const updating = installedByExtension.has(String(item.id || item.Id || "").toLowerCase());
+            return html`<article class="extension-install-result">${this.renderExtensionLogo(item, "large")}<div><strong>${item.displayName || item.DisplayName}</strong><small>${updating ? `Update to v${item.version || item.Version}` : `v${item.version || item.Version}`}${item.author || item.Author ? ` · ${item.author || item.Author}` : ""}</small><p>${display(item.description || item.Description, "No description supplied.")}</p><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => this.renderExtensionCapabilityChip(capability))}</div></div><button class="primary" ?disabled=${!checksum || Boolean(action)} @click=${() => this.installExtension(item, updating)}>${action || (checksum ? updating ? "Review update" : "Install" : "Unavailable")}</button></article>`;
           }) : html`<div class="empty"><strong>No matching extensions</strong><span>Everything may already be installed.</span></div>`}</div>
         ` : html`<form class="config-grid extension-direct-form" @submit=${(event) => this.stageExtensionPackage(event)}>
           <label class="config-field full-span"><span>Package URL</span><input autofocus name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" placeholder="https://example.org/provider.sflx"></label>
@@ -4560,15 +5134,94 @@ class AllstarrApp extends LitElement {
     </div>`;
   }
 
+  renderExtensionUninstallControl(packageRecord) {
+    if (!packageRecord) return nothing;
+    const packageId = packageRecord.id || packageRecord.Id;
+    const revision = packageRecord.revision ?? packageRecord.Revision;
+    const displayName = packageRecord.displayName || packageRecord.DisplayName || packageRecord.extensionId || packageRecord.ExtensionId || "extension";
+    const confirming = this.extensionUninstallConfirmId === packageId;
+    const busy = this.extensionUninstallBusyId === packageId;
+    if ((packageRecord.state || packageRecord.State || "").toLowerCase() === "uninstalled") return nothing;
+    return html`
+      <aside class="extension-uninstall-control" aria-label="Uninstall ${displayName}">
+        ${confirming ? html`
+          <div class="extension-uninstall-confirm" role="alertdialog" aria-labelledby="extension-uninstall-title">
+            <div>
+              <strong id="extension-uninstall-title">Uninstall ${displayName}?</strong>
+              <p>The package and runtime are removed. Provider accounts can be retained for a later reinstall.</p>
+            </div>
+            <label class="compact-check">
+              <input type="checkbox" .checked=${this.extensionUninstallRetainAccounts !== false}
+                @change=${(event) => { this.extensionUninstallRetainAccounts = event.target.checked; }}>
+              Retain provider accounts
+            </label>
+            <div class="extension-uninstall-actions">
+              <button class="ghost" ?disabled=${busy} @click=${() => { this.extensionUninstallConfirmId = null; }}>Cancel</button>
+              <button class="danger" ?disabled=${busy} @click=${() => this.uninstallExtensionPackage(packageRecord)}>
+                ${busy ? "Uninstalling..." : "Confirm uninstall"}
+              </button>
+            </div>
+          </div>
+        ` : html`
+          <button class="danger" @click=${() => {
+            this.extensionUninstallRetainAccounts = true;
+            this.extensionUninstallConfirmId = packageId;
+          }}>${icon("trash", 17)} Uninstall extension</button>
+        `}
+      </aside>`;
+  }
+
+  async uninstallExtensionPackage(packageRecord) {
+    const packageId = packageRecord?.id || packageRecord?.Id;
+    if (!packageId || this.extensionUninstallBusyId) return;
+    this.extensionUninstallBusyId = packageId;
+    try {
+      await API.uninstallExtensionPackage(
+        packageId,
+        packageRecord.revision ?? packageRecord.Revision,
+        this.extensionUninstallRetainAccounts !== false,
+      );
+      this.extensionPackages = asArray(this.extensionPackages).filter((entry) => (entry.id || entry.Id) !== packageId);
+      this.extensionUninstallConfirmId = null;
+      this.extensionManagePackageId = null;
+      this.extensionManagedPackageId = null;
+      this.toast("Extension uninstalled");
+    } catch (error) {
+      this.toast(error?.message || "Failed to uninstall extension", "error");
+    } finally {
+      this.extensionUninstallBusyId = null;
+    }
+  }
+
+  moveSegmentedTabFocus(event) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = [...event.currentTarget.parentElement.querySelectorAll('[role="tab"]')];
+    const current = tabs.indexOf(event.currentTarget);
+    if (current < 0 || tabs.length === 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 :
+      (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next].focus();
+    tabs[next].click();
+  }
+
   renderExtensions() {
     const registries = asArray(this.extensionRegistries);
     const storeItems = asArray(this.extensionStore?.items || this.extensionStore?.Items || this.extensionStore);
     const errors = asArray(this.extensionStore?.errors || this.extensionStore?.Errors);
-    const installedPackages = this.installedExtensionPackages();
-    const installedByExtension = new Map(installedPackages.map((item) => [String(item.extensionId || item.ExtensionId).toLowerCase(), item]));
-    const permissionPackage = installedPackages.find((item) => String(item.id || item.Id) === String(this.extensionPermissionPackageId));
-    const managedPackage = installedPackages.find((item) => String(item.id || item.Id) === String(this.selectedExtensionPackageId));
-    const available = storeItems.filter((item) => !installedByExtension.has(String(item.id || item.Id || "").toLowerCase()));
+    const packageHistory = this.installedExtensionPackages();
+    const installedByExtension = new Map();
+    for (const item of packageHistory) {
+      const key = String(item.extensionId || item.ExtensionId).toLowerCase();
+      if (!installedByExtension.has(key)) installedByExtension.set(key, item);
+    }
+    const installedPackages = [...installedByExtension.values()];
+    const permissionPackage = packageHistory.find((item) => String(item.id || item.Id) === String(this.extensionPermissionPackageId));
+    const managedPackage = packageHistory.find((item) => String(item.id || item.Id) === String(this.selectedExtensionPackageId));
+    const available = storeItems.filter((item) => {
+      const installed = installedByExtension.get(String(item.id || item.Id || "").toLowerCase());
+      return !installed || String(installed.version || installed.Version) !== String(item.version || item.Version);
+    });
     const activeRegistries = registries.filter((item) => item.enabled ?? item.Enabled);
     const capabilityLegend = [
       ["metadata", "Metadata", "Read track, album, and artist metadata"], ["playlist", "Playlist", "Read and synchronize playlists"],
@@ -4582,13 +5235,16 @@ class AllstarrApp extends LitElement {
         const state = this.extensionPackageState(item);
         const action = this.extensionActions[id];
         const label = ({ active: "Enabled", reviewrequired: "Review needed", staged: "Ready", disabled: "Disabled", failed: "Needs attention" })[state] || titleCase(state);
-        return html`<article class="extension-row">${this.renderExtensionLogo(item, "large")}<div class="extension-row-copy"><div class="extension-row-title"><strong>${item.displayName || item.DisplayName}</strong><span>v${item.version || item.Version}</span></div><small>${display(item.author || item.Author, "Extension package")}</small><p>${display(item.description || item.Description, "No description supplied by this extension.")}</p></div><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : state === "disabled" ? "disabled" : "warning"}">${label}</span><button ?disabled=${Boolean(action)} @click=${() => this.openExtensionManager(item)}>Manage</button></article>`;
+        const extensionId = String(item.extensionId || item.ExtensionId).toLowerCase();
+        const update = storeItems.filter((candidate) => String(candidate.id || candidate.Id).toLowerCase() === extensionId && compareExtensionVersions(candidate.version || candidate.Version, item.version || item.Version) > 0).sort((a, b) => compareExtensionVersions(b.version || b.Version, a.version || a.Version))[0];
+        const updateAction = update ? this.extensionActions[update.id || update.Id] : "";
+        return html`<article class="extension-row">${this.renderExtensionLogo(item, "large")}<div class="extension-row-copy"><div class="extension-row-title"><strong>${item.displayName || item.DisplayName}</strong><span>v${item.version || item.Version}</span></div><small>${display(item.author || item.Author, "Extension package")}</small><p>${display(item.description || item.Description, "No description supplied by this extension.")}</p></div><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : state === "disabled" ? "disabled" : "warning"}">${update ? `v${update.version || update.Version} available` : label}</span><div class="extension-row-actions">${update ? html`<button class="primary" ?disabled=${Boolean(updateAction)} @click=${() => this.installExtension(update, true)}>${updateAction || "Update"}</button>` : nothing}<button ?disabled=${Boolean(action)} @click=${() => this.openExtensionManager(item)}>Manage</button></div></article>`;
       }) : html`<div class="empty"><strong>No extensions installed</strong><span>Install one from a connected registry.</span></div>`}</div>
-    </div><aside class="extension-workspace-side"><section class="panel extension-capability-legend"><h3>Permissions & capabilities</h3>${capabilityLegend.map(([key, label, detail]) => html`<div><span>${icon(key, 17)}</span><p><strong>${label}</strong><small>${detail}</small></p></div>`)}</section><section class="panel extension-activity-summary"><div class="section-heading"><h3>Extension activity</h3><button @click=${() => { this.extensionViewTab = "activity"; }}>View all</button></div>${asArray(this.extensionLogs).slice(0, 5).map((entry) => html`<div><span class="activity-dot"></span><p><strong>${titleCase(entry.eventCode || entry.EventCode)}</strong><small>${formatRelativeTime(entry.createdAt || entry.CreatedAt)}</small></p></div>`)}</section></aside></div>`;
+    </div><aside class="extension-workspace-side"><section class="panel extension-capability-legend"><h3>Capabilities</h3>${capabilityLegend.map(([key, label, detail]) => html`<div><span>${icon(key, 17)}</span><p><strong>${label}</strong><small>${detail}</small></p></div>`)}</section><section class="panel extension-activity-summary"><div class="section-heading"><h3>Extension activity</h3><button @click=${() => { this.extensionViewTab = "activity"; }}>View all</button></div>${asArray(this.extensionLogs).slice(0, 5).map((entry) => html`<div><span class="activity-dot"></span><p><strong>${entry.summary || entry.Summary || "Extension event"}</strong><small>${formatRelativeTime(entry.createdAt || entry.CreatedAt)}</small></p></div>`)}</section></aside></div>`;
     const renderAvailable = () => html`<div class="panel extension-catalog"><div class="section-heading"><div><h3>Available extensions</h3><p>Packages are verified before permission review.</p></div><label class="extension-search">${icon("search", 17)}<input aria-label="Search available extensions" placeholder="Search extensions…" .value=${this.extensionSearch} @input=${(event) => { this.extensionSearch = event.target.value; }}></label></div>${errors.map((error) => html`<div class="error-text">${error.Repository || error.repository}: ${error.Message || error.message}</div>`)}<div class="extension-store-grid">${available.filter((item) => !this.extensionSearch || `${item.displayName || item.DisplayName} ${item.description || item.Description}`.toLowerCase().includes(this.extensionSearch.toLowerCase())).map((item) => html`<article class="extension-store-card"><div class="extension-store-card-heading"><div class="provider-brand">${this.renderExtensionLogo(item, "large")}<div><strong>${item.displayName || item.DisplayName}</strong><small>v${item.version || item.Version}</small></div></div></div><p>${display(item.description || item.Description)}</p><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><button class="primary" ?disabled=${!(item.sha256 || item.Sha256)} @click=${() => this.installExtension(item)}>Install</button></article>`)}</div></div>`;
     const renderRegistries = () => html`<div class="panel"><div class="section-heading"><div><h3>Registries</h3><p>Catalog sources that supply verified extension packages.</p></div></div><form class="config-grid extension-registry-form" @submit=${(event) => this.createExtensionRegistry(event)}><label class="config-field"><span>Name</span><input name="name" required maxlength="200" placeholder="Community catalog"></label><label class="config-field"><span>Registry JSON URL</span><input name="registryUrl" type="url" required pattern="https://.*" placeholder="https://example.org/registry.json"></label><button class="primary" ?disabled=${Boolean(this.extensionActions.registry)}>${this.extensionActions.registry || "Add registry"}</button></form>${this.extensionRegistryError ? html`<div class="error-text">${this.extensionRegistryError}</div>` : nothing}<div class="extension-registry-list">${registries.map((item) => { const enabled = item.enabled ?? item.Enabled; return html`<div><span>${icon("link", 18)}</span><p><strong>${item.name || item.Name}</strong><small>${item.registryUrl || item.RegistryUrl}</small></p><span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span><button @click=${() => this.setExtensionRegistryEnabled(item, !enabled)}>${enabled ? "Disable" : "Enable"}</button></div>`; })}</div></div>`;
-    const renderActivity = () => html`<div class="panel"><div class="section-heading"><div><h3>Extension activity</h3><p>Install, update, authorization, and runtime events.</p></div></div><div class="extension-log-list">${asArray(this.extensionLogs).length ? asArray(this.extensionLogs).map((entry) => html`<div class="extension-log-entry"><span class="chip">${entry.level || entry.Level}</span><strong>${titleCase(entry.eventCode || entry.EventCode)}</strong><span>${entry.message || entry.Message}</span><small>${formatDate(entry.createdAt || entry.CreatedAt)}</small></div>`) : html`<div class="empty">No extension activity recorded.</div>`}</div></div>`;
-    return html`<section class="view-stack extensions-view"><div class="view-header extensions-page-header"><div class="extensions-page-title"><span class="workspace-icon">${icon("extensions", 28)}</span><div><h2>Extensions</h2><p>Install, enable, update, and manage optional provider modules.</p></div></div><button class="primary" @click=${() => { this.extensionInstallOpen = true; }}>${icon("plus", 17)} Install extension</button></div><div class="extension-tabs" role="tablist">${[["installed", "Installed", installedPackages.length], ["available", "Available", available.length], ["registries", "Registries", registries.length], ["activity", "Activity", ""]].map(([id, label, count]) => html`<button class=${this.extensionViewTab === id ? "active" : ""} @click=${() => { this.extensionViewTab = id; }}>${label}${count !== "" ? html`<span>${count}</span>` : nothing}</button>`)}</div>${this.extensionViewTab === "installed" ? renderInstalled() : this.extensionViewTab === "available" ? renderAvailable() : this.extensionViewTab === "registries" ? renderRegistries() : renderActivity()}${this.renderExtensionManager(managedPackage, (entry) => this.extensionPackageState(entry))}${this.renderExtensionPermissionModal(permissionPackage)}${this.renderExtensionInstallModal(storeItems, installedByExtension)}</section>`;
+    const renderActivity = () => html`<div class="panel"><div class="section-heading"><div><h3>Extension activity</h3><p>Install, update, authorization, and runtime events.</p></div></div><div class="extension-log-list">${asArray(this.extensionLogs).length ? asArray(this.extensionLogs).map((entry) => html`<div class="extension-log-entry"><span class="chip">${entry.level || entry.Level}</span><strong>${entry.summary || entry.Summary || "Extension event"}</strong><span>${entry.message || entry.Message}</span><small>${formatDate(entry.createdAt || entry.CreatedAt)}</small></div>`) : html`<div class="empty">No extension activity recorded.</div>`}</div></div>`;
+    return html`<section class="view-stack extensions-view"><div class="view-header extensions-page-header"><div class="extensions-page-title"><span class="workspace-icon">${icon("extensions", 28)}</span><div><h2>Extensions</h2><p>Install, enable, update, and manage optional provider modules.</p></div></div><button class="primary" @click=${() => { this.extensionInstallOpen = true; }}>${icon("plus", 17)} Install extension</button></div><div class="workspace-tabs" role="tablist" aria-label="Extension views">${[["installed", "Installed", installedPackages.length], ["available", "Available", available.length], ["registries", "Registries", registries.length], ["activity", "Activity", ""]].map(([id, label, count]) => html`<button role="tab" aria-selected=${this.extensionViewTab === id} tabindex=${this.extensionViewTab === id ? "0" : "-1"} class=${this.extensionViewTab === id ? "active" : ""} @keydown=${(event) => this.moveSegmentedTabFocus(event)} @click=${() => { this.extensionViewTab = id; }}>${label}${count !== "" ? html`<span>${count}</span>` : nothing}</button>`)}</div>${this.extensionViewTab === "installed" ? renderInstalled() : this.extensionViewTab === "available" ? renderAvailable() : this.extensionViewTab === "registries" ? renderRegistries() : renderActivity()}${this.renderExtensionManager(managedPackage, (entry) => this.extensionPackageState(entry))}${this.renderExtensionPermissionModal(permissionPackage)}${this.renderExtensionInstallModal(storeItems, installedByExtension)}</section>`;
   }
 
   renderActivity() {
@@ -4596,11 +5252,12 @@ class AllstarrApp extends LitElement {
       <section class="view-stack" data-testid="activity-workspace">
         <div class="view-header">
           <div>
-            <h2>Activity</h2>
+            <h2>Event log</h2>
             <p>Background work, download activity, scrobbling, and endpoint usage.</p>
           </div>
-          <button class="primary" @click=${async () => { await Promise.all([this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]); this.toast("Activity refreshed"); }}>Refresh</button>
+          <button class="primary" @click=${async () => { await Promise.all([this.loadDashboardPresentation(), this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]); this.toast("Event log refreshed"); }}>Refresh</button>
         </div>
+        ${this.renderEventLogFeed()}
         <div class="panel durable-jobs-panel">
           <h3>Background jobs</h3>
           <p class="muted">Queued work that Allstarr remembers across restarts, retries when appropriate, and records until it finishes or is cancelled.</p>
@@ -4625,6 +5282,69 @@ class AllstarrApp extends LitElement {
         </div>
       </section>
     `;
+  }
+
+  renderEventLogFeed() {
+    const all = asArray(this.dashboardActivity);
+    const categories = [...new Set(all.map((entry) => entry.kind || entry.Kind).filter(Boolean))].sort();
+    const sources = [...new Set(all.map((entry) => entry.source || entry.Source).filter(Boolean))].sort();
+    const states = [...new Set(all.map((entry) => entry.state || entry.State).filter(Boolean))].sort();
+    const severities = [...new Set(all.map((entry) => entry.severity || entry.Severity || "info"))].sort();
+    const providers = [...new Set(all.map((entry) => entry.providerId || entry.ProviderId).filter(Boolean))].sort();
+    const playlists = new Map(all.map((entry) => [entry.playlistLinkId || entry.PlaylistLinkId, entry.playlistName || entry.PlaylistName]).filter(([id]) => id));
+    const category = this.eventLogCategory || "all";
+    const source = this.eventLogSource || "all";
+    const selectedState = this.eventLogState || "all";
+    const selectedTime = this.eventLogTime || "all";
+    const selectedSeverity = this.eventLogSeverity || "all";
+    const selectedProvider = this.eventLogProvider || "all";
+    const selectedPlaylist = this.eventLogPlaylist || "all";
+    const selectedCorrelation = String(this.eventLogCorrelation || "").trim().toLowerCase();
+    const query = String(this.eventLogQuery || "").trim().toLowerCase();
+    const items = all.filter((entry) => {
+      const occurredAt = new Date(entry.occurredAt || entry.OccurredAt).getTime();
+      const timeWindow = { hour: 60 * 60 * 1000, day: 24 * 60 * 60 * 1000, week: 7 * 24 * 60 * 60 * 1000 }[selectedTime];
+      if (timeWindow && (!Number.isFinite(occurredAt) || occurredAt < Date.now() - timeWindow)) return false;
+      if (category !== "all" && (entry.kind || entry.Kind) !== category) return false;
+      if (source !== "all" && (entry.source || entry.Source) !== source) return false;
+      if (selectedState !== "all" && (entry.state || entry.State) !== selectedState) return false;
+      if (selectedSeverity !== "all" && (entry.severity || entry.Severity || "info") !== selectedSeverity) return false;
+      if (selectedProvider !== "all" && (entry.providerId || entry.ProviderId) !== selectedProvider) return false;
+      if (selectedPlaylist !== "all" && (entry.playlistLinkId || entry.PlaylistLinkId) !== selectedPlaylist) return false;
+      if (selectedCorrelation && !String(entry.correlationId || entry.CorrelationId || "").toLowerCase().includes(selectedCorrelation)) return false;
+      if (!query) return true;
+      return [entry.label, entry.Label, entry.source, entry.Source, entry.detail, entry.Detail, entry.state, entry.State, entry.correlationId, entry.CorrelationId]
+        .filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+    });
+    return html`<section class="panel event-log-panel" aria-labelledby="event-log-heading">
+      <div class="section-heading"><div><h3 id="event-log-heading">Recent events</h3><p>Matching, playlists, providers, jobs, and administrative changes.</p></div><span class="chip">${items.length} shown</span></div>
+      <div class="event-log-filters">
+        <label><span>Time</span><select .value=${selectedTime} @change=${(event) => { this.eventLogTime = event.target.value; }}><option value="all">All loaded</option><option value="hour">Last hour</option><option value="day">Last 24 hours</option><option value="week">Last 7 days</option></select></label>
+        <label><span>Severity</span><select .value=${selectedSeverity} @change=${(event) => { this.eventLogSeverity = event.target.value; }}><option value="all">All severities</option>${severities.map((value) => html`<option value=${value}>${titleCase(value)}</option>`)}</select></label>
+        <label><span>Category</span><select .value=${category} @change=${(event) => { this.eventLogCategory = event.target.value; this.requestUpdate(); }}><option value="all">All categories</option>${categories.map((value) => html`<option value=${value}>${titleCase(value)}</option>`)}</select></label>
+        <label><span>Provider / source</span><select .value=${source} @change=${(event) => { this.eventLogSource = event.target.value; this.requestUpdate(); }}><option value="all">All sources</option>${sources.map((value) => html`<option value=${value}>${providerDisplayName(value, this.schema?.providers)}</option>`)}</select></label>
+        <label><span>Provider</span><select .value=${selectedProvider} @change=${(event) => { this.eventLogProvider = event.target.value; }}><option value="all">All providers</option>${providers.map((value) => html`<option value=${value}>${providerDisplayName(value, this.schema?.providers)}</option>`)}</select></label>
+        <label><span>Playlist</span><select .value=${selectedPlaylist} @change=${(event) => { this.eventLogPlaylist = event.target.value; }}><option value="all">All playlists</option>${[...playlists].map(([id, name]) => html`<option value=${id}>${name || "Playlist"}</option>`)}</select></label>
+        <label><span>Outcome</span><select .value=${selectedState} @change=${(event) => { this.eventLogState = event.target.value; this.requestUpdate(); }}><option value="all">All outcomes</option>${states.map((value) => html`<option value=${value}>${titleCase(value)}</option>`)}</select></label>
+        <label><span>Correlation ID</span><input .value=${this.eventLogCorrelation || ""} placeholder="Exact request or job" @input=${(event) => { this.eventLogCorrelation = event.target.value; }}></label>
+        <label><span>Search</span><input type="search" .value=${this.eventLogQuery || ""} placeholder="Event, provider, correlation ID" @input=${(event) => { this.eventLogQuery = event.target.value; this.requestUpdate(); }}></label>
+      </div>
+      <div class="event-log-list" role="list">
+        ${items.length ? items.map((entry) => {
+          const kind = entry.kind || entry.Kind || "event";
+          const state = entry.state || entry.State || "unknown";
+          const correlation = entry.correlationId || entry.CorrelationId;
+          const severity = entry.severity || entry.Severity || "info";
+          return html`<article class="event-log-entry" role="listitem">
+            <span class=${`event-kind event-${kind}`}>${icon(kind === "matching" ? "search" : kind === "playlist" ? "library" : kind === "provider_health" ? "activity" : kind === "administration" ? "settings" : "activity", 17)}</span>
+            <div><strong>${entry.label || entry.Label || titleCase(kind)}</strong><small>${entry.source || entry.Source || "system"} · ${entry.detail || entry.Detail || "No additional detail"}</small>${correlation ? html`<code title="Correlation ID">${correlation}</code>` : nothing}</div>
+            <span class=${`status-chip ${state}`} title=${`${titleCase(severity)} severity`}>${titleCase(state)}</span>
+            <time datetime=${entry.occurredAt || entry.OccurredAt}>${formatRelativeTime(entry.occurredAt || entry.OccurredAt)}</time>
+          </article>`;
+        }) : html`<div class="empty">No events match these filters.</div>`}
+      </div>
+      ${this.eventLogHasMore ? html`<div class="event-log-pagination"><button ?disabled=${this.eventLogLoading} @click=${() => this.loadEarlierEvents()}>${this.eventLogLoading ? "Loading…" : "Load earlier events"}</button></div>` : nothing}
+    </section>`;
   }
 
   renderActivityList(items) {
@@ -4659,8 +5379,8 @@ class AllstarrApp extends LitElement {
         <div class="empty">
           <strong>No background jobs have been enqueued yet.</strong>
           <p class="muted">This list covers background work that survives restarts and keeps its history.</p>
-          <p class="muted">Imported legacy Spotify playlists are handled by the legacy scheduler and appear under <a href="#/library/injected">Library &gt; Injected</a>; that older work is not recorded here yet.</p>
-          <p class="muted">New playlist links, library actions, recommendations, and other background operations will appear here after they run.</p>
+          <p class="muted">Imported legacy playlists use the earlier scheduler and appear under <a href="#/library/playlists">Library &gt; Playlists</a>; that older work is not recorded here yet.</p>
+          <p class="muted">Managed playlist syncs, library actions, recommendations, and other background operations will appear here after they run.</p>
         </div>
       `;
     }
@@ -5073,7 +5793,7 @@ class AllstarrApp extends LitElement {
           <div class="setup-summary-item"><strong>2. Review matches</strong><small>Accept or pin the local songs you trust. Unmatched tracks stay visible.</small></div>
           <div class="setup-summary-item"><strong>3. Choose delivery</strong><small>Keep it virtual, reconcile a backend playlist, or explicitly recreate it each run.</small></div>
         </div>
-        <div class="setup-legacy-path"><p>This step is safe to revisit. Playlist sync never deletes or rewrites audio files.</p><button @click=${() => this.leaveSetupGuideFor("/library/link")}>Open playlist links</button></div>
+        <div class="setup-legacy-path"><p>This step is safe to revisit. Playlist sync never deletes or rewrites audio files.</p><button @click=${() => this.leaveSetupGuideFor("/library/playlists")}>Open playlists</button></div>
       `,
       html`
         <h2 id="setup-guide-title" tabindex="-1" autofocus>Your hub is ready to shape</h2>
@@ -5233,10 +5953,11 @@ class AllstarrApp extends LitElement {
 
     this.envMigration = { ...this.envMigration, state: "applying", error: "" };
     try {
+      const playlistHandoffs = asArray(preview.playlistHandoffs || preview.PlaylistHandoffs);
       const result = await API.applyEnvMigration(previewToken, revision);
       clearTimeout(this.envMigrationExpiryTimer);
       this.envMigrationExpiryTimer = null;
-      this.envMigration = { state: "success", sourceName: this.envMigration.sourceName, preview: null, result, error: "" };
+      this.envMigration = { state: "success", sourceName: this.envMigration.sourceName, preview: null, result: { ...result, playlistHandoffs }, error: "" };
       await this.loadConfig();
       await this.loadEnvMigrationStatus();
       this.toast("Legacy settings migrated. Imported settings are active now.");
@@ -5304,6 +6025,7 @@ class AllstarrApp extends LitElement {
           ? "Map the legacy owner to a current user, then select the destination backend, library, and target playlist."
           : "Choose an owning user, destination backend, library, and target playlist before scheduling this playlist.",
         sourceLine: playlistSourceLine,
+        handoff: playlist,
       });
     }
     for (const conflict of asArray(preview.conflicts || preview.Conflicts)) {
@@ -5446,6 +6168,41 @@ class AllstarrApp extends LitElement {
       entry.redactedValue ?? entry.RedactedValue ?? entry.value ?? entry.Value);
   }
 
+  async continueLegacyPlaylistHandoff(handoff) {
+    await this.loadPlaylistDiscovery();
+    const sourceAccounts = this.playlistSources.filter((item) =>
+      String(item.providerId || item.ProviderId).toLowerCase() === "spotify");
+    const jellyfinTargets = this.mediaTargets.filter((item) =>
+      String(item.protocol || item.Protocol).toLowerCase() === "jellyfin");
+    const sourceAccountId = sourceAccounts.length === 1 ? String(sourceAccounts[0].id || sourceAccounts[0].Id) : "";
+    const targetIdentityId = jellyfinTargets.length === 1 ? String(jellyfinTargets[0].id || jellyfinTargets[0].Id) : "";
+    const sourcePlaylist = {
+      id: handoff.sourcePlaylistId || handoff.SourcePlaylistId,
+      name: handoff.name || handoff.Name,
+    };
+    const targetPlaylistId = handoff.jellyfinTargetPlaylistId || handoff.JellyfinTargetPlaylistId || "";
+    const schedule = handoff.syncSchedule || handoff.SyncSchedule || "0 8 * * *";
+    this.playlistWizard = {
+      ...this.newPlaylistWizardDraft(),
+      sourceAccountId,
+      sourcePlaylist,
+      sourceQuery: sourcePlaylist.id,
+      targetIdentityId,
+      targetPlaylist: targetIdentityId && targetPlaylistId ? { id: targetPlaylistId, name: sourcePlaylist.name } : null,
+      createTarget: Boolean(targetIdentityId && !targetPlaylistId),
+      trigger: "scheduled",
+      cronExpression: schedule,
+      legacyHandoff: handoff,
+      step: sourceAccountId ? 1 : 0,
+    };
+    this.sourcePlaylistResults = [sourcePlaylist];
+    this.targetPlaylistResults = this.playlistWizard.targetPlaylist ? [this.playlistWizard.targetPlaylist] : [];
+    this.navigate("/library/playlists");
+    this.toast(sourceAccountId
+      ? "Legacy playlist details loaded. Confirm the destination and behavior."
+      : "Legacy playlist details loaded. Choose its owning Spotify account to continue.");
+  }
+
   renderEnvMigrationWizard() {
     const migration = this.envMigration;
     const durableStatus = this.envMigrationStatus || {};
@@ -5471,6 +6228,7 @@ class AllstarrApp extends LitElement {
     const busy = migration.state === "previewing" || migration.state === "applying";
     const result = migration.result || {};
     const resultWarnings = asArray(result.warnings || result.Warnings);
+    const resultPlaylistHandoffs = asArray(result.playlistHandoffs || result.PlaylistHandoffs);
     const resultSections = this.migrationResultSections();
     const hasDeploymentChecklist = this.migrationHasDeploymentChecklist();
     const canApply = preview.canApply ?? preview.CanApply ?? categories.length > 0;
@@ -5535,7 +6293,7 @@ class AllstarrApp extends LitElement {
                     <td class="mono">${display(entry.key || entry.Key || entry.sourceKey || entry.SourceKey)}</td>
                     <td>${display(entry.destination || entry.Destination || entry.target || entry.Target)}</td>
                     <td class=${this.migrationEntryIsSensitive(entry) ? "migration-redacted" : ""}>${this.migrationEntryValue(entry)}</td>
-                    <td><span class="status-chip ${this.migrationEntryStatusClass(entry)}">${titleCase(this.migrationEntryState(entry))}</span>${entry.warning || entry.Warning ? html`<div class="warning-text">${display(entry.warning || entry.Warning)}</div>` : nothing}</td>
+                    <td><span class="status-chip ${this.migrationEntryStatusClass(entry)}">${titleCase(this.migrationEntryState(entry))}</span>${entry.warning || entry.Warning ? html`<div class="warning-text">${display(entry.warning || entry.Warning)}</div>` : nothing}${entry.handoff ? html`<button class="compact" type="button" @click=${() => this.continueLegacyPlaylistHandoff(entry.handoff)}>Continue in Playlists</button>` : nothing}</td>
                   </tr>`)}</tbody>
                 </table></div>
               </section>`;
@@ -5564,6 +6322,7 @@ class AllstarrApp extends LitElement {
             </div>
             ${this.renderMigrationOptionalRuntimeGuidance()}
             <dl><div><dt>Durable settings</dt><dd>${this.migrationResultCount(result.settingsImported ?? result.SettingsImported ?? result.importedSettings ?? result.ImportedSettings)}</dd></div><div><dt>Disabled accounts created</dt><dd>${this.migrationResultCount(result.providerAccountsCreated ?? result.ProviderAccountsCreated)}</dd></div><div><dt>Skipped</dt><dd>${this.migrationResultCount(result.settingsSkipped ?? result.SettingsSkipped) + this.migrationResultCount(result.providerAccountsSkipped ?? result.ProviderAccountsSkipped)}</dd></div><div><dt>Manual checklist</dt><dd>${this.migrationResultCount(result.manualChecklistItems ?? result.ManualChecklistItems)}</dd></div><div><dt>Playlist handoffs</dt><dd>${this.migrationResultCount(result.playlistHandoffsPending ?? result.PlaylistHandoffsPending)}</dd></div></dl>
+            ${resultPlaylistHandoffs.length ? html`<section class="env-migration-result-section" aria-labelledby="migration-result-playlists"><h5 id="migration-result-playlists">Finish playlist migration</h5><div class="migration-playlist-handoffs">${resultPlaylistHandoffs.map((handoff) => html`<div><span><strong>${handoff.name || handoff.Name}</strong><small class="mono">${handoff.sourcePlaylistId || handoff.SourcePlaylistId}</small></span><button type="button" @click=${() => this.continueLegacyPlaylistHandoff(handoff)}>Continue in Playlists</button></div>`)}</div></section>` : nothing}
             ${resultSections.map((section) => html`<section class="env-migration-result-section" aria-labelledby=${`migration-result-${section.id}`}>
               <h5 id=${`migration-result-${section.id}`}>${section.label}</h5>
               <ul>${section.items.map((item) => html`<li>${this.migrationChecklistText(item)}</li>`)}</ul>

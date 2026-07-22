@@ -138,7 +138,8 @@ public class AdminUiController : ControllerBase
     [HttpGet("provider-summaries")]
     public async Task<IActionResult> GetProviderSummaries(CancellationToken cancellationToken = default)
     {
-        if (!IsAdministratorSession())
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
+            sessionValue is not AdminAuthSession { IsAdministrator: true, TenantId: { } tenantId })
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
         }
@@ -194,25 +195,63 @@ public class AdminUiController : ControllerBase
     [HttpGet("activity")]
     public async Task<IActionResult> GetDashboardActivity(
         [FromQuery] int limit = 20,
+        [FromQuery] DateTimeOffset? before = null,
+        [FromQuery] Guid? beforeId = null,
         CancellationToken cancellationToken = default)
     {
-        if (!IsAdministratorSession())
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
+            sessionValue is not AdminAuthSession { IsAdministrator: true, TenantId: { } tenantId })
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
         }
 
         limit = Math.Clamp(limit, 1, 100);
+        var scanLimit = Math.Min(500, limit * 5);
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
+            .Where(item => item.TenantId == tenantId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var accountIds = accounts.Keys.ToArray();
         var jobs = await context.Jobs.AsNoTracking()
-            .OrderByDescending(item => item.UpdatedAt)
-            .Take(limit)
+            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.UpdatedAt < before.Value ||
+                (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var health = await context.ProviderHealthSamples.AsNoTracking()
-            .OrderByDescending(item => item.ObservedAt)
-            .Take(limit)
+            .Where(item => accountIds.Contains(item.ProviderAccountId) && (!before.HasValue || item.ObservedAt < before.Value ||
+                (item.ObservedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .OrderByDescending(item => item.ObservedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
+            .ToListAsync(cancellationToken);
+        var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
+                ((item.CompletedAt ?? item.StartedAt) == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .OrderByDescending(item => item.CompletedAt ?? item.StartedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
+            .ToListAsync(cancellationToken);
+        var playlistLinkIds = playlistRuns.Select(item => item.PlaylistLinkId).Distinct().ToArray();
+        var playlistNames = playlistLinkIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : (await context.PlaylistSourceSnapshots.AsNoTracking()
+                .Where(item => playlistLinkIds.Contains(item.PlaylistLinkId))
+                .GroupBy(item => item.PlaylistLinkId)
+                .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
+                    .ThenByDescending(item => item.RetrievedAt).First())
+                .ToListAsync(cancellationToken))
+                .ToDictionary(item => item.PlaylistLinkId, item => item.Name);
+        var matches = await context.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.DecidedAt < before.Value ||
+                (item.DecidedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .OrderByDescending(item => item.DecidedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
+            .ToListAsync(cancellationToken);
+        var audits = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.CreatedAt < before.Value ||
+                (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
             .ToListAsync(cancellationToken);
 
         var activity = new List<AdminUiActivityItem>();
@@ -225,7 +264,11 @@ public class AdminUiController : ControllerBase
             item.Type,
             item.State.ToString().ToLowerInvariant(),
             item.LastErrorMessage ?? $"{item.AttemptCount} run attempt{(item.AttemptCount == 1 ? "" : "s")}",
-            item.UpdatedAt)));
+            item.UpdatedAt,
+            item.CorrelationId,
+            SeverityForState(item.State.ToString()),
+            item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var providerAccount)
+                ? providerAccount.ProviderId : null)));
         activity.AddRange(health.Select(item =>
         {
             var provider = accounts.TryGetValue(item.ProviderAccountId, out var account)
@@ -238,11 +281,130 @@ public class AdminUiController : ControllerBase
                 $"{item.Capability} check",
                 item.State.ToString().ToLowerInvariant(),
                 item.FailureCode ?? (item.LatencyMilliseconds.HasValue ? $"{item.LatencyMilliseconds} ms" : "Connection checked"),
-                item.ObservedAt);
+                item.ObservedAt,
+                Severity: SeverityForState(item.State.ToString()),
+                ProviderId: provider);
         }));
+        activity.AddRange(playlistRuns.Select(item => new AdminUiActivityItem(
+            item.Id.ToString("N"),
+            "playlist",
+            "playlists",
+            "Playlist sync",
+            item.State.ToString().ToLowerInvariant(),
+            item.ConflictCode ?? $"Generation {item.Generation}",
+            item.CompletedAt ?? item.StartedAt,
+            Severity: SeverityForState(item.State.ToString()),
+            PlaylistLinkId: item.PlaylistLinkId.ToString("N"),
+            PlaylistName: playlistNames.GetValueOrDefault(item.PlaylistLinkId, "Playlist"))));
+        activity.AddRange(matches.Select(item => new AdminUiActivityItem(
+            item.Id.ToString("N"),
+            "matching",
+            "matching",
+            "Track match evaluated",
+            item.State.ToString().ToLowerInvariant(),
+            $"{Math.Round(item.Confidence * 100, 1)}% confidence",
+            item.DecidedAt,
+            item.CorrelationId,
+            SeverityForState(item.State.ToString()))));
+        activity.AddRange(audits.Select(AuditActivity));
 
-        return Ok(new { items = activity.OrderByDescending(item => item.OccurredAt).Take(limit) });
+        var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
+        var items = ordered.Take(limit).ToArray();
+        return Ok(new
+        {
+            items,
+            hasMore = ordered.Length > limit || jobs.Count == scanLimit || health.Count == scanLimit ||
+                      playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit,
+            nextCursor = items.LastOrDefault()?.OccurredAt,
+            nextCursorId = items.LastOrDefault()?.Id
+        });
     }
+
+    private static AdminUiActivityItem AuditActivity(AuditEventRecord item)
+    {
+        var category = item.Category.Trim().ToLowerInvariant();
+        var kind = category switch
+        {
+            "scrobble" => "scrobble",
+            "provider-route" => "streaming",
+            "track-identity" or "track-match" => "matching",
+            "library-index" => "library",
+            _ => "administration"
+        };
+        var source = AuditDetail(item.DetailsJson, "providerId")
+            ?? AuditDetail(item.DetailsJson, "selectedProviderId")
+            ?? item.Category;
+        var detail = category switch
+        {
+            "scrobble" => TrackDetail(item.DetailsJson),
+            "provider-route" => RouteDetail(item.DetailsJson),
+            _ => AuditDetail(item.DetailsJson, "message") ?? HumanizeAuditCategory(item.Category)
+        };
+        var label = category switch
+        {
+            "scrobble" => "Scrobble recorded",
+            "provider-route" when item.Action == "plan" => "Playback route selected",
+            "provider-route" => "Provider request completed",
+            _ => HumanizeAuditCategory(item.Action)
+        };
+        return new AdminUiActivityItem(
+            item.Id.ToString("N"), kind, source, label, item.Outcome, detail, item.CreatedAt,
+            item.CorrelationId, SeverityForState(item.Outcome), source,
+            AuditDetail(item.DetailsJson, "playlistLinkId"),
+            AuditDetail(item.DetailsJson, "playlistName"));
+    }
+
+    private static string SeverityForState(string? state)
+    {
+        var normalized = state?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (normalized.Contains("fail", StringComparison.Ordinal) || normalized.Contains("error", StringComparison.Ordinal) ||
+            normalized.Contains("reject", StringComparison.Ordinal) || normalized.Contains("unhealthy", StringComparison.Ordinal)) return "error";
+        if (normalized.Contains("warn", StringComparison.Ordinal) || normalized.Contains("degrad", StringComparison.Ordinal) ||
+            normalized.Contains("conflict", StringComparison.Ordinal) || normalized.Contains("retry", StringComparison.Ordinal) ||
+            normalized.Contains("ambiguous", StringComparison.Ordinal) || normalized.Contains("partial", StringComparison.Ordinal)) return "warning";
+        return "info";
+    }
+
+    private static string TrackDetail(string json)
+    {
+        var title = AuditDetail(json, "Title") ?? "Unknown track";
+        var artist = AuditDetail(json, "Artist");
+        return string.IsNullOrWhiteSpace(artist) ? title : $"{title} · {artist}";
+    }
+
+    private static string RouteDetail(string json)
+    {
+        var capability = AuditDetail(json, "capability");
+        var stage = AuditDetail(json, "Stage");
+        var reason = AuditDetail(json, "ReasonCode");
+        return string.Join(" · ", new[] { capability, stage, reason }.Where(value => !string.IsNullOrWhiteSpace(value))) is { Length: > 0 } detail
+            ? detail
+            : "Provider route evaluated";
+    }
+
+    private static string? AuditDetail(string json, string property)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            foreach (var candidate in document.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(candidate.Name, property, StringComparison.OrdinalIgnoreCase)) continue;
+                return candidate.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? candidate.Value.GetString()
+                    : candidate.Value.ToString();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Older audit records may contain malformed details. Keep the event visible without exposing raw JSON.
+        }
+        return null;
+    }
+
+    private static string HumanizeAuditCategory(string value) =>
+        string.Join(' ', value.Split(['-', '_', '.'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
 
     private bool IsAdministratorSession() =>
         ControllerContext.HttpContext?.Items.TryGetValue(
@@ -255,7 +417,7 @@ public class AdminUiController : ControllerBase
         Route("home", "#/home", "Home", "home"),
         Route("library", "#/library", "Library", "library"),
         Route("sources", "#/sources", "Sources", "sources"),
-        Route("activity", "#/activity", "Activity", "activity"),
+        Route("activity", "#/activity", "Event log", "activity"),
         Route("settings", "#/settings", "Settings", "settings")
     ];
 
@@ -329,8 +491,8 @@ public class AdminUiController : ControllerBase
             Name = "Apple Music library",
             Icon = "applemusic",
             Status = "available",
-            Categories = ["metadata", "playlist"],
-            Notes = ["Personal library", "Music User Token"],
+            Categories = ["playlist"],
+            Notes = ["Personal playlists", "Music User Token", "Lyrics use a separate provider"],
             AccountSettings =
             [
                 new AdminUiConfigField
@@ -341,7 +503,7 @@ public class AdminUiController : ControllerBase
                     Sensitive = true,
                     Required = true,
                     Ownership = "provider-account",
-                    HelpText = "The MusicKit developer token issued by your Apple developer integration."
+                    HelpText = "The MusicKit developer token issued by your Apple developer integration. It authorizes Apple Music API access but does not replace the per-user token."
                 },
                 new AdminUiConfigField
                 {
@@ -351,7 +513,7 @@ public class AdminUiController : ControllerBase
                     Sensitive = true,
                     Required = true,
                     Ownership = "provider-account",
-                    HelpText = "The per-user Apple Music authorization token for personal library and playlist access."
+                    HelpText = "The per-user Apple Music authorization token used only to browse and import that user's playlists. Lyrics come from a separate lyrics-capable provider."
                 }
             ]
         },
@@ -753,4 +915,9 @@ public sealed record AdminUiActivityItem(
     string Label,
     string State,
     string Detail,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    string? CorrelationId = null,
+    string Severity = "info",
+    string? ProviderId = null,
+    string? PlaylistLinkId = null,
+    string? PlaylistName = null);

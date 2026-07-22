@@ -70,14 +70,31 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
 
+      - name: Restore WebUI tooling
+        run: npm ci
+
       - name: Verify C# formatting and analyzers
         run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 
       - name: Build
         run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
+      - name: Verify WebUI contracts
+        run: npm run check:webui
+
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
+
+      - name: Create release manifest
+        run: bash tools/create-release-manifest.sh > allstarr-release-manifest.json
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: allstarr-release-manifest.json
+          if-no-files-found: error
+          retention-days: 30
 
   provider-contracts:
     runs-on: ubuntu-latest

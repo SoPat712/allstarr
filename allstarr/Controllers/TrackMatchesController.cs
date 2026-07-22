@@ -262,11 +262,31 @@ public sealed class TrackMatchesController(
         var snapshotsQuery = db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.TenantId == tenantId);
         if (!session.IsAdministrator) snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == userId);
         if (!string.IsNullOrWhiteSpace(libraryScopeId)) snapshotsQuery = snapshotsQuery.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var pattern = $"%{search.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
+            snapshotsQuery = snapshotsQuery.Where(item =>
+                EF.Functions.ILike(item.ProviderId, pattern, "\\") ||
+                EF.Functions.ILike(item.PayloadJson, pattern, "\\"));
+        }
         var snapshots = await snapshotsQuery.OrderByDescending(item => item.RetrievedAt).Take(5000).ToListAsync(cancellationToken);
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
-        var decisions = (await db.TrackMatches.AsNoTracking().Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecisionVersion).ToListAsync(cancellationToken))
-            .GroupBy(item => item.ExternalSnapshotId).ToDictionary(group => group.Key, group => group.First());
+        var decisionQuery = db.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId));
+        var latestDecisionVersions = decisionQuery
+            .GroupBy(item => item.ExternalSnapshotId)
+            .Select(group => new
+            {
+                ExternalSnapshotId = group.Key,
+                DecisionVersion = group.Max(item => item.DecisionVersion)
+            });
+        var decisions = (await decisionQuery.Join(
+                latestDecisionVersions,
+                item => new { item.ExternalSnapshotId, item.DecisionVersion },
+                latest => new { latest.ExternalSnapshotId, latest.DecisionVersion },
+                (item, _) => item)
+            .ToListAsync(cancellationToken))
+            .ToDictionary(item => item.ExternalSnapshotId);
         var overrides = (await db.ManualTrackOverrides.AsNoTracking().Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId) && item.RevokedAt == null)
                 .ToListAsync(cancellationToken)).ToDictionary(item => item.ExternalSnapshotId);
         var libraryIds = decisions.Values.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)
@@ -282,7 +302,6 @@ public sealed class TrackMatchesController(
         var rows = snapshots.Select(snapshot => Row(snapshot, decisions.GetValueOrDefault(snapshot.Id),
                 overrides.GetValueOrDefault(snapshot.Id), library, identities))
             .Where(row => string.IsNullOrWhiteSpace(state) || row.State.ToString().Equals(state, StringComparison.OrdinalIgnoreCase))
-            .Where(row => string.IsNullOrWhiteSpace(search) || row.SearchText.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase))
             .ToArray();
         var total = rows.Length;
         var items = rows.Skip((page - 1) * pageSize).Take(pageSize).Select(row => row.Value).ToArray();

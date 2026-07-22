@@ -3856,21 +3856,6 @@ button.setup-choice {
     }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    html {
-        scroll-behavior: auto;
-    }
-
-    *,
-    *::before,
-    *::after {
-        scroll-behavior: auto !important;
-        transition-duration: 0.01ms !important;
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-    }
-}
-
 /* 2026 visual system: information-dense music control center */
 .ui-icon {
     display: block;
@@ -5224,26 +5209,6 @@ button.setup-choice {
     .now-progress-labels { grid-template-columns: 1fr 1fr; }
 }
 
-/* Keep the settings accordions compact even though their markup uses the shared disclosure class. */
-.settings-view > .content-disclosure > summary {
-    min-height: 0;
-    padding: 10px 16px;
-    gap: 10px;
-}
-
-.settings-view > .content-disclosure > summary strong {
-    line-height: 1.2;
-}
-
-.settings-view > .content-disclosure > summary small {
-    line-height: 1.15;
-}
-
-.settings-view > .content-disclosure > .disclosure-body {
-    padding: 16px;
-    gap: 12px;
-}
-
 /* Keep the playlist table aligned at desktop widths and scroll it as one unit when it cannot fit. */
 .injected-table-wrap {
     width: 100%;
@@ -5339,17 +5304,6 @@ button.setup-choice {
     .injected-table-row {
         min-width: 1056px;
     }
-}
-
-@media (max-width: 700px) {
-    .settings-view > .content-disclosure > summary {
-        padding: 8px 14px;
-    }
-
-    .settings-view > .content-disclosure > .disclosure-body {
-        padding: 12px 14px;
-    }
-
 }
 
 .table-pagination-controls {
@@ -5520,46 +5474,11 @@ button.setup-choice {
 
 .extensions-page-header > button,
 .extension-registry-bar button,
-.extension-tabs button,
 .extension-search,
 .button-link {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-}
-
-.extension-tabs {
-    display: flex;
-    align-items: center;
-    width: max-content;
-    max-width: 100%;
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: 11px;
-    background: var(--surface-card);
-    padding: 3px;
-}
-
-.extension-tabs button,
-.extension-modal-tabs button {
-    border: 0;
-    background: transparent;
-    color: var(--text-secondary);
-    box-shadow: none;
-}
-
-.extension-tabs button.active,
-.extension-modal-tabs button.active {
-    background: color-mix(in srgb, var(--accent), transparent 78%);
-    color: var(--text);
-}
-
-.extension-tabs button span {
-    border-radius: 999px;
-    background: var(--surface-elevated);
-    padding: 1px 7px;
-    color: var(--text-muted);
-    font-size: .72rem;
 }
 
 .extension-workspace-grid {
@@ -5758,15 +5677,6 @@ button.setup-choice {
     background: transparent;
     padding-inline: 0;
     box-shadow: none;
-}
-
-.extension-modal-tabs {
-    display: flex;
-    width: max-content;
-    margin-bottom: 14px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 3px;
 }
 
 .extension-install-dialog {

@@ -42,21 +42,21 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task Paging_is_deterministic_and_search_is_explicitly_not_advertised()
+    public async Task Paging_and_search_are_advertised_for_the_selected_user_account()
     {
         var handler = new AppleHandler();
         var adapter = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler),
             new SecretAccessor(new("developer", "user")));
 
         var playlists = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest(1, "7")));
-        var unsupported = await adapter.SearchPlaylistsAsync(Context(), new("mix", new ProviderPageRequest()));
+        var searched = await adapter.SearchPlaylistsAsync(Context(), new("mix", new ProviderPageRequest()));
 
         Assert.True(playlists.IsSuccess);
         Assert.Equal("8", playlists.RequireValue().NextCursor);
-        Assert.Equal(ProviderErrorKind.PermanentFailure, unsupported.Error!.Kind);
+        Assert.True(searched.IsSuccess, searched.Error?.ToString());
         var registration = ProviderRegistrationValidator.Validate(AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(adapter));
         var capability = Assert.Single(registration.Descriptor.Capabilities);
-        Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "resolveArtwork"], capability.Hooks);
+        Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "resolveArtwork", "searchPlaylists"], capability.Hooks);
         Assert.Equal([ProviderAccountScope.User], capability.AllowedAccountScopes);
         Assert.Same(adapter, Assert.Single(registration.Implementations));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
@@ -104,8 +104,8 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.Unauthorized, ProviderErrorKind.Unauthorized)]
-    [InlineData(HttpStatusCode.Forbidden, ProviderErrorKind.Forbidden)]
+    [InlineData(HttpStatusCode.Unauthorized, ProviderErrorKind.AccountNeedsReauthentication)]
+    [InlineData(HttpStatusCode.Forbidden, ProviderErrorKind.AccountNeedsReauthentication)]
     [InlineData(HttpStatusCode.BadRequest, ProviderErrorKind.PermanentFailure)]
     [InlineData(HttpStatusCode.ServiceUnavailable, ProviderErrorKind.TransientFailure)]
     [InlineData(HttpStatusCode.TooManyRequests, ProviderErrorKind.RateLimited)]

@@ -96,7 +96,8 @@ public sealed class PlaylistLinksControllerContractTests
 
     private static PlaylistLinksController Controller()
     {
-        var controller = new PlaylistLinksController(null!, null!, null!, null!, null!, null!, null!);
+        var controller = new PlaylistLinksController(
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

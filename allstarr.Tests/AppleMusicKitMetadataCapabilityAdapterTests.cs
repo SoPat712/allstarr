@@ -81,8 +81,10 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         var unauthorizedHandler = new AppleMetadataHandler { Failure = HttpStatusCode.Unauthorized };
         var unauthorized = new AppleMusicKitMetadataCapabilityAdapter(
             new HttpClient(unauthorizedHandler), new SecretAccessor(new("d", "u")));
-        Assert.Equal(ProviderErrorKind.Unauthorized,
-            (await unauthorized.SearchTracksAsync(Context(), Search())).Error!.Kind);
+        var authenticationError = (await unauthorized.SearchTracksAsync(Context(), Search())).Error!;
+        Assert.Equal(ProviderErrorKind.AccountNeedsReauthentication, authenticationError.Kind);
+        Assert.Equal("account-needs-reauthentication", authenticationError.Code);
+        Assert.Contains("Reconnect", authenticationError.SafeMessage, StringComparison.Ordinal);
 
         var malformedHandler = new AppleMetadataHandler { Malformed = true };
         var malformed = new AppleMusicKitMetadataCapabilityAdapter(

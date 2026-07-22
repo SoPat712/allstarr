@@ -41,6 +41,68 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         HasNativeRevision: false,
         HasStagedReplacement: true);
 
+    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(
+        BackendPlaylistTargetContext context,
+        string? query,
+        int limit,
+        CancellationToken cancellationToken) =>
+        await ListPageAsync(context, query, 0, limit, cancellationToken);
+
+    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListPageAsync(
+        BackendPlaylistTargetContext context,
+        string? query,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        offset = Math.Max(0, offset);
+        limit = Math.Clamp(limit, 1, 200);
+        var search = string.IsNullOrWhiteSpace(query)
+            ? string.Empty
+            : $"&SearchTerm={Escape(query.Trim())}";
+        var path = $"Users/{Escape(context.VerifiedPrincipalId)}/Items?IncludeItemTypes=Playlist&Recursive=true&Fields=Overview,ChildCount,PrimaryImageTag&StartIndex={offset}&Limit={limit}{search}";
+        var response = await SendAsync(context, HttpMethod.Get, path, null, cancellationToken);
+        if (!response.IsSuccess)
+            return ConvertFailure<IReadOnlyList<BackendPlaylistSummary>>(response);
+
+        using var document = JsonDocument.Parse(response.Body!);
+        var values = new List<BackendPlaylistSummary>();
+        foreach (var item in document.RootElement.GetPropertyOrDefault("Items").EnumerateArrayOrEmpty())
+        {
+            var id = item.StringOrNull("Id");
+            var name = item.StringOrNull("Name");
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name)) continue;
+            int? trackCount = item.GetPropertyOrDefault("ChildCount").TryGetInt32(out var count) ? count : null;
+            var imageTag = item.StringOrNull("PrimaryImageTag");
+            values.Add(new BackendPlaylistSummary(
+                id,
+                name,
+                trackCount,
+                item.StringOrNull("Overview"),
+                string.IsNullOrWhiteSpace(imageTag) ? null : $"jellyfin:{id}:{imageTag}"));
+        }
+
+        return new(BackendPlaylistTargetStatus.Success, values, response.Status);
+    }
+
+    public async Task<BackendPlaylistTargetResult<BackendPlaylistArtwork>> ReadArtworkAsync(
+        BackendPlaylistTargetContext context,
+        string backendPlaylistId,
+        string? artworkReference,
+        CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(
+            context,
+            HttpMethod.Get,
+            $"Items/{Escape(backendPlaylistId)}/Images/Primary",
+            null,
+            cancellationToken);
+        if (!response.IsSuccess || response.Body is not { Length: > 0 })
+            return ConvertFailure<BackendPlaylistArtwork>(response);
+        var contentType = response.ContentType is "image/png" or "image/webp" ? response.ContentType : "image/jpeg";
+        return new(BackendPlaylistTargetStatus.Success, new BackendPlaylistArtwork(response.Body, contentType), response.Status);
+    }
+
     public async Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(
         BackendPlaylistTargetContext context,
         string name,
@@ -241,7 +303,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             var body = response.Content.Headers.ContentLength == 0
                 ? []
                 : await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            return new(response.StatusCode, body);
+            return new(response.StatusCode, body, ContentType: response.Content.Headers.ContentType?.MediaType);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -291,7 +353,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
 
     private static string Escape(string value) => Uri.EscapeDataString(value);
     private static string Csv(IEnumerable<string> values) => Escape(string.Join(',', values));
-    private sealed record HttpResult(HttpStatusCode Status, byte[]? Body, string? ErrorCode = null)
+    private sealed record HttpResult(HttpStatusCode Status, byte[]? Body, string? ErrorCode = null, string? ContentType = null)
     {
         public bool IsSuccess => (int)Status is >= 200 and < 300;
     }

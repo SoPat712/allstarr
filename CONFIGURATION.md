@@ -5,7 +5,7 @@ Start with [.env.example](.env.example). It is the checked-in list of deployment
 For the turnkey install, optional-service, update, and custom-overlay commands, use the
 [deployment profile guide](docs/operations/deployment-profiles.md).
 
-`v3.0.0-beta.1` is a fresh-install baseline. Recreate the deployment instead of copying an old `.env` wholesale.
+`v3.1.0-beta.1` is a fresh-install baseline. Recreate the deployment instead of copying an old `.env` wholesale.
 After the new database is ready, the administrator WebUI can preview and import the safe allowlisted subset without
 replacing existing settings. Old Redis, mapping, extension, and job state is not imported automatically. Follow the
 [legacy environment upgrade procedure](docs/operations/legacy-env-import.md#upgrade-procedure).

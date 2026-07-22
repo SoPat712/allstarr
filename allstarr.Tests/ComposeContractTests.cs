@@ -24,12 +24,32 @@ public sealed class ComposeContractTests
         Assert.Contains("/health/ready", compose, StringComparison.Ordinal);
         Assert.Contains("postgres-data:/var/lib/postgresql", compose, StringComparison.Ordinal);
         Assert.Contains("allstarr-state:/app/state", compose, StringComparison.Ordinal);
+        Assert.Contains("ghcr.io/sopat712/allstarr:3.1.0-beta.1", compose, StringComparison.Ordinal);
+        Assert.Contains("Providers__MetadataFanoutConcurrency: ${PROVIDER_METADATA_FANOUT_CONCURRENCY:-4}", compose, StringComparison.Ordinal);
+        Assert.Contains("Operations__EventLog__MaximumRows: ${EVENT_LOG_MAXIMUM_ROWS:-250000}", compose, StringComparison.Ordinal);
+        Assert.Contains("Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}", compose, StringComparison.Ordinal);
+        Assert.Contains("Jellyfin__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}", compose, StringComparison.Ordinal);
         Assert.DoesNotContain(":latest", compose, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/var/run/docker.sock", compose, StringComparison.Ordinal);
         Assert.DoesNotContain("  gamdl-aio:", compose, StringComparison.Ordinal);
         Assert.DoesNotContain("  spotify-lyrics:", compose, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(_repositoryRoot, "docker-compose-redis2valkey.yml")));
         Assert.DoesNotContain("REDIS_DATA_PATH", compose, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnvironmentExample_UsesCanonicalBetaAndSafePlaylistDefaults()
+    {
+        var environment = File.ReadAllText(Path.Combine(_repositoryRoot, ".env.example"));
+        var versionSource = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr", "AppVersion.cs"));
+        var version = Regex.Match(versionSource, "Version\\s*=\\s*\"([^\"]+)\"").Groups[1].Value;
+
+        Assert.False(string.IsNullOrWhiteSpace(version));
+        Assert.Contains($"ALLSTARR_IMAGE=ghcr.io/sopat712/allstarr:{version}", environment, StringComparison.Ordinal);
+        Assert.Contains("PROVIDER_METADATA_FANOUT_CONCURRENCY=4", environment, StringComparison.Ordinal);
+        Assert.Contains("EVENT_LOG_MAXIMUM_ROWS=250000", environment, StringComparison.Ordinal);
+        Assert.Contains("ENABLE_EXTERNAL_PLAYLISTS=false", environment, StringComparison.Ordinal);
+        Assert.DoesNotContain("Link Playlists tab", environment, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

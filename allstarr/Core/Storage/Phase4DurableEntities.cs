@@ -128,6 +128,7 @@ public sealed class PlaylistLinkRecord
     public Guid OwnerUserId { get; set; }
     public Guid ProviderAccountId { get; set; }
     public Guid? ScheduleId { get; set; }
+    public bool Enabled { get; set; } = true;
     public string LibraryScopeId { get; set; } = string.Empty;
     public string SourceProviderId { get; set; } = string.Empty;
     public string SourcePlaylistId { get; set; } = string.Empty;

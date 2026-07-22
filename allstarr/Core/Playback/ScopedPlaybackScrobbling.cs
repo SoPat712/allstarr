@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using allstarr.Services.Common;
 
 namespace allstarr.Core.Playback;
@@ -21,7 +22,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
     IEnumerable<IExactScopePlaybackScrobbleTarget> targets,
     IPlaybackDeliveryCheckpointStore checkpoints,
     IPlaybackTrackResolver? trackResolver = null,
-    PlaybackDeliveryActivityStore? activity = null) : IScopedPlaybackScrobbleDelivery
+    PlaybackDeliveryActivityStore? activity = null,
+    ILogger<ScopedPlaybackScrobbleDelivery>? logger = null) : IScopedPlaybackScrobbleDelivery
 {
     public async Task DeliverAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
@@ -35,6 +37,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         Exception? unauthorizedFailure = null;
         Exception? retryableFailure = null;
         var delivered = false;
+        var completedTargets = new List<string>();
         foreach (var target in targets)
         {
             try
@@ -48,6 +51,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks, payload.ObservedAt, checkpointKey, cancellationToken);
                 await checkpoints.MarkCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken);
                 delivered |= completion;
+                if (completion) completedTargets.Add(target.ProviderId);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -65,6 +69,49 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         if (delivered)
         {
             activity?.MarkDelivered(payload.ItemId, payload.DeviceId);
+        }
+        if (completedTargets.Count > 0)
+        {
+            try
+            {
+                await using var db = await factory.CreateDbContextAsync(cancellationToken);
+                var now = DateTimeOffset.UtcNow;
+                var providerIds = completedTargets
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(providerId => providerId, StringComparer.OrdinalIgnoreCase)
+                    .Take(16)
+                    .ToArray();
+                db.AuditEvents.Add(new AuditEventRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = payload.Scope.TenantId,
+                    ActorUserId = payload.Scope.OwnerUserId,
+                    Category = "scrobble",
+                    Action = "delivered",
+                    Outcome = "success",
+                    CorrelationId = checkpointKey,
+                    DetailsJson = JsonSerializer.Serialize(new
+                    {
+                        providerIds,
+                        providerCount = providerIds.Length,
+                        track.Title,
+                        track.Artist,
+                        track.Album,
+                        transition = payload.Transition.ToString(),
+                        observedAt = payload.ObservedAt
+                    }),
+                    CreatedAt = now
+                });
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Completed scrobble delivery succeeded but its activity event could not be recorded");
+            }
         }
         if (retryableFailure != null) ExceptionDispatchInfo.Capture(retryableFailure).Throw();
         if (unauthorizedFailure != null) ExceptionDispatchInfo.Capture(unauthorizedFailure).Throw();

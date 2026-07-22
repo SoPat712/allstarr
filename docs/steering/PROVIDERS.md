@@ -62,7 +62,11 @@ Typed routes must register an accurate descriptor and matching capability implem
 - `apple-download` is an optional repository gateway and typed managed-download adapter. Its separate Compose
   profile uses GAMDL 3.8.2 and locked wrapper-v2 0.0.2 source after legal Apple libraries pass upstream hashes.
   Standard and AIO do not start that stack.
-- `apple-musickit` is a separate per-user MusicKit account for personal playlists and library operations.
+- `apple-musickit` is a separate per-user MusicKit account for personal playlist browse, search, artwork, track
+  paging, and personal-library metadata operations. Apple API `401` and `403` responses produce the typed
+  `account-needs-reauthentication` outcome and instruct the owner to reconnect this account.
+- MusicKit credentials do not advertise lyrics. Subscription lyrics come from a separately enabled lyrics-capable
+  provider or extension and must not receive the Music User Token unless it owns that encrypted account secret.
 - Never pass a Music User Token to the download gateway or treat gateway login state as MusicKit authorization.
 
 ### Spotify

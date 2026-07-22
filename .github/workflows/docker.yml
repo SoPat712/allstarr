@@ -34,6 +34,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
+      - name: Read canonical application version
+        id: app-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*Version = "\([^"]*\)";.*/\1/p' allstarr/AppVersion.cs)"
+          test -n "${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match canonical app version v${version}." >&2
+            exit 1
+          fi
+
       - name: Setup .NET
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
@@ -129,6 +142,7 @@ jobs:
           platforms: linux/amd64
           push: false
           tags: allstarr:release-smoke
+          build-args: ALLSTARR_VERSION=${{ steps.app-version.outputs.version }}
           cache-from: type=gha
 
       - name: Smoke test built image
@@ -206,6 +220,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: ALLSTARR_VERSION=${{ steps.app-version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

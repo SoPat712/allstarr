@@ -10,18 +10,12 @@ public static class AppleMusicKitPlaylistCapabilityRegistration
         services.AddSingleton<IProviderAccountSecretAccessor, EncryptedProviderAccountSecretAccessor>();
         services.AddHttpClient(AppleMusicKitPlaylistCapabilityAdapter.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-        services.AddHttpClient(AppleMusicKitMetadataCapabilityAdapter.HttpClientName)
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddSingleton(provider => new AppleMusicKitPlaylistCapabilityAdapter(
-            provider.GetRequiredService<IHttpClientFactory>(),
-            provider.GetRequiredService<IProviderAccountSecretAccessor>()));
-        services.AddSingleton(provider => new AppleMusicKitMetadataCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<IProviderAccountSecretAccessor>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(
-                provider.GetRequiredService<AppleMusicKitPlaylistCapabilityAdapter>(),
-                provider.GetRequiredService<AppleMusicKitMetadataCapabilityAdapter>()));
+                provider.GetRequiredService<AppleMusicKitPlaylistCapabilityAdapter>()));
         return services;
     }
 }

@@ -9,11 +9,13 @@
         <!-- Keep build/package version in sync with AppVersion.cs -->
         <AppVersionFile>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', 'AppVersion.cs'))</AppVersionFile>
         <AppVersionText>$([System.IO.File]::ReadAllText('$(AppVersionFile)'))</AppVersionText>
-        <AppVersion>$([System.Text.RegularExpressions.Regex]::Match('$(AppVersionText)', 'Version\s*=\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"').Groups[1].Value)</AppVersion>
+        <AppVersion>$([System.Text.RegularExpressions.Regex]::Match('$(AppVersionText)', 'Version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"').Groups[1].Value)</AppVersion>
+        <AppVersionCore>$([System.Text.RegularExpressions.Regex]::Match('$(AppVersion)', '^([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value)</AppVersionCore>
 
         <Version>$(AppVersion)</Version>
-        <AssemblyVersion>$(AppVersion).0</AssemblyVersion>
-        <FileVersion>$(AppVersion).0</FileVersion>
+        <InformationalVersion>$(AppVersion)</InformationalVersion>
+        <AssemblyVersion>$(AppVersionCore).0</AssemblyVersion>
+        <FileVersion>$(AppVersionCore).0</FileVersion>
     </PropertyGroup>
 
     <ItemGroup>

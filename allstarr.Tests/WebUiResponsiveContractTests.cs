@@ -132,7 +132,7 @@ public sealed class WebUiResponsiveContractTests
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("class=\"playlist-toolbar\"", script, StringComparison.Ordinal);
-        Assert.Contains("class=\"injected-table-head\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"injected-data-table\"", script, StringComparison.Ordinal);
         Assert.Contains("Sync ${selected.size ? `${selected.size} selected` : \"all now\"}", script, StringComparison.Ordinal);
         Assert.Contains("return nothing;", script, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Playlist preview\"", script, StringComparison.Ordinal);
@@ -212,7 +212,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("signed-in session is the connection test", script, StringComparison.Ordinal);
         Assert.Contains("Connected", script, StringComparison.Ordinal);
         Assert.Contains("First playlist", script, StringComparison.Ordinal);
-        Assert.Contains("leaveSetupGuideFor(\"/library/link\")", script, StringComparison.Ordinal);
+        Assert.Contains("leaveSetupGuideFor(\"/library/playlists\")", script, StringComparison.Ordinal);
         Assert.Contains("SETUP_GUIDE_LAST_STEP = 4", script, StringComparison.Ordinal);
         Assert.Contains("Promise.all([this.loadStatus(), this.loadProviderAccounts()])", script, StringComparison.Ordinal);
         Assert.DoesNotContain("this.loadProviderHealth()", script, StringComparison.Ordinal);
@@ -265,7 +265,7 @@ public sealed class WebUiResponsiveContractTests
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
 
         Assert.Contains("/api/admin/ui/provider-summaries", script, StringComparison.Ordinal);
-        Assert.Contains("/api/admin/ui/activity?limit=", script, StringComparison.Ordinal);
+        Assert.Contains("API.dashboardActivity(100)", script, StringComparison.Ordinal);
         Assert.Contains("class=\"global-search\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"overview-grid\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"source-metrics\"", script, StringComparison.Ordinal);
@@ -281,13 +281,17 @@ public sealed class WebUiResponsiveContractTests
     public void SmallScreens_UseFullHeightSetupAndCoarsePointerTouchTargets()
     {
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+        var foundation = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "foundation.css"));
 
         Assert.Contains("@media (max-width: 620px)", css, StringComparison.Ordinal);
         Assert.Contains("height: 100dvh;", css, StringComparison.Ordinal);
         Assert.Contains("@media (hover: none), (pointer: coarse)", css, StringComparison.Ordinal);
         Assert.Contains("min-height: 44px;", css, StringComparison.Ordinal);
         Assert.Contains("env(safe-area-inset-bottom)", css, StringComparison.Ordinal);
-        Assert.Contains("@media (prefers-reduced-motion: reduce)", css, StringComparison.Ordinal);
+        Assert.Contains("@media (prefers-reduced-motion: reduce)", foundation, StringComparison.Ordinal);
+        Assert.Contains("transition-duration: 0.01ms !important;", foundation, StringComparison.Ordinal);
+        Assert.Contains("animation-iteration-count: 1 !important;", foundation, StringComparison.Ordinal);
+        Assert.DoesNotContain("@media (prefers-reduced-motion: reduce)", css, StringComparison.Ordinal);
     }
 
     [Fact]

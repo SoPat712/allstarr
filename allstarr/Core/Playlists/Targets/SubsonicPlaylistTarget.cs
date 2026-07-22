@@ -43,6 +43,67 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         HasNativeRevision: true,
         HasStagedReplacement: true);
 
+    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(
+        BackendPlaylistTargetContext context,
+        string? query,
+        int limit,
+        CancellationToken cancellationToken) =>
+        await ListPageAsync(context, query, 0, limit, cancellationToken);
+
+    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListPageAsync(
+        BackendPlaylistTargetContext context,
+        string? query,
+        int offset,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        offset = Math.Max(0, offset);
+        limit = Math.Clamp(limit, 1, 200);
+        var response = await CallAsync(context, "getPlaylists", [], cancellationToken);
+        if (!response.IsSuccess)
+            return ConvertFailure<IReadOnlyList<BackendPlaylistSummary>>(response);
+        using var document = JsonDocument.Parse(response.Body!);
+        if (!TryResponseRoot(document.RootElement, out var root, out var protocolFailure))
+            return ConvertFailure<IReadOnlyList<BackendPlaylistSummary>>(protocolFailure!);
+
+        var normalizedQuery = query?.Trim();
+        var values = new List<BackendPlaylistSummary>();
+        var skipped = 0;
+        foreach (var playlist in root.GetPropertyOrDefault("playlists").GetPropertyOrDefault("playlist").EnumerateArrayOrEmpty())
+        {
+            var id = playlist.StringOrNull("id");
+            var name = playlist.StringOrNull("name");
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name)) continue;
+            if (!string.IsNullOrWhiteSpace(normalizedQuery) &&
+                !name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)) continue;
+            if (skipped++ < offset) continue;
+            int? trackCount = playlist.GetPropertyOrDefault("songCount").TryGetInt32(out var count) ? count : null;
+            values.Add(new BackendPlaylistSummary(
+                id,
+                name,
+                trackCount,
+                playlist.StringOrNull("comment"),
+                playlist.StringOrNull("coverArt")));
+            if (values.Count == limit) break;
+        }
+
+        return new(BackendPlaylistTargetStatus.Success, values, response.Status);
+    }
+
+    public async Task<BackendPlaylistTargetResult<BackendPlaylistArtwork>> ReadArtworkAsync(
+        BackendPlaylistTargetContext context,
+        string backendPlaylistId,
+        string? artworkReference,
+        CancellationToken cancellationToken)
+    {
+        var coverArtId = string.IsNullOrWhiteSpace(artworkReference) ? backendPlaylistId : artworkReference;
+        var response = await CallAsync(context, "getCoverArt", [Pair("id", coverArtId)], cancellationToken);
+        if (!response.IsSuccess || response.Body is not { Length: > 0 })
+            return ConvertFailure<BackendPlaylistArtwork>(response);
+        var contentType = response.ContentType is "image/png" or "image/webp" ? response.ContentType : "image/jpeg";
+        return new(BackendPlaylistTargetStatus.Success, new BackendPlaylistArtwork(response.Body, contentType), response.Status);
+    }
+
     public async Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(
         BackendPlaylistTargetContext context,
         string name,
@@ -190,7 +251,7 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         {
             using var response = await _client.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            return new(response.StatusCode, body);
+            return new(response.StatusCode, body, ContentType: response.Content.Headers.ContentType?.MediaType);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -261,7 +322,7 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
     };
 
     private static KeyValuePair<string, string> Pair(string key, string value) => new(key, value);
-    private sealed record HttpResult(HttpStatusCode Status, byte[]? Body, string? ErrorCode = null)
+    private sealed record HttpResult(HttpStatusCode Status, byte[]? Body, string? ErrorCode = null, string? ContentType = null)
     {
         public bool IsSuccess => (int)Status is >= 200 and < 300;
     }

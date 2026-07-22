@@ -115,16 +115,41 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
         Assert.Null(result.Snapshot);
     }
 
+    [Fact]
+    public async Task Oversized_page_or_declared_playlist_is_rejected_before_unbounded_collection()
+    {
+        var playlist = PlaylistId("playlist");
+        var context = Context("spotify");
+        var summary = Summary(playlist);
+        var oversizedPage = new FakePlaylistCapability("spotify",
+            Page(summary, [Track(0, "a"), Track(1, "b"), Track(2, "c")]));
+
+        var pageResult = await new ProviderPlaylistSnapshotCollector().CollectAsync(
+            oversizedPage, context, new(playlist, PageSize: 2));
+
+        Assert.Equal(PlaylistSnapshotCollectionStatus.Failed, pageResult.Status);
+        Assert.Equal(ProviderErrorKind.PermanentFailure, pageResult.Error!.Kind);
+
+        var excessiveSummary = Summary(playlist, 100_001);
+        var excessivePlaylist = new FakePlaylistCapability("spotify", Page(excessiveSummary, []));
+        var countResult = await new ProviderPlaylistSnapshotCollector().CollectAsync(
+            excessivePlaylist, context, new(playlist));
+
+        Assert.Equal(PlaylistSnapshotCollectionStatus.Failed, countResult.Status);
+        Assert.Equal(ProviderErrorKind.PermanentFailure, countResult.Error!.Kind);
+        Assert.Null(countResult.Snapshot);
+    }
+
     private static ProviderExternalResourceId PlaylistId(string value) => new("spotify", ProviderResourceKind.Playlist, value);
 
-    private static ProviderPlaylistSummary Summary(ProviderExternalResourceId id) => new(
+    private static ProviderPlaylistSummary Summary(ProviderExternalResourceId id, int trackCount = 3) => new(
         id,
         "Road Mix",
         new ProviderPlaylistOwner("owner"),
         "revision-17",
         "Source description",
         new ProviderArtworkReference(new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "opaque-art-secret"), revision: "art-rev"),
-        trackCount: 3,
+        trackCount: trackCount,
         sourceETag: "etag-17");
 
     private static ProviderPlaylistTrack Track(int position, string id) => new(

@@ -7,6 +7,7 @@ namespace allstarr.Services.Common;
 public class RoundRobinFallbackHelper
 {
     private const int PreferredFastEndpointCount = 2;
+    private const int MaximumConcurrentEndpointOperations = 8;
     private readonly List<string> _apiUrls;
     private int _currentUrlIndex = 0;
     private readonly object _urlIndexLock = new object();
@@ -129,10 +130,18 @@ public class RoundRobinFallbackHelper
             return new List<string>();
         }
 
-        var healthCheckTasks = _apiUrls.Select(async url => new
+        using var healthGate = new SemaphoreSlim(MaximumConcurrentEndpointOperations);
+        var healthCheckTasks = _apiUrls.Select(async url =>
         {
-            Url = url,
-            IsHealthy = await IsEndpointHealthyAsync(url)
+            await healthGate.WaitAsync();
+            try
+            {
+                return new { Url = url, IsHealthy = await IsEndpointHealthyAsync(url) };
+            }
+            finally
+            {
+                healthGate.Release();
+            }
         }).ToList();
 
         var results = await Task.WhenAll(healthCheckTasks);
@@ -524,63 +533,77 @@ public class RoundRobinFallbackHelper
         var blacklistedEndpoints = new HashSet<string>();
         var blacklistLock = new object();
 
-        // Start one task per endpoint
+        using var endpointGate = new SemaphoreSlim(MaximumConcurrentEndpointOperations);
+        // Every configured endpoint remains eligible, but only a bounded number
+        // can actively process or fail over work at once.
         var tasks = _apiUrls.Select(async endpoint =>
         {
-            while (true)
+            await endpointGate.WaitAsync(cancellationToken);
+            try
             {
-                // Check if endpoint is blacklisted
-                lock (blacklistLock)
+                while (true)
                 {
-                    if (blacklistedEndpoints.Contains(endpoint))
-                    {
-                        return;
-                    }
-                }
-
-                // Get next item from queue
-                TItem? item;
-                lock (queueLock)
-                {
-                    if (itemQueue.Count == 0)
-                    {
-                        return; // No more items to process
-                    }
-                    item = itemQueue.Dequeue();
-                }
-
-                // Process the item
-                try
-                {
-                    var result = await action(endpoint, item, cancellationToken);
-
-                    lock (resultsLock)
-                    {
-                        results.Add(result);
-                    }
-
-                    _logger.LogDebug("✓ {Service} endpoint {Endpoint} processed item ({Completed}/{Total})",
-                        _serviceName, endpoint, results.Count, items.Count);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "✗ {Service} endpoint {Endpoint} failed, blacklisting",
-                        _serviceName, endpoint);
-
-                    // Blacklist this endpoint
+                    // Check if endpoint is blacklisted
                     lock (blacklistLock)
                     {
-                        blacklistedEndpoints.Add(endpoint);
+                        if (blacklistedEndpoints.Contains(endpoint))
+                        {
+                            return;
+                        }
                     }
 
-                    // Put item back in queue for another endpoint to try
+                    // Get next item from queue
+                    TItem? item;
                     lock (queueLock)
                     {
-                        itemQueue.Enqueue(item);
+                        if (itemQueue.Count == 0)
+                        {
+                            return; // No more items to process
+                        }
+                        item = itemQueue.Dequeue();
                     }
 
-                    return; // Exit this endpoint's task
+                    // Process the item
+                    try
+                    {
+                        var result = await action(endpoint, item, cancellationToken);
+
+                        lock (resultsLock)
+                        {
+                            results.Add(result);
+                        }
+
+                        _logger.LogDebug("✓ {Service} endpoint {Endpoint} processed item ({Completed}/{Total})",
+                            _serviceName, endpoint, results.Count, items.Count);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "✗ {Service} endpoint {Endpoint} failed, blacklisting",
+                            _serviceName, endpoint);
+
+                        // Blacklist this endpoint
+                        lock (blacklistLock)
+                        {
+                            blacklistedEndpoints.Add(endpoint);
+                        }
+
+                        // Put item back in queue for another endpoint to try
+                        lock (queueLock)
+                        {
+                            itemQueue.Enqueue(item);
+                        }
+
+                        return; // Exit this endpoint's task
+                    }
                 }
+            }
+            finally
+            {
+                endpointGate.Release();
             }
         }).ToList();
 
