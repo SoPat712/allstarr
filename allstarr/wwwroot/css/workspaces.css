@@ -346,6 +346,13 @@
     font-size: .88rem;
 }
 
+.playlist-operation-heading strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .playlist-operation-metrics {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
