@@ -567,7 +567,11 @@
 
     .playlist-track-table {
         display: grid;
+        width: 100%;
+        min-width: 0;
         gap: 10px;
+        overflow: visible;
+        border: 0;
     }
 
     .playlist-track-row {
