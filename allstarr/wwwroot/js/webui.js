@@ -593,6 +593,12 @@ const API = {
     requestJson("/api/admin/mappings/tracks", { cache: "no-store" }, "Failed to load imported legacy mappings"),
   saveMapping: (externalSnapshotId, payload) =>
     requestJson(`/api/admin/playlist-links/matches/${encodeURIComponent(externalSnapshotId)}/override`, jsonBody(payload), "Failed to save match review"),
+  resolveMapping: (externalSnapshotId, payload) =>
+    requestJson(`/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/resolve`, jsonBody(payload), "Failed to resolve track match"),
+  rematchMapping: (externalSnapshotId) =>
+    requestJson(`/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/rematch`, { method: "POST" }, "Failed to rematch track"),
+  searchMappingLocalTargets: (query, libraryScopeId = "") =>
+    requestJson(`/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}`, {}, "Failed to search indexed library"),
   deleteMapping: (overrideId, expectedRevision = 0) =>
     requestJson(`/api/admin/playlist-links/matches/overrides/${encodeURIComponent(overrideId)}?expectedRevision=${encodeURIComponent(expectedRevision)}`, { method: "DELETE" }, "Failed to clear match review"),
   extensionStore: () => requestJson("/api/admin/extensions/store", {}, "Failed to load extension store"),
@@ -730,6 +736,7 @@ class AllstarrApp extends LitElement {
     ctsMeasurements: { state: true },
     endpointUsage: { state: true },
     mappings: { state: true },
+  mappingEditor: { state: true },
     legacyMappings: { state: true },
     extensionStore: { state: true },
     extensionRegistries: { state: true },
@@ -895,7 +902,8 @@ class AllstarrApp extends LitElement {
     this.injectedAddOpen = false;
     this.selectedInjectedPlaylists = new Set();
     this.playlistLinkFilters = { libraryScopeId: "" };
-    this.mappingFilters = { page: 1, pageSize: 50, state: "", libraryScopeId: "", search: "" };
+    this.mappingFilters = { page: 1, pageSize: 50, state: "attention", libraryScopeId: "", search: "" };
+    this.mappingEditor = null;
     this.activitySource = null;
     this.routeLoadKey = "";
     this.envMigrationExpiryTimer = null;
@@ -1828,12 +1836,7 @@ class AllstarrApp extends LitElement {
   }
 
   async loadMappings() {
-    const [mappings, legacyMappings] = await Promise.all([
-      API.mappings(this.mappingFilters),
-      API.legacyMappings(),
-    ]);
-    this.mappings = mappings;
-    this.legacyMappings = legacyMappings;
+    this.mappings = await API.mappings(this.mappingFilters);
   }
 
   async loadMigrationData() {
@@ -3816,6 +3819,72 @@ class AllstarrApp extends LitElement {
   };
 
   renderMappings() {
+    const mappings = asArray(this.mappings?.matches);
+    const stats = this.mappings?.stats || {};
+    const pagination = this.mappings?.pagination || {};
+    const attention = Number(stats.unresolved || 0) + Number(stats.review || 0);
+    const filters = [["attention", "Needs attention"], ["", "All tracks"], ["matched", "Matched"], ["rejected", "Rejected"]];
+    return html`
+      <section class="mapping-review-queue">
+        <div class="section-heading mapping-review-heading"><div><div class="eyebrow">Library matching</div><h2>Match review queue</h2><p>Resolve unmatched tracks against your indexed library or any playback provider. No storage IDs are required.</p></div><button class="secondary" @click=${async () => { await this.loadMappings(); this.toast("Match queue refreshed"); }}>Refresh</button></div>
+        <div class="metric-grid mapping-metrics"><article class="metric-card"><span>Total</span><strong>${stats.total ?? 0}</strong></article><article class="metric-card attention"><span>Needs attention</span><strong>${attention}</strong></article><article class="metric-card"><span>Matched</span><strong>${stats.accepted ?? 0}</strong></article><article class="metric-card"><span>Unresolved</span><strong>${stats.unresolved ?? 0}</strong></article></div>
+        <div class="mapping-filter-bar" role="group" aria-label="Mapping status filter">${filters.map(([value, label]) => html`<button class=${this.mappingFilters.state === value ? "active" : ""} @click=${async () => { this.mappingFilters.state = value; this.mappingFilters.page = 1; await this.loadMappings(); }}>${label}</button>`)}</div>
+        <form class="mapping-search-bar" @submit=${async (event) => { event.preventDefault(); this.mappingFilters.page = 1; await this.loadMappings(); }}><label class="search-field"><span>Search mappings</span><input .value=${this.mappingFilters.search} @input=${(event) => { this.mappingFilters.search = event.target.value; }} placeholder="Title, artist, album, or provider"></label><label><span>Library scope</span><input .value=${this.mappingFilters.libraryScopeId} @input=${(event) => { this.mappingFilters.libraryScopeId = event.target.value; }} placeholder="All libraries"></label><button class="primary" type="submit">Search</button></form>
+        <div class="mapping-card-list">${mappings.length ? mappings.map((mapping) => this.renderMappingReviewRow(mapping)) : html`<div class="empty-state compact"><strong>No mappings found.</strong><span>Try another filter, or wait for the next playlist match.</span></div>`}</div>
+        <div class="pagination mapping-pagination"><span>${pagination.total ?? 0} tracks</span><div><button ?disabled=${(pagination.page ?? 1) <= 1} @click=${async () => { this.mappingFilters.page -= 1; await this.loadMappings(); }}>Previous</button><span>Page ${pagination.page ?? 1} of ${pagination.totalPages ?? 1}</span><button ?disabled=${(pagination.page ?? 1) >= (pagination.totalPages ?? 1)} @click=${async () => { this.mappingFilters.page += 1; await this.loadMappings(); }}>Next</button></div></div>
+      </section>
+      ${this.renderMappingReviewModal()}
+    `;
+  }
+
+  renderMappingReviewRow(mapping) {
+    const state = String(mapping.state || "unresolved");
+    const routes = asArray(mapping.providerIdentities).filter((identity) => identity.providerId !== mapping.providerId);
+    const route = mapping.localTrack ? `${display(mapping.localTrack.artist, "Local library")} · ${display(mapping.localTrack.title, mapping.localTrack.backendItemId)}` : routes.map((identity) => `${identity.providerId}:${identity.externalId}`).join(", ");
+    const notes = [...asArray(mapping.reasons), ...asArray(mapping.warnings)].filter(Boolean);
+    return html`<article class="mapping-review-card ${["unresolved", "suggested", "ambiguous", "rejected"].includes(state) ? "needs-attention" : ""}"><div class="mapping-source-mark" aria-hidden="true">${String(mapping.providerId || "?").slice(0, 2).toUpperCase()}</div><div class="mapping-track-copy"><div class="mapping-card-title"><strong>${display(mapping.title, "Unknown track")}</strong><span class="status-pill ${state}">${humanize(state)}</span></div><p>${display(mapping.artist, "Unknown artist")}${mapping.album ? html`<span> · ${mapping.album}</span>` : ""}</p><div class="mapping-route"><span>Source</span><strong>${humanize(mapping.providerId || "provider")}</strong><span>Current match</span><strong>${route || "No playable match"}</strong></div>${notes.length ? html`<div class="mapping-notes">${notes.slice(0, 3).map((note) => html`<span>${note}</span>`)}</div>` : ""}</div><div class="mapping-card-actions"><button class="primary" @click=${() => this.openMappingReview(mapping)}>Review match</button><button @click=${async () => { await API.rematchMapping(mapping.externalSnapshotId); await this.loadMappings(); this.toast("Rematch requested"); }}>Rematch</button><button @click=${async () => { await API.resolveMapping(mapping.externalSnapshotId, { targetType: "reject", reason: "Rejected from the match review queue" }); await this.loadMappings(); this.toast("Track rejected"); }}>Reject</button>${mapping.overrideId ? html`<button class="danger" @click=${async () => { await API.deleteMapping(mapping.overrideId, mapping.overrideRevision ?? 0); await this.loadMappings(); this.toast("Manual review cleared"); }}>Clear review</button>` : ""}</div></article>`;
+  }
+
+  mappingReviewProviders(mapping) {
+    const providers = new Set(["apple", "deezer", "qobuz", "soundcloud", "youtube", "squidwtf", "tidal", "amazon"]);
+    asArray(mapping?.providerIdentities).forEach((identity) => identity?.providerId && providers.add(String(identity.providerId).toLowerCase()));
+    return [...providers].sort();
+  }
+
+  openMappingReview(mapping) {
+    this.mappingEditor = { mapping, targetType: "local", provider: this.mappingReviewProviders(mapping)[0] || "", query: [mapping.artist, mapping.title].filter(Boolean).join(" "), results: [], searched: false, busy: false, error: "" };
+  }
+
+  renderMappingReviewModal() {
+    const editor = this.mappingEditor;
+    if (!editor) return nothing;
+    const mapping = editor.mapping;
+    const local = editor.targetType === "local";
+    return html`<div class="playlist-preview-backdrop mapping-review-backdrop" @click=${(event) => { if (event.target === event.currentTarget) this.mappingEditor = null; }}><section class="playlist-preview-modal mapping-review-modal" role="dialog" aria-modal="true" aria-label="Review track match"><header><div><div class="eyebrow">Review match</div><h2>${display(mapping.title, "Unknown track")}</h2><p>${display(mapping.artist, "Unknown artist")} · source: ${humanize(mapping.providerId)}</p></div><button class="icon-button" aria-label="Close match review" @click=${() => { this.mappingEditor = null; }}>×</button></header><div class="mapping-target-tabs" role="tablist"><button class=${local ? "active" : ""} @click=${() => { editor.targetType = "local"; editor.results = []; this.requestUpdate(); }}>Search local library</button><button class=${!local ? "active" : ""} @click=${() => { editor.targetType = "provider"; editor.results = []; this.requestUpdate(); }}>Search a playback provider</button></div><form class="mapping-target-search" @submit=${(event) => { event.preventDefault(); this.searchMappingTargets(); }}>${!local ? html`<label><span>Provider</span><input list="mapping-provider-options" .value=${editor.provider} @input=${(event) => { editor.provider = event.target.value; }}><datalist id="mapping-provider-options">${this.mappingReviewProviders(mapping).map((provider) => html`<option value=${provider}></option>`)}</datalist></label>` : ""}<label class="grow"><span>Track</span><input .value=${editor.query} @input=${(event) => { editor.query = event.target.value; }} placeholder="Artist and title"></label><button class="primary" type="submit" ?disabled=${editor.busy}>${editor.busy ? "Searching…" : "Search"}</button></form><div class="mapping-target-results">${editor.error ? html`<div class="callout danger">${editor.error}</div>` : ""}${asArray(editor.results).map((result) => this.renderMappingTargetResult(result, local))}${editor.searched && !editor.busy && !editor.results.length ? html`<div class="empty-state compact"><strong>No playable results.</strong><span>Try another provider or a more exact query.</span></div>` : ""}</div></section></div>`;
+  }
+
+  renderMappingTargetResult(result, local) {
+    const title = display(result.title ?? result.Title ?? result.name ?? result.Name, "Unknown track");
+    const artist = display(result.artist ?? result.Artist ?? result.artistName ?? result.ArtistName, "Unknown artist");
+    const album = result.album ?? result.Album ?? result.albumTitle ?? result.AlbumTitle;
+    return html`<button class="mapping-target-result" @click=${() => this.applyMappingTarget(result, local)}><span class="mapping-result-art" aria-hidden="true">♫</span><span><strong>${title}</strong><small>${artist}${album ? ` · ${album}` : ""}</small></span><span class="choose-label">Choose</span></button>`;
+  }
+
+  async searchMappingTargets() {
+    const editor = this.mappingEditor;
+    if (!editor || editor.query.trim().length < 2) return;
+    editor.busy = true; editor.error = ""; editor.searched = true; this.requestUpdate();
+    try { const response = editor.targetType === "local" ? await API.searchMappingLocalTargets(editor.query.trim(), editor.mapping.libraryScopeId || "") : await API.searchExternalTracks(editor.query.trim(), editor.provider.trim()); editor.results = asArray(response?.tracks || response?.songs || response?.results || response?.items || response?.Items || response); } catch (error) { editor.error = error?.message || "Search failed"; editor.results = []; } finally { editor.busy = false; this.requestUpdate(); }
+  }
+
+  async applyMappingTarget(result, local) {
+    const editor = this.mappingEditor;
+    if (!editor) return;
+    const payload = local ? { targetType: "local", libraryTrackId: result.id ?? result.Id, reason: "Selected from indexed library search" } : { targetType: "provider", externalProvider: result.externalProvider ?? result.ExternalProvider ?? editor.provider, externalId: result.externalId ?? result.ExternalId ?? result.id ?? result.Id, reason: "Selected from provider search" };
+    await API.resolveMapping(editor.mapping.externalSnapshotId, payload);
+    this.mappingEditor = null; await this.loadMappings(); this.toast("Match updated");
+  }
+  renderMappingsLegacy() {
     const mappings = asArray(this.mappings?.mappings || this.mappings?.Mappings);
     const legacyMappings = asArray(this.legacyMappings?.mappings || this.legacyMappings?.Mappings);
     const playableLegacyMappings = legacyMappings.filter((mapping) => mapping.playable ?? mapping.Playable ?? false);

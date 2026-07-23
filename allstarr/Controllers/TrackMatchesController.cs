@@ -1,7 +1,11 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
 using allstarr.Filters;
+using allstarr.Models.Spotify;
 using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
 using Microsoft.AspNetCore.Mvc;
@@ -18,8 +22,16 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class TrackMatchesController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    SpotifyMappingService spotifyMappings) : ControllerBase
+    SpotifyMappingService spotifyMappings,
+    SpotifyTrackMatchingService matchingService) : ControllerBase
 {
+    public sealed record ResolveTrackMatchRequest(
+        string TargetType,
+        Guid? LibraryTrackId = null,
+        string? ExternalProvider = null,
+        string? ExternalId = null,
+        string? Reason = null);
+
     [HttpGet("spotify/{spotifyId}")]
     public async Task<IActionResult> Detail(
         string spotifyId,
@@ -253,7 +265,10 @@ public sealed class TrackMatchesController(
     {
         if (!TrySession(out var session, out var error)) return error!;
         if (page < 1 || pageSize is < 1 or > 200) return BadRequest(new { error = "Page and pageSize are outside the supported range" });
-        if (!string.IsNullOrWhiteSpace(state) && !Enum.TryParse<TrackMatchState>(state, true, out _))
+        if (!string.IsNullOrWhiteSpace(state) &&
+            !state.Equals("attention", StringComparison.OrdinalIgnoreCase) &&
+            !state.Equals("matched", StringComparison.OrdinalIgnoreCase) &&
+            !Enum.TryParse<TrackMatchState>(state, true, out _))
             return BadRequest(new { error = "State is not a valid match state" });
 
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -299,10 +314,10 @@ public sealed class TrackMatchesController(
                 .OrderBy(item => item.ProviderId).ThenBy(item => item.ExternalId).ToListAsync(cancellationToken))
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
 
-        var rows = snapshots.Select(snapshot => Row(snapshot, decisions.GetValueOrDefault(snapshot.Id),
+        var allRows = snapshots.Select(snapshot => Row(snapshot, decisions.GetValueOrDefault(snapshot.Id),
                 overrides.GetValueOrDefault(snapshot.Id), library, identities))
-            .Where(row => string.IsNullOrWhiteSpace(state) || row.State.ToString().Equals(state, StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        var rows = allRows.Where(row => MatchesStateFilter(row.State, state)).ToArray();
         var total = rows.Length;
         var items = rows.Skip((page - 1) * pageSize).Take(pageSize).Select(row => row.Value).ToArray();
         return Ok(new
@@ -310,15 +325,259 @@ public sealed class TrackMatchesController(
             matches = items,
             stats = new
             {
-                total,
-                accepted = rows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
-                unresolved = rows.Count(item => item.State == TrackMatchState.Unresolved),
-                review = rows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous)
+                total = allRows.Length,
+                accepted = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
+                unresolved = allRows.Count(item => item.State == TrackMatchState.Unresolved),
+                review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous)
             },
             pagination = new { page, pageSize, total, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) }
         }
         );
     }
+
+    [HttpGet("targets/local")]
+    public async Task<IActionResult> SearchLocalTargets(
+        [FromQuery] string query,
+        [FromQuery] string? libraryScopeId = null,
+        [FromQuery] int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        query = query?.Trim() ?? string.Empty;
+        if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
+        limit = Math.Clamp(limit, 1, 50);
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var tenantId = session!.TenantId!.Value;
+        var userId = session.AllstarrUserId!.Value;
+        var pattern = $"%{query.Replace("%", "\\%").Replace("_", "\\_")}%";
+        var tracks = db.LibraryTracks.AsNoTracking().Where(item => item.TenantId == tenantId);
+        if (!session.IsAdministrator) tracks = tracks.Where(item => item.OwnerUserId == userId);
+        if (!string.IsNullOrWhiteSpace(libraryScopeId)) tracks = tracks.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
+        tracks = tracks.Where(item =>
+            EF.Functions.ILike(item.Title, pattern, "\\") ||
+            EF.Functions.ILike(item.Artist, pattern, "\\") ||
+            (item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\")));
+        var values = await tracks.OrderBy(item => item.Artist).ThenBy(item => item.Title).Take(limit)
+            .Select(item => new
+            {
+                item.Id,
+                item.BackendItemId,
+                item.Title,
+                item.Artist,
+                item.Album,
+                item.DurationMilliseconds,
+                item.Isrc,
+                item.CoverArtReference
+            }).ToArrayAsync(cancellationToken);
+        return Ok(new { tracks = values });
+    }
+
+    [HttpPost("{externalSnapshotId:guid}/resolve")]
+    public async Task<IActionResult> Resolve(
+        Guid externalSnapshotId,
+        [FromBody] ResolveTrackMatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        var targetType = request.TargetType?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (targetType is not ("local" or "provider" or "reject"))
+            return BadRequest(new { error = "TargetType must be local, provider, or reject" });
+
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var tenantId = session!.TenantId!.Value;
+        var userId = session.AllstarrUserId!.Value;
+        var snapshot = await db.ExternalMetadataSnapshots.SingleOrDefaultAsync(
+            item => item.Id == externalSnapshotId && item.TenantId == tenantId, cancellationToken);
+        if (snapshot == null) return NotFound();
+        if (!session.IsAdministrator && snapshot.OwnerUserId != userId) return Forbid();
+
+        var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
+            ? await db.ProviderTrackIdentities.SingleOrDefaultAsync(
+                item => item.Id == snapshot.ProviderTrackIdentityId.Value && item.TenantId == tenantId,
+                cancellationToken)
+            : null;
+        var latestDecision = await db.TrackMatches.Where(item =>
+                item.TenantId == tenantId && item.ExternalSnapshotId == externalSnapshotId)
+            .OrderByDescending(item => item.DecisionVersion).FirstOrDefaultAsync(cancellationToken);
+        var decisionVersion = (latestDecision?.DecisionVersion ?? 0) + 1;
+        var now = DateTimeOffset.UtcNow;
+        var activeOverride = await db.ManualTrackOverrides.SingleOrDefaultAsync(item =>
+            item.TenantId == tenantId && item.ExternalSnapshotId == externalSnapshotId && item.RevokedAt == null,
+            cancellationToken);
+        if (activeOverride != null)
+        {
+            activeOverride.RevokedAt = now;
+            activeOverride.Revision++;
+        }
+
+        LibraryTrackRecord? localTrack = null;
+        string? providerId = null;
+        string? externalId = null;
+        if (targetType == "local")
+        {
+            if (!request.LibraryTrackId.HasValue) return BadRequest(new { error = "LibraryTrackId is required for a local match" });
+            localTrack = await db.LibraryTracks.SingleOrDefaultAsync(item =>
+                item.Id == request.LibraryTrackId.Value && item.TenantId == tenantId &&
+                item.LibraryScopeId == snapshot.LibraryScopeId, cancellationToken);
+            if (localTrack == null || (!session.IsAdministrator && localTrack.OwnerUserId != userId)) return NotFound();
+            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = snapshot.OwnerUserId,
+                ExternalSnapshotId = snapshot.Id,
+                LibraryTrackId = localTrack.Id,
+                LibraryScopeId = snapshot.LibraryScopeId,
+                Decision = ManualOverrideDecision.Pin,
+                Reason = CleanReason(request.Reason, "Selected from the indexed local library"),
+                DecisionVersion = decisionVersion,
+                CreatedAt = now
+            });
+        }
+        else if (targetType == "reject")
+        {
+            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = snapshot.OwnerUserId,
+                ExternalSnapshotId = snapshot.Id,
+                LibraryScopeId = snapshot.LibraryScopeId,
+                Decision = ManualOverrideDecision.Reject,
+                Reason = CleanReason(request.Reason, "Rejected during manual review"),
+                DecisionVersion = decisionVersion,
+                CreatedAt = now
+            });
+        }
+        else
+        {
+            providerId = request.ExternalProvider?.Trim().ToLowerInvariant();
+            externalId = request.ExternalId?.Trim();
+            if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(externalId))
+                return BadRequest(new { error = "ExternalProvider and ExternalId are required for a provider match" });
+            if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(providerId))
+                return BadRequest(new { error = "That provider cannot supply playback audio" });
+            var canonicalId = latestDecision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
+            if (!canonicalId.HasValue) return Conflict(new { error = "The source track has no canonical identity yet; rematch it first" });
+
+            var externalHash = Hash(externalId);
+            var identity = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>
+                item.TenantId == tenantId && item.ProviderId == providerId && item.ResourceKind == ProviderResourceKind.Track &&
+                item.CatalogNamespace == "default" && item.Scope == ProviderIdentityScope.Catalog &&
+                item.ExternalIdHash == externalHash, cancellationToken);
+            if (identity != null && identity.CanonicalRecordingId != canonicalId.Value)
+                return Conflict(new { error = "That provider track is already linked to a different recording" });
+            if (identity == null)
+            {
+                db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = tenantId,
+                    CanonicalRecordingId = canonicalId.Value,
+                    ProviderId = providerId,
+                    ResourceKind = ProviderResourceKind.Track,
+                    CatalogNamespace = "default",
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = externalId,
+                    ExternalIdHash = externalHash,
+                    Verification = ProviderIdentityVerification.Pinned,
+                    VerificationMethod = "manual-review",
+                    DecisionVersion = decisionVersion,
+                    VerifiedAt = now,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+            db.TrackMatches.Add(new TrackMatchRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = tenantId,
+                OwnerUserId = snapshot.OwnerUserId,
+                ExternalSnapshotId = snapshot.Id,
+                CanonicalRecordingId = canonicalId.Value,
+                LibraryScopeId = snapshot.LibraryScopeId,
+                State = TrackMatchState.Suggested,
+                Confidence = 1,
+                Threshold = 1,
+                DecisionVersion = decisionVersion,
+                PolicyVersion = "manual-provider-route-v1",
+                CandidateResultsJson = "[]",
+                ReasonsJson = JsonSerializer.Serialize(new[] { $"Manually selected {providerId} playback route" }),
+                WarningsJson = "[]",
+                CorrelationId = HttpContext.TraceIdentifier,
+                DecidedAt = now
+            });
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        var metadata = Metadata(snapshot.PayloadJson);
+        var compatibilityUpdated = true;
+        if (sourceIdentity?.ProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            compatibilityUpdated = targetType switch
+            {
+                "local" => await spotifyMappings.SaveManualMappingAsync(sourceIdentity.ExternalId, "local",
+                    localTrack!.BackendItemId, metadata: ToTrackMetadata(metadata)),
+                "provider" => await spotifyMappings.SaveManualMappingAsync(sourceIdentity.ExternalId, "external",
+                    externalProvider: providerId, externalId: externalId, metadata: ToTrackMetadata(metadata)),
+                _ => await spotifyMappings.DeleteMappingAsync(sourceIdentity.ExternalId)
+            };
+        }
+        return Ok(new { success = true, compatibilityUpdated });
+    }
+
+    [HttpPost("{externalSnapshotId:guid}/rematch")]
+    public async Task<IActionResult> Rematch(Guid externalSnapshotId, CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out var session, out var error)) return error!;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var tenantId = session!.TenantId!.Value;
+        var userId = session.AllstarrUserId!.Value;
+        var snapshot = await db.ExternalMetadataSnapshots.SingleOrDefaultAsync(
+            item => item.Id == externalSnapshotId && item.TenantId == tenantId, cancellationToken);
+        if (snapshot == null) return NotFound();
+        if (!session.IsAdministrator && snapshot.OwnerUserId != userId) return Forbid();
+        var active = await db.ManualTrackOverrides.SingleOrDefaultAsync(item =>
+            item.TenantId == tenantId && item.ExternalSnapshotId == snapshot.Id && item.RevokedAt == null,
+            cancellationToken);
+        if (active != null)
+        {
+            active.RevokedAt = DateTimeOffset.UtcNow;
+            active.Revision++;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        var source = snapshot.ProviderTrackIdentityId.HasValue
+            ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(
+                item => item.Id == snapshot.ProviderTrackIdentityId.Value && item.TenantId == tenantId,
+                cancellationToken)
+            : null;
+        if (source?.ProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            await spotifyMappings.DeleteMappingAsync(source.ExternalId);
+            await matchingService.TriggerMatchingAsync(cancellationToken);
+        }
+        return Accepted(new { queued = true });
+    }
+
+    private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
+        string.IsNullOrWhiteSpace(filter) ||
+        (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Unresolved or TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected) ||
+        (filter.Equals("matched", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Accepted or TrackMatchState.Pinned) ||
+        state.ToString().Equals(filter, StringComparison.OrdinalIgnoreCase);
+
+    private static string CleanReason(string? reason, string fallback) =>
+        string.IsNullOrWhiteSpace(reason) ? fallback : reason.Trim()[..Math.Min(reason.Trim().Length, 500)];
+
+    private static string Hash(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static TrackMetadata ToTrackMetadata((string? Title, string? Artist, string? Album) value) => new()
+    {
+        Title = value.Title,
+        Artist = value.Artist,
+        Album = value.Album
+    };
 
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
         ManualTrackOverrideRecord? manual, IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
