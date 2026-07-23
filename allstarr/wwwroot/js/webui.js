@@ -4874,6 +4874,19 @@ class AllstarrApp extends LitElement {
     const usesSession = item.usesSignedSession || item.UsesSignedSession;
     const sessionAuthenticated = this.extensionSession?.authenticated ?? this.extensionSession?.Authenticated;
     const action = this.extensionActions[id];
+    const capabilities = this.extensionCapabilities(item);
+    const capabilityCatalog = [
+      ["metadata", "Search and enrich track, album, and artist details"],
+      ["playlist", "Read and synchronize provider playlists"],
+      ["streaming", "Resolve playable media streams"],
+      ["download", "Retrieve media for managed local storage"],
+      ["lyrics", "Find and display synchronized or plain lyrics"],
+    ];
+    const extensionActivity = asArray(this.extensionLogs).filter((entry) => {
+      const packageId = entry.extensionPackageId || entry.ExtensionPackageId;
+      const logExtensionId = entry.extensionId || entry.ExtensionId;
+      return packageId ? String(packageId) === String(id) : logExtensionId ? String(logExtensionId).toLowerCase() === String(extensionId).toLowerCase() : true;
+    }).slice(0, 12);
     return html`
       <div class="modal-backdrop extension-manage-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
         <section class="panel extension-manage-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-manage-title" tabindex="-1">
@@ -4884,7 +4897,7 @@ class AllstarrApp extends LitElement {
             </div>
             <div class="row-actions"><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : "warning"}">${state === "active" ? "Enabled" : titleCase(state)}</span><button class="icon-button ghost" aria-label="Close extension manager" @click=${close}>${icon("close")}</button></div>
           </div>
-          <p class="muted extension-manage-description">${display(item.description || item.Description, "No description supplied by this extension.")}</p>
+          <section class="extension-about" aria-labelledby="extension-about-title"><div><h4 id="extension-about-title">About</h4><p class="extension-manage-description">${display(item.description || item.Description, "No description supplied by this extension.")}</p></div><dl class="extension-package-facts"><div><dt>Extension ID</dt><dd><code>${extensionId}</code></dd></div><div><dt>Version</dt><dd>${item.version || item.Version}</dd></div><div><dt>Author</dt><dd>${display(item.author || item.Author, "Not provided")}</dd></div><div><dt>Installed</dt><dd>${formatDate(item.stagedAt || item.StagedAt || item.createdAt || item.CreatedAt)}</dd></div><div><dt>Runtime</dt><dd>${display(item.compatibility || item.Compatibility, "Allstarr extension SDK")}</dd></div></dl></section>
 
           <div class="extension-manage-grid">
             <div class="extension-manage-main">
@@ -4921,12 +4934,11 @@ class AllstarrApp extends LitElement {
                 </section>` : nothing}
 
               <section class="extension-manage-section">
-                <div class="section-heading"><div><h4>Capabilities</h4><p>What this extension can provide to Allstarr.</p></div></div>
-                <div class="extension-capability-summary">
-                  ${this.extensionCapabilities(item).length
-                    ? this.extensionCapabilities(item).map((capability) => this.renderExtensionCapabilityChip(capability))
-                    : html`<span class="muted">No provider capabilities declared.</span>`}
-                </div>
+                <div class="section-heading"><div><h4>Capabilities</h4><p>Declared provider functions available to Allstarr.</p></div></div>
+                <div class="extension-capability-matrix">${capabilityCatalog.map(([capability, detail]) => {
+                  const supported = capabilities.includes(capability);
+                  return html`<div class=${supported ? "supported" : "unsupported"}>${icon(({ metadata: "metadata", playlist: "playlist", streaming: "streaming", download: "download", lyrics: "lyrics" })[capability], 18)}<span><strong>${titleCase(capability)}</strong><small>${detail}</small></span><span class="extension-capability-state" title=${supported ? "Supported" : "Not declared"}>${icon(supported ? "check" : "close", 16)}</span></div>`;
+                })}</div>
                 <div class="extension-runtime-summary">
                   <strong>Runtime</strong>
                   <span class="muted">${display(item.compatibility || item.Compatibility, "Allstarr extension SDK")}</span>
@@ -4946,7 +4958,7 @@ class AllstarrApp extends LitElement {
                   return this.runExtensionAction(item, "Restoring", () => API.rollbackExtensionPackage(id, revision), "Previous extension version restored");
                 }}>Restore previous version</button>` : nothing}
               </div>${this.renderExtensionUninstallControl(item)}</section>
-              <section class="extension-manage-section"><h4>Recent activity</h4><div class="extension-mini-log">${asArray(this.extensionLogs).slice(0, 5).map((entry) => html`<div><strong>${entry.summary || entry.Summary || "Extension event"}</strong><small>${formatDate(entry.createdAt || entry.CreatedAt)}</small></div>`)}</div></section>
+              <section class="extension-manage-section extension-manager-activity"><div class="section-heading"><div><h4>Recent activity</h4><p>Runtime, authorization, and lifecycle events.</p></div></div><div class="extension-mini-log">${extensionActivity.length ? extensionActivity.map((entry) => html`<details><summary><span class=${`activity-dot level-${String(entry.level || entry.Level || "info").toLowerCase()}`}></span><strong>${titleCase(entry.summary || entry.Summary || "Extension event")}</strong><time>${formatRelativeTime(entry.createdAt || entry.CreatedAt)}</time>${icon("chevronRight", 15)}</summary><div><p>${display(entry.message || entry.Message, "No additional details were recorded.")}</p><small>${formatDate(entry.createdAt || entry.CreatedAt)} · ${titleCase(entry.level || entry.Level || "info")}</small></div></details>`) : html`<div class="empty compact">No activity recorded for this extension.</div>`}</div><button class="ghost" @click=${() => { close(); this.extensionViewTab = "activity"; }}>View all extension activity</button></section>
             </aside>
           </div>
         </section>

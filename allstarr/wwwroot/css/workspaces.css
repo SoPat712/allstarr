@@ -1362,6 +1362,150 @@
   white-space: nowrap;
 }
 
+.extension-about {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.extension-about h4,
+.extension-about p {
+  margin: 0;
+}
+
+.extension-about p {
+  margin-top: 0.4rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.extension-package-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.extension-package-facts > div {
+  min-width: 0;
+  padding: 0.6rem;
+  background: var(--surface-card);
+  border-radius: var(--radius-md);
+}
+
+.extension-package-facts dt {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.extension-package-facts dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.extension-capability-matrix {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.extension-capability-matrix > div {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) 1.5rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.extension-capability-matrix > div > span:nth-child(2) {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.extension-capability-matrix small {
+  color: var(--text-secondary);
+}
+
+.extension-capability-matrix .unsupported {
+  color: var(--text-muted);
+  opacity: 0.72;
+}
+
+.extension-capability-state {
+  display: grid;
+  place-items: center;
+  color: var(--success);
+}
+
+.extension-capability-matrix .unsupported .extension-capability-state {
+  color: var(--text-muted);
+}
+
+.extension-manager-activity .extension-mini-log {
+  display: grid;
+  margin-bottom: 0.75rem;
+}
+
+.extension-manager-activity details {
+  border-bottom: 1px solid var(--border);
+}
+
+.extension-manager-activity summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.extension-manager-activity summary::-webkit-details-marker {
+  display: none;
+}
+
+.extension-manager-activity details[open] summary > .ui-icon {
+  transform: rotate(90deg);
+}
+
+.extension-manager-activity summary time,
+.extension-manager-activity details > div small {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.extension-manager-activity details > div {
+  padding: 0 0 0.75rem 1.1rem;
+}
+
+.extension-manager-activity details > div p {
+  margin: 0 0 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .extension-about,
+  .extension-package-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .extension-manager-activity summary {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .extension-manager-activity summary time {
+    grid-column: 2;
+  }
+}
+
 .deep-stream-diagnostic {
   display: grid;
   grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) minmax(9rem, 0.65fr) auto;
