@@ -5373,7 +5373,7 @@ class AllstarrApp extends LitElement {
     const terminal = new Set(["Succeeded", "Failed", "Cancelled"]);
     return html`
       <div class="table-wrap">
-        <table>
+        <table class="responsive-data-table">
           <thead><tr><th>Type</th><th>State</th><th>Runs / budgets</th><th>Available / finished</th><th>Failure</th><th></th></tr></thead>
           <tbody>
             ${jobs.map((job) => {
@@ -5383,16 +5383,16 @@ class AllstarrApp extends LitElement {
               const copy = jobCopy(job.type || job.Type, state, failure);
               return html`
                 <tr>
-                  <td><strong>${copy.label}</strong><div class="muted">${copy.description}</div><details class="job-technical-details"><summary>Technical details</summary><span class="mono">${display(job.type || job.Type)} · ${id}</span></details></td>
-                  <td><span class="status-chip ${state === "Succeeded" ? "configured" : state === "Failed" ? "degraded" : "needs_config"}">${display(state)}</span></td>
-                  <td>
+                  <td class="mobile-primary" data-label="Type"><strong>${copy.label}</strong><div class="muted">${copy.description}</div><details class="job-technical-details"><summary>Technical details</summary><span class="mono">${display(job.type || job.Type)} · ${id}</span></details></td>
+                  <td data-label="State"><span class="status-chip ${state === "Succeeded" ? "configured" : state === "Failed" ? "degraded" : "needs_config"}">${display(state)}</span></td>
+                  <td data-label="Runs and budgets">
                     <div>Runs: ${display(job.attemptCount ?? job.AttemptCount ?? 0)}</div>
                     <div class="muted">Failures: ${display(job.failureCount ?? job.FailureCount ?? 0)} / ${display(job.maxAttempts ?? job.MaxAttempts ?? 0)}</div>
                     <div class="muted">Waits: ${display(job.deferralCount ?? job.DeferralCount ?? 0)} / ${display(job.maxDeferrals ?? job.MaxDeferrals ?? 0)}</div>
                   </td>
-                  <td>${formatDate(job.completedAt || job.CompletedAt || job.availableAt || job.AvailableAt)}</td>
-                  <td>${failure ? html`<span class="error-text">${copy.explanation}</span>` : html`<span class="muted">No failure</span>`}</td>
-                  <td>${!terminal.has(state) ? html`<button class="danger" @click=${async () => { await API.cancelJob(id); await this.loadJobs(); this.toast("Cancellation requested"); }}>Cancel</button>` : nothing}</td>
+                  <td data-label="Available or finished">${formatDate(job.completedAt || job.CompletedAt || job.availableAt || job.AvailableAt)}</td>
+                  <td data-label="Failure">${failure ? html`<span class="error-text">${copy.explanation}</span>` : html`<span class="muted">No failure</span>`}</td>
+                  <td class="mobile-actions" data-label="Actions">${!terminal.has(state) ? html`<button class="danger" @click=${async () => { await API.cancelJob(id); await this.loadJobs(); this.toast("Cancellation requested"); }}>Cancel</button>` : html`<span class="muted">No actions available</span>`}</td>
                 </tr>
               `;
             })}
@@ -5480,10 +5480,10 @@ class AllstarrApp extends LitElement {
         <div class="card metric"><span class="metric-label">Endpoints</span><span class="metric-value">${display(this.endpointUsage?.totalEndpoints || this.endpointUsage?.TotalEndpoints || endpoints.length)}</span></div>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="responsive-data-table">
           <thead><tr><th>Endpoint</th><th>Count</th></tr></thead>
           <tbody>
-            ${endpoints.length ? endpoints.map((item) => html`<tr><td class="mono">${item.endpoint || item.Endpoint}</td><td>${item.count || item.Count}</td></tr>`) : html`<tr><td colspan="2"><div class="empty">No endpoint usage data.</div></td></tr>`}
+            ${endpoints.length ? endpoints.map((item) => html`<tr><td class="mono mobile-primary" data-label="Endpoint">${item.endpoint || item.Endpoint}</td><td data-label="Count">${item.count || item.Count}</td></tr>`) : html`<tr class="empty-table-row"><td class="empty-table-cell" colspan="2"><div class="empty">No endpoint usage data.</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -6272,14 +6272,14 @@ class AllstarrApp extends LitElement {
               const categoryId = this.migrationCategoryId(category);
               return html`<section class="env-migration-category" aria-labelledby=${categoryId}>
                 <h4 id=${categoryId}>${display(category.label || category.Label || category.name || category.Name, "Settings")}</h4>
-                <div class="table-wrap"><table>
+                <div class="table-wrap"><table class="responsive-data-table">
                   <thead><tr><th scope="col">Line</th><th scope="col">Legacy key</th><th scope="col">Destination</th><th scope="col">Value</th><th scope="col">Outcome</th></tr></thead>
                   <tbody>${entries.map((entry) => html`<tr>
-                    <td class="mono">${display(entry.sourceLine ?? entry.SourceLine)}</td>
-                    <td class="mono">${display(entry.key || entry.Key || entry.sourceKey || entry.SourceKey)}</td>
-                    <td>${display(entry.destination || entry.Destination || entry.target || entry.Target)}</td>
-                    <td class=${this.migrationEntryIsSensitive(entry) ? "migration-redacted" : ""}>${this.migrationEntryValue(entry)}</td>
-                    <td><span class="status-chip ${this.migrationEntryStatusClass(entry)}">${titleCase(this.migrationEntryState(entry))}</span>${entry.warning || entry.Warning ? html`<div class="warning-text">${display(entry.warning || entry.Warning)}</div>` : nothing}${entry.handoff ? html`<button class="compact" type="button" @click=${() => this.continueLegacyPlaylistHandoff(entry.handoff)}>Continue in Playlists</button>` : nothing}</td>
+                    <td class="mono" data-label="Line">${display(entry.sourceLine ?? entry.SourceLine)}</td>
+                    <td class="mono mobile-primary" data-label="Legacy key">${display(entry.key || entry.Key || entry.sourceKey || entry.SourceKey)}</td>
+                    <td data-label="Destination">${display(entry.destination || entry.Destination || entry.target || entry.Target)}</td>
+                    <td class=${this.migrationEntryIsSensitive(entry) ? "migration-redacted" : ""} data-label="Value">${this.migrationEntryValue(entry)}</td>
+                    <td data-label="Outcome"><span class="status-chip ${this.migrationEntryStatusClass(entry)}">${titleCase(this.migrationEntryState(entry))}</span>${entry.warning || entry.Warning ? html`<div class="warning-text">${display(entry.warning || entry.Warning)}</div>` : nothing}${entry.handoff ? html`<button class="compact" type="button" @click=${() => this.continueLegacyPlaylistHandoff(entry.handoff)}>Continue in Playlists</button>` : nothing}</td>
                   </tr>`)}</tbody>
                 </table></div>
               </section>`;
