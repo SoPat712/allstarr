@@ -18,13 +18,14 @@ public sealed class ProviderCtsTrackRotationContractTests
     public void Diagnostic_AutomaticallySelectsATrackButKeepsManualOverride()
     {
         var controller = Read("allstarr/Controllers/ProviderDiagnosticsController.cs");
+        var runner = Read("allstarr/Services/Common/ProviderCtsDiagnosticRunner.cs");
         var script = Read("allstarr/wwwroot/js/webui.js");
 
-        Assert.Contains("trackSelector.SelectAsync", controller, StringComparison.Ordinal);
-        Assert.Contains("selectionMode = automaticTrack == null ? \"manual\" : \"rotating-corpus\"", controller, StringComparison.Ordinal);
+        Assert.Contains("trackSelector.SelectAsync", runner, StringComparison.Ordinal);
+        Assert.Contains("automaticTrack == null ? \"manual\" : \"rotating-corpus\"", runner, StringComparison.Ordinal);
         Assert.Contains("public string? TrackId", controller, StringComparison.Ordinal);
-        Assert.Contains("NoCache = true", controller, StringComparison.Ordinal);
-        Assert.Contains("NoStore = true", controller, StringComparison.Ordinal);
+        Assert.Contains("NoCache = true", runner, StringComparison.Ordinal);
+        Assert.Contains("NoStore = true", runner, StringComparison.Ordinal);
         Assert.Contains("Provider track ID (optional)", script, StringComparison.Ordinal);
         Assert.Contains("Rotating corpus", script, StringComparison.Ordinal);
     }
@@ -33,10 +34,11 @@ public sealed class ProviderCtsTrackRotationContractTests
     public void Measurements_AreDurableAndReloadedIntoSources()
     {
         var controller = Read("allstarr/Controllers/ProviderDiagnosticsController.cs");
+        var runner = Read("allstarr/Services/Common/ProviderCtsDiagnosticRunner.cs");
         var script = Read("allstarr/wwwroot/js/webui.js");
 
-        Assert.Contains("healthStore.RecordAsync", controller, StringComparison.Ordinal);
-        Assert.Contains("\"click-to-stream\"", controller, StringComparison.Ordinal);
+        Assert.Contains("healthStore.RecordAsync", runner, StringComparison.Ordinal);
+        Assert.Contains("\"click-to-stream\"", runner, StringComparison.Ordinal);
         Assert.Contains("[HttpGet(\"deep-stream/latest\")]", controller, StringComparison.Ordinal);
         Assert.Contains("API.ctsMeasurements()", script, StringComparison.Ordinal);
         Assert.Contains("class=\"cts-persisted\"", script, StringComparison.Ordinal);
