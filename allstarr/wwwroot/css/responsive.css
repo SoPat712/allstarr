@@ -354,10 +354,177 @@
         padding: 12px 16px 16px;
     }
 
-    .playlist-track-head,
+    .injected-playlist-backdrop {
+        padding: 0;
+    }
+
+    .injected-playlist-dialog {
+        width: 100%;
+        height: 100dvh;
+        max-height: 100dvh;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .injected-table-wrap {
+        overflow: visible;
+    }
+
+    .injected-data-table,
+    .injected-data-table tbody {
+        display: grid;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .injected-data-table colgroup,
+    .injected-data-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .injected-data-table tbody {
+        gap: 12px;
+        padding: 12px;
+    }
+
+    .injected-data-table tbody tr {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0;
+        overflow: visible;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-card);
+    }
+
+    .injected-data-table td {
+        display: grid;
+        gap: 4px;
+        padding: 10px 12px;
+        border: 0;
+    }
+
+    .injected-data-table td::before {
+        content: attr(data-label);
+        color: var(--text-muted);
+        font-size: .7rem;
+        font-weight: 800;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+    }
+
+    .injected-data-table .selection-cell {
+        position: absolute;
+        top: 15px;
+        right: 12px;
+        z-index: 1;
+        padding: 0;
+    }
+
+    .injected-data-table .selection-cell::before,
+    .injected-data-table .playlist-main-cell::before {
+        display: none;
+    }
+
+    .injected-data-table .playlist-main-cell {
+        grid-column: 1 / -1;
+        padding: 14px 52px 14px 14px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .injected-data-table .actions-cell {
+        grid-column: 1 / -1;
+        border-top: 1px solid var(--border);
+    }
+
+    .playlist-row-actions {
+        width: 100%;
+        justify-content: stretch;
+    }
+
+    .playlist-row-actions > .primary {
+        min-width: 0;
+    }
+
+    .playlist-action-menu {
+        flex-basis: 44px;
+    }
+
+    .playlist-action-menu > summary {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+    }
+
+    .playlist-action-menu[open] > div {
+        position: fixed;
+        top: auto;
+        right: 12px;
+        bottom: max(12px, env(safe-area-inset-bottom));
+        z-index: 1100;
+        width: calc(100vw - 24px);
+    }
+
+    .playlist-track-head {
+        display: none;
+    }
+
+    .playlist-track-table {
+        display: grid;
+        gap: 10px;
+    }
+
     .playlist-track-row {
-        grid-template-columns: 28px minmax(0, 1.2fr) minmax(130px, .9fr) minmax(150px, 1fr) minmax(115px, .7fr) 40px;
-        min-width: min(700px, calc(100vw - 24px));
+        grid-template-columns: 30px minmax(0, 1fr) 44px;
+        min-width: 0;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-elevated);
+    }
+
+    .track-position {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .track-title-cell {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .track-menu-cell {
+        grid-column: 3;
+        grid-row: 1;
+    }
+
+    .track-artist-cell,
+    .track-album-cell,
+    .track-provider-cell {
+        display: grid;
+        grid-column: 2 / -1;
+        grid-template-columns: 70px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        min-width: 0;
+    }
+
+    .track-artist-cell::before,
+    .track-album-cell::before,
+    .track-provider-cell::before {
+        content: attr(data-label);
+        color: var(--text-muted);
+        font-size: .72rem;
+        font-weight: 700;
+        text-transform: uppercase;
     }
 
     .track-details-dialog {

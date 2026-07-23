@@ -3254,6 +3254,13 @@ class AllstarrApp extends LitElement {
     const pageCount = Math.max(1, Math.ceil(filtered.length / this.injectedPageSize));
     const page = Math.min(this.injectedPage, pageCount);
     const visible = filtered.slice((page - 1) * this.injectedPageSize, page * this.injectedPageSize);
+    const paginationPages = pageCount <= 7
+      ? Array.from({ length: pageCount }, (_, index) => index + 1)
+      : [...new Set([1, page - 1, page, page + 1, pageCount].filter((item) => item >= 1 && item <= pageCount))].sort((a, b) => a - b);
+    const paginationItems = paginationPages.flatMap((pageNumber, index) =>
+      index > 0 && pageNumber - paginationPages[index - 1] > 1
+        ? [`gap-${pageNumber}`, pageNumber]
+        : [pageNumber]);
     const selected = this.selectedInjectedPlaylists;
     const updateSelection = (name, checked) => {
       const next = new Set(selected);
@@ -3318,14 +3325,14 @@ class AllstarrApp extends LitElement {
               aria-label="Open ${playlist.name} playlist details" @click=${openRow}
               @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
               <td class="selection-cell"><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></td>
-              <td><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt=""><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
-              <td>${display(playlist.trackCount, 0)}</td>
-              <td><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
-              <td><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>
-              <td><span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span></td>
-              <td><span class="status-chip ${status}">${titleCase(status)}</span></td>
-              <td>${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</td>
-              <td class="actions-cell"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>
+              <td class="playlist-main-cell" data-label="Playlist"><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt=""><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
+              <td data-label="Tracks">${display(playlist.trackCount, 0)}</td>
+              <td data-label="Matched"><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
+              <td data-label="Unmatched"><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>
+              <td data-label="Schedule"><span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span></td>
+              <td data-label="Status"><span class="status-chip ${status}">${titleCase(status)}</span></td>
+              <td data-label="Last sync">${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</td>
+              <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>
             </tr>`;
           }) : html`<tr><td colspan="9"><div class="empty">No playlists match these filters.</div></td></tr>`}
             </tbody>
@@ -3335,14 +3342,14 @@ class AllstarrApp extends LitElement {
           <span>Showing ${filtered.length ? (page - 1) * this.injectedPageSize + 1 : 0}–${Math.min(page * this.injectedPageSize, filtered.length)} of ${filtered.length} playlists</span>
           <div class="table-pagination-controls" aria-label="Playlist pages">
             <button class="icon-button" aria-label="Previous page" ?disabled=${page <= 1} @click=${() => { this.injectedPage = page - 1; }}>${icon("chevronLeft")}</button>
-            ${Array.from({ length: pageCount }, (_, index) => index + 1).map((pageNumber) => html`
+            ${paginationItems.map((item) => typeof item === "string" ? html`<span class="pagination-gap" aria-hidden="true">…</span>` : html`
               <button
-                class="page-number ${pageNumber === page ? "active" : ""}"
-                aria-label="Page ${pageNumber}"
-                aria-current=${pageNumber === page ? "page" : nothing}
-                ?disabled=${pageNumber === page}
-                @click=${() => { this.injectedPage = pageNumber; }}
-              >${pageNumber}</button>
+                class="page-number ${item === page ? "active" : ""}"
+                aria-label="Page ${item}"
+                aria-current=${item === page ? "page" : nothing}
+                ?disabled=${item === page}
+                @click=${() => { this.injectedPage = item; }}
+              >${item}</button>
             `)}
             <button class="icon-button" aria-label="Next page" ?disabled=${page >= pageCount} @click=${() => { this.injectedPage = page + 1; }}>${icon("chevronRight")}</button>
           </div>
@@ -3453,10 +3460,10 @@ class AllstarrApp extends LitElement {
                 @keydown=${(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openTrackDetails(track); } }}>
                 <span class="track-position" title=${track.sourcePosition ? `Provider position ${track.sourcePosition}` : ""}>${display(track.position ?? index + 1)}</span>
                 <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt=""><strong>${display(track.title)}</strong></span>
-                <span>${asArray(track.artists).join(", ") || "Unknown artist"}</span>
-                <span>${display(track.album)}</span>
-                <span><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
-                <span @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track, index)}</span>
+                <span class="track-artist-cell" data-label="Artist">${asArray(track.artists).join(", ") || "Unknown artist"}</span>
+                <span class="track-album-cell" data-label="Album">${display(track.album)}</span>
+                <span class="track-provider-cell" data-label="Provider"><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
+                <span class="track-menu-cell" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track, index)}</span>
               </div>`) : html`<div class="empty compact">No tracks match this filter.</div>`}
             </div>
             <div class="playlist-track-summary">${query ? `Showing ${filtered.length} of ${tracks.length} tracks` : `All ${tracks.length} tracks`}</div>
