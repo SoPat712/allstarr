@@ -1395,8 +1395,8 @@ public class ExtensionHostBridge
     private const int MaximumLogEvents = 1_000;
     private const int HttpFailureThreshold = 2;
     private static readonly TimeSpan HttpFailureWindow = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan HttpInitialCooldown = TimeSpan.FromMinutes(1);
-    private static readonly TimeSpan HttpMaximumCooldown = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan HttpInitialCooldown = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan HttpMaximumCooldown = TimeSpan.FromHours(1);
     private static readonly Regex SensitiveLogPattern = new(
         "(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
