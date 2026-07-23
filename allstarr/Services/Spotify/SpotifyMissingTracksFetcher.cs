@@ -9,6 +9,8 @@ namespace allstarr.Services.Spotify;
 
 public class SpotifyMissingTracksFetcher : BackgroundService
 {
+    private const int MaximumCandidateProbes = 256;
+    private const int ScheduledRunToleranceMinutes = 30;
     private readonly IOptions<SpotifyImportSettings> _spotifySettings;
     private readonly IOptions<SpotifyApiSettings> _spotifyApiSettings;
     private readonly IOptions<JellyfinSettings> _jellyfinSettings;
@@ -18,6 +20,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly string _cacheDirectory;
+    private readonly SemaphoreSlim _fetchGate = new(1, 1);
     private bool _hasRunOnce = false;
     private Dictionary<string, string> _playlistIdToName = new();
     public SpotifyMissingTracksFetcher(
@@ -45,10 +48,10 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     /// <summary>
     /// Public method to trigger fetching manually (called from controller).
     /// </summary>
-    public async Task TriggerFetchAsync()
+    public async Task TriggerFetchAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Manual fetch triggered");
-        await FetchMissingTracksAsync(CancellationToken.None);
+        await RunFetchAsync(cancellationToken, waitForActiveRun: true);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -109,7 +112,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 _logger.LogInformation("Running initial fetch on startup");
                 try
                 {
-                    await FetchMissingTracksAsync(stoppingToken);
+                    await RunFetchAsync(stoppingToken, waitForActiveRun: false);
                     _hasRunOnce = true;
                 }
                 catch (Exception ex)
@@ -119,7 +122,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             }
             else
             {
-                _logger.LogWarning("Skipping startup fetch - already have cached files");
+                _logger.LogDebug("Skipping startup fetch because every configured playlist has a cache file");
                 _hasRunOnce = true;
             }
         }
@@ -132,7 +135,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 var shouldFetch = await ShouldFetchNowAsync();
                 if (shouldFetch)
                 {
-                    await FetchMissingTracksAsync(stoppingToken);
+                    await RunFetchAsync(stoppingToken, waitForActiveRun: false);
                 }
             }
             catch (Exception ex)
@@ -222,7 +225,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         if (allPlaylistsHaveCache)
         {
-            _logger.LogWarning("=== ALL PLAYLISTS HAVE CACHE - SKIPPING STARTUP FETCH ===");
+            _logger.LogDebug("All configured playlists have cache; startup fetch is unnecessary");
             return false;
         }
 
@@ -247,7 +250,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             var json = await File.ReadAllTextAsync(filePath);
             var tracks = JsonSerializer.Deserialize<List<MissingTrack>>(json);
 
-            if (tracks != null && tracks.Count > 0)
+            if (tracks != null)
             {
                 var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
                 var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
@@ -310,6 +313,27 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             foundPlaylists.Count, _playlistIdToName.Count);
     }
 
+    private async Task RunFetchAsync(CancellationToken cancellationToken, bool waitForActiveRun)
+    {
+        var entered = await _fetchGate.WaitAsync(
+            waitForActiveRun ? Timeout.Infinite : 0,
+            cancellationToken);
+        if (!entered)
+        {
+            _logger.LogDebug("Skipping missing-track fetch because another fetch is already active");
+            return;
+        }
+
+        try
+        {
+            await FetchMissingTracksAsync(cancellationToken);
+        }
+        finally
+        {
+            _fetchGate.Release();
+        }
+    }
+
     private async Task<DateTime?> FetchPlaylistMissingTracksAsync(
         string playlistName,
         CancellationToken cancellationToken,
@@ -348,108 +372,49 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         var httpClient = _httpClientFactory.CreateClient();
 
-        // Search starting from 24 hours ahead, going backwards for 72 hours
-        // This handles timezone differences where the plugin may have run "in the future" from our perspective
         var now = DateTime.UtcNow;
-        var searchStart = now.AddHours(24); // Start 24 hours from now
-        var totalMinutesToSearch = 72 * 60; // 72 hours = 4320 minutes
-
-        _logger.LogInformation("  Current UTC time: {Now:yyyy-MM-dd HH:mm}", now);
-        _logger.LogInformation("  Search start: {Start:yyyy-MM-dd HH:mm} (24h ahead)", searchStart);
-        _logger.LogInformation("  Searching backwards for 72 hours ({Minutes} minutes)", totalMinutesToSearch);
-
-        var found = false;
         DateTime? foundFileTime = null;
+        var candidates = BuildCandidateTimes(playlistName, now, hintTime);
+        _logger.LogDebug(
+            "Probing {CandidateCount} schedule-centered missing-track filenames for {Playlist}",
+            candidates.Count,
+            playlistName);
 
-        // If we have a hint time from another playlist, search ±1 hour around it first
-        if (hintTime.HasValue)
+        foreach (var time in candidates)
         {
-            _logger.LogInformation("  Hint: Searching ±1h around {Time:yyyy-MM-dd HH:mm} (from another playlist)", hintTime.Value);
-
-            // Search ±60 minutes around the hint time
-            for (var minuteOffset = 0; minuteOffset <= 60; minuteOffset++)
-            {
-                if (cancellationToken.IsCancellationRequested) break;
-
-                // Try both forward and backward from hint
-                if (minuteOffset > 0)
-                {
-                    // Try forward
-                    var timeForward = hintTime.Value.AddMinutes(minuteOffset);
-                    var resultForward = await TryFetchMissingTracksFile(playlistName, timeForward, jellyfinUrl, apiKey, httpClient, cancellationToken);
-                    if (resultForward.found)
-                    {
-                        found = true;
-                        foundFileTime = resultForward.fileTime;
-                        _logger.LogInformation("  ✓ Found using hint (+{Minutes}min from hint)", minuteOffset);
-                        return foundFileTime;
-                    }
-                }
-
-                // Try backward
-                var timeBackward = hintTime.Value.AddMinutes(-minuteOffset);
-                var resultBackward = await TryFetchMissingTracksFile(playlistName, timeBackward, jellyfinUrl, apiKey, httpClient, cancellationToken);
-                if (resultBackward.found)
-                {
-                    found = true;
-                    foundFileTime = resultBackward.fileTime;
-                    _logger.LogInformation("  ✓ Found using hint (-{Minutes}min from hint)", minuteOffset);
-                    return foundFileTime;
-                }
-            }
-
-            _logger.LogInformation("  Not found within ±1h of hint, doing full search...");
-        }
-
-        // Search from 24h ahead, going backwards minute by minute for 72 hours
-        _logger.LogInformation("  Searching from {Start:yyyy-MM-dd HH:mm} backwards to {End:yyyy-MM-dd HH:mm}...",
-            searchStart, searchStart.AddMinutes(-totalMinutesToSearch));
-
-        for (var minutesBehind = 0; minutesBehind <= totalMinutesToSearch; minutesBehind++)
-        {
-            if (cancellationToken.IsCancellationRequested) break;
-
-            var time = searchStart.AddMinutes(-minutesBehind);
+            cancellationToken.ThrowIfCancellationRequested();
 
             var result = await TryFetchMissingTracksFile(playlistName, time, jellyfinUrl, apiKey, httpClient, cancellationToken);
             if (result.found)
             {
-                found = true;
                 foundFileTime = result.fileTime;
                 return foundFileTime;
             }
-
-            // Small delay every 60 requests to avoid rate limiting
-            if (minutesBehind > 0 && minutesBehind % 60 == 0)
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
-            }
         }
 
-        if (!found)
+        if (existingTracks != null || File.Exists(filePath))
         {
-            _logger.LogWarning("  ✗ Could not find new missing tracks file (searched +24h forward, -48h backward)");
-
-            // Keep the existing cache - don't let it expire
-            if (existingTracks != null && existingTracks.Count > 0)
+            _logger.LogDebug(
+                "No newer missing-track file found for {Playlist}; preserving the existing cache",
+                playlistName);
+            if (existingTracks != null)
             {
-                _logger.LogDebug("  ✓ Keeping existing cache with {Count} tracks (no expiration)", existingTracks.Count);
-                // Re-save with no expiration to ensure it persists
-                await _cache.SetAsync(cacheKey, existingTracks, TimeSpan.FromDays(365)); // Effectively no expiration
+                await _cache.SetAsync(cacheKey, existingTracks, TimeSpan.FromDays(365));
             }
             else if (File.Exists(filePath))
             {
-                // Load from file if Redis cache is empty
-                _logger.LogInformation("  📦 Loading existing file cache to keep playlist populated");
                 try
                 {
                     var json = await File.ReadAllTextAsync(filePath, cancellationToken);
                     var tracks = JsonSerializer.Deserialize<List<MissingTrack>>(json);
 
-                    if (tracks != null && tracks.Count > 0)
+                    if (tracks != null)
                     {
-                        await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365)); // No expiration
-                        _logger.LogDebug("  ✓ Loaded {Count} tracks from file cache (no expiration)", tracks.Count);
+                        await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365));
+                        _logger.LogDebug(
+                            "Restored {Count} cached missing tracks for {Playlist}",
+                            tracks.Count,
+                            playlistName);
                     }
                 }
                 catch (Exception ex)
@@ -457,13 +422,71 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                     _logger.LogError(ex, "  Failed to reload cache from file for {Playlist}", playlistName);
                 }
             }
-            else
-            {
-                _logger.LogWarning("  No existing cache to keep - playlist will be empty until tracks are found");
-            }
+        }
+        else
+        {
+            _logger.LogInformation(
+                "No missing-track export is available for {Playlist} in the bounded schedule window",
+                playlistName);
         }
 
         return foundFileTime;
+    }
+
+    private IReadOnlyList<DateTime> BuildCandidateTimes(
+        string playlistName,
+        DateTime now,
+        DateTime? hintTime)
+    {
+        var candidates = new HashSet<DateTime>();
+
+        static void AddWindow(HashSet<DateTime> target, DateTime center, int radiusMinutes)
+        {
+            var normalized = new DateTime(
+                center.Year,
+                center.Month,
+                center.Day,
+                center.Hour,
+                center.Minute,
+                0,
+                DateTimeKind.Utc);
+            for (var offset = -radiusMinutes; offset <= radiusMinutes; offset++)
+            {
+                target.Add(normalized.AddMinutes(offset));
+            }
+        }
+
+        if (hintTime.HasValue)
+        {
+            AddWindow(candidates, hintTime.Value, ScheduledRunToleranceMinutes);
+        }
+        else
+        {
+            var schedule = _spotifySettings.Value.GetPlaylistByName(playlistName)?.SyncSchedule;
+            var fields = schedule?.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields is { Length: >= 2 } &&
+                int.TryParse(fields[0], out var minute) &&
+                int.TryParse(fields[1], out var hour) &&
+                minute is >= 0 and <= 59 &&
+                hour is >= 0 and <= 23)
+            {
+                for (var dayOffset = -2; dayOffset <= 1; dayOffset++)
+                {
+                    var day = now.Date.AddDays(dayOffset);
+                    AddWindow(
+                        candidates,
+                        new DateTime(day.Year, day.Month, day.Day, hour, minute, 0, DateTimeKind.Utc),
+                        ScheduledRunToleranceMinutes);
+                }
+            }
+
+            AddWindow(candidates, now, ScheduledRunToleranceMinutes);
+        }
+
+        return candidates
+            .OrderBy(candidate => Math.Abs((candidate - now).TotalMinutes))
+            .Take(MaximumCandidateProbes)
+            .ToArray();
     }
 
     private async Task<(bool found, DateTime? fileTime)> TryFetchMissingTracksFile(
@@ -489,17 +512,15 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 var tracks = ParseMissingTracks(json);
 
-                if (tracks.Count > 0)
+                if (tracks != null)
                 {
                     var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
 
-                    // Save to both Redis and file with extended TTL until next job runs
-                    // Set to 365 days (effectively no expiration) - will be replaced when Jellyfin generates new file
                     await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365));
                     await SaveToFileCache(playlistName, tracks);
 
                     _logger.LogInformation(
-                        "✓ FOUND! Cached {Count} missing tracks for {Playlist} from {Filename}",
+                        "Cached {Count} missing tracks for {Playlist} from {Filename}",
                         tracks.Count, playlistName, filename);
                     return (true, time);
                 }
@@ -513,7 +534,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         return (false, null);
     }
 
-    private List<MissingTrack> ParseMissingTracks(string json)
+    private List<MissingTrack>? ParseMissingTracks(string json)
     {
         var tracks = new List<MissingTrack>();
 
@@ -544,6 +565,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to parse missing tracks JSON");
+            return null;
         }
 
         return tracks;

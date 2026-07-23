@@ -1402,6 +1402,7 @@ public class ExtensionHostBridge
     private readonly string _storageFile;
     private readonly ExtensionRuntimePermissionSet _permissions;
     private readonly ExtensionSignedSessionClient? _signedSession;
+    private readonly string _extensionId;
     private int _logEvents;
 
     public ExtensionHostBridge(
@@ -1418,6 +1419,7 @@ public class ExtensionHostBridge
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _permissions = permissions;
+        _extensionId = string.IsNullOrWhiteSpace(extensionId) ? "unknown" : extensionId;
         _storageFile = Path.Combine(_folderPath, "storage.json");
         if (signedSession != null)
         {
@@ -1449,10 +1451,34 @@ public class ExtensionHostBridge
         _permissions.LogSink?.Invoke(level, message);
         switch (level.ToLowerInvariant())
         {
-            case "error": _logger.LogError("[JS EXT] {Message}", message); break;
-            case "warn": _logger.LogWarning("[JS EXT] {Message}", message); break;
-            case "debug": _logger.LogDebug("[JS EXT] {Message}", message); break;
-            default: _logger.LogInformation("[JS EXT] {Message}", message); break;
+            case "error":
+                _logger.LogError(
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "extension.runtime.error",
+                    _extensionId,
+                    message);
+                break;
+            case "warn":
+                _logger.LogWarning(
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "extension.runtime.warning",
+                    _extensionId,
+                    message);
+                break;
+            case "debug":
+                _logger.LogDebug(
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "extension.runtime.debug",
+                    _extensionId,
+                    message);
+                break;
+            default:
+                _logger.LogInformation(
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "extension.runtime.info",
+                    _extensionId,
+                    message);
+                break;
         }
     }
 

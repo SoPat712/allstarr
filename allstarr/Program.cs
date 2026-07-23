@@ -577,7 +577,8 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>(
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
 
 // Register Spotify missing tracks fetcher (legacy - only runs when SpotifyImport is enabled and SpotifyApi is disabled)
-builder.Services.AddHostedService<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>();
+builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>());
 
 // Register Spotify track matching service (pre-matches tracks with rate limiting)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyTrackMatchingService>();

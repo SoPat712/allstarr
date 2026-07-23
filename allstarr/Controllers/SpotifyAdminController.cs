@@ -222,7 +222,8 @@ public class SpotifyAdminController : ControllerBase
     /// Get all playlists from Jellyfin
     /// </summary>
     [HttpGet("spotify/sync")]
-    public async Task<IActionResult> TriggerSpotifySync([FromServices] IEnumerable<IHostedService> hostedServices)
+    public async Task<IActionResult> TriggerSpotifySync(
+        [FromServices] SpotifyMissingTracksFetcher fetcherService)
     {
         try
         {
@@ -232,23 +233,7 @@ public class SpotifyAdminController : ControllerBase
             }
 
             _logger.LogInformation("Manual Spotify sync triggered via admin endpoint");
-
-            // Find the SpotifyMissingTracksFetcher service
-            var fetcherService = hostedServices
-                .OfType<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>()
-                .FirstOrDefault();
-
-            if (fetcherService == null)
-            {
-                return BadRequest(new { error = "SpotifyMissingTracksFetcher service not found" });
-            }
-
-            var method = fetcherService.GetType().GetMethod("ExecuteOnceAsync",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (method == null)
-                return StatusCode(500, new { error = "Spotify sync operation is unavailable" });
-            await ((Task)method.Invoke(fetcherService, new object[] { HttpContext.RequestAborted })!)
-                .WaitAsync(HttpContext.RequestAborted);
+            await fetcherService.TriggerFetchAsync(HttpContext.RequestAborted);
             _logger.LogInformation("Manual Spotify sync completed successfully");
 
             return Ok(new
@@ -268,7 +253,8 @@ public class SpotifyAdminController : ControllerBase
     /// Manual trigger endpoint to force Spotify track matching.
     /// </summary>
     [HttpGet("spotify/match")]
-    public async Task<IActionResult> TriggerSpotifyMatch([FromServices] IEnumerable<IHostedService> hostedServices)
+    public async Task<IActionResult> TriggerSpotifyMatch(
+        [FromServices] SpotifyTrackMatchingService matchingService)
     {
         try
         {
@@ -278,23 +264,7 @@ public class SpotifyAdminController : ControllerBase
             }
 
             _logger.LogInformation("Manual Spotify track matching triggered via admin endpoint");
-
-            // Find the SpotifyTrackMatchingService
-            var matchingService = hostedServices
-                .OfType<allstarr.Services.Spotify.SpotifyTrackMatchingService>()
-                .FirstOrDefault();
-
-            if (matchingService == null)
-            {
-                return BadRequest(new { error = "SpotifyTrackMatchingService not found" });
-            }
-
-            var method = matchingService.GetType().GetMethod("ExecuteOnceAsync",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (method == null)
-                return StatusCode(500, new { error = "Spotify matching operation is unavailable" });
-            await ((Task)method.Invoke(matchingService, new object[] { HttpContext.RequestAborted })!)
-                .WaitAsync(HttpContext.RequestAborted);
+            await matchingService.TriggerMatchingAsync(HttpContext.RequestAborted);
             _logger.LogInformation("Manual Spotify track matching completed successfully");
 
             return Ok(new

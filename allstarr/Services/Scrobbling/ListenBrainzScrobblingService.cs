@@ -33,22 +33,6 @@ public class ListenBrainzScrobblingService : IScrobblingService
         _settings = settings.Value.ListenBrainz;
         _httpClient = httpClientFactory.CreateClient("ListenBrainz");
         _logger = logger;
-
-        // Debug logging
-        _logger.LogInformation("ListenBrainz Service Configuration:");
-        _logger.LogInformation("  Enabled: {Enabled}", _settings.Enabled);
-        _logger.LogInformation("  UserToken: {Token}", string.IsNullOrEmpty(_settings.UserToken) ? "(empty)" : "***" + _settings.UserToken[^Math.Min(8, _settings.UserToken.Length)..]);
-        _logger.LogInformation("  IsEnabled: {IsEnabled}", IsEnabled);
-
-        if (IsEnabled)
-        {
-            _logger.LogInformation("🎵 ListenBrainz scrobbling enabled");
-        }
-        else
-        {
-            _logger.LogWarning("⚠️ ListenBrainz scrobbling NOT enabled (Enabled={Enabled}, HasToken={HasToken})",
-                _settings.Enabled, !string.IsNullOrEmpty(_settings.UserToken));
-        }
     }
 
     public async Task<ScrobbleResult> UpdateNowPlayingAsync(ScrobbleTrack track, CancellationToken cancellationToken = default)

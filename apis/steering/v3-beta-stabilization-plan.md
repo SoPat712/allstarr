@@ -120,3 +120,21 @@ Items remain unchecked until the combined local and browser verification pass.
   permission-bypassing installs, or secret exposure.
 - [ ] Deploy, rematch, and verify representative Jellyfin and provider playlists before
   publishing the beta.
+
+## Database-backed mapping and cache consolidation
+
+- [ ] Confirm PostgreSQL is the durable source of truth for canonical recordings, provider routes, accepted/rejected mappings, and reusable track-match decisions; no mapping needed after restart may exist only in Valkey or process memory.
+- [ ] Inventory every `RedisCacheService` key and classify it as durable state, derived cache, coordination/lock state, transient session state, or disposable telemetry, including TTL, typical payload size, read/write rate, and current fallback behavior.
+- [ ] Remove duplicate mapping stores and route all matching, rematching, playlist playback, and event-log lookups through one repository contract backed by PostgreSQL.
+- [ ] Design a pluggable cache backend (`PostgreSQL`, `Valkey`, or bounded in-process memory) so a single-container/small-install deployment can run without Valkey while larger installs can retain it when benchmarks justify it.
+- [ ] Implement the PostgreSQL cache backend with explicit expiry, bounded cleanup, namespaced keys, payload-size limits, concurrency-safe upserts, and indexes that prevent cache maintenance from degrading durable application queries.
+- [ ] Keep cache records reconstructable and disposable; dropping or expiring the PostgreSQL cache must never delete canonical mappings, user decisions, playlist links, accounts, or kept-media metadata.
+- [ ] Add an automated migration path that preserves reusable mappings, warms only valuable hot entries, and permits rollback between Valkey and PostgreSQL cache modes without data loss.
+- [ ] Benchmark cold/hot lookup latency, rematch throughput, database CPU/I/O, total resident memory, and container overhead on the target server before choosing the beta default; document when Valkey remains beneficial.
+- [ ] Add restart, cache-loss, concurrent-rematch, expiry, and backend-parity tests proving PostgreSQL-only operation produces the same playback and matching decisions.
+
+## Playlist detail visual semantics
+
+- [ ] Render the actual target backend icon in the playlist-detail target summary for Jellyfin, Subsonic/Navidrome, and future targets; do not substitute a generic library glyph when a branded target icon exists.
+- [ ] Derive the playable summary icon/accent from the playable ratio using the shared semantic scale (red through amber to green), with accessible text/contrast and no color-only status communication.
+- [ ] Apply the target-icon and playable-ratio treatment consistently at desktop, compact-sidebar, tablet, and mobile modal widths without changing the authoritative coverage calculation.

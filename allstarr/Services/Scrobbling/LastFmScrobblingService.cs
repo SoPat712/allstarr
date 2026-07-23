@@ -37,33 +37,6 @@ public class LastFmScrobblingService : IScrobblingService
         _settings = settings.Value.LastFm;
         _httpClient = httpClientFactory.CreateClient("LastFm");
         _logger = logger;
-
-        if (_settings.Enabled)
-        {
-            if (LastFmSettings.IsLegacyJellyfinPluginApiKey(_settings.ApiKey))
-            {
-                _logger.LogError(
-                    "Last.fm is enabled but uses the suspended shared Jellyfin plugin API key. " +
-                    "Register your own app at https://www.last.fm/api/account/create, set " +
-                    "SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET, then re-authenticate in Admin → Scrobbling.");
-            }
-            else if (string.IsNullOrEmpty(_settings.ApiKey) || string.IsNullOrEmpty(_settings.SharedSecret))
-            {
-                _logger.LogError(
-                    "Last.fm is enabled but API credentials are missing. Set SCROBBLING_LASTFM_API_KEY and " +
-                    "SCROBBLING_LASTFM_SHARED_SECRET from https://www.last.fm/api/account/create");
-            }
-            else if (string.IsNullOrEmpty(_settings.SessionKey))
-            {
-                _logger.LogWarning(
-                    "Last.fm API credentials are set but SCROBBLING_LASTFM_SESSION_KEY is missing — authenticate in Admin → Scrobbling");
-            }
-            else
-            {
-                _logger.LogInformation("🎵 Last.fm scrobbling enabled for user: {Username}",
-                    _settings.Username ?? "Unknown");
-            }
-        }
     }
 
     public async Task<ScrobbleResult> UpdateNowPlayingAsync(ScrobbleTrack track, CancellationToken cancellationToken = default)
