@@ -1473,7 +1473,7 @@ public class ExtensionHostBridge
                     message);
                 break;
             default:
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
                     "extension.runtime.info",
                     _extensionId,

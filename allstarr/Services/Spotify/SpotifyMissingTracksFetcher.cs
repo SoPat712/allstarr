@@ -96,10 +96,10 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         // Fetch playlist names from Jellyfin
         await LoadPlaylistNamesAsync();
 
-        _logger.LogInformation("Configured Playlists:");
+        _logger.LogDebug("Configured Playlists:");
         foreach (var kvp in _playlistIdToName)
         {
-            _logger.LogInformation("  - {Name} (ID: {Id})", kvp.Value, kvp.Key);
+            _logger.LogDebug("  - {Name} (ID: {Id})", kvp.Value, kvp.Key);
         }
         _logger.LogInformation("========================================");
 
@@ -295,7 +295,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         foreach (var kvp in _playlistIdToName)
         {
-            _logger.LogInformation("Fetching playlist: {Name}", kvp.Value);
+            _logger.LogDebug("Fetching playlist: {Name}", kvp.Value);
             var foundTime = await FetchPlaylistMissingTracksAsync(kvp.Value, cancellationToken, firstFoundTime);
 
             if (foundTime.HasValue)
@@ -348,7 +348,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         if (File.Exists(filePath))
         {
             var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
-            _logger.LogInformation("  Existing cache file age: {Age:F1}h", fileAge.TotalHours);
+            _logger.LogDebug("Existing cache file age: {Age:F1}h", fileAge.TotalHours);
         }
 
         if (existingTracks != null && existingTracks.Count > 0)
