@@ -56,15 +56,70 @@
         grid-template-columns: 110px minmax(0, 1fr);
     }
 
-    .playlist-track-head,
-    .playlist-track-row {
-        min-width: min(850px, calc(100vw - 24px));
+    .playlist-track-head {
+        display: none;
     }
 
     .playlist-track-table {
-        overflow-x: auto;
-        overscroll-behavior-inline: contain;
-        -webkit-overflow-scrolling: touch;
+        display: grid;
+        width: 100%;
+        min-width: 0;
+        gap: 10px;
+        overflow: visible;
+        border: 0;
+    }
+
+    .playlist-track-row {
+        grid-template-columns: 30px minmax(0, 1fr) 44px;
+        min-width: 0;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-elevated);
+    }
+
+    .playlist-track-row .track-position {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .playlist-track-row .track-title-cell {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .playlist-track-row .track-menu-cell {
+        grid-column: 3;
+        grid-row: 1;
+    }
+
+    .playlist-track-row .track-artist-cell,
+    .playlist-track-row .track-album-cell,
+    .playlist-track-row .track-provider-cell {
+        display: grid;
+        grid-column: 2 / -1;
+        grid-template-columns: 70px minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+        min-width: 0;
+    }
+
+    .playlist-track-row .track-artist-cell::before,
+    .playlist-track-row .track-album-cell::before,
+    .playlist-track-row .track-provider-cell::before {
+        content: attr(data-label);
+        color: var(--text-muted);
+        font-size: .72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .playlist-track-row .provider-badge {
+        width: fit-content;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     :root {
@@ -95,7 +150,7 @@
     }
 
     .sidebar-collapse {
-        display: none;
+        display: none !important;
     }
 
     .topbar {

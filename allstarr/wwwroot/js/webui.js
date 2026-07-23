@@ -263,6 +263,33 @@ function providerDisplayName(providerId, providers = []) {
   return provider?.name || provider?.Name || providerMark({ id: providerId });
 }
 
+function providerCoverageColor(providerId, providers = []) {
+  const id = String(providerId || "external").toLowerCase();
+  const provider = asArray(providers).find((item) =>
+    String(item?.id || item?.Id || "").toLowerCase() === id);
+  const supplied = provider?.brandColor || provider?.BrandColor ||
+    provider?.branding?.accentColor || provider?.Branding?.AccentColor;
+  if (supplied) return String(supplied);
+  const aliases = {
+    jellyfin: "#8b6cff",
+    spotify: "#1ed760",
+    applemusic: "#fa2d48",
+    "apple-music": "#fa2d48",
+    "apple-musickit": "#fa2d48",
+    "apple-download": "#fa2d48",
+    deezer: "#a855f7",
+    qobuz: "#27a8e0",
+    soundcloud: "#ff5500",
+    youtubemusic: "#ff0033",
+    "youtube-music": "#ff0033",
+    squidwtf: "#21c7a8",
+    external: "#7f8ca3",
+  };
+  if (aliases[id]) return aliases[id];
+  const hue = [...id].reduce((value, character) => (value * 31 + character.charCodeAt(0)) % 360, 210);
+  return `hsl(${hue} 62% 56%)`;
+}
+
 function compareExtensionVersions(left, right) {
   const parts = (value) => String(value || "0").replace(/^v/i, "").split(/[.+-]/).map((part) => /^\d+$/.test(part) ? Number(part) : part.toLowerCase());
   const a = parts(left);
@@ -2675,6 +2702,9 @@ class AllstarrApp extends LitElement {
       providerDisplayName(providerId, this.schema?.providers));
     const readiness = this.serviceResults.readiness;
     const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
+    const playlistInventory = this.playlists?.inventory || this.playlists?.Inventory || {};
+    const managedPlaylists = Number(playlistInventory.managed ?? playlistInventory.Managed ?? playlists.length ?? spotifyImport.playlistCount ?? 0);
+    const unmanagedPlaylists = Number(playlistInventory.unmanaged ?? playlistInventory.Unmanaged ?? 0);
     const activeJobs = asArray(this.jobs).filter((job) => !["Succeeded", "Failed", "Cancelled"].includes(job.state || job.State)).length;
     const providerSummaries = asArray(this.providerSummaries);
 
@@ -2693,10 +2723,13 @@ class AllstarrApp extends LitElement {
             <div><span class="metric-label">Playlist sources</span><span class="metric-value">${playlistProviderIds.length ? `${readyPlaylistProviderIds.length} / ${playlistProviderIds.length} ready` : "None"}</span></div>
             <small class="health-line ${playlistRefreshState === "healthy" ? "healthy" : "warning"}" title=${playlistProviderNames.join(", ")}><span></span>${playlistProviderIds.length ? `${playlistProviderNames.join(", ")} · ${latestPlaylistCheck ? formatRelativeTime(latestPlaylistCheck) : "Awaiting check"}` : "Connect a playlist provider"}</small>
           </div>
-          <div class="card overview-card">
+          <div class="card overview-card playlist-inventory-card">
             <span class="overview-icon playlists">${icon("playlist", 22)}</span>
-            <div><span class="metric-label">Managed playlists</span><span class="metric-value">${display(playlists.length || spotifyImport.playlistCount || 0)}</span></div>
-            <small class="health-line info"><span></span>Total in library</small>
+            <div class="playlist-inventory-split" aria-label="${managedPlaylists} managed and ${unmanagedPlaylists} unmanaged playlists">
+              <button type="button" @click=${() => this.navigate("/library/playlists")}><span class="metric-label">Managed</span><span class="metric-value">${managedPlaylists}</span></button>
+              <button type="button" @click=${() => this.navigate("/library/playlists")}><span class="metric-label">Unmanaged</span><span class="metric-value">${unmanagedPlaylists}</span></button>
+            </div>
+            <small class="health-line info"><span></span>${managedPlaylists + unmanagedPlaylists} total in library</small>
           </div>
           <div class="card overview-card">
             <span class="overview-icon tasks">${icon("tasks", 22)}</span>
@@ -3459,13 +3492,13 @@ class AllstarrApp extends LitElement {
               <col class="matched-col">
               <col class="unmatched-col">
               <col class="schedule-col">
-              <col class="status-col">
+              <col class="coverage-col">
               <col class="last-sync-col">
               <col class="actions-col">
             </colgroup>
             <thead><tr>
               <th scope="col"><input type="checkbox" aria-label="Select visible playlists" .checked=${visible.length > 0 && visible.every((item) => selected.has(item.name))} @change=${(event) => { const next = new Set(selected); visible.forEach((item) => event.target.checked ? next.add(item.name) : next.delete(item.name)); this.selectedInjectedPlaylists = next; }}></th>
-              <th scope="col">Playlist</th><th scope="col">Tracks</th><th scope="col">Matched</th><th scope="col">Unmatched</th><th scope="col">Schedule</th><th scope="col">Status</th><th scope="col">Last sync</th><th scope="col">Actions</th>
+              <th scope="col">Playlist</th><th scope="col">Tracks</th><th scope="col">Matched</th><th scope="col">Unmatched</th><th scope="col">Schedule</th><th scope="col">Coverage</th><th scope="col">Last sync</th><th scope="col">Actions</th>
             </tr></thead>
             <tbody>
           ${visible.length ? visible.map((playlist) => {
@@ -3473,6 +3506,22 @@ class AllstarrApp extends LitElement {
             const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
             const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
             const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matched === 0 ? "needs_matching" : "partial");
+            const targetBackend = String(this.status?.backendType || this.config?.backendType || "jellyfin").toLowerCase();
+            const rawBreakdown = playlist.providerBreakdown || playlist.ProviderBreakdown || {};
+            const providerCounts = Object.entries(rawBreakdown)
+              .map(([provider, count]) => [String(provider).toLowerCase(), Number(count || 0)])
+              .filter(([, count]) => count > 0);
+            if (!providerCounts.length) {
+              const local = Number(playlist.localTracks || 0);
+              const external = Number(playlist.externalTracks || 0);
+              if (local > 0) providerCounts.push([targetBackend, local]);
+              if (external > 0) providerCounts.push(["external", external]);
+            }
+            const total = Math.max(1, Number(playlist.trackCount || 0));
+            const coverageLabel = [
+              ...providerCounts.map(([provider, count]) => `${providerDisplayName(provider, this.schema?.providers)} ${count}`),
+              `Unmatched ${unmatched}`,
+            ].join(", ");
             const openRow = (event) => {
               if (event.target.closest("button, input, details, summary, a, select")) return;
               this.openInjectedPlaylist(playlist.name);
@@ -3486,7 +3535,13 @@ class AllstarrApp extends LitElement {
               <td data-label="Matched"><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
               <td data-label="Unmatched"><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>
               <td data-label="Schedule"><span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span></td>
-              <td data-label="Status"><span class="status-chip ${status}">${titleCase(status)}</span></td>
+              <td class="coverage-cell" data-label="Coverage">
+                <div class="playlist-coverage" role="img" tabindex="0" aria-label=${coverageLabel} title=${coverageLabel}>
+                  ${providerCounts.map(([provider, count]) => html`<span class="coverage-segment" style=${`--segment-size:${count * 100 / total}%;--segment-color:${providerCoverageColor(provider, this.schema?.providers)}`}></span>`)}
+                  ${unmatched > 0 ? html`<span class="coverage-segment unmatched" style=${`--segment-size:${unmatched * 100 / total}%`}></span>` : nothing}
+                </div>
+                <div class="coverage-meta"><span class="status-chip ${status}">${titleCase(status)}</span><small>${matched}/${playlist.trackCount || 0}</small></div>
+              </td>
               <td data-label="Last sync">${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</td>
               <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>
             </tr>`;

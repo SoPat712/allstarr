@@ -63,6 +63,10 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("var mapping = await _mappingService.GetMappingAsync(track.SpotifyId)", controller, StringComparison.Ordinal);
         Assert.Contains("matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
+        Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
+        Assert.Contains("[\"providerBreakdown\"]", controller, StringComparison.Ordinal);
+        Assert.Contains("class=\"playlist-coverage\"", script, StringComparison.Ordinal);
+        Assert.Contains("providerCoverageColor(", script, StringComparison.Ordinal);
     }
 
     [Fact]

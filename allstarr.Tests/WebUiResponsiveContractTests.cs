@@ -58,6 +58,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains(".app-shell.sidebar-collapsed", css, StringComparison.Ordinal);
         Assert.Contains("--rail-width: 76px;", css, StringComparison.Ordinal);
         Assert.Contains(".sidebar-collapsed .nav-link > span", css, StringComparison.Ordinal);
+        var responsive = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "responsive.css"));
+        Assert.Contains(".sidebar-collapse {\n        display: none !important;", responsive, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -74,6 +76,9 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("`All ${tracks.length} tracks`", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-dialog-hero .dialog-close", css, StringComparison.Ordinal);
         Assert.Contains("align-items: start;", css, StringComparison.Ordinal);
+        var responsive = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "responsive.css"));
+        Assert.Contains("@media (max-width: 900px)", responsive, StringComparison.Ordinal);
+        Assert.Contains(".playlist-track-table {\n        display: grid;", responsive, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -33,7 +33,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
-    private const int PlaylistSummarySchemaVersion = 4;
+    private const int PlaylistSummarySchemaVersion = 5;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -95,7 +95,10 @@ public class PlaylistController : ControllerBase
                                                   item.TryGetProperty("artworkUrl", out _) &&
                                                   item.TryGetProperty("artworkSource", out _) &&
                                                   item.TryGetProperty("matchedTracks", out _) &&
+                                                  item.TryGetProperty("providerBreakdown", out _) &&
                                                   item.TryGetProperty("syncStatus", out _));
+                    currentSummaryShape = currentSummaryShape &&
+                                          cachedDocument.RootElement.TryGetProperty("inventory", out _);
                     if (currentSummaryShape &&
                         cachedNames.Count == configuredPlaylists.Count &&
                         configuredPlaylists.All(item => cachedNames.Contains(item.Name)))
@@ -139,6 +142,7 @@ public class PlaylistController : ControllerBase
                 ["lastSuccessfulSyncAt"] = await ResolveLastSuccessfulSyncAtAsync(config.Name),
                 ["cacheAge"] = null as string,
                 ["artworkUrl"] = null as string,
+                ["providerBreakdown"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
                 ["sourceProvider"] = "spotify"
             };
 
@@ -783,51 +787,30 @@ public class PlaylistController : ControllerBase
                 }
             }
 
-            // Finally reconcile the current provider snapshot with the actual Jellyfin playlist
-            // by identity. Rotating playlists often retain the same item count while every track
-            // changes, so count or position alone must never make last week's items look current.
+            // Finish with the same per-source-track precedence used by the detail view:
+            // current materialized identity, current item cache, matched record, then durable
+            // manual mapping. A sparse identity join must never overwrite valid current matches.
             if (playlistMetadata?.Tracks.Count > 0)
             {
                 try
                 {
-                    var materializedItems = await GetMaterializedPlaylistItemsAsync(config.Name);
-                    var materializedMatches = MatchMaterializedItems(playlistMetadata.Tracks, materializedItems);
-                    var materializedLocal = 0;
-                    var materializedExternal = 0;
-                    foreach (var item in materializedMatches.Values)
-                    {
-                        if (IsExternalPlaylistItem(item))
-                        {
-                            var itemId = ReadCachedString(item, "Id");
-                            var providerIds = ReadCachedProviderIds(item);
-                            var provider = providerIds == null ? null : ResolveExternalProviderFromProviderIds(providerIds);
-                            provider ??= ExtractExternalProviderFromItemId(itemId);
-                            if (ExternalTrackPlaybackPolicy.CanUseForPlayback(provider, itemId))
-                            {
-                                materializedExternal++;
-                            }
-                        }
-                        else
-                        {
-                            materializedLocal++;
-                        }
-                    }
-
-                    ApplyPlaylistStats(
-                        playlistInfo,
-                        materializedLocal,
-                        materializedExternal,
-                        Math.Max(0, playlistMetadata.Tracks.Count - materializedLocal - materializedExternal));
+                    var coverage = await ResolveCanonicalPlaylistCoverageAsync(
+                        config.Name,
+                        playlistMetadata.Tracks);
+                    ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing);
+                    playlistInfo["providerBreakdown"] = coverage.ProviderBreakdown;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to reconcile current materialized identities for {Playlist}", config.Name);
+                    _logger.LogWarning(ex, "Failed to build canonical playlist coverage for {Playlist}", config.Name);
                 }
             }
 
             EnrichPlaylistSummary(playlistInfo, config.SyncSchedule);
             playlists.Add(playlistInfo);
         }
+
+        var inventory = await GetPlaylistInventoryAsync(configuredPlaylists);
 
         // Save to file cache
         try
@@ -836,7 +819,7 @@ public class PlaylistController : ControllerBase
             Directory.CreateDirectory(cacheDir);
             var cacheFile = Path.Combine(cacheDir, "admin_playlists_summary.json");
 
-            var response = new { schemaVersion = PlaylistSummarySchemaVersion, playlists };
+            var response = new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory };
             var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = false });
             await System.IO.File.WriteAllTextAsync(cacheFile, json);
 
@@ -847,7 +830,223 @@ public class PlaylistController : ControllerBase
             _logger.LogError(ex, "Failed to save playlist summary cache");
         }
 
-        return Ok(new { schemaVersion = PlaylistSummarySchemaVersion, playlists });
+        return Ok(new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory });
+    }
+
+    private sealed record PlaylistCoverage(
+        int Local,
+        int External,
+        int Missing,
+        Dictionary<string, int> ProviderBreakdown);
+
+    private async Task<PlaylistCoverage> ResolveCanonicalPlaylistCoverageAsync(
+        string playlistName,
+        IReadOnlyList<SpotifyPlaylistTrack> sourceTracks)
+    {
+        var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin")
+            .Trim()
+            .ToLowerInvariant();
+        var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);
+        var cachedItemsBySpotifyId = new Dictionary<string, Dictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
+
+        var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(
+            CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName));
+        foreach (var matched in matchedTracks ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(matched.SpotifyId) &&
+                matched.MatchedSong != null &&
+                !matchedTracksBySpotifyId.ContainsKey(matched.SpotifyId))
+            {
+                matchedTracksBySpotifyId[matched.SpotifyId] = matched;
+            }
+        }
+
+        var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(
+            CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlistName));
+        foreach (var item in cachedItems ?? [])
+        {
+            var providerIds = ReadCachedProviderIds(item);
+            if (providerIds?.TryGetValue("Spotify", out var spotifyId) == true &&
+                !string.IsNullOrWhiteSpace(spotifyId))
+            {
+                cachedItemsBySpotifyId[spotifyId] = item;
+            }
+        }
+
+        var materializedItems = await GetMaterializedPlaylistItemsAsync(playlistName);
+        var materializedItemsBySpotifyId = MatchMaterializedItems(sourceTracks, materializedItems);
+        var providerBreakdown = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var local = 0;
+        var external = 0;
+
+        foreach (var track in sourceTracks)
+        {
+            materializedItemsBySpotifyId.TryGetValue(track.SpotifyId, out var item);
+            item ??= cachedItemsBySpotifyId.GetValueOrDefault(track.SpotifyId);
+
+            bool? isLocal = null;
+            string? externalProvider = null;
+            var itemId = item == null ? null : ReadCachedString(item, "Id");
+            var providerIds = item == null ? null : ReadCachedProviderIds(item);
+            if (item != null)
+            {
+                externalProvider = providerIds == null
+                    ? null
+                    : ResolveExternalProviderFromProviderIds(providerIds);
+                if (IsExternalPlaylistItem(item) || !string.IsNullOrWhiteSpace(externalProvider))
+                {
+                    isLocal = false;
+                    externalProvider ??= ExtractExternalProviderFromItemId(itemId);
+                }
+                else
+                {
+                    isLocal = true;
+                }
+            }
+
+            var mapping = await _mappingService.GetMappingAsync(track.SpotifyId);
+            if (isLocal == false && string.IsNullOrWhiteSpace(externalProvider))
+            {
+                if (PlaylistTrackStatusResolver.TryResolveFromMatchedTrack(
+                        matchedTracksBySpotifyId,
+                        track.SpotifyId,
+                        out var resolvedIsLocal,
+                        out var resolvedExternalProvider) &&
+                    resolvedIsLocal == false)
+                {
+                    externalProvider = resolvedExternalProvider;
+                }
+                else if (mapping?.TargetType == "external")
+                {
+                    externalProvider = ResolvePreferredExternalProvider(mapping);
+                }
+            }
+            else if (isLocal == null && mapping?.Source == "manual")
+            {
+                if (mapping.TargetType == "local")
+                {
+                    isLocal = true;
+                }
+                else if (mapping.TargetType == "external")
+                {
+                    isLocal = false;
+                    externalProvider = ResolvePreferredExternalProvider(mapping);
+                }
+            }
+            else if (isLocal == null &&
+                     PlaylistTrackStatusResolver.TryResolveFromMatchedTrack(
+                         matchedTracksBySpotifyId,
+                         track.SpotifyId,
+                         out var resolvedIsLocal,
+                         out var resolvedExternalProvider))
+            {
+                isLocal = resolvedIsLocal;
+                externalProvider = resolvedExternalProvider;
+            }
+
+            if (isLocal == false)
+            {
+                externalProvider = NormalizeExternalProviderForDisplay(externalProvider);
+                if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(externalProvider, itemId))
+                {
+                    isLocal = null;
+                    externalProvider = null;
+                }
+            }
+
+            if (isLocal == true)
+            {
+                local++;
+                IncrementProviderCount(providerBreakdown, targetBackend);
+            }
+            else if (isLocal == false)
+            {
+                external++;
+                IncrementProviderCount(providerBreakdown, externalProvider ?? "external");
+            }
+        }
+
+        return new PlaylistCoverage(
+            local,
+            external,
+            Math.Max(0, sourceTracks.Count - local - external),
+            providerBreakdown);
+    }
+
+    private static void IncrementProviderCount(Dictionary<string, int> counts, string provider)
+    {
+        counts[provider] = counts.GetValueOrDefault(provider) + 1;
+    }
+
+    private async Task<Dictionary<string, int>> GetPlaylistInventoryAsync(
+        IReadOnlyCollection<SpotifyPlaylistConfig> configuredPlaylists)
+    {
+        var managed = configuredPlaylists.Count;
+        try
+        {
+            var userId = _jellyfinSettings.UserId;
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                var usersRequest = _helperService.CreateJellyfinRequest(HttpMethod.Get, $"{_jellyfinSettings.Url}/Users");
+                using var usersResponse = await _jellyfinHttpClient.SendAsync(usersRequest, HttpContext.RequestAborted);
+                if (usersResponse.IsSuccessStatusCode)
+                {
+                    using var usersDocument = JsonDocument.Parse(
+                        await usersResponse.Content.ReadAsStringAsync(HttpContext.RequestAborted));
+                    userId = usersDocument.RootElement.ValueKind == JsonValueKind.Array &&
+                             usersDocument.RootElement.GetArrayLength() > 0
+                        ? usersDocument.RootElement[0].GetProperty("Id").GetString()
+                        : null;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return new Dictionary<string, int>
+                {
+                    ["managed"] = managed,
+                    ["unmanaged"] = 0,
+                    ["total"] = managed
+                };
+            }
+
+            var request = _helperService.CreateJellyfinRequest(
+                HttpMethod.Get,
+                $"{_jellyfinSettings.Url}/Users/{userId}/Items?IncludeItemTypes=Playlist&Recursive=true&Limit=10000");
+            using var response = await _jellyfinHttpClient.SendAsync(request, HttpContext.RequestAborted);
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(
+                await response.Content.ReadAsStringAsync(HttpContext.RequestAborted));
+            var managedIds = configuredPlaylists
+                .Select(item => item.JellyfinId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var backendPlaylistIds = document.RootElement.TryGetProperty("Items", out var items) &&
+                                     items.ValueKind == JsonValueKind.Array
+                ? items.EnumerateArray()
+                    .Select(item => item.TryGetProperty("Id", out var id) ? id.GetString() : null)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : [];
+            var unmanaged = backendPlaylistIds.Count(id => !managedIds.Contains(id));
+            return new Dictionary<string, int>
+            {
+                ["managed"] = managed,
+                ["unmanaged"] = unmanaged,
+                ["total"] = managed + unmanaged
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load media-server playlist inventory");
+            return new Dictionary<string, int>
+            {
+                ["managed"] = managed,
+                ["unmanaged"] = 0,
+                ["total"] = managed
+            };
+        }
     }
 
     private static void ApplyPlaylistStats(
@@ -1127,6 +1326,7 @@ public class PlaylistController : ControllerBase
         var matchedTrackCount = 0;
         var localTrackCount = 0;
         var externalTrackCount = 0;
+        var providerBreakdown = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(decodedName);
         var playlistArtworkUrl = playlistMetadata?.ImageUrl ?? spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
         var playlistArtworkSource = !string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl)
@@ -1449,10 +1649,12 @@ public class PlaylistController : ControllerBase
                     if (isLocal.Value)
                     {
                         localTrackCount++;
+                        IncrementProviderCount(providerBreakdown, targetBackend);
                     }
                     else
                     {
                         externalTrackCount++;
+                        IncrementProviderCount(providerBreakdown, externalProvider ?? "external");
                     }
                 }
 
@@ -1495,6 +1697,7 @@ public class PlaylistController : ControllerBase
                 externalTracks = externalTrackCount,
                 matchedTracks = matchedTrackCount,
                 unmatchedTracks = Math.Max(0, spotifyTracks.Count - matchedTrackCount),
+                providerBreakdown,
                 syncSchedule,
                 lastSourceRefreshAt,
                 lastSuccessfulSyncAt,
