@@ -61,7 +61,8 @@ public sealed class WebUiEnvMigrationContractTests
         Assert.DoesNotContain("found an eligible legacy migration", _script, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("event.key === \"Escape\"", _script, StringComparison.Ordinal);
         Assert.Contains("event.key !== \"Tab\"", _script, StringComparison.Ordinal);
-        Assert.Contains("dialog.querySelector(\"[autofocus]\")?.focus()", _script, StringComparison.Ordinal);
+        Assert.Contains("(activeDialog.querySelector(\"[autofocus]\") || activeDialog).focus()", _script, StringComparison.Ordinal);
+        Assert.Contains("this.handleDialogKeydown(event, close)", _script, StringComparison.Ordinal);
         Assert.Contains("localStorage.setItem(SETUP_GUIDE_DISMISSED_KEY, \"1\")", _script, StringComparison.Ordinal);
         Assert.Contains("localStorage.getItem(SETUP_GUIDE_DISMISSED_KEY) !== \"1\"", _script, StringComparison.Ordinal);
         Assert.Contains("/api/admin/onboarding/status", _script, StringComparison.Ordinal);
