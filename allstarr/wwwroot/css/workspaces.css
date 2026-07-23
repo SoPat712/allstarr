@@ -1491,6 +1491,109 @@
   overflow-wrap: anywhere;
 }
 
+.extension-permission-dialog {
+  width: min(760px, calc(100vw - (2 * var(--space-5))));
+  padding: 0;
+  overflow: hidden;
+}
+
+.extension-permission-dialog > .dialog-header,
+.extension-permission-dialog > .extension-permission-review,
+.extension-permission-dialog > .dialog-actions {
+  padding-inline: var(--space-6);
+}
+
+.extension-permission-dialog > .dialog-header {
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, var(--surface-elevated), var(--surface));
+  padding-block: var(--space-5);
+}
+
+.extension-permission-dialog > .extension-permission-review {
+  gap: var(--space-5);
+  padding-block: var(--space-5);
+  overflow: auto;
+}
+
+.extension-permission-dialog .permission-summary {
+  align-items: flex-start;
+  margin: 0;
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface-elevated));
+  padding: var(--space-4);
+}
+
+.extension-permission-dialog .permission-summary strong {
+  font-size: 1rem;
+}
+
+.extension-permission-dialog .permission-summary span {
+  max-width: 52ch;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.extension-permission-dialog .extension-permission-list {
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+
+.extension-permission-dialog .extension-permission-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+  padding: var(--space-4);
+}
+
+.extension-permission-dialog .extension-permission-row > div:first-child {
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.extension-permission-dialog .extension-permission-row code {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.extension-permission-dialog .extension-permission-row .row-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: var(--space-2);
+}
+
+.extension-permission-dialog .extension-permission-row .chip {
+  width: fit-content;
+}
+
+.extension-permission-dialog .permission-confirm {
+  align-items: flex-start;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-4);
+  line-height: 1.45;
+}
+
+.extension-permission-dialog > .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  padding-block: var(--space-4);
+  backdrop-filter: blur(16px);
+}
+
 @media (max-width: 760px) {
   .extension-about,
   .extension-package-facts {
@@ -1503,6 +1606,28 @@
 
   .extension-manager-activity summary time {
     grid-column: 2;
+  }
+
+  .extension-permission-dialog {
+    width: min(100vw - (2 * var(--space-3)), 760px);
+    max-height: calc(100dvh - (2 * var(--space-3)));
+  }
+
+  .extension-permission-dialog > .dialog-header,
+  .extension-permission-dialog > .extension-permission-review,
+  .extension-permission-dialog > .dialog-actions {
+    padding-inline: var(--space-4);
+  }
+
+  .extension-permission-dialog .permission-summary,
+  .extension-permission-dialog .extension-permission-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .extension-permission-dialog .permission-summary > button,
+  .extension-permission-dialog .extension-permission-row .row-actions,
+  .extension-permission-dialog > .dialog-actions > button {
+    width: 100%;
   }
 }
 
