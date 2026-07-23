@@ -882,10 +882,22 @@ class AllstarrApp extends LitElement {
     this.activitySource = null;
     this.routeLoadKey = "";
     this.envMigrationExpiryTimer = null;
+    this.nowPlayingTimer = null;
+    this.onVisibilityChange = null;
   }
 
   createRenderRoot() {
     return this;
+  }
+
+  startNowPlayingClock() {
+    if (this.nowPlayingTimer || document.hidden) return;
+    this.nowPlayingTimer = window.setInterval(() => { this.nowPlayingClock = Date.now(); }, 500);
+  }
+
+  stopNowPlayingClock() {
+    clearInterval(this.nowPlayingTimer);
+    this.nowPlayingTimer = null;
   }
 
   connectedCallback() {
@@ -904,13 +916,19 @@ class AllstarrApp extends LitElement {
       this.loadForRoute();
     };
     window.addEventListener("hashchange", this.onHashChange);
-    this.nowPlayingTimer = window.setInterval(() => { this.nowPlayingClock = Date.now(); }, 500);
+    this.onVisibilityChange = () => {
+      if (document.hidden) this.stopNowPlayingClock();
+      else this.startNowPlayingClock();
+    };
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
+    this.startNowPlayingClock();
     this.bootstrap();
   }
 
   disconnectedCallback() {
     window.removeEventListener("hashchange", this.onHashChange);
-    clearInterval(this.nowPlayingTimer);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    this.stopNowPlayingClock();
     this.stopActivityStream();
     clearTimeout(this.envMigrationExpiryTimer);
     super.disconnectedCallback();
@@ -5152,9 +5170,19 @@ class AllstarrApp extends LitElement {
     const errors = asArray(this.extensionStore?.errors || this.extensionStore?.Errors);
     const packageHistory = this.installedExtensionPackages();
     const installedByExtension = new Map();
+    const packageById = new Map();
     for (const item of packageHistory) {
       const key = String(item.extensionId || item.ExtensionId).toLowerCase();
       if (!installedByExtension.has(key)) installedByExtension.set(key, item);
+      packageById.set(String(item.id || item.Id), item);
+    }
+    const latestStoreByExtension = new Map();
+    for (const item of storeItems) {
+      const key = String(item.id || item.Id || "").toLowerCase();
+      const current = latestStoreByExtension.get(key);
+      if (!current || compareExtensionVersions(item.version || item.Version, current.version || current.Version) > 0) {
+        latestStoreByExtension.set(key, item);
+      }
     }
     const installedPackages = [...installedByExtension.values()];
     const permissionPackage = packageHistory.find((item) => String(item.id || item.Id) === String(this.extensionPermissionPackageId));
@@ -5166,7 +5194,7 @@ class AllstarrApp extends LitElement {
     const activeRegistries = registries.filter((item) => item.enabled ?? item.Enabled);
     const renderActivityEntry = (entry, compact = false) => {
       const packageId = String(entry.extensionPackageId || entry.ExtensionPackageId || "");
-      const sourcePackage = packageHistory.find((item) => String(item.id || item.Id) === packageId);
+      const sourcePackage = packageById.get(packageId);
       const packageName = sourcePackage?.displayName || sourcePackage?.DisplayName || entry.extensionId || entry.ExtensionId || "Extension runtime";
       const level = String(entry.level || entry.Level || "information").toLowerCase();
       return html`<details class="extension-activity-entry ${compact ? "compact" : ""}"><summary><span class=${`activity-dot level-${level}`}></span><span><strong>${titleCase(entry.summary || entry.Summary || "Extension event")}</strong><small>${packageName}</small></span><time>${compact ? formatRelativeTime(entry.createdAt || entry.CreatedAt) : formatDate(entry.createdAt || entry.CreatedAt)}</time>${icon("chevronRight", 16)}</summary><div><p>${display(entry.message || entry.Message, "No additional details were recorded.")}</p><dl><div><dt>Extension</dt><dd>${packageName}</dd></div><div><dt>Level</dt><dd>${titleCase(level)}</dd></div><div><dt>Recorded</dt><dd>${formatDate(entry.createdAt || entry.CreatedAt)}</dd></div></dl>${sourcePackage ? html`<button class="ghost compact" @click=${() => this.openExtensionManager(sourcePackage)}>Open extension details</button>` : nothing}</div></details>`;
@@ -5179,7 +5207,8 @@ class AllstarrApp extends LitElement {
         const action = this.extensionActions[id];
         const label = ({ active: "Enabled", reviewrequired: "Review needed", staged: "Ready", disabled: "Disabled", failed: "Needs attention" })[state] || titleCase(state);
         const extensionId = String(item.extensionId || item.ExtensionId).toLowerCase();
-        const update = storeItems.filter((candidate) => String(candidate.id || candidate.Id).toLowerCase() === extensionId && compareExtensionVersions(candidate.version || candidate.Version, item.version || item.Version) > 0).sort((a, b) => compareExtensionVersions(b.version || b.Version, a.version || a.Version))[0];
+        const latestStoreItem = latestStoreByExtension.get(extensionId);
+        const update = latestStoreItem && compareExtensionVersions(latestStoreItem.version || latestStoreItem.Version, item.version || item.Version) > 0 ? latestStoreItem : null;
         const updateAction = update ? this.extensionActions[update.id || update.Id] : "";
         return html`<article class="extension-row">${this.renderExtensionLogo(item, "large")}<div class="extension-row-copy"><div class="extension-row-title"><strong>${item.displayName || item.DisplayName}</strong><span>v${item.version || item.Version}</span></div><small>${display(item.author || item.Author, "Extension package")}</small><p>${display(item.description || item.Description, "No description supplied by this extension.")}</p></div><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : state === "disabled" ? "disabled" : "warning"}">${update ? `v${update.version || update.Version} available` : label}</span><div class="extension-row-actions">${update ? html`<button class="primary" ?disabled=${Boolean(updateAction)} @click=${() => this.installExtension(update, true)}>${updateAction || "Update"}</button>` : nothing}<button ?disabled=${Boolean(action)} @click=${() => this.openExtensionManager(item)}>Manage</button></div></article>`;
       }) : html`<div class="empty"><strong>No extensions installed</strong><span>Install one from a connected registry.</span></div>`}</div>
@@ -5722,6 +5751,9 @@ class AllstarrApp extends LitElement {
     const backendConnected = this.authenticated && signedInBackend === expectedBackend;
     const backendUser = display(this.session?.name || this.session?.Name, "your account");
     const providers = asArray(this.schema?.providers).filter((provider) => provider.status !== "disabled").slice(0, 6);
+    const healthyProviderIds = new Set(asArray(this.providerHealth)
+      .filter((item) => String(item.health || item.Health).toLowerCase() === "healthy")
+      .map((item) => String(item.provider || item.Provider || item.providerId || item.ProviderId).toLowerCase()));
     const stepBody = [
       html`
         <h2 id="setup-guide-title" tabindex="-1" autofocus>Welcome to your music hub</h2>
@@ -5759,8 +5791,7 @@ class AllstarrApp extends LitElement {
         <p>You only need the services you actually use. Accounts are encrypted and can be shared by an administrator or kept per user.</p>
         <div class="setup-choice-grid">
           ${providers.map((provider) => {
-            const observed = this.providerHealth.filter((item) => String(item.provider || item.Provider || item.providerId || item.ProviderId).toLowerCase() === String(provider.id).toLowerCase());
-            const healthy = observed.some((item) => String(item.health || item.Health).toLowerCase() === "healthy");
+            const healthy = healthyProviderIds.has(String(provider.id).toLowerCase());
             const state = healthy ? "healthy" : provider.status;
             return html`<div class="setup-choice">
               <strong>${display(provider.name)}</strong>

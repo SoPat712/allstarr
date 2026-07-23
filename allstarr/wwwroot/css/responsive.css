@@ -732,10 +732,6 @@
         flex: 0 0 145px;
     }
 
-    .injected-data-table {
-        min-width: 1040px;
-    }
-
     .settings-view > details.content-disclosure.panel > summary {
         min-height: 42px;
         padding: 8px 12px;
