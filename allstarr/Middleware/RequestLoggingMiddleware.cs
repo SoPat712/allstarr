@@ -28,7 +28,7 @@ public class RequestLoggingMiddleware
 
         if (initialValue)
         {
-            _logger.LogWarning(
+            _logger.LogInformation(
                 "🔍 Request logging ENABLED - sensitive request values are always redacted");
         }
         else

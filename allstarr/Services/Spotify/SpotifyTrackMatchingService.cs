@@ -1638,11 +1638,11 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         if (missingTracks == null || missingTracks.Count == 0)
         {
-            _logger.LogWarning("No missing tracks found for {Playlist}, skipping matching", playlistName);
+            _logger.LogDebug("No missing tracks found for {Playlist}, skipping matching", playlistName);
             return;
         }
 
-        _logger.LogWarning("Matching {Count} tracks for {Playlist} (with rate limiting)",
+        _logger.LogInformation("Matching {Count} tracks for {Playlist} (with rate limiting)",
             missingTracks.Count, playlistName);
 
         var matchedSongs = new List<Song>();

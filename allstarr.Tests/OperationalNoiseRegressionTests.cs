@@ -1,4 +1,5 @@
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using allstarr.Services.Scrobbling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -58,11 +59,60 @@ public sealed class OperationalNoiseRegressionTests
         Assert.DoesNotContain("[JS EXT]", extensionManager, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ProviderFallbackHelper_DoesNotWarnDuringConstruction()
+    {
+        var logger = new Mock<ILogger>();
+
+        _ = new RoundRobinFallbackHelper([], logger.Object, "SquidWTF");
+
+        VerifyNoLevel(logger, LogLevel.Warning);
+        VerifyNoLevel(logger, LogLevel.Error);
+        VerifyNoLevel(logger, LogLevel.Critical);
+    }
+
+    [Fact]
+    public void RoutineOperationalEvents_AreNotWarningTemplates()
+    {
+        var requestLogging = Read("allstarr/Middleware/RequestLoggingMiddleware.cs");
+        var matching = Read("allstarr/Services/Spotify/SpotifyTrackMatchingService.cs");
+        var playlists = Read("allstarr/Controllers/PlaylistController.cs");
+
+        Assert.DoesNotContain(
+            "LogWarning(\"Matching {Count} tracks",
+            matching,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "LogWarning(\"No missing tracks found",
+            matching,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "LogWarning(\"Playlist cache not available",
+            playlists,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "LogWarning(\n                \"🔍 Request logging ENABLED",
+            requestLogging,
+            StringComparison.Ordinal);
+    }
+
     private static void VerifyNoLogs<T>(Mock<ILogger<T>> logger)
     {
         logger.Verify(
             item => item.Log(
                 It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((_, _) => true),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+    }
+
+    private static void VerifyNoLevel(Mock<ILogger> logger, LogLevel level)
+    {
+        logger.Verify(
+            item => item.Log(
+                level,
                 It.IsAny<EventId>(),
                 It.Is<It.IsAnyType>((_, _) => true),
                 It.IsAny<Exception?>(),

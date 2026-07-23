@@ -1720,7 +1720,7 @@ public class PlaylistController : ControllerBase
         }
 
         // Fallback: Cache not available, use matched tracks cache
-        _logger.LogWarning("Playlist cache not available for {Playlist}, using fallback", decodedName);
+        _logger.LogDebug("Playlist cache not available for {Playlist}, using fallback", decodedName);
 
         for (var trackIndex = 0; trackIndex < spotifyTracks.Count; trackIndex++)
         {

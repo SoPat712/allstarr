@@ -36,7 +36,9 @@ public class RoundRobinFallbackHelper
 
         if (_apiUrls.Count == 0)
         {
-            _logger.LogWarning("{Service} initialized with zero endpoints; external provider is currently unavailable", _serviceName);
+            _logger.LogDebug(
+                "{Service} initialized with zero endpoints; availability will be reported if the provider is used",
+                _serviceName);
         }
     }
 
