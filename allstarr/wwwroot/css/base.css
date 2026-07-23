@@ -5922,3 +5922,24 @@ button.setup-choice {
   .mapping-target-tabs { grid-template-columns: 1fr; }
   .mapping-review-modal { width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); }
 }
+
+/* Cached and kept media inventory */
+.managed-downloads-surface { display: grid; gap: var(--space-4); }
+.managed-downloads-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--space-4); align-items: end; }
+.managed-downloads-header h2 { margin: .2rem 0; }
+.managed-downloads-header p { max-width: 60ch; margin: 0; color: var(--text-muted); }
+.managed-downloads-table td > small { display: block; max-width: 24rem; margin-top: .25rem; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.managed-downloads-table .provider-chip { display: inline-flex; padding: .3rem .55rem; border-radius: 999px; color: var(--text); background: var(--surface-3); font-size: var(--font-size-sm); font-weight: 800; text-transform: capitalize; }
+.managed-downloads-table .row-actions { flex-wrap: nowrap; }
+.managed-downloads-table a.button { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+@media (max-width: 900px) {
+  .managed-downloads-header { grid-template-columns: 1fr auto; }
+  .managed-downloads-header > :first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  .managed-downloads-header { grid-template-columns: 1fr; align-items: stretch; }
+  .managed-downloads-header > :first-child { grid-column: auto; }
+  .managed-downloads-header .actions, .managed-downloads-header .actions button { width: 100%; }
+  .managed-downloads-table .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .managed-downloads-table .row-actions > * { width: 100%; }
+}

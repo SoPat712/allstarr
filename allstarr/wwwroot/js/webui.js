@@ -515,10 +515,13 @@ const API = {
     requestJson("/api/admin/playlist-links/backend-credentials", jsonBody(payload), "Failed to store backend credentials"),
   rotatePlaylistBackendCredential: (referenceId, payload) =>
     requestJson(`/api/admin/playlist-links/backend-credentials/${encodeURIComponent(referenceId)}`, jsonBody(payload, "PUT"), "Failed to rotate backend credentials"),
-  downloads: () => requestJson("/api/admin/downloads", {}, "Failed to load downloads"),
-  deleteDownload: (path) =>
-    requestJson(`/api/admin/downloads?path=${encodeURIComponent(path)}`, { method: "DELETE" }, "Failed to delete download"),
-  deleteAllDownloads: () => requestJson("/api/admin/downloads/all", { method: "DELETE" }, "Failed to delete downloads"),
+  downloads: (storage = "kept") => requestJson(`/api/admin/downloads?storage=${encodeURIComponent(storage)}`, {}, "Failed to load downloads"),
+  deleteDownload: (path, storage = "kept") =>
+    requestJson(`/api/admin/downloads?path=${encodeURIComponent(path)}&storage=${encodeURIComponent(storage)}`, { method: "DELETE" }, "Failed to delete download"),
+  deleteAllDownloads: (storage = "kept") => requestJson(`/api/admin/downloads/all?storage=${encodeURIComponent(storage)}`, { method: "DELETE" }, "Failed to delete downloads"),
+  promoteCachedDownload: (path) =>
+    requestJson(`/api/admin/downloads/promote?path=${encodeURIComponent(path)}`, { method: "POST" }, "Failed to keep cached track"),
+  downloadFileUrl: (path, storage = "kept") => `/api/admin/downloads/file?path=${encodeURIComponent(path)}&storage=${encodeURIComponent(storage)}`,
   endpointUsage: (top = 50) =>
     requestJson(`/api/admin/debug/endpoint-usage?top=${top}`, {}, "Failed to load endpoint usage"),
   clearEndpointUsage: () => requestJson("/api/admin/debug/endpoint-usage", { method: "DELETE" }, "Failed to clear endpoint usage"),
@@ -717,6 +720,7 @@ class AllstarrApp extends LitElement {
     selectedTrackContext: { state: true },
     trackDetailsLoading: { state: true },
     downloads: { state: true },
+    cachedDownloads: { state: true },
     jobs: { state: true },
     providerAccounts: { state: true },
     providerHealth: { state: true },
@@ -827,6 +831,7 @@ class AllstarrApp extends LitElement {
     this.selectedTrackContext = null;
     this.trackDetailsLoading = false;
     this.downloads = null;
+    this.cachedDownloads = null;
     this.jobs = [];
     this.providerAccounts = [];
     this.providerHealth = [];
@@ -1331,6 +1336,8 @@ class AllstarrApp extends LitElement {
           await this.loadMigrationData();
         } else if (sub === "kept") {
           await this.loadDownloads();
+        } else if (sub === "cached") {
+          await this.loadCachedDownloads();
         }
       } else if (zone === "sources") {
         if (this.isAdministrator()) {
@@ -1694,7 +1701,11 @@ class AllstarrApp extends LitElement {
   }
 
   async loadDownloads() {
-    this.downloads = await API.downloads();
+    this.downloads = await API.downloads("kept");
+  }
+
+  async loadCachedDownloads() {
+    this.cachedDownloads = await API.downloads("cache");
   }
 
   async loadQueue() {
@@ -2891,6 +2902,7 @@ class AllstarrApp extends LitElement {
           sub === "mappings" ? this.renderMappings() :
           sub === "missing" ? this.renderMissingTracks() :
           sub === "migration" ? this.renderSongMigration() :
+          sub === "cached" ? this.renderCachedDownloads() :
           sub === "kept" ? this.renderKeptDownloads() :
           this.renderPlaylistsWorkspace()}
       </section>
@@ -2901,6 +2913,7 @@ class AllstarrApp extends LitElement {
     const items = [
       ["playlists", "Playlists", "playlist"],
       ["mappings", "Mappings", "sources"],
+      ["cached", "Cached", "download"],
       ["kept", "Kept", "check"],
     ];
     return html`
@@ -4090,6 +4103,32 @@ class AllstarrApp extends LitElement {
   }
 
   renderKeptDownloads() {
+    return this.renderManagedDownloads(this.downloads, "kept");
+  }
+
+  renderCachedDownloads() {
+    return this.renderManagedDownloads(this.cachedDownloads, "cache");
+  }
+
+  renderManagedDownloads(data, mode) {
+    const files = asArray(data?.files || data?.Files);
+    const cached = mode === "cache";
+    const label = cached ? "Cached" : "Kept";
+    return html`
+      <section class="panel managed-downloads-surface" data-testid=${`${mode}-downloads`}>
+        <header class="managed-downloads-header">
+          <div><div class="eyebrow">Library storage</div><h2>${label} tracks</h2><p>${cached ? "Temporary playback files. Keep a track to move it into permanent storage." : "Permanent downloads, including current and legacy Allstarr storage."}</p></div>
+          <div class="stat-strip" aria-label=${`${label} download totals`}><div><span class="metric-label">Tracks</span><strong>${display(data?.count ?? data?.Count ?? files.length)}</strong></div><div><span class="metric-label">Size</span><strong>${display(data?.totalSizeFormatted ?? data?.TotalSizeFormatted, "—")}</strong></div></div>
+          <div class="actions"><button class="primary" @click=${async () => { cached ? await this.loadCachedDownloads() : await this.loadDownloads(); this.toast(`${label} tracks refreshed`); }}>Refresh</button>${files.length ? html`<button class="danger" @click=${async () => { if (confirm(`Delete all ${label.toLowerCase()} tracks?`)) { await API.deleteAllDownloads(mode); cached ? await this.loadCachedDownloads() : await this.loadDownloads(); this.toast(`${label} tracks deleted`); } }}>Delete all</button>` : nothing}</div>
+        </header>
+        <div class="table-wrap">
+          ${files.length ? html`<table class="responsive-data-table managed-downloads-table"><thead><tr><th>Track</th><th>Provider</th><th>Quality</th><th>Size</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${files.map((file) => html`<tr><td class="mobile-primary" data-label="Track"><strong>${display(file.title, file.fileName)}</strong><small>${display(file.artist, "Unknown artist")} · ${display(file.album, "Unknown album")}</small></td><td data-label="Provider"><span class="provider-chip">${display(file.provider, "Unknown")}</span>${file.externalId ? html`<small class="mono">${file.externalId}</small>` : nothing}</td><td data-label="Quality"><strong>${display(file.quality, file.codec)}</strong><small>${file.bitrateKbps ? `${file.bitrateKbps} kbps` : ""}${file.bitDepth && file.sampleRateHz ? `${file.bitrateKbps ? " · " : ""}${file.bitDepth}-bit · ${(file.sampleRateHz / 1000).toFixed(file.sampleRateHz % 1000 ? 1 : 0)} kHz` : ""}</small></td><td data-label="Size">${display(file.sizeFormatted)}</td><td data-label="Updated">${formatDate(file.lastModified)}</td><td class="mobile-actions" data-label="Actions"><div class="row-actions"><a class="button secondary" href=${API.downloadFileUrl(file.path, file.storage || mode)}>Download</a>${cached ? html`<button class="primary" @click=${async () => { await API.promoteCachedDownload(file.path); await Promise.all([this.loadCachedDownloads(), this.loadDownloads()]); this.toast("Track moved to Kept"); }}>Keep</button>` : nothing}<button class="danger" @click=${async () => { await API.deleteDownload(file.path, file.storage || mode); cached ? await this.loadCachedDownloads() : await this.loadDownloads(); this.toast("Track deleted"); }}>Delete</button></div></td></tr>`)}</tbody></table>` : emptyState(cached ? "No cached tracks. Streamed and temporary downloads will appear here." : "No kept downloads. Tracks you keep will appear here.")}
+        </div>
+      </section>
+    `;
+  }
+
+  renderKeptDownloadsLegacy() {
     const files = asArray(this.downloads?.files || this.downloads?.Files);
     return html`
       <section class="panel kept-surface" data-testid="kept-downloads">

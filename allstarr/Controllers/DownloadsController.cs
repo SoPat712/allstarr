@@ -1,7 +1,9 @@
-using Microsoft.AspNetCore.Mvc;
+using System.Text.RegularExpressions;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Lyrics;
+using Microsoft.AspNetCore.Mvc;
+using TagLib;
 
 namespace allstarr.Controllers;
 
@@ -10,7 +12,10 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public class DownloadsController : ControllerBase
 {
-    private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a", ".opus"];
+    private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a", ".aac", ".opus", ".ogg"];
+    private static readonly Regex ProviderSuffix = new(
+        @"\s+\[(?<provider>[a-zA-Z0-9_]+)-(?<id>[^\]]+)\]$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly ILogger<DownloadsController> _logger;
     private readonly IConfiguration _configuration;
@@ -27,307 +32,357 @@ public class DownloadsController : ControllerBase
     }
 
     [HttpGet("downloads")]
-    public IActionResult GetDownloads()
+    public IActionResult GetDownloads([FromQuery] string storage = "kept")
     {
         try
         {
-            var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
-
-            if (!Directory.Exists(keptPath))
-            {
-                return Ok(new { files = new List<object>(), totalSize = 0, count = 0 });
-            }
-
-            var files = new List<object>();
-            long totalSize = 0;
-
-            // Recursively get all audio files from kept folder
-            var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
-                .Where(IsSupportedAudioFile)
-                .ToList();
-
-            foreach (var filePath in allFiles)
-            {
-
-                var fileInfo = new FileInfo(filePath);
-                var relativePath = Path.GetRelativePath(keptPath, filePath);
-
-                // Parse artist/album/track from path structure
-                var parts = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                var artist = parts.Length > 0 ? parts[0] : "";
-                var album = parts.Length > 1 ? parts[1] : "";
-                var fileName = parts.Length > 2 ? parts[^1] : Path.GetFileName(filePath);
-
-                files.Add(new
-                {
-                    path = relativePath,
-                    fullPath = filePath,
-                    artist,
-                    album,
-                    fileName,
-                    size = fileInfo.Length,
-                    sizeFormatted = AdminHelperService.FormatFileSize(fileInfo.Length),
-                    lastModified = fileInfo.LastWriteTimeUtc,
-                    extension = fileInfo.Extension
-                });
-
-                totalSize += fileInfo.Length;
-            }
-
+            var roots = ResolveListRoots(storage);
+            var files = roots.SelectMany(root => EnumerateFiles(root.Path)
+                    .Select(path => Describe(path, root)))
+                .OrderBy(item => item.Artist)
+                .ThenBy(item => item.Album)
+                .ThenBy(item => item.Title)
+                .ToArray();
+            var totalSize = files.Sum(item => item.Size);
             return Ok(new
             {
-                files = files.OrderBy(f => ((dynamic)f).artist).ThenBy(f => ((dynamic)f).album).ThenBy(f => ((dynamic)f).fileName),
+                storage = NormalizeStorage(storage),
+                files,
                 totalSize,
                 totalSizeFormatted = AdminHelperService.FormatFileSize(totalSize),
-                count = files.Count
+                count = files.Length
             });
         }
-        catch (Exception ex)
+        catch (ArgumentException exception)
         {
-            _logger.LogError(ex, "Failed to list kept downloads");
-            return StatusCode(500, new { error = "Failed to list kept downloads" });
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to list {Storage} downloads", storage);
+            return StatusCode(500, new { error = "Failed to list downloads" });
         }
     }
 
-    /// <summary>
-    /// DELETE /api/admin/downloads
-    /// Deletes a specific kept file and cleans up empty folders
-    /// </summary>
     [HttpDelete("downloads")]
-    public IActionResult DeleteDownload([FromQuery] string path)
+    public IActionResult DeleteDownload([FromQuery] string path, [FromQuery] string storage = "kept")
     {
         try
         {
-            if (string.IsNullOrEmpty(path))
-            {
-                return BadRequest(new { error = "Path is required" });
-            }
-
-            var keptPath = Path.GetFullPath(Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept"));
-
-            if (!TryResolvePathUnderRoot(keptPath, path, out var fullPath))
-            {
-                return BadRequest(new { error = "Invalid path" });
-            }
-
-            if (!System.IO.File.Exists(fullPath))
-            {
+            if (string.IsNullOrWhiteSpace(path) || !IsSafeRequestedPath(storage, path))
+                return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
+            if (!TryResolveExistingFile(storage, path, out var root, out var fullPath))
                 return NotFound(new { error = "File not found" });
-            }
 
             System.IO.File.Delete(fullPath);
-            var sidecarPath = _keptLyricsSidecarService?.GetSidecarPath(fullPath) ?? Path.ChangeExtension(fullPath, ".lrc");
-            if (System.IO.File.Exists(sidecarPath))
-            {
-                System.IO.File.Delete(sidecarPath);
-            }
-
-            // Clean up empty directories (Album folder, then Artist folder if empty)
-            var directory = Path.GetDirectoryName(fullPath);
-            while (directory != null &&
-                   !string.Equals(directory, keptPath, GetPathComparison()) &&
-                   IsPathUnderRoot(directory, keptPath))
-            {
-                if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    Directory.Delete(directory);
-                    directory = Path.GetDirectoryName(directory);
-                }
-                else
-                {
-                    break;
-                }
-            }
-
+            DeleteSidecar(fullPath);
+            CleanEmptyDirectories(Path.GetDirectoryName(fullPath), root.Path);
             return Ok(new { success = true, message = "File deleted successfully" });
         }
-        catch (Exception ex)
+        catch (ArgumentException exception)
         {
-            _logger.LogError(ex, "Failed to delete file: {Path}", path);
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to delete {Storage} file: {Path}", storage, path);
             return StatusCode(500, new { error = "Failed to delete file" });
         }
     }
 
-    /// <summary>
-    /// DELETE /api/admin/downloads/all
-    /// Deletes all kept audio files and removes empty folders
-    /// </summary>
     [HttpDelete("downloads/all")]
-    public IActionResult DeleteAllDownloads()
+    public IActionResult DeleteAllDownloads([FromQuery] string storage = "kept")
     {
         try
         {
-            var keptPath = Path.GetFullPath(Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept"));
-            if (!Directory.Exists(keptPath))
+            var roots = ResolveListRoots(storage);
+            var deleted = 0;
+            foreach (var root in roots)
             {
-                return Ok(new { success = true, deletedCount = 0, message = "No kept downloads found" });
-            }
-
-            var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
-                .Where(IsSupportedAudioFile)
-                .ToList();
-
-            foreach (var filePath in allFiles)
-            {
-                System.IO.File.Delete(filePath);
-            }
-
-            var sidecarFiles = Directory.GetFiles(keptPath, "*.lrc", SearchOption.AllDirectories);
-            foreach (var sidecarFile in sidecarFiles)
-            {
-                System.IO.File.Delete(sidecarFile);
-            }
-
-            // Clean up empty directories under kept root (deepest first)
-            var allDirectories = Directory.GetDirectories(keptPath, "*", SearchOption.AllDirectories)
-                .OrderByDescending(d => d.Length);
-            foreach (var directory in allDirectories)
-            {
-                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                if (!Directory.Exists(root.Path)) continue;
+                foreach (var file in EnumerateFiles(root.Path))
                 {
-                    Directory.Delete(directory);
+                    System.IO.File.Delete(file);
+                    DeleteSidecar(file);
+                    deleted++;
                 }
+                foreach (var sidecar in Directory.GetFiles(root.Path, "*.lrc", SearchOption.AllDirectories))
+                    System.IO.File.Delete(sidecar);
+                CleanAllEmptyDirectories(root.Path);
             }
-
-            return Ok(new
-            {
-                success = true,
-                deletedCount = allFiles.Count,
-                message = $"Deleted {allFiles.Count} kept download(s)"
-            });
+            return Ok(new { success = true, deletedCount = deleted, message = $"Deleted {deleted} download(s)" });
         }
-        catch (Exception ex)
+        catch (ArgumentException exception)
         {
-            _logger.LogError(ex, "Failed to delete all kept downloads");
-            return StatusCode(500, new { error = "Failed to delete all kept downloads" });
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to delete all {Storage} downloads", storage);
+            return StatusCode(500, new { error = "Failed to delete downloads" });
         }
     }
 
-    /// <summary>
-    /// GET /api/admin/downloads/file
-    /// Downloads a specific file from the kept folder
-    /// </summary>
-    [HttpGet("downloads/file")]
-    public async Task<IActionResult> DownloadFile([FromQuery] string path)
+    [HttpPost("downloads/promote")]
+    public IActionResult PromoteCachedDownload([FromQuery] string path)
     {
         try
         {
-            if (string.IsNullOrEmpty(path))
-            {
-                return BadRequest(new { error = "Path is required" });
-            }
+            if (string.IsNullOrWhiteSpace(path) || !IsSafeRequestedPath("cache", path))
+                return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
+            if (!TryResolveExistingFile("cache", path, out var cacheRoot, out var sourcePath))
+                return NotFound(new { error = "Cached file not found" });
 
-            var keptPath = Path.GetFullPath(Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept"));
-
-            if (!TryResolvePathUnderRoot(keptPath, path, out var fullPath))
-            {
+            var permanentRoot = Root("permanent");
+            var targetPath = Path.GetFullPath(Path.Combine(permanentRoot.Path, Path.GetRelativePath(cacheRoot.Path, sourcePath)));
+            if (!IsPathUnderRoot(targetPath, permanentRoot.Path))
                 return BadRequest(new { error = "Invalid path" });
-            }
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            targetPath = ResolveUniquePath(targetPath);
+            System.IO.File.Move(sourcePath, targetPath);
 
-            if (!System.IO.File.Exists(fullPath))
+            var sourceSidecar = Path.ChangeExtension(sourcePath, ".lrc");
+            if (System.IO.File.Exists(sourceSidecar))
             {
-                return NotFound(new { error = "File not found" });
+                var targetSidecar = Path.ChangeExtension(targetPath, ".lrc");
+                System.IO.File.Move(sourceSidecar, targetSidecar, overwrite: false);
             }
+            CleanEmptyDirectories(Path.GetDirectoryName(sourcePath), cacheRoot.Path);
+            return Ok(new
+            {
+                success = true,
+                storage = "permanent",
+                path = Path.GetRelativePath(permanentRoot.Path, targetPath),
+                message = "Cached track moved to Kept"
+            });
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to keep cached file: {Path}", path);
+            return StatusCode(500, new { error = "Failed to keep cached file" });
+        }
+    }
+
+    [HttpGet("downloads/file")]
+    public async Task<IActionResult> DownloadFile([FromQuery] string path, [FromQuery] string storage = "kept")
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !IsSafeRequestedPath(storage, path))
+                return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
+            if (!TryResolveExistingFile(storage, path, out _, out var fullPath))
+                return NotFound(new { error = "File not found" });
 
             var fileName = Path.GetFileName(fullPath);
             if (IsSupportedAudioFile(fullPath))
             {
                 var sidecarPath = await EnsureLyricsSidecarIfPossibleAsync(fullPath, HttpContext.RequestAborted);
                 if (System.IO.File.Exists(sidecarPath))
-                {
                     return await CreateSingleTrackArchiveAsync(fullPath, sidecarPath, fileName);
-                }
             }
-
-            var fileStream = System.IO.File.OpenRead(fullPath);
-            return File(fileStream, "application/octet-stream", fileName);
+            return File(System.IO.File.OpenRead(fullPath), "application/octet-stream", fileName);
         }
-        catch (Exception ex)
+        catch (ArgumentException exception)
         {
-            _logger.LogError(ex, "Failed to download file: {Path}", path);
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to download {Storage} file: {Path}", storage, path);
             return StatusCode(500, new { error = "Failed to download file" });
         }
     }
 
-    /// <summary>
-    /// GET /api/admin/downloads/all
-    /// Downloads all kept files as a zip archive
-    /// </summary>
     [HttpGet("downloads/all")]
-    public async Task<IActionResult> DownloadAllFiles()
+    public async Task<IActionResult> DownloadAllFiles([FromQuery] string storage = "kept")
     {
         try
         {
-            var keptPath = Path.Combine(_configuration["Library:DownloadPath"] ?? "./downloads", "kept");
+            var roots = ResolveListRoots(storage);
+            var allFiles = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
+            if (allFiles.Length == 0) return NotFound(new { error = "No audio files found" });
 
-            if (!Directory.Exists(keptPath))
-            {
-                return NotFound(new { error = "No kept files found" });
-            }
-
-            var allFiles = Directory.GetFiles(keptPath, "*.*", SearchOption.AllDirectories)
-                .Where(IsSupportedAudioFile)
-                .ToList();
-
-            if (allFiles.Count == 0)
-            {
-                return NotFound(new { error = "No audio files found in kept folder" });
-            }
-
-            _logger.LogInformation("📦 Creating zip archive with {Count} files", allFiles.Count);
-
-            // Create zip in memory
             var memoryStream = new MemoryStream();
             using (var archive = new System.IO.Compression.ZipArchive(memoryStream, System.IO.Compression.ZipArchiveMode.Create, true))
             {
                 var addedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var filePath in allFiles)
+                var includeRootPrefix = allFiles.Select(item => item.root.Key).Distinct().Count() > 1;
+                foreach (var (root, filePath) in allFiles)
                 {
-                    var relativePath = Path.GetRelativePath(keptPath, filePath);
+                    var prefix = includeRootPrefix ? $"{root.Key}/" : string.Empty;
+                    var relativePath = prefix + Path.GetRelativePath(root.Path, filePath).Replace('\\', '/');
                     await AddFileToArchiveAsync(archive, filePath, relativePath, addedEntries);
-
                     var sidecarPath = await EnsureLyricsSidecarIfPossibleAsync(filePath, HttpContext.RequestAborted);
                     if (System.IO.File.Exists(sidecarPath))
                     {
-                        var sidecarRelativePath = Path.GetRelativePath(keptPath, sidecarPath);
+                        var sidecarRelativePath = prefix + Path.GetRelativePath(root.Path, sidecarPath).Replace('\\', '/');
                         await AddFileToArchiveAsync(archive, sidecarPath, sidecarRelativePath, addedEntries);
                     }
                 }
             }
-
             memoryStream.Position = 0;
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            return File(memoryStream, "application/zip", $"allstarr_kept_{timestamp}.zip");
+            return File(memoryStream, "application/zip", $"allstarr_{NormalizeStorage(storage)}_{timestamp}.zip");
         }
-        catch (Exception ex)
+        catch (ArgumentException exception)
         {
-            _logger.LogError(ex, "Failed to create zip archive");
-            return StatusCode(500, new { error = "Failed to create zip archive" });
+            return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Failed to create {Storage} download archive", storage);
+            return StatusCode(500, new { error = "Failed to create download archive" });
         }
     }
+
+    private IReadOnlyList<StorageRoot> ResolveListRoots(string storage) => NormalizeStorage(storage) switch
+    {
+        "cache" => [Root("cache")],
+        "kept" => [Root("permanent"), Root("legacy")],
+        "permanent" => [Root("permanent")],
+        "legacy" => [Root("legacy")],
+        _ => throw new ArgumentException("Storage must be cache, kept, permanent, or legacy")
+    };
+
+    private StorageRoot Root(string key)
+    {
+        var basePath = _configuration["Library:DownloadPath"] ?? "./downloads";
+        var directory = key switch
+        {
+            "cache" => "cache",
+            "permanent" => "permanent",
+            "legacy" => "kept",
+            _ => throw new ArgumentException("Unsupported storage root")
+        };
+        return new(key, Path.GetFullPath(Path.Combine(basePath, directory)));
+    }
+
+    private static string NormalizeStorage(string? storage) =>
+        string.IsNullOrWhiteSpace(storage) ? "kept" : storage.Trim().ToLowerInvariant();
+
+    private static IEnumerable<string> EnumerateFiles(string root) =>
+        Directory.Exists(root)
+            ? Directory.GetFiles(root, "*.*", SearchOption.AllDirectories).Where(IsSupportedAudioFile)
+            : [];
+
+    private static ManagedDownloadFile Describe(string filePath, StorageRoot root)
+    {
+        var info = new FileInfo(filePath);
+        var relativePath = Path.GetRelativePath(root.Path, filePath);
+        var parts = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fallbackArtist = parts.Length > 0 ? parts[0] : string.Empty;
+        var fallbackAlbum = parts.Length > 1 ? parts[1] : string.Empty;
+        var fileName = Path.GetFileName(filePath);
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var identity = ParseProviderIdentity(stem);
+        var cleanStem = ProviderSuffix.Replace(stem, string.Empty);
+        cleanStem = Regex.Replace(cleanStem, @"^\d+\s*-\s*", string.Empty);
+
+        var title = cleanStem;
+        var artist = fallbackArtist;
+        var album = fallbackAlbum;
+        int? bitrate = null;
+        int? sampleRate = null;
+        int? bitDepth = null;
+        int? channels = null;
+        double? durationSeconds = null;
+        try
+        {
+            using var tagFile = TagLib.File.Create(filePath);
+            title = string.IsNullOrWhiteSpace(tagFile.Tag.Title) ? title : tagFile.Tag.Title;
+            artist = tagFile.Tag.Performers.FirstOrDefault() ?? artist;
+            album = string.IsNullOrWhiteSpace(tagFile.Tag.Album) ? album : tagFile.Tag.Album;
+            bitrate = Positive(tagFile.Properties.AudioBitrate);
+            sampleRate = Positive(tagFile.Properties.AudioSampleRate);
+            bitDepth = Positive(tagFile.Properties.BitsPerSample);
+            channels = Positive(tagFile.Properties.AudioChannels);
+            durationSeconds = tagFile.Properties.Duration.TotalSeconds > 0
+                ? Math.Round(tagFile.Properties.Duration.TotalSeconds, 1)
+                : null;
+        }
+        catch (Exception)
+        {
+            // Partially written or legacy files remain manageable with path-derived metadata.
+        }
+
+        var codec = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant() switch
+        {
+            "M4A" or "AAC" => "AAC",
+            "OGG" => "Vorbis",
+            var value => value
+        };
+        var quality = bitDepth.HasValue && sampleRate.HasValue
+            ? $"{bitDepth}-bit / {FormatSampleRate(sampleRate.Value)}"
+            : bitrate.HasValue
+                ? $"{bitrate} kbps"
+                : codec;
+
+        return new(
+            relativePath,
+            root.Key,
+            artist,
+            album,
+            title,
+            fileName,
+            info.Length,
+            AdminHelperService.FormatFileSize(info.Length),
+            info.LastWriteTimeUtc,
+            codec,
+            bitrate,
+            sampleRate,
+            bitDepth,
+            channels,
+            durationSeconds,
+            quality,
+            identity.Provider,
+            identity.ExternalId);
+    }
+
+    private static (string? Provider, string? ExternalId) ParseProviderIdentity(string stem)
+    {
+        var match = ProviderSuffix.Match(stem);
+        return match.Success
+            ? (match.Groups["provider"].Value.ToLowerInvariant(), match.Groups["id"].Value)
+            : (null, null);
+    }
+
+    private static int? Positive(int value) => value > 0 ? value : null;
+
+    private static string FormatSampleRate(int sampleRate) =>
+        sampleRate % 1000 == 0 ? $"{sampleRate / 1000} kHz" : $"{sampleRate / 1000d:0.0} kHz";
+
+    private bool TryResolveExistingFile(string storage, string requestedPath, out StorageRoot root, out string resolvedPath)
+    {
+        root = default!;
+        resolvedPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(requestedPath)) return false;
+        foreach (var candidateRoot in ResolveListRoots(storage))
+        {
+            if (!TryResolvePathUnderRoot(candidateRoot.Path, requestedPath, out var candidatePath) ||
+                !System.IO.File.Exists(candidatePath) ||
+                !IsSupportedAudioFile(candidatePath)) continue;
+            root = candidateRoot;
+            resolvedPath = candidatePath;
+            return true;
+        }
+        return false;
+    }
+
+    private bool IsSafeRequestedPath(string storage, string requestedPath) =>
+        ResolveListRoots(storage).Any(root => TryResolvePathUnderRoot(root.Path, requestedPath, out _));
 
     private static bool TryResolvePathUnderRoot(string rootPath, string requestedPath, out string resolvedPath)
     {
         resolvedPath = string.Empty;
-
-        if (string.IsNullOrWhiteSpace(requestedPath))
-        {
-            return false;
-        }
-
         try
         {
             var normalizedRoot = Path.GetFullPath(rootPath);
-            var normalizedRootWithSeparator = normalizedRoot.EndsWith(Path.DirectorySeparatorChar)
-                ? normalizedRoot
-                : normalizedRoot + Path.DirectorySeparatorChar;
-
             var candidatePath = Path.GetFullPath(Path.Combine(normalizedRoot, requestedPath));
-            if (!candidatePath.StartsWith(normalizedRootWithSeparator, GetPathComparison()))
-            {
-                return false;
-            }
-
+            if (!IsPathUnderRoot(candidatePath, normalizedRoot)) return false;
             resolvedPath = candidatePath;
             return true;
         }
@@ -343,26 +398,55 @@ public class DownloadsController : ControllerBase
         var normalizedRootWithSeparator = normalizedRoot.EndsWith(Path.DirectorySeparatorChar)
             ? normalizedRoot
             : normalizedRoot + Path.DirectorySeparatorChar;
-        var normalizedCandidate = Path.GetFullPath(candidatePath);
-
-        return normalizedCandidate.StartsWith(normalizedRootWithSeparator, GetPathComparison());
+        return Path.GetFullPath(candidatePath).StartsWith(normalizedRootWithSeparator, GetPathComparison());
     }
 
-    private static StringComparison GetPathComparison()
+    private static string ResolveUniquePath(string path)
     {
-        return OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
+        if (!System.IO.File.Exists(path)) return path;
+        var directory = Path.GetDirectoryName(path)!;
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        for (var index = 2; index < 10_000; index++)
+        {
+            var candidate = Path.Combine(directory, $"{stem} ({index}){extension}");
+            if (!System.IO.File.Exists(candidate)) return candidate;
+        }
+        throw new IOException("Unable to create a unique kept file name");
     }
+
+    private void DeleteSidecar(string audioPath)
+    {
+        var sidecarPath = _keptLyricsSidecarService?.GetSidecarPath(audioPath) ?? Path.ChangeExtension(audioPath, ".lrc");
+        if (System.IO.File.Exists(sidecarPath)) System.IO.File.Delete(sidecarPath);
+    }
+
+    private static void CleanEmptyDirectories(string? directory, string root)
+    {
+        while (directory != null &&
+               !string.Equals(directory, root, GetPathComparison()) &&
+               IsPathUnderRoot(directory, root))
+        {
+            if (!Directory.Exists(directory) || Directory.EnumerateFileSystemEntries(directory).Any()) break;
+            Directory.Delete(directory);
+            directory = Path.GetDirectoryName(directory);
+        }
+    }
+
+    private static void CleanAllEmptyDirectories(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        foreach (var directory in Directory.GetDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(item => item.Length))
+            if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+    }
+
+    private static StringComparison GetPathComparison() =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private async Task<string> EnsureLyricsSidecarIfPossibleAsync(string audioFilePath, CancellationToken cancellationToken)
     {
         var sidecarPath = _keptLyricsSidecarService?.GetSidecarPath(audioFilePath) ?? Path.ChangeExtension(audioFilePath, ".lrc");
-        if (System.IO.File.Exists(sidecarPath) || _keptLyricsSidecarService == null)
-        {
-            return sidecarPath;
-        }
-
+        if (System.IO.File.Exists(sidecarPath) || _keptLyricsSidecarService == null) return sidecarPath;
         var generatedSidecar = await _keptLyricsSidecarService.EnsureSidecarAsync(audioFilePath, cancellationToken: cancellationToken);
         return generatedSidecar ?? sidecarPath;
     }
@@ -375,10 +459,8 @@ public class DownloadsController : ControllerBase
             await AddFileToArchiveAsync(archive, audioFilePath, Path.GetFileName(audioFilePath), null);
             await AddFileToArchiveAsync(archive, sidecarPath, Path.GetFileName(sidecarPath), null);
         }
-
         archiveStream.Position = 0;
-        var downloadName = $"{Path.GetFileNameWithoutExtension(fileName)}.zip";
-        return File(archiveStream, "application/zip", downloadName);
+        return File(archiveStream, "application/zip", $"{Path.GetFileNameWithoutExtension(fileName)}.zip");
     }
 
     private static async Task AddFileToArchiveAsync(
@@ -387,23 +469,35 @@ public class DownloadsController : ControllerBase
         string entryPath,
         HashSet<string>? addedEntries)
     {
-        if (addedEntries != null && !addedEntries.Add(entryPath))
-        {
-            return;
-        }
-
+        if (addedEntries != null && !addedEntries.Add(entryPath)) return;
         var entry = archive.CreateEntry(entryPath, System.IO.Compression.CompressionLevel.NoCompression);
         await using var entryStream = entry.Open();
         await using var fileStream = System.IO.File.OpenRead(filePath);
         await fileStream.CopyToAsync(entryStream);
     }
 
-    private static bool IsSupportedAudioFile(string path)
-    {
-        return AudioExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
-    }
+    private static bool IsSupportedAudioFile(string path) =>
+        AudioExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
 
-    /// <summary>
-    /// Gets all Spotify track mappings (paginated)
-    /// </summary>
+    private sealed record StorageRoot(string Key, string Path);
+
+    private sealed record ManagedDownloadFile(
+        string Path,
+        string Storage,
+        string Artist,
+        string Album,
+        string Title,
+        string FileName,
+        long Size,
+        string SizeFormatted,
+        DateTime LastModified,
+        string Codec,
+        int? BitrateKbps,
+        int? SampleRateHz,
+        int? BitDepth,
+        int? Channels,
+        double? DurationSeconds,
+        string Quality,
+        string? Provider,
+        string? ExternalId);
 }

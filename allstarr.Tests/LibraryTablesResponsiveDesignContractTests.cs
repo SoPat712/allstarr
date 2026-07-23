@@ -30,6 +30,10 @@ public sealed class LibraryTablesResponsiveDesignContractTests
         Assert.Contains("No mappings found.", script, StringComparison.Ordinal);
         Assert.Contains("Review match", script, StringComparison.Ordinal);
         Assert.Contains("Needs attention", script, StringComparison.Ordinal);
+        Assert.Contains("[\"cached\", \"Cached\", \"download\"]", script, StringComparison.Ordinal);
+        Assert.Contains("renderManagedDownloads", script, StringComparison.Ordinal);
+        Assert.Contains("bitrateKbps", script, StringComparison.Ordinal);
+        Assert.Contains("promoteCachedDownload", script, StringComparison.Ordinal);
         Assert.Contains("No playlist data loaded.", script, StringComparison.Ordinal);
         Assert.True(CountOccurrences(script, "class=\"empty-table-row\"") >= 3);
     }
