@@ -2839,8 +2839,8 @@ class AllstarrApp extends LitElement {
         <div class="view-stack">
           ${this.renderPlaylistLinkWizard()}
 
-          <div class="table-wrap"><table><thead><tr><th>Playlist</th><th>Source</th><th>Target</th><th>Mode</th><th>Last run</th><th></th></tr></thead><tbody>
-            ${links.length ? links.map((link) => this.renderPlaylistLinkRow(link)) : html`<tr><td colspan="6"><div class="empty">No synchronized playlists yet.</div></td></tr>`}
+          <div class="table-wrap"><table class="responsive-data-table"><thead><tr><th>Playlist</th><th>Source</th><th>Target</th><th>Mode</th><th>Last run</th><th>Actions</th></tr></thead><tbody>
+            ${links.length ? links.map((link) => this.renderPlaylistLinkRow(link)) : html`<tr class="empty-table-row"><td class="empty-table-cell" colspan="6"><div class="empty">No synchronized playlists yet.</div></td></tr>`}
           </tbody></table></div>
         </div>
       </div>
@@ -3028,12 +3028,12 @@ class AllstarrApp extends LitElement {
     const enabled = Boolean(link.enabled ?? link.Enabled ?? true);
     const state = enabled ? link.lastRunState || link.LastRunState || link.state || link.State || "ready" : "paused";
     return html`<tr>
-      <td><div class="provider-brand">${this.renderPlaylistArtwork(link, "source", false, provider)}<div><strong>${link.name || link.Name || "Playlist"}</strong>${link.description || link.Description ? html`<small>${link.description || link.Description}</small>` : nothing}</div></div></td>
-      <td>${providerDisplayName(provider, this.schema?.providers)}</td>
-      <td>${String(target).toLowerCase() === "subsonic" ? "Navidrome / Subsonic" : display(target)}</td>
-      <td>${titleCase(link.mode || link.Mode)} · ${titleCase(link.materializationMode || link.MaterializationMode)}</td>
-      <td><span class="status-chip ${String(state).toLowerCase()}">${titleCase(state)}</span><div class="muted">${formatDate(link.lastRunAt || link.LastRunAt)}</div></td>
-      <td class="row-actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
+      <td class="mobile-primary" data-label="Playlist"><div class="provider-brand">${this.renderPlaylistArtwork(link, "source", false, provider)}<div><strong>${link.name || link.Name || "Playlist"}</strong>${link.description || link.Description ? html`<small>${link.description || link.Description}</small>` : nothing}</div></div></td>
+      <td data-label="Source">${providerDisplayName(provider, this.schema?.providers)}</td>
+      <td data-label="Target">${String(target).toLowerCase() === "subsonic" ? "Navidrome / Subsonic" : display(target)}</td>
+      <td data-label="Mode">${titleCase(link.mode || link.Mode)} · ${titleCase(link.materializationMode || link.MaterializationMode)}</td>
+      <td data-label="Last run"><span class="status-chip ${String(state).toLowerCase()}">${titleCase(state)}</span><div class="muted">${formatDate(link.lastRunAt || link.LastRunAt)}</div></td>
+      <td class="row-actions mobile-actions" data-label="Actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
     </tr>`;
   }
 
@@ -3744,9 +3744,9 @@ class AllstarrApp extends LitElement {
       ${legacyMappings.length ? html`<div class="panel legacy-mappings-panel">
         <div class="section-heading"><div><h3>Imported legacy decisions</h3><p class="muted">Your previous decisions are intact. Ready targets can play now; preserved targets stay visible until a safe replacement can be confirmed.</p></div><div class="actions"><span class="chip success">${playableLegacyMappings.length} ready</span>${reviewLegacyMappings.length ? html`<span class="chip warning">${reviewLegacyMappings.length} need review</span>` : nothing}</div></div>
         ${reviewLegacyMappings.length ? html`<div class="callout warning"><strong>${reviewLegacyMappings.length} old ${reviewLegacyMappings.length === 1 ? "decision uses" : "decisions use"} an unavailable provider.</strong><span>Nothing was deleted or guessed. Open the affected playlist in Playlists, choose Match, and select a playable Jellyfin or provider result.</span><button @click=${() => this.navigate("/library/playlists")}>Review affected playlists</button></div>` : html`<div class="callout success"><strong>Every imported decision has a playable target.</strong></div>`}
-        <div class="table-wrap"><table><thead><tr><th>Status</th><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => {
+        <div class="table-wrap"><table class="responsive-data-table"><thead><tr><th>Status</th><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => {
           const playable = mapping.playable ?? mapping.Playable ?? false;
-          return html`<tr class=${playable ? "" : "mapping-needs-review"}><td><span class="chip ${playable ? "success" : "warning"}">${playable ? "Ready" : "Review"}</span></td><td>${display(mapping.playlist || mapping.Playlist)}</td><td class="mono">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td>${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td>${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`;
+          return html`<tr class=${playable ? "" : "mapping-needs-review"}><td data-label="Status"><span class="chip ${playable ? "success" : "warning"}">${playable ? "Ready" : "Review"}</span></td><td class="mobile-primary" data-label="Playlist">${display(mapping.playlist || mapping.Playlist)}</td><td class="mono" data-label="Spotify track">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td data-label="Target">${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td data-label="Created">${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`;
         })}</tbody></table></div>
       </div>` : nothing}
       <div class="panel">
@@ -3767,11 +3767,11 @@ class AllstarrApp extends LitElement {
         </form>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="responsive-data-table">
           <thead><tr><th>Provider track</th><th>State</th><th>Local match</th><th>Provider identities</th><th>Confidence</th><th></th></tr></thead>
           <tbody>
             ${mappings.length ? mappings.map((mapping) => this.renderMappingRow(mapping)) : html`
-              <tr><td colspan="6"><div class="empty">No mappings found.</div></td></tr>
+              <tr class="empty-table-row"><td class="empty-table-cell" colspan="6"><div class="empty">No mappings found.</div></td></tr>
             `}
           </tbody>
         </table>
@@ -3792,19 +3792,19 @@ class AllstarrApp extends LitElement {
     const identities = asArray(mapping.providerIdentities);
     return html`
       <tr>
-        <td>
+        <td class="mobile-primary" data-label="Provider track">
           <strong>${display(mapping.title, "Unknown track")}</strong>
           <div class="muted">${display(mapping.artist, "Unknown artist")} · ${display(mapping.album, "Unknown album")}</div>
           <div class="mono">${display(mapping.providerId)} · ${display(snapshotId)}</div>
         </td>
-        <td><span class="chip">${display(mapping.state)}</span></td>
-        <td>
+        <td data-label="State"><span class="chip">${display(mapping.state)}</span></td>
+        <td data-label="Local match">
           ${local ? html`<strong>${display(local.title)}</strong><div class="muted">${display(local.artist)}</div><div class="mono">${display(local.id)}</div>` : html`<span class="muted">No accepted local track</span>`}
           ${asArray(mapping.candidates).map((candidate) => html`<div><button @click=${() => this.prefillMatchReview({ ...mapping, libraryTrackId: candidate.libraryTrackId }, "pin")}>Pin ${display(candidate.backendItemId, candidate.libraryTrackId)} (${Math.round(Number(candidate.confidence || 0) * 100)}%)</button></div>`)}
         </td>
-        <td>${identities.length ? identities.map((item) => html`<span class="chip">${display(item.providerId)}: <span class="mono">${display(item.externalId)}</span></span>`) : html`<span class="muted">Not linked yet</span>`}</td>
-        <td>${mapping.confidence == null ? html`<span class="muted">—</span>` : html`${Math.round(Number(mapping.confidence) * 100)}%<div class="muted">threshold ${Math.round(Number(mapping.threshold) * 100)}%</div>`}</td>
-        <td>
+        <td data-label="Provider identities">${identities.length ? identities.map((item) => html`<span class="chip">${display(item.providerId)}: <span class="mono">${display(item.externalId)}</span></span>`) : html`<span class="muted">Not linked yet</span>`}</td>
+        <td data-label="Confidence">${mapping.confidence == null ? html`<span class="muted">—</span>` : html`${Math.round(Number(mapping.confidence) * 100)}%<div class="muted">threshold ${Math.round(Number(mapping.threshold) * 100)}%</div>`}</td>
+        <td class="mobile-actions" data-label="Actions">
           <button @click=${() => this.prefillMatchReview(mapping, "pin")}>Pin</button>
           <button @click=${() => this.prefillMatchReview(mapping, "reject")}>Reject</button>
           ${mapping.overrideId ? html`<button class="danger" @click=${async () => { await API.deleteMapping(mapping.overrideId, mapping.overrideRevision ?? 0); await this.loadMappings(); this.toast("Manual review cleared"); }}>Clear review</button>` : ""}
@@ -3849,18 +3849,18 @@ class AllstarrApp extends LitElement {
         </div>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="responsive-data-table">
           <thead><tr><th>Playlist</th><th>Tracks</th><th>Local</th><th>External</th><th>Missing</th></tr></thead>
           <tbody>
             ${playlists.length ? playlists.map((playlist) => html`
               <tr>
-                <td><strong>${playlist.name}</strong></td>
-                <td>${display(playlist.trackCount)}</td>
-                <td>${display(playlist.localTracks)}</td>
-                <td>${display(playlist.externalTracks)}</td>
-                <td><span class="chip ${Number(playlist.externalMissing || 0) > 0 ? "warning" : "success"}">${display(playlist.externalMissing || 0)}</span></td>
+                <td class="mobile-primary" data-label="Playlist"><strong>${playlist.name}</strong></td>
+                <td data-label="Tracks">${display(playlist.trackCount)}</td>
+                <td data-label="Local">${display(playlist.localTracks)}</td>
+                <td data-label="External">${display(playlist.externalTracks)}</td>
+                <td data-label="Missing"><span class="chip ${Number(playlist.externalMissing || 0) > 0 ? "warning" : "success"}">${display(playlist.externalMissing || 0)}</span></td>
               </tr>
-            `) : html`<tr><td colspan="5"><div class="empty">No playlist data loaded.</div></td></tr>`}
+            `) : html`<tr class="empty-table-row"><td class="empty-table-cell" colspan="5"><div class="empty">No playlist data loaded.</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3921,16 +3921,16 @@ class AllstarrApp extends LitElement {
           </div>
         </header>
         <div class="table-wrap">
-          ${files.length ? html`<table>
+          ${files.length ? html`<table class="responsive-data-table">
             <thead><tr><th>Artist</th><th>Album</th><th>File</th><th>Size</th><th></th></tr></thead>
             <tbody>
               ${files.map((file) => html`
                 <tr>
-                  <td>${display(file.artist)}</td>
-                  <td>${display(file.album)}</td>
-                  <td class="mono">${display(file.fileName)}</td>
-                  <td>${display(file.sizeFormatted)}</td>
-                  <td><button class="danger" @click=${async () => { await API.deleteDownload(file.path); await this.loadDownloads(); this.toast("Download deleted"); }}>Delete</button></td>
+                  <td class="mobile-primary" data-label="Artist">${display(file.artist)}</td>
+                  <td data-label="Album">${display(file.album)}</td>
+                  <td class="mono" data-label="File">${display(file.fileName)}</td>
+                  <td data-label="Size">${display(file.sizeFormatted)}</td>
+                  <td class="mobile-actions" data-label="Actions"><button class="danger" @click=${async () => { await API.deleteDownload(file.path); await this.loadDownloads(); this.toast("Download deleted"); }}>Delete</button></td>
                 </tr>
               `)}
             </tbody>

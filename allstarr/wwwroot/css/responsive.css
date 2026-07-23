@@ -444,6 +444,95 @@
         border-top: 1px solid var(--border);
     }
 
+    .responsive-data-table,
+    .responsive-data-table tbody {
+        display: grid;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .responsive-data-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+    }
+
+    .responsive-data-table tbody {
+        gap: 12px;
+        padding: 12px;
+    }
+
+    .responsive-data-table tbody tr {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        overflow: visible;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-card);
+    }
+
+    .responsive-data-table td {
+        display: grid;
+        align-content: start;
+        gap: 5px;
+        min-width: 0;
+        padding: 10px 12px;
+        overflow-wrap: anywhere;
+        border: 0;
+    }
+
+    .responsive-data-table td::before {
+        content: attr(data-label);
+        color: var(--text-muted);
+        font-size: .7rem;
+        font-weight: 800;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+    }
+
+    .responsive-data-table .mobile-primary,
+    .responsive-data-table .mobile-actions,
+    .responsive-data-table .empty-table-cell {
+        grid-column: 1 / -1;
+    }
+
+    .responsive-data-table .mobile-primary {
+        padding: 14px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .responsive-data-table .mobile-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        border-top: 1px solid var(--border);
+    }
+
+    .responsive-data-table .mobile-actions::before {
+        flex-basis: 100%;
+    }
+
+    .responsive-data-table .mobile-actions > button {
+        flex: 1 1 auto;
+    }
+
+    .responsive-data-table .empty-table-row {
+        display: block;
+    }
+
+    .responsive-data-table .empty-table-cell {
+        display: block;
+        padding: 0;
+    }
+
+    .responsive-data-table .empty-table-cell::before {
+        display: none;
+    }
+
     .playlist-row-actions {
         width: 100%;
         justify-content: stretch;
