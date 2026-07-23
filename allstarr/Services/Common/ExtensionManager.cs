@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -1392,6 +1393,10 @@ public class ExtensionHostBridge
     private const int MaximumCacheBytes = 4 * 1024 * 1024;
     private const int MaximumCacheKeys = 256;
     private const int MaximumLogEvents = 1_000;
+    private const int HttpFailureThreshold = 2;
+    private static readonly TimeSpan HttpFailureWindow = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan HttpInitialCooldown = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan HttpMaximumCooldown = TimeSpan.FromMinutes(15);
     private static readonly Regex SensitiveLogPattern = new(
         "(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -1403,6 +1408,9 @@ public class ExtensionHostBridge
     private readonly ExtensionRuntimePermissionSet _permissions;
     private readonly ExtensionSignedSessionClient? _signedSession;
     private readonly string _extensionId;
+    private readonly Dictionary<string, ExtensionHttpFailureState> _httpFailureStates =
+        new(StringComparer.Ordinal);
+    private readonly object _httpFailureLock = new();
     private int _logEvents;
 
     public ExtensionHostBridge(
@@ -1764,10 +1772,28 @@ public class ExtensionHostBridge
                 safeUri!.Scheme != Uri.UriSchemeHttps ||
                 !IsNetworkAllowed(safeUri))
                 throw new UnauthorizedAccessException("Extension network origin is not approved.");
+            var normalizedMethod = method.Trim().ToUpperInvariant();
+            var routeKey = $"{normalizedMethod} {safeUri.GetLeftPart(UriPartial.Authority)}{safeUri.AbsolutePath}";
+            if (TryGetHttpCooldown(routeKey, out var retryAfterSeconds, out var lastStatusCode))
+            {
+                return new
+                {
+                    statusCode = 503,
+                    statusText = "Temporarily unavailable",
+                    url = safeUri.AbsoluteUri,
+                    body = "",
+                    bodyBase64 = "",
+                    headers = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase),
+                    error = "provider_temporarily_unavailable",
+                    retryAfterSeconds,
+                    upstreamStatusCode = lastStatusCode
+                };
+            }
+
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = TimeSpan.FromSeconds(15);
 
-            var request = new HttpRequestMessage(new HttpMethod(method.Trim().ToUpperInvariant()), safeUri);
+            var request = new HttpRequestMessage(new HttpMethod(normalizedMethod), safeUri);
 
             if (body != null)
             {
@@ -1780,6 +1806,10 @@ public class ExtensionHostBridge
             if (response.RequestMessage?.RequestUri is { } finalUri &&
                 !IsNetworkAllowed(finalUri))
                 throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
+            if (response.IsSuccessStatusCode)
+                RecordHttpSuccess(routeKey);
+            else if (ShouldCoolDown(response.StatusCode))
+                RecordHttpFailure(routeKey, normalizedMethod, safeUri, (int)response.StatusCode);
             if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
                 throw new InvalidOperationException("Extension response exceeds 4 MiB.");
             using var responseStream = response.Content.ReadAsStream();
@@ -1823,6 +1853,109 @@ public class ExtensionHostBridge
             };
         }
     }
+
+    private bool TryGetHttpCooldown(
+        string routeKey,
+        out int retryAfterSeconds,
+        out int lastStatusCode)
+    {
+        lock (_httpFailureLock)
+        {
+            if (_httpFailureStates.TryGetValue(routeKey, out var state) &&
+                state.BlockedUntil > DateTimeOffset.UtcNow)
+            {
+                retryAfterSeconds = Math.Max(
+                    1,
+                    (int)Math.Ceiling((state.BlockedUntil - DateTimeOffset.UtcNow).TotalSeconds));
+                lastStatusCode = state.LastStatusCode;
+                return true;
+            }
+        }
+
+        retryAfterSeconds = 0;
+        lastStatusCode = 0;
+        return false;
+    }
+
+    private void RecordHttpSuccess(string routeKey)
+    {
+        ExtensionHttpFailureState? recovered = null;
+        lock (_httpFailureLock)
+        {
+            if (_httpFailureStates.Remove(routeKey, out var state) &&
+                state.ConsecutiveFailures >= HttpFailureThreshold)
+                recovered = state;
+        }
+
+        if (recovered != null)
+        {
+            _logger.LogInformation(
+                "Extension provider route recovered {EventCode} for {ExtensionId} after HTTP {StatusCode}",
+                "extension.http.recovered",
+                _extensionId,
+                recovered.LastStatusCode);
+        }
+    }
+
+    private void RecordHttpFailure(
+        string routeKey,
+        string method,
+        Uri uri,
+        int statusCode)
+    {
+        var now = DateTimeOffset.UtcNow;
+        TimeSpan? openedCooldown = null;
+        lock (_httpFailureLock)
+        {
+            _httpFailureStates.TryGetValue(routeKey, out var previous);
+            var failures = previous == null || now - previous.LastFailureAt > HttpFailureWindow
+                ? 1
+                : previous.ConsecutiveFailures + 1;
+            var blockedUntil = previous?.BlockedUntil ?? DateTimeOffset.MinValue;
+            if (failures >= HttpFailureThreshold)
+            {
+                var multiplier = 1 << Math.Min(failures - HttpFailureThreshold, 4);
+                var cooldown = TimeSpan.FromTicks(Math.Min(
+                    HttpMaximumCooldown.Ticks,
+                    HttpInitialCooldown.Ticks * multiplier));
+                blockedUntil = now + cooldown;
+                if (previous == null || previous.BlockedUntil <= now)
+                    openedCooldown = cooldown;
+            }
+
+            _httpFailureStates[routeKey] = new ExtensionHttpFailureState(
+                failures,
+                now,
+                blockedUntil,
+                statusCode);
+        }
+
+        if (openedCooldown is { } duration)
+        {
+            _logger.LogWarning(
+                "Extension provider route paused {EventCode} for {ExtensionId}: {Method} {Host}{Path} returned HTTP {StatusCode}; retrying after {RetryAfterSeconds}s",
+                "extension.http.cooldown",
+                _extensionId,
+                method,
+                uri.Host,
+                uri.AbsolutePath,
+                statusCode,
+                (int)duration.TotalSeconds);
+        }
+    }
+
+    private static bool ShouldCoolDown(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.BadRequest
+            or HttpStatusCode.Unauthorized
+            or HttpStatusCode.Forbidden
+            or HttpStatusCode.TooManyRequests ||
+        (int)statusCode >= 500;
+
+    private sealed record ExtensionHttpFailureState(
+        int ConsecutiveFailures,
+        DateTimeOffset LastFailureAt,
+        DateTimeOffset BlockedUntil,
+        int LastStatusCode);
 
     private void AddHeaders(HttpRequestMessage request, object? headersObj)
     {

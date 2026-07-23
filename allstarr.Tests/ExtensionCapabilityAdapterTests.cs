@@ -15,6 +15,89 @@ namespace allstarr.Tests;
 public sealed class ExtensionCapabilityAdapterTests
 {
     [Fact]
+    public void RepeatedExtensionHttpFailures_OpenCooldownAndSuppressNetworkCalls()
+    {
+        const string manifest = """
+            {"id":"failure-demo","displayName":"Failure demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],
+             "permissions":[{"kind":"Network","value":"https://api.example.test/","required":true}]}
+            """;
+        const string script = """
+            registerExtension({
+              searchTracks:function(){
+                var response = http.get('https://api.example.test/search', {});
+                return {items:[], statusCode:response.statusCode, error:response.error || null};
+              }
+            });
+            """;
+        var handler = new StatusHandler(HttpStatusCode.Forbidden);
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://api.example.test/"]),
+            new HashSet<string>(),
+            new HashSet<string>());
+        var sandbox = new ExtensionSandbox(
+            Path.GetTempPath(),
+            manifest,
+            script,
+            new HttpClientFactory(handler),
+            NullLogger.Instance,
+            permissions);
+
+        var first = sandbox.InvokeJson("searchTracks", "{}");
+        var second = sandbox.InvokeJson("searchTracks", "{}");
+        var suppressed = sandbox.InvokeJson("searchTracks", "{}");
+
+        Assert.Contains("\"statusCode\":403", first, StringComparison.Ordinal);
+        Assert.Contains("\"statusCode\":403", second, StringComparison.Ordinal);
+        Assert.Contains("\"statusCode\":503", suppressed, StringComparison.Ordinal);
+        Assert.Contains("provider_temporarily_unavailable", suppressed, StringComparison.Ordinal);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public void SuccessfulExtensionHttpCall_ResetsConsecutiveFailureCount()
+    {
+        const string manifest = """
+            {"id":"recovery-demo","displayName":"Recovery demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],
+             "permissions":[{"kind":"Network","value":"https://api.example.test/","required":true}]}
+            """;
+        const string script = """
+            registerExtension({
+              searchTracks:function(){
+                var response = http.get('https://api.example.test/search', {});
+                return {items:[], statusCode:response.statusCode, error:response.error || null};
+              }
+            });
+            """;
+        var handler = new StatusHandler(
+            HttpStatusCode.Forbidden,
+            HttpStatusCode.OK,
+            HttpStatusCode.Forbidden,
+            HttpStatusCode.Forbidden);
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(["https://api.example.test/"]),
+            new HashSet<string>(),
+            new HashSet<string>());
+        var sandbox = new ExtensionSandbox(
+            Path.GetTempPath(),
+            manifest,
+            script,
+            new HttpClientFactory(handler),
+            NullLogger.Instance,
+            permissions);
+
+        sandbox.InvokeJson("searchTracks", "{}");
+        sandbox.InvokeJson("searchTracks", "{}");
+        sandbox.InvokeJson("searchTracks", "{}");
+        sandbox.InvokeJson("searchTracks", "{}");
+        var suppressed = sandbox.InvokeJson("searchTracks", "{}");
+
+        Assert.Contains("provider_temporarily_unavailable", suppressed, StringComparison.Ordinal);
+        Assert.Equal(4, handler.CallCount);
+    }
+
+    [Fact]
     public void SignedSessionRuntime_BootstrapsExchangesAndSignsRequests()
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-signed-session", Guid.NewGuid().ToString("N"));
@@ -441,6 +524,27 @@ public sealed class ExtensionCapabilityAdapterTests
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
             response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class StatusHandler(params HttpStatusCode[] statuses) : HttpMessageHandler
+    {
+        private readonly Queue<HttpStatusCode> _statuses = new(statuses);
+        private readonly HttpStatusCode _fallback = statuses.LastOrDefault();
+        public int CallCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            var status = _statuses.TryDequeue(out var queued) ? queued : _fallback;
+            var response = new HttpResponseMessage(status)
+            {
+                Content = new StringContent("{}"),
+                RequestMessage = request
+            };
             return Task.FromResult(response);
         }
     }
