@@ -139,6 +139,22 @@ Items remain unchecked until the combined local and browser verification pass.
 
 ## Database-backed mapping and cache consolidation
 
+- [ ] Standardize supported v3 deployments on mandatory PostgreSQL. Remove SQLite
+  compatibility and make PostgreSQL the single durable implementation for identities,
+  accounts, playlists, canonical recordings, mappings, jobs, events, and configuration
+  state after providing an explicit backup-and-migrate path for existing installs.
+- [ ] Remove mandatory Valkey/Redis infrastructure once PostgreSQL-backed cache,
+  coordination, expiry, and concurrency behavior meets parity and performance targets.
+  Delete the container, configuration, health checks, client abstractions, fallback
+  branches, and documentation rather than retaining an untested optional backend.
+- [ ] Replace Valkey primitives deliberately: TTL or unlogged PostgreSQL tables for
+  disposable derived cache entries, advisory locks for cross-process coordination,
+  `FOR UPDATE SKIP LOCKED` leases for durable jobs, and `LISTEN/NOTIFY` only for
+  ephemeral wake-ups. Retain a bounded in-process hot cache where measurements justify
+  it, and never store audio files or other media payloads in PostgreSQL.
+- [ ] Simplify Docker Compose, startup validation, backup/restore, diagnostics, and CI
+  around the PostgreSQL-only topology; fail startup with an actionable message when
+  PostgreSQL is unavailable and verify upgrades do not silently lose legacy state.
 - [ ] Confirm PostgreSQL is the durable source of truth for canonical recordings, provider routes, accepted/rejected mappings, and reusable track-match decisions; no mapping needed after restart may exist only in Valkey or process memory.
 - [ ] Inventory every `RedisCacheService` key and classify it as durable state, derived cache, coordination/lock state, transient session state, or disposable telemetry, including TTL, typical payload size, read/write rate, and current fallback behavior.
 - [ ] Remove duplicate mapping stores and route all matching, rematching, playlist playback, and event-log lookups through one repository contract backed by PostgreSQL.

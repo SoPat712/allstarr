@@ -15,7 +15,9 @@ public sealed class PlaylistDetailStreamingContractTests
         Assert.Contains("playlist-operation-group coverage-group", _script, StringComparison.Ordinal);
         Assert.Contains("playlist-operation-group timing-group", _script, StringComparison.Ordinal);
         Assert.Contains("playlist-operation-metrics", _script, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: minmax(140px, .72fr) minmax(0, 1.28fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("grid-column: 1 / -1", _workspaceStyles, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-heading", _workspaceStyles, StringComparison.Ordinal);
         var compactBreakpoint = _responsiveStyles.IndexOf("@media (max-width: 620px)", StringComparison.Ordinal);
         var compactSummary = _responsiveStyles.IndexOf(".playlist-operation-summary", compactBreakpoint, StringComparison.Ordinal);

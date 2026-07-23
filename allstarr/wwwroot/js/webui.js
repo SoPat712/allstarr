@@ -3502,14 +3502,23 @@ class AllstarrApp extends LitElement {
             </tr></thead>
             <tbody>
           ${visible.length ? visible.map((playlist) => {
-            const matched = Number(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0));
-            const unmatched = Number(playlist.unmatchedTracks ?? Math.max(0, Number(playlist.trackCount || 0) - matched));
-            const matchPercent = Number(playlist.matchPercent ?? (playlist.trackCount ? matched * 100 / playlist.trackCount : 0));
+            const trackCount = Math.max(0, Number(playlist.trackCount || 0));
+            const matched = Math.min(trackCount, Math.max(0,
+              Number(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0))));
+            const unmatched = Math.max(0, trackCount - matched);
+            const matchPercent = trackCount ? matched * 100 / trackCount : 0;
             const status = playlist.syncStatus || (unmatched === 0 && playlist.trackCount ? "synced" : matched === 0 ? "needs_matching" : "partial");
             const targetBackend = String(this.status?.backendType || this.config?.backendType || "jellyfin").toLowerCase();
             const rawBreakdown = playlist.providerBreakdown || playlist.ProviderBreakdown || {};
+            let remainingMatched = matched;
             const providerCounts = Object.entries(rawBreakdown)
               .map(([provider, count]) => [String(provider).toLowerCase(), Number(count || 0)])
+              .filter(([, count]) => count > 0)
+              .map(([provider, count]) => {
+                const normalizedCount = Math.min(remainingMatched, count);
+                remainingMatched -= normalizedCount;
+                return [provider, normalizedCount];
+              })
               .filter(([, count]) => count > 0);
             if (!providerCounts.length) {
               const local = Number(playlist.localTracks || 0);
@@ -3517,7 +3526,7 @@ class AllstarrApp extends LitElement {
               if (local > 0) providerCounts.push([targetBackend, local]);
               if (external > 0) providerCounts.push(["external", external]);
             }
-            const total = Math.max(1, Number(playlist.trackCount || 0));
+            const total = Math.max(1, trackCount);
             const coverageLabel = [
               ...providerCounts.map(([provider, count]) => `${providerDisplayName(provider, this.schema?.providers)} ${count}`),
               `Unmatched ${unmatched}`,
@@ -3531,7 +3540,7 @@ class AllstarrApp extends LitElement {
               @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
               <td class="selection-cell"><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></td>
               <td class="playlist-main-cell" data-label="Playlist"><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
-              <td data-label="Tracks">${display(playlist.trackCount, 0)}</td>
+              <td data-label="Tracks">${trackCount}</td>
               <td data-label="Matched"><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
               <td data-label="Unmatched"><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>
               <td data-label="Schedule"><span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span></td>
@@ -3540,7 +3549,7 @@ class AllstarrApp extends LitElement {
                   ${providerCounts.map(([provider, count]) => html`<span class="coverage-segment" style=${`--segment-size:${count * 100 / total}%;--segment-color:${providerCoverageColor(provider, this.schema?.providers)}`}></span>`)}
                   ${unmatched > 0 ? html`<span class="coverage-segment unmatched" style=${`--segment-size:${unmatched * 100 / total}%`}></span>` : nothing}
                 </div>
-                <div class="coverage-meta"><span class="status-chip ${status}">${titleCase(status)}</span><small>${matched}/${playlist.trackCount || 0}</small></div>
+                <div class="coverage-meta"><span class="status-chip ${status}">${titleCase(status)}</span><small>${matched}/${trackCount}</small></div>
               </td>
               <td data-label="Last sync">${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</td>
               <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>

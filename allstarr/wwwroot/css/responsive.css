@@ -153,11 +153,29 @@
     }
 }
 
+@media (max-width: 900px) {
+    .playlist-operation-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .playlist-rematch-action {
+        justify-self: end;
+    }
+}
+
 @media (max-width: 620px) {
     .playlist-operation-summary {
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .playlist-operation-group {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .playlist-operation-group + .playlist-operation-group {
+        border-top: 1px solid var(--border);
+        border-left: 0;
+    }
 }
 
 @media (max-width: 760px) {

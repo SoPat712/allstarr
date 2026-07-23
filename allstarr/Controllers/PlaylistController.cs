@@ -33,7 +33,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
-    private const int PlaylistSummarySchemaVersion = 5;
+    private const int PlaylistSummarySchemaVersion = 6;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -1055,13 +1055,18 @@ public class PlaylistController : ControllerBase
         int external,
         int missing)
     {
-        playlistInfo["localTracks"] = local;
-        playlistInfo["externalTracks"] = external;
-        playlistInfo["externalMatched"] = external;
-        playlistInfo["externalMissing"] = missing;
-        playlistInfo["externalTotal"] = external + missing;
-        playlistInfo["totalInJellyfin"] = local + external;
-        playlistInfo["totalPlayable"] = local + external;
+        var coverage = PlaylistCoverageMath.Normalize(
+            ReadSummaryInt(playlistInfo, "trackCount"),
+            local,
+            external,
+            missing);
+        playlistInfo["localTracks"] = coverage.Local;
+        playlistInfo["externalTracks"] = coverage.External;
+        playlistInfo["externalMatched"] = coverage.External;
+        playlistInfo["externalMissing"] = coverage.Missing;
+        playlistInfo["externalTotal"] = coverage.External + coverage.Missing;
+        playlistInfo["totalInJellyfin"] = coverage.Playable;
+        playlistInfo["totalPlayable"] = coverage.Playable;
     }
 
     private static void EnrichPlaylistSummary(
@@ -1069,7 +1074,10 @@ public class PlaylistController : ControllerBase
         string? syncSchedule)
     {
         var trackCount = ReadSummaryInt(playlistInfo, "trackCount");
-        var matchedTracks = ReadSummaryInt(playlistInfo, "totalPlayable");
+        var matchedTracks = Math.Clamp(
+            ReadSummaryInt(playlistInfo, "totalPlayable"),
+            0,
+            trackCount);
         var unmatchedTracks = Math.Max(0, trackCount - matchedTracks);
         var matchPercent = trackCount > 0
             ? Math.Round(matchedTracks * 100d / trackCount, 1)
