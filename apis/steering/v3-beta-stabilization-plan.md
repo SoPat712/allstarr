@@ -20,7 +20,7 @@ Items remain unchecked until the combined local and browser verification pass.
 - [x] Push and deploy the verified batch, then verify container health and server logs.
 - [ ] Run a full rematch and investigate the residual unmatched set.
 - [ ] Fix or correctly classify the actionable post-deploy log signals.
-- [ ] Check CI and formatting together at the end and repair any remaining failures.
+- [x] Check CI and formatting together at the end and repair any remaining failures.
 
 ## Product and WebUI
 
@@ -115,7 +115,7 @@ Items remain unchecked until the combined local and browser verification pass.
 
 - [ ] Unit/integration coverage for every changed endpoint and lifecycle.
 - [ ] Browser coverage for every screen and modal at desktop, tablet, and mobile sizes.
-- [ ] CI format, build, test, migration, and container checks pass.
+- [x] CI format, build, test, migration, and container checks pass.
 - [ ] No recurring unexplained errors, false playlist metrics, route-stale dialogs,
   permission-bypassing installs, or secret exposure.
 - [ ] Deploy, rematch, and verify representative Jellyfin and provider playlists before
