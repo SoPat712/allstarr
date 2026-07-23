@@ -95,7 +95,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.DoesNotContain("By Spotify", request, StringComparison.Ordinal);
         Assert.Contains("\"flatten\":true", request, StringComparison.Ordinal);
         Assert.Contains("\"includeFoldersWhenFlattening\":false", request, StringComparison.Ordinal);
-        Assert.Contains("973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3",
+        Assert.Contains("390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455",
             request, StringComparison.Ordinal);
     }
 

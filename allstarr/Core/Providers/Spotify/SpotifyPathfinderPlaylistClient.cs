@@ -15,9 +15,9 @@ namespace allstarr.Core.Providers.Spotify;
 public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
 {
     internal const string LibraryOperation = "libraryV3";
-    internal const string LibraryQueryHash = "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3";
+    internal const string LibraryQueryHash = "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455";
     internal const string PlaylistOperation = "fetchPlaylist";
-    internal const string PlaylistQueryHash = "a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4";
+    internal const string PlaylistQueryHash = "e4b2953f160e58e38ac025d79b5a9b3aceee5c4c716598e9830bfceb69faff5f";
     private const string ProviderId = SpotifyPlaylistCapabilityAdapter.StableProviderId;
     private static readonly Uri Endpoint = new("https://api-partner.spotify.com/pathfinder/v1/query");
     private readonly ConcurrentDictionary<string, ArtworkCacheEntry> _artwork = new(StringComparer.Ordinal);
