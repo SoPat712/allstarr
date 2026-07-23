@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Models.Spotify;
@@ -23,7 +24,7 @@ namespace allstarr.Controllers;
 public sealed class TrackMatchesController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     SpotifyMappingService spotifyMappings,
-    SpotifyTrackMatchingService matchingService) : ControllerBase
+    TrackMatchDecisionEngine decisionEngine) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -545,19 +546,118 @@ public sealed class TrackMatchesController(
         {
             active.RevokedAt = DateTimeOffset.UtcNow;
             active.Revision++;
-            await db.SaveChangesAsync(cancellationToken);
         }
         var source = snapshot.ProviderTrackIdentityId.HasValue
             ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(
                 item => item.Id == snapshot.ProviderTrackIdentityId.Value && item.TenantId == tenantId,
                 cancellationToken)
             : null;
+
+        var candidates = await db.LibraryTracks.AsNoTracking()
+            .Where(item =>
+                item.TenantId == tenantId &&
+                item.OwnerUserId == snapshot.OwnerUserId &&
+                item.LibraryScopeId == snapshot.LibraryScopeId)
+            .ToListAsync(cancellationToken);
+        var latestVersion = await db.TrackMatches
+            .Where(item => item.TenantId == tenantId && item.ExternalSnapshotId == snapshot.Id)
+            .Select(item => (int?)item.DecisionVersion)
+            .MaxAsync(cancellationToken) ?? 0;
+        var payload = Metadata(snapshot.PayloadJson);
+        var sourceTrack = new ExternalTrackMatchSnapshot(
+            snapshot.Id.ToString("N"),
+            source?.ProviderId ?? snapshot.ProviderId,
+            source?.ExternalId ?? snapshot.ExternalIdHash,
+            payload.Title ?? "Unknown",
+            payload.Artist ?? "Unknown",
+            payload.Album,
+            null,
+            DurationSeconds(snapshot.PayloadJson),
+            payload.Isrc,
+            null,
+            null);
+        var localCandidates = candidates.Select(item => new LocalTrackMatchCandidate(
+            item.Id,
+            item.TenantId,
+            item.OwnerUserId,
+            item.BackendInstanceId,
+            item.LibraryScopeId,
+            item.BackendItemId,
+            item.CanonicalRecordingId,
+            item.Title,
+            item.Artist,
+            item.Album,
+            item.AlbumArtist,
+            item.DurationMilliseconds > 0 ? (int?)Math.Round(item.DurationMilliseconds / 1000d) : null,
+            item.Isrc,
+            item.MusicBrainzRecordingId,
+            null)).ToArray();
+        var scope = new TrackMatchScope(
+            tenantId,
+            snapshot.OwnerUserId,
+            candidates.FirstOrDefault()?.BackendInstanceId ?? "unknown",
+            snapshot.LibraryScopeId,
+            snapshot.ProviderAccountId,
+            2,
+            snapshot.SnapshotVersion);
+        var decision = decisionEngine.Decide(scope, sourceTrack, localCandidates);
+        var selected = decision.SelectedLibraryTrackId.HasValue
+            ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
+            : null;
+        var state = Enum.Parse<TrackMatchState>(decision.State.ToString(), ignoreCase: true);
+        db.TrackMatches.Add(new TrackMatchRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = snapshot.OwnerUserId,
+            ExternalSnapshotId = snapshot.Id,
+            CanonicalRecordingId = selected?.CanonicalRecordingId,
+            LibraryScopeId = snapshot.LibraryScopeId,
+            LibraryTrackId = decision.SelectedLibraryTrackId,
+            State = state,
+            Confidence = decision.Confidence,
+            Threshold = 0.88,
+            DecisionVersion = latestVersion + 1,
+            PolicyVersion = "manual-rematch-v2",
+            CandidateResultsJson = JsonSerializer.Serialize(decision.Candidates),
+            ReasonsJson = JsonSerializer.Serialize(decision.Reasons),
+            WarningsJson = JsonSerializer.Serialize(decision.Warnings),
+            CorrelationId = HttpContext.TraceIdentifier,
+            DecidedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync(cancellationToken);
+
         if (source?.ProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase) == true)
         {
             await spotifyMappings.DeleteMappingAsync(source.ExternalId);
-            await matchingService.TriggerMatchingAsync(cancellationToken);
         }
-        return Accepted(new { queued = true });
+        return Ok(new
+        {
+            rematched = true,
+            state = decision.State.ToString().ToLowerInvariant(),
+            confidence = decision.Confidence,
+            candidateCount = decision.Candidates.Count,
+            decisionVersion = latestVersion + 1
+        });
+    }
+
+    private static int? DurationSeconds(string payloadJson)
+    {
+        try
+        {
+            using var payload = JsonDocument.Parse(payloadJson);
+            var root = payload.RootElement;
+            foreach (var name in new[] { "durationSeconds", "DurationSeconds", "duration", "Duration" })
+            {
+                if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)
+                    return (int)Math.Round(value.GetDouble());
+            }
+        }
+        catch (JsonException)
+        {
+            // The normal metadata projection will surface malformed payloads.
+        }
+        return null;
     }
 
     private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
@@ -574,12 +674,12 @@ public sealed class TrackMatchesController(
 
     private static TrackMetadata ToTrackMetadata(
         (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc) value) => new()
-    {
-        Title = value.Title,
-        Artist = value.Artist,
-        Album = value.Album,
-        ArtworkUrl = value.ArtworkUrl
-    };
+        {
+            Title = value.Title,
+            Artist = value.Artist,
+            Album = value.Album,
+            ArtworkUrl = value.ArtworkUrl
+        };
 
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
         ManualTrackOverrideRecord? manual, IReadOnlyDictionary<Guid, LibraryTrackRecord> library,

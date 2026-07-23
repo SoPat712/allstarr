@@ -51,6 +51,10 @@ public sealed class PlaylistLinksController(
                 .OrderBy(item => item.ProviderId)
                 .ThenBy(item => item.DisplayName)
                 .ToListAsync(cancellationToken);
+            var ownerIds = accounts.Where(item => item.OwnerUserId.HasValue).Select(item => item.OwnerUserId!.Value).Distinct().ToArray();
+            var ownerNames = await db.Users.AsNoTracking()
+                .Where(item => ownerIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
             var capableAccounts = accounts.Where(item =>
             {
                 if (!supportedProviders.TryGetValue(item.ProviderId, out var provider)) return false;
@@ -69,13 +73,15 @@ public sealed class PlaylistLinksController(
                     item,
                     true,
                     null,
+                    item.OwnerUserId.HasValue ? ownerNames.GetValueOrDefault(item.OwnerUserId.Value) : null,
                     item.Scope == ProviderAccountScope.Global &&
                     session.IsAdministrator &&
                     !providerPolicy.AllowGlobalPersonalAccounts)),
                 blockedAccounts = blockedAccounts.Select(item => ToPlaylistSourceAccountDto(
                     item,
                     false,
-                    "shared-playlist-credentials-disabled")),
+                    "shared-playlist-credentials-disabled",
+                    item.OwnerUserId.HasValue ? ownerNames.GetValueOrDefault(item.OwnerUserId.Value) : null)),
                 providers = supportedProviders.Values.Select(provider =>
                 {
                     var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
@@ -146,7 +152,26 @@ public sealed class PlaylistLinksController(
                 ? await candidate.Implementation.GetUserPlaylistsAsync(candidate.Context, new ProviderUserPlaylistsRequest(pageRequest))
                 : await candidate.Implementation.SearchPlaylistsAsync(candidate.Context, new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
             if (!outcome.IsSuccess)
-                return StatusCode(StatusCodes.Status502BadGateway, new { error = "The provider could not return playlists", reasonCode = outcome.Error?.Code });
+            {
+                var failure = outcome.Error!;
+                var status = failure.Kind switch
+                {
+                    ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
+                    ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
+                    ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
+                    ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
+                    ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
+                    _ => StatusCodes.Status502BadGateway
+                };
+                return StatusCode(status, new
+                {
+                    error = failure.SafeMessage,
+                    reasonCode = failure.Code,
+                    providerId,
+                    accountId = account.Id,
+                    retryAfterSeconds = failure.RetryAfter?.TotalSeconds
+                });
+            }
             var page = outcome.RequireValue();
             return Ok(new
             {
@@ -343,10 +368,41 @@ public sealed class PlaylistLinksController(
                 .ToListAsync(cancellationToken);
             var snapshotsByLink = snapshots.ToDictionary(item => item.PlaylistLinkId);
             var runsByLink = runs.ToDictionary(item => item.PlaylistLinkId);
+            var snapshotIds = snapshots.Select(item => item.Id).ToArray();
+            var sourceEntries = snapshotIds.Length == 0 ? [] : await db.PlaylistSourceEntries.AsNoTracking()
+                .Where(item => snapshotIds.Contains(item.PlaylistSourceSnapshotId))
+                .ToListAsync(cancellationToken);
+            var externalSnapshotIds = sourceEntries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
+            var matchRows = externalSnapshotIds.Length == 0 ? [] : await db.TrackMatches.AsNoTracking()
+                .Where(item => externalSnapshotIds.Contains(item.ExternalSnapshotId))
+                .ToListAsync(cancellationToken);
+            var latestMatches = matchRows
+                .GroupBy(item => item.ExternalSnapshotId)
+                .ToDictionary(group => group.Key, group => group
+                    .OrderByDescending(item => item.DecisionVersion)
+                    .ThenByDescending(item => item.DecidedAt)
+                    .First());
+            var runIds = runs.Select(item => item.Id).ToArray();
+            var runEntries = runIds.Length == 0 ? [] : await db.PlaylistSyncEntryResults.AsNoTracking()
+                .Where(item => runIds.Contains(item.PlaylistSyncRunId))
+                .ToListAsync(cancellationToken);
+            var sourceEntriesBySnapshot = sourceEntries
+                .GroupBy(item => item.PlaylistSourceSnapshotId)
+                .ToDictionary(group => group.Key, group => group.ToArray());
+            var runEntriesByRun = runEntries
+                .GroupBy(item => item.PlaylistSyncRunId)
+                .ToDictionary(group => group.Key, group => group.ToArray());
+            var metricsByLink = links.ToDictionary(link => link.Id, link => BuildMetrics(
+                snapshotsByLink.GetValueOrDefault(link.Id),
+                runsByLink.GetValueOrDefault(link.Id),
+                sourceEntriesBySnapshot,
+                latestMatches,
+                runEntriesByRun));
             return Ok(new
             {
                 playlistLinks = links.Select(link => ToListDto(link,
-                snapshotsByLink.GetValueOrDefault(link.Id), runsByLink.GetValueOrDefault(link.Id)))
+                snapshotsByLink.GetValueOrDefault(link.Id), runsByLink.GetValueOrDefault(link.Id),
+                metricsByLink[link.Id]))
             });
         });
     }
@@ -673,11 +729,22 @@ public sealed class PlaylistLinksController(
         ProviderAccountRecord account,
         bool available,
         string? reasonCode,
+        string? ownerDisplayName,
         bool administratorAccess = false) => new
         {
             id = account.Id,
             providerId = account.ProviderId,
-            displayName = account.DisplayName,
+            displayName = account.DisplayName is "Legacy .env import" or "Legacy .env import (current user)"
+                ? account.ProviderId.ToLowerInvariant() switch
+                {
+                    "spotify" => "Spotify",
+                    "apple-musickit" => "Apple Music",
+                    "deezer" => "Deezer",
+                    "qobuz" => "Qobuz",
+                    _ => account.ProviderId
+                }
+                : account.DisplayName,
+            ownerDisplayName,
             libraryScopeId = account.LibraryScopeId,
             scope = account.Scope.ToString().ToLowerInvariant(),
             accessLabel = account.Scope switch
@@ -790,7 +857,53 @@ public sealed class PlaylistLinksController(
     private static string EncodeOffsetCursor(int offset) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(offset.ToString(System.Globalization.CultureInfo.InvariantCulture)));
     private static object ToDto(PlaylistLinkRecord value) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id) };
-    private static object ToListDto(PlaylistLinkRecord value, PlaylistSourceSnapshotRecord? snapshot, PlaylistSyncRunRecord? run) => new
+    private static PlaylistListMetrics BuildMetrics(
+        PlaylistSourceSnapshotRecord? snapshot,
+        PlaylistSyncRunRecord? run,
+        IReadOnlyDictionary<Guid, PlaylistSourceEntryRecord[]> entriesBySnapshot,
+        IReadOnlyDictionary<Guid, TrackMatchRecord> latestMatches,
+        IReadOnlyDictionary<Guid, PlaylistSyncEntryResultRecord[]> entriesByRun)
+    {
+        var entries = snapshot == null
+            ? []
+            : entriesBySnapshot.GetValueOrDefault(snapshot.Id) ?? [];
+        var decisions = entries
+            .Select(item => latestMatches.GetValueOrDefault(item.ExternalMetadataSnapshotId))
+            .ToArray();
+        var runEntries = run == null
+            ? []
+            : entriesByRun.GetValueOrDefault(run.Id) ?? [];
+        var matched = decisions.Count(item => item?.State is TrackMatchState.Accepted or TrackMatchState.Pinned);
+        var review = decisions.Count(item => item?.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous);
+        var rejected = decisions.Count(item => item?.State == TrackMatchState.Rejected);
+        var unresolved = entries.Length - matched;
+        var playableOutcomes = new HashSet<PlaylistEntryOutcome>
+        {
+            PlaylistEntryOutcome.Matched,
+            PlaylistEntryOutcome.Reused,
+            PlaylistEntryOutcome.Added,
+            PlaylistEntryOutcome.Reordered
+        };
+        var playable = runEntries.Length == 0
+            ? matched
+            : runEntries.Count(item => playableOutcomes.Contains(item.Outcome));
+        var materialized = runEntries.Count(item =>
+            item.Outcome is PlaylistEntryOutcome.Reused or PlaylistEntryOutcome.Added or PlaylistEntryOutcome.Reordered);
+        return new PlaylistListMetrics(
+            entries.Length,
+            matched,
+            unresolved,
+            review,
+            rejected,
+            playable,
+            materialized,
+            snapshot?.Id,
+            snapshot?.SnapshotVersion,
+            run?.Id,
+            run?.Generation);
+    }
+
+    private static object ToListDto(PlaylistLinkRecord value, PlaylistSourceSnapshotRecord? snapshot, PlaylistSyncRunRecord? run, PlaylistListMetrics metrics) => new
     {
         id = value.Id,
         enabled = value.Enabled,
@@ -818,8 +931,39 @@ public sealed class PlaylistLinksController(
         revision = value.Revision,
         lastRunAt = run?.CompletedAt ?? run?.StartedAt,
         lastRunState = run?.State.ToString().ToLowerInvariant(),
+        trackCount = metrics.Total,
+        matchedCount = metrics.Matched,
+        unmatchedCount = metrics.Unresolved,
+        playableCount = metrics.Playable,
+        materializedCount = metrics.Materialized,
+        metrics = new
+        {
+            total = metrics.Total,
+            matched = metrics.Matched,
+            unresolved = metrics.Unresolved,
+            review = metrics.Review,
+            rejected = metrics.Rejected,
+            playable = metrics.Playable,
+            materialized = metrics.Materialized,
+            snapshotId = metrics.SnapshotId,
+            snapshotVersion = metrics.SnapshotVersion,
+            runId = metrics.RunId,
+            generation = metrics.Generation
+        },
         virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id)
     };
+    private sealed record PlaylistListMetrics(
+        int Total,
+        int Matched,
+        int Unresolved,
+        int Review,
+        int Rejected,
+        int Playable,
+        int Materialized,
+        Guid? SnapshotId,
+        int? SnapshotVersion,
+        Guid? RunId,
+        long? Generation);
     private static object ToScheduleDto(JobScheduleRecord value) => new { id = value.Id, cronExpression = value.CronExpression, timeZoneId = value.TimeZoneId, overlapPolicy = value.OverlapPolicy.ToString().ToLowerInvariant(), misfirePolicy = LowerCamel(value.MisfirePolicy.ToString()), enabled = value.Enabled, nextRunAt = value.NextRunAt, revision = value.Revision };
     private static object ToPreviewDto(PlaylistPreview value) => new { linkId = value.LinkId, snapshotId = value.SnapshotId, name = value.Name, description = value.Description, artworkReferenceKey = value.ArtworkReferenceKey, entries = value.Entries.Select(item => new { position = item.Position, externalSnapshotId = item.ExternalSnapshotId, state = item.State.ToString().ToLowerInvariant(), libraryTrackId = item.LibraryTrackId, @override = item.Override?.ToString().ToLowerInvariant() }) };
     private static object ToCredentialDto(SecretReferenceInfo value) => new { referenceId = value.Id, targetProtocol = "subsonic", purpose = value.Purpose, activeVersion = value.ActiveVersion, updatedAt = value.UpdatedAt };

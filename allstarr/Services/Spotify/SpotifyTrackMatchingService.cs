@@ -695,29 +695,7 @@ public class SpotifyTrackMatchingService : BackgroundService
                     playlistName);
             }
 
-            // Check if we have NEW manual mappings that aren't in the cache
-            var hasNewManualMappings = false;
-            foreach (var track in tracksToMatch)
-            {
-                // Check if this track has a manual mapping but isn't in the cached results
-                var manualMappingKey = CacheKeyBuilder.BuildSpotifyManualMappingKey(playlistName, track.SpotifyId);
-                var manualMapping = await _cache.GetAsync<string>(manualMappingKey);
-
-                var externalMappingKey = CacheKeyBuilder.BuildSpotifyExternalMappingKey(playlistName, track.SpotifyId);
-                var externalMappingJson = await _cache.GetStringAsync(externalMappingKey);
-
-                var hasManualMapping = !string.IsNullOrEmpty(manualMapping) || !string.IsNullOrEmpty(externalMappingJson);
-                var isInCache = existingMatched.Any(m => m.SpotifyId == track.SpotifyId);
-
-                // If track has manual mapping but isn't in cache, we need to rebuild
-                if (hasManualMapping && !isInCache)
-                {
-                    hasNewManualMappings = true;
-                    break;
-                }
-            }
-
-            if (!hasNewManualMappings && !hasUncachedSourceTracks && !hasLocalMatchesToReverify &&
+            if (!hasUncachedSourceTracks && !hasLocalMatchesToReverify &&
                 !hasIncompleteLocalSnapshots && !hasPolicyBlockedExternalMatches)
             {
                 _logger.LogWarning("✓ Playlist {Playlist} already has {Count} matched tracks cached (skipping {ToMatch} new tracks), no re-matching needed",
@@ -835,9 +813,11 @@ public class SpotifyTrackMatchingService : BackgroundService
         // PHASE 3: For remaining unmatched Spotify tracks, search external providers
         var unmatchedSpotifyTracks = spotifyTracks
             .Where(t => !usedSpotifyIds.Contains(t.SpotifyId))
+            .GroupBy(t => t.SpotifyId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(track => track.Position).First())
             .ToList();
 
-        _logger.LogInformation("🔍 Searching external providers for {Count} unmatched tracks",
+        _logger.LogInformation("🔍 Searching external providers for {Count} unique unmatched tracks",
             unmatchedSpotifyTracks.Count);
 
         // Snapshot the playback provider order once per phase so each track's

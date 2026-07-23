@@ -86,8 +86,23 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
     {
         var package = await GetPackageAsync(packageId, cancellationToken);
-        var registration = await BuildRegistrationAsync(package, cancellationToken);
-        RejectBuiltInCollision(registration.Descriptor.Id, package);
+        ProviderRegistration registration;
+        try
+        {
+            registration = await BuildRegistrationAsync(package, cancellationToken);
+            RejectBuiltInCollision(registration.Descriptor.Id, package);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await _controlPlane.CancelStagingAsync(packageId, expectedRevision, CancellationToken.None);
+            throw;
+        }
+        catch
+        {
+            await _controlPlane.FailStagingAsync(
+                packageId, expectedRevision, "runtime_validation_failed", CancellationToken.None);
+            throw;
+        }
         var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
         RegisterVerified(registration, package);
         return active;
@@ -115,13 +130,36 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         _sandboxes.TryRemove(packageId, out _);
     }
 
-    public async Task<ExtensionPackageRecord> UninstallAsync(
-        Guid packageId, long expectedRevision, bool retainProviderAccounts,
+    public async Task<ExtensionPackageRecord> ResetPermissionsForReviewAsync(
+        Guid packageId,
+        long expectedRevision,
         CancellationToken cancellationToken = default)
     {
-        if (!retainProviderAccounts)
-            throw new InvalidOperationException(
-                "SDK v1 uninstall retains provider accounts and encrypted secrets. Delete accounts separately with tenant-aware confirmation.");
+        var package = await GetPackageAsync(packageId, cancellationToken);
+        var reset = await _controlPlane.ResetPermissionsForReviewAsync(
+            packageId, expectedRevision, cancellationToken);
+        _registry.RemoveExtension(package.ExtensionId);
+        _sandboxes.TryRemove(packageId, out _);
+        return reset;
+    }
+
+    public async Task<ExtensionPackageRecord> CancelStagingAsync(
+        Guid packageId,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        var package = await GetPackageAsync(packageId, cancellationToken);
+        var cancelled = await _controlPlane.CancelStagingAsync(
+            packageId, expectedRevision, cancellationToken);
+        _registry.RemoveExtension(package.ExtensionId);
+        _sandboxes.TryRemove(packageId, out _);
+        return cancelled;
+    }
+
+    public async Task<ExtensionPackageRecord> UninstallAsync(
+        Guid packageId, long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
         var package = await GetPackageAsync(packageId, cancellationToken);
         var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
         _registry.RemoveExtension(package.ExtensionId);

@@ -581,6 +581,8 @@ const API = {
     requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}/secret`, jsonBody({ secret }, "PUT"), "Failed to replace provider credential"),
   setProviderAccountEnabled: (id, enabled, expectedRevision) =>
     requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}`, jsonBody({ enabled, expectedRevision }, "PATCH"), "Failed to update provider account"),
+  updateProviderAccountAudience: (id, scope, libraryScopeId, expectedRevision) =>
+    requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}/audience`, jsonBody({ scope, libraryScopeId, expectedRevision }, "PUT"), "Failed to update account access"),
   revokeProviderAccount: (id) =>
     requestJson(`/api/admin/provider-accounts/${encodeURIComponent(id)}`, { method: "DELETE" }, "Failed to revoke provider account"),
   createDatabaseBackup: () =>
@@ -617,14 +619,18 @@ const API = {
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/permissions`, { cache: "no-store" }, "Failed to load extension permissions"),
   reviewExtensionPermissions: (packageId, payload) =>
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/review`, jsonBody(payload), "Failed to review extension permissions"),
+  revokeExtensionPermissions: (packageId, expectedRevision) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/permissions/revoke`, jsonBody({ expectedRevision }), "Failed to revoke extension permissions"),
+  cancelExtensionStaging: (packageId, expectedRevision) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/staging/cancel`, jsonBody({ expectedRevision }), "Failed to cancel extension installation"),
   activateExtensionPackage: (packageId, expectedRevision) =>
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/activate`, jsonBody({ expectedRevision }), "Failed to activate extension"),
   disableExtensionPackage: (packageId, expectedRevision) =>
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/disable`, jsonBody({ expectedRevision }), "Failed to disable extension"),
   rollbackExtensionPackage: (packageId, expectedRevision) =>
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/rollback`, jsonBody({ expectedRevision }), "Failed to roll back extension"),
-  uninstallExtensionPackage: (packageId, expectedRevision, retainProviderAccounts = true) =>
-    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}`, jsonBody({ expectedRevision, retainProviderAccounts }, "DELETE"), "Failed to uninstall extension package"),
+  uninstallExtensionPackage: (packageId, expectedRevision) =>
+    requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}`, jsonBody({ expectedRevision }, "DELETE"), "Failed to uninstall extension package"),
   extensionLogs: (packageId = "", limit = 100) => {
     const query = new URLSearchParams({ limit: String(limit) });
     if (packageId) query.set("packageId", packageId);
@@ -931,6 +937,7 @@ class AllstarrApp extends LitElement {
     ThemeManager.apply(this.theme);
     this.onHashChange = () => {
       const requestedRoute = normalizeRoute();
+      this.clearTransientSurfaces();
       this.route = this.routeForSession(requestedRoute);
       if (this.route !== requestedRoute) {
         window.history.replaceState(null, "", `#${this.route}`);
@@ -949,6 +956,29 @@ class AllstarrApp extends LitElement {
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     this.startNowPlayingClock();
     this.bootstrap();
+  }
+
+  clearTransientSurfaces() {
+    this.mappingEditor = null;
+    this.injectedAddOpen = false;
+    this.injectedPlaylistDetails = null;
+    this.injectedTrackEditor = null;
+    this.injectedTrackMenuId = "";
+    this.selectedInjectedPlaylist = null;
+    this.selectedPlaylistLinkId = "";
+    this.selectedTrackDetails = null;
+    this.trackDetailsLoading = false;
+    this.providerAccountModalOpen = false;
+    this.providerAccountConfigOpen = "";
+    this.providerConfigOpen = "";
+    this.selectedProviderId = "";
+    this.sourceCatalogOpen = false;
+    this.selectedExtensionPackageId = "";
+    this.extensionManagePackageId = "";
+    this.extensionManagedPackageId = "";
+    this.extensionPermissionPackageId = "";
+    this.extensionPermissionConfirmed = false;
+    this.extensionInstallOpen = false;
   }
 
   disconnectedCallback() {
@@ -2935,13 +2965,18 @@ class AllstarrApp extends LitElement {
 
   renderPlaylistsWorkspace() {
     const links = asArray(this.playlistLinks);
-    const imported = asArray(this.playlists?.playlists || this.playlists?.Playlists || this.playlists);
+    const imported = asArray(this.playlists?.playlists || this.playlists?.Playlists || this.playlists).filter((playlist) => !links.some((link) => {
+      const linkResourceId = String(link.sourceResourceId || link.SourceResourceId || link.providerPlaylistId || link.ProviderPlaylistId || "").trim();
+      const importedResourceId = String(playlist.id || playlist.Id || playlist.spotifyId || playlist.SpotifyId || "").trim();
+      if (linkResourceId && importedResourceId && linkResourceId === importedResourceId) return true;
+      return String(link.name || link.Name || "").trim().toLowerCase() === String(playlist.name || playlist.Name || "").trim().toLowerCase();
+    }));
     return html`
       ${this.renderPlaylistLinkWizard()}
       <section class="view-stack playlist-inventory" aria-labelledby="playlist-inventory-title">
         <div class="section-heading"><div><h3 id="playlist-inventory-title">Your playlists</h3><p>Provider links and existing injected playlists live in one workspace. Every row can be synchronized, reviewed, and managed here.</p></div><span class="chip">${links.length + imported.length} total</span></div>
         ${links.length ? this.renderLinkPlaylists() : nothing}
-        ${imported.length ? this.renderInjectedPlaylists() : nothing}
+        ${imported.length ? this.renderInjectedPlaylists(imported) : nothing}
         ${!links.length && !imported.length ? html`<div class="panel empty"><strong>No playlists yet.</strong><span>Use the guided setup above to choose a source playlist and media-server target.</span></div>` : nothing}
       </section>
       ${this.renderPlaylistLinkPreview()}${this.renderPlaylistBehaviorDialog()}
@@ -2953,7 +2988,7 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="playlist-link-layout">
         <div class="view-stack">
-          <div class="table-wrap"><table class="responsive-data-table"><thead><tr><th>Playlist</th><th>Source</th><th>Target</th><th>Mode</th><th>Last run</th><th>Actions</th></tr></thead><tbody>
+          <div class="table-wrap"><table class="responsive-data-table"><thead><tr><th>Playlist</th><th>Tracks</th><th>Matched</th><th>Source</th><th>Target</th><th>Last run</th><th>Actions</th></tr></thead><tbody>
             ${links.map((link) => this.renderPlaylistLinkRow(link))}
           </tbody></table></div>
         </div>
@@ -2995,7 +3030,9 @@ class AllstarrApp extends LitElement {
           const id = String(account.id || account.Id);
           const provider = account.providerId || account.ProviderId;
           const access = account.accessLabel || account.AccessLabel || titleCase(account.scope || account.Scope || "account");
-          return html`<button class="choice-card ${draft.sourceAccountId === id ? "selected" : ""}" @click=${() => this.choosePlaylistSourceAccount(id)}><span class="provider-choice-icon">${this.renderProviderLogo(provider, "tiny")}</span><span><strong>${account.displayName || account.DisplayName}</strong><small>${providerDisplayName(provider, this.schema?.providers)} · ${access}</small></span></button>`;
+          const owner = account.ownerDisplayName || account.OwnerDisplayName;
+          const providerName = providerDisplayName(provider, this.schema?.providers);
+          return html`<button class="choice-card ${draft.sourceAccountId === id ? "selected" : ""}" @click=${() => this.choosePlaylistSourceAccount(id)}><span class="provider-choice-icon">${this.renderProviderLogo(provider, "tiny")}</span><span><strong>${owner ? `${providerName} - ${owner}` : account.displayName || account.DisplayName || providerName}</strong><small>${access}</small></span></button>`;
         })}
       </div>` : blocked.length ? html`<div class="inline-alert warning playlist-source-policy"><strong>Shared playlist credentials are configured but disabled by policy.</strong><span>${blocked.map((account) => `${providerDisplayName(account.providerId || account.ProviderId, this.schema?.providers)} (${account.displayName || account.DisplayName})`).join(", ")}</span><small>Enable shared credentials for personal playlist operations in deployment settings, or connect a personal provider account.</small><button @click=${() => this.navigate("/settings")}>Review Settings</button></div>` : html`<div class="empty playlist-source-empty"><strong>No playlist source is connected.</strong><span>Connect any provider or extension with Playlist capability${providerNames.length ? `. Available now: ${providerNames.join(", ")}.` : "."}</span><button @click=${() => this.navigate("/sources")}>Open Sources</button></div>`}
       ${this.playlistSources.length && blocked.length ? html`<div class="inline-alert warning playlist-source-policy"><strong>${blocked.length} shared source${blocked.length === 1 ? " is" : "s are"} hidden by policy.</strong><span>Use a personal or library-shared account, or explicitly allow deployment-shared credentials.</span></div>` : nothing}
@@ -3141,11 +3178,16 @@ class AllstarrApp extends LitElement {
     const target = link.targetProtocol || link.TargetProtocol || link.targetBackendType || link.TargetBackendType || link.backendType || link.BackendType;
     const enabled = Boolean(link.enabled ?? link.Enabled ?? true);
     const state = enabled ? link.lastRunState || link.LastRunState || link.state || link.State || "ready" : "paused";
+    const metrics = link.metrics || link.Metrics || {};
+    const total = Number(metrics.total ?? metrics.Total ?? link.trackCount ?? link.TrackCount ?? 0);
+    const playable = Number(metrics.playable ?? metrics.Playable ?? metrics.matched ?? metrics.Matched ?? link.matchedTracks ?? link.MatchedTracks ?? 0);
+    const matchPercent = total > 0 ? Math.min(100, Math.max(0, playable * 100 / total)) : 0;
     return html`<tr>
       <td class="mobile-primary" data-label="Playlist"><div class="provider-brand">${this.renderPlaylistArtwork(link, "source", false, provider)}<div><strong>${link.name || link.Name || "Playlist"}</strong>${link.description || link.Description ? html`<small>${link.description || link.Description}</small>` : nothing}</div></div></td>
+      <td data-label="Tracks">${total}</td>
+      <td data-label="Matched"><strong>${playable}</strong><small>${matchPercent.toFixed(1)}%</small></td>
       <td data-label="Source">${providerDisplayName(provider, this.schema?.providers)}</td>
       <td data-label="Target">${String(target).toLowerCase() === "subsonic" ? "Navidrome / Subsonic" : display(target)}</td>
-      <td data-label="Mode">${titleCase(link.mode || link.Mode)} · ${titleCase(link.materializationMode || link.MaterializationMode)}</td>
       <td data-label="Last run"><span class="status-chip ${String(state).toLowerCase()}">${titleCase(state)}</span><div class="muted">${formatDate(link.lastRunAt || link.LastRunAt)}</div></td>
       <td class="row-actions mobile-actions" data-label="Actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
     </tr>`;
@@ -3355,8 +3397,8 @@ class AllstarrApp extends LitElement {
     this.toast("Match review cleared");
   }
 
-  renderInjectedPlaylists() {
-    const playlists = asArray(this.playlists?.playlists || this.playlists?.Playlists);
+  renderInjectedPlaylists(providedPlaylists = null) {
+    const playlists = providedPlaylists || asArray(this.playlists?.playlists || this.playlists?.Playlists);
     const query = this.injectedSearch.trim().toLowerCase();
     const filtered = playlists.filter((playlist) => {
       const status = String(playlist.syncStatus || "pending").toLowerCase();
@@ -3869,7 +3911,12 @@ class AllstarrApp extends LitElement {
   }
 
   mappingReviewProviders(mapping) {
-    const providers = new Set(["apple", "deezer", "qobuz", "soundcloud", "youtube", "squidwtf", "tidal", "amazon"]);
+    const providers = new Set();
+    asArray(this.schema?.providers).forEach((provider) => {
+      const id = String(provider.id || provider.Id || "").trim().toLowerCase();
+      if (id && !["jellyfin", "jellyfin-local", "subsonic", "subsonic-local", "spotify"].includes(id)) providers.add(id);
+    });
+    if (!providers.size) ["apple-download", "deezer", "qobuz", "soundcloud", "youtube", "squidwtf", "tidal", "amazon"].forEach((id) => providers.add(id));
     asArray(mapping?.providerIdentities).forEach((identity) => identity?.providerId && providers.add(String(identity.providerId).toLowerCase()));
     return [...providers].sort();
   }
@@ -3949,14 +3996,6 @@ class AllstarrApp extends LitElement {
           <button class="primary" @click=${async () => { this.mappingFilters.page = 1; await this.loadMappings(); }}>Apply</button>
         </div>
       </div>
-      ${legacyMappings.length ? html`<div class="panel legacy-mappings-panel">
-        <div class="section-heading"><div><h3>Imported legacy decisions</h3><p class="muted">Your previous decisions are intact. Ready targets can play now; preserved targets stay visible until a safe replacement can be confirmed.</p></div><div class="actions"><span class="chip success">${playableLegacyMappings.length} ready</span>${reviewLegacyMappings.length ? html`<span class="chip warning">${reviewLegacyMappings.length} need review</span>` : nothing}</div></div>
-        ${reviewLegacyMappings.length ? html`<div class="callout warning"><strong>${reviewLegacyMappings.length} old ${reviewLegacyMappings.length === 1 ? "decision uses" : "decisions use"} an unavailable provider.</strong><span>Nothing was deleted or guessed. Open the affected playlist in Playlists, choose Match, and select a playable Jellyfin or provider result.</span><button @click=${() => this.navigate("/library/playlists")}>Review affected playlists</button></div>` : html`<div class="callout success"><strong>Every imported decision has a playable target.</strong></div>`}
-        <div class="table-wrap"><table class="responsive-data-table"><thead><tr><th>Status</th><th>Playlist</th><th>Spotify track</th><th>Target</th><th>Created</th></tr></thead><tbody>${legacyMappings.map((mapping) => {
-          const playable = mapping.playable ?? mapping.Playable ?? false;
-          return html`<tr class=${playable ? "" : "mapping-needs-review"}><td data-label="Status"><span class="chip ${playable ? "success" : "warning"}">${playable ? "Ready" : "Review"}</span></td><td class="mobile-primary" data-label="Playlist">${display(mapping.playlist || mapping.Playlist)}</td><td class="mono" data-label="Spotify track">${display(mapping.spotifyId || mapping.SpotifyId)}</td><td data-label="Target">${mapping.jellyfinId || mapping.JellyfinId ? html`Jellyfin <span class="mono">${mapping.jellyfinId || mapping.JellyfinId}</span>` : html`${titleCase(mapping.externalProvider || mapping.ExternalProvider)} <span class="mono">${mapping.externalId || mapping.ExternalId}</span>`}</td><td data-label="Created">${formatDate(mapping.createdAt || mapping.CreatedAt)}</td></tr>`;
-        })}</tbody></table></div>
-      </div>` : nothing}
       <div class="panel">
         <h3>Manual match review</h3>
         <p class="muted">Pin a provider snapshot to an indexed local track, or reject the current match. Provider identities remain attached to the same canonical recording.</p>
@@ -4357,13 +4396,27 @@ class AllstarrApp extends LitElement {
     const provider = asArray(this.schema?.providers).find((item) => String(item.id).toLowerCase() === providerId) || { id: providerId, name: titleCase(providerId) };
     const secret = account.secret || account.Secret || {};
     const enabled = Boolean(account.Enabled ?? account.enabled);
+    const scope = String(account.scope || account.Scope || "User");
+    const owner = account.ownerDisplayName || account.OwnerDisplayName;
+    const audienceLabel = scope.toLowerCase() === "global"
+      ? "Everyone"
+      : scope.toLowerCase() === "library"
+        ? `Library ${account.LibraryScopeId || account.libraryScopeId}`
+        : owner ? `Only ${owner}` : "Only me";
     const capabilities = this.providerHealth.filter((item) => String(item.providerAccountId || item.ProviderAccountId).toLowerCase() === String(id).toLowerCase());
     return html`<article class="card provider-account-card">
       <div class="provider-head">
         <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="" loading="lazy" decoding="async">` : providerMark(provider)}</span><div class="provider-title"><strong>${providerAccountDisplayName(account.DisplayName || account.displayName, provider.name || titleCase(providerId))}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
         <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
       </div>
-      <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Account details stored" : "Account setup needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
+      <div class="account-meta"><span class="chip">${icon("user", 14)} ${audienceLabel}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Account details stored" : "Account setup needed"}</span></div>
+      ${administrator ? html`<details class="account-audience-editor"><summary>Manage access</summary><form class="account-audience-form" @submit=${async (event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        await API.updateProviderAccountAudience(id, data.get("scope"), data.get("libraryScopeId"), account.revision ?? account.Revision);
+        await this.loadProviderAccounts();
+        this.toast("Account access updated");
+      }}><label><span>Who can use this account?</span><select name="scope" .value=${scope}><option value="User">Only me</option><option value="Global">Everyone</option><option value="Library">One library</option></select></label><label><span>Library ID</span><input name="libraryScopeId" .value=${account.LibraryScopeId || account.libraryScopeId || ""} placeholder="Required for one library"></label><button type="submit">Save access</button></form></details>` : nothing}
       ${this.renderProviderRecovery(account, capabilities)}
       ${administrator && capabilities.length ? this.renderProviderAccountHealth(account, capabilities) : html`<p class="muted">No automatic connection test is available for this provider.</p>`}
       <div class="account-actions">
@@ -5194,6 +5247,7 @@ class AllstarrApp extends LitElement {
                 ${state === "reviewrequired" ? html`<button class="primary" @click=${() => this.loadExtensionPermissions(item)}>Review permissions</button>` : nothing}
                 ${["staged", "disabled"].includes(state) ? html`<button class="primary" ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Enabling", () => API.activateExtensionPackage(id, revision), "Extension enabled")}>${action || "Enable extension"}</button>` : nothing}
                 ${state === "active" ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Disabling", () => API.disableExtensionPackage(id, revision), "Extension disabled")}>${action || "Disable extension"}</button>` : nothing}
+                ${["active", "disabled"].includes(state) && this.extensionCapabilities(item).length ? html`<button ?disabled=${Boolean(action)} @click=${() => this.runExtensionAction(item, "Resetting access", () => API.revokeExtensionPermissions(id, revision), "Extension access revoked; review permissions before enabling again")}>Review permissions again</button>` : nothing}
                 ${state === "active" && previousPackageId ? html`<button ?disabled=${Boolean(action)} @click=${() => {
                   if (!window.confirm("Restore the previous extension version? The current runtime will be replaced and provider requests may pause briefly.")) return;
                   return this.runExtensionAction(item, "Restoring", () => API.rollbackExtensionPackage(id, revision), "Previous extension version restored");
@@ -5253,7 +5307,18 @@ class AllstarrApp extends LitElement {
     const permissions = this.extensionPermissions.get(id);
     if (!permissions) return nothing;
     const action = this.extensionActions[id];
-    const close = () => { this.extensionPermissionPackageId = ""; this.extensionPermissionConfirmed = false; };
+    const close = async () => {
+      try {
+        await API.cancelExtensionStaging(id, item.revision ?? item.Revision ?? 0);
+        await Promise.all([this.loadExtensionControlPlane(), this.loadExtensionStore()]);
+      } catch (error) {
+        this.toast(error.message || "Extension installation could not be cancelled", "error");
+        return;
+      }
+      this.extensionPermissionPackageId = "";
+      this.extensionPermissionConfirmed = false;
+      this.toast("Extension installation cancelled");
+    };
     const allDecided = permissions.length > 0 && permissions.every((review) => ["approved", "denied"].includes(review.uiDecision));
     return html`<div class="modal-backdrop extension-permission-backdrop" @click=${(event) => { if (event.target === event.currentTarget) close(); }} @keydown=${(event) => this.handleDialogKeydown(event, close)}>
       <section class="panel extension-permission-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-permission-title" tabindex="-1">
@@ -5273,7 +5338,7 @@ class AllstarrApp extends LitElement {
           </div>`;
         })}</div>
         <label class="permission-confirm"><input type="checkbox" .checked=${this.extensionPermissionConfirmed} @change=${(event) => { this.extensionPermissionConfirmed = event.currentTarget.checked; }}><span>I understand the access requested by this extension.</span></label>
-        <div class="dialog-actions"><button @click=${close}>Cancel</button><button class="primary" ?disabled=${Boolean(action) || !allDecided || !this.extensionPermissionConfirmed} @click=${() => this.reviewExtensionPermissions(item)}>${action || "Save choices and enable"}</button></div>
+        <div class="dialog-actions"><button @click=${() => close()}>Cancel installation</button><button class="primary" ?disabled=${Boolean(action) || !allDecided || !this.extensionPermissionConfirmed} @click=${() => this.reviewExtensionPermissions(item)}>${action || "Approve and install"}</button></div>
       </section>
     </div>`;
   }
@@ -5303,7 +5368,7 @@ class AllstarrApp extends LitElement {
           <label class="config-field full-span"><span>Package URL</span><input autofocus name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" placeholder="https://example.org/provider.sflx"></label>
           <label class="config-field full-span"><span>SHA-256 checksum</span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false"><small>Allstarr verifies the package before opening permission review.</small></label>
           <label class="config-field"><span>Registry attribution</span><select name="registryId"><option value="">Direct package</option>${asArray(this.extensionRegistries).filter((entry) => entry.enabled ?? entry.Enabled).map((entry) => html`<option value=${entry.id || entry.Id}>${entry.name || entry.Name}</option>`)}</select></label>
-          <div class="dialog-actions full-span"><button type="button" @click=${close}>Cancel</button><button class="primary" type="submit">Verify and install</button></div>
+          <div class="dialog-actions full-span"><button type="button" @click=${close}>Cancel</button><button class="primary" type="submit">Verify and review permissions</button></div>
         </form>`}
       </section>
     </div>`;
@@ -5323,13 +5388,8 @@ class AllstarrApp extends LitElement {
           <div class="extension-uninstall-confirm" role="alertdialog" aria-labelledby="extension-uninstall-title">
             <div>
               <strong id="extension-uninstall-title">Uninstall ${displayName}?</strong>
-              <p>The package and runtime are removed. Provider accounts can be retained for a later reinstall.</p>
+              <p>The package and runtime are removed. Encrypted provider accounts are retained so they can be reused after reinstalling.</p>
             </div>
-            <label class="compact-check">
-              <input type="checkbox" .checked=${this.extensionUninstallRetainAccounts !== false}
-                @change=${(event) => { this.extensionUninstallRetainAccounts = event.target.checked; }}>
-              Retain provider accounts
-            </label>
             <div class="extension-uninstall-actions">
               <button class="ghost" ?disabled=${busy} @click=${() => { this.extensionUninstallConfirmId = null; }}>Cancel</button>
               <button class="danger" ?disabled=${busy} @click=${() => this.uninstallExtensionPackage(packageRecord)}>
@@ -5339,7 +5399,6 @@ class AllstarrApp extends LitElement {
           </div>
         ` : html`
           <button class="danger" @click=${() => {
-            this.extensionUninstallRetainAccounts = true;
             this.extensionUninstallConfirmId = packageId;
           }}>${icon("trash", 17)} Uninstall extension</button>
         `}
@@ -5354,7 +5413,6 @@ class AllstarrApp extends LitElement {
       await API.uninstallExtensionPackage(
         packageId,
         packageRecord.revision ?? packageRecord.Revision,
-        this.extensionUninstallRetainAccounts !== false,
       );
       this.extensionPackages = asArray(this.extensionPackages).filter((entry) => (entry.id || entry.Id) !== packageId);
       this.extensionUninstallConfirmId = null;
@@ -5598,6 +5656,14 @@ class AllstarrApp extends LitElement {
                 const correlation = item.correlationId || item.CorrelationId;
                 const provider = item.providerId || item.ProviderId;
                 const playlist = item.playlistName || item.PlaylistName;
+                const isrc = item.isrc || item.Isrc || item.sourceIsrc || item.SourceIsrc || item.targetIsrc || item.TargetIsrc;
+                const sourceId = item.sourceProviderTrackId || item.SourceProviderTrackId || item.sourceExternalId || item.SourceExternalId;
+                const targetId = item.targetProviderTrackId || item.TargetProviderTrackId || item.targetExternalId || item.TargetExternalId;
+                const backendId = item.backendItemId || item.BackendItemId || item.targetBackendItemId || item.TargetBackendItemId;
+                const routeId = item.routeDecisionId || item.RouteDecisionId;
+                const technical = item.technicalDetails || item.TechnicalDetails || {};
+                const knownTechnicalKeys = new Set(["isrc", "sourceProviderTrackId", "sourceExternalId", "externalId", "targetProviderTrackId", "targetExternalId", "backendItemId", "targetBackendItemId", "routeDecisionId"]);
+                const additionalTechnical = Object.entries(technical).filter(([key, value]) => value != null && value !== "" && !knownTechnicalKeys.has(key));
                 return html`<article class="event-log-detail">
                   ${eventArtwork(item, "detail")}
                   <div class="event-log-detail-body">
@@ -5609,7 +5675,15 @@ class AllstarrApp extends LitElement {
                       ${playlist ? html`<div><dt>Playlist</dt><dd>${playlist}</dd></div>` : nothing}
                       <div><dt>Outcome</dt><dd><span class=${`status-chip ${eventStatusClass(item.state || item.State || "unknown")}`}>${titleCase(item.state || item.State || "unknown")}</span></dd></div>
                     </dl>
-                    ${correlation ? html`<details class="event-log-technical"><summary>Technical details</summary><code>${correlation}</code></details>` : nothing}
+                    ${correlation || isrc || sourceId || targetId || backendId || routeId || additionalTechnical.length ? html`<details class="event-log-technical"><summary>Technical details</summary><dl>
+                      ${isrc ? html`<div><dt>ISRC</dt><dd class="mono">${isrc}</dd></div>` : nothing}
+                      ${sourceId ? html`<div><dt>Source provider ID</dt><dd class="mono">${sourceId}</dd></div>` : nothing}
+                      ${targetId ? html`<div><dt>Target provider ID</dt><dd class="mono">${targetId}</dd></div>` : nothing}
+                      ${backendId ? html`<div><dt>Media-server item ID</dt><dd class="mono">${backendId}</dd></div>` : nothing}
+                      ${routeId ? html`<div><dt>Route decision</dt><dd class="mono">${routeId}</dd></div>` : nothing}
+                      ${correlation ? html`<div><dt>Correlation ID</dt><dd class="mono">${correlation}</dd></div>` : nothing}
+                      ${additionalTechnical.map(([key, value]) => html`<div><dt>${titleCase(key.replace(/([a-z])([A-Z])/g, "$1 $2"))}</dt><dd class="mono">${String(value)}</dd></div>`)}
+                    </dl></details>` : nothing}
                   </div>
                 </article>`;
               })}
@@ -5780,12 +5854,14 @@ class AllstarrApp extends LitElement {
   }
 
   renderSettings() {
-    const [, sub] = routeParts(this.route);
-    if (sub === "extensions" && this.isAdministrator()) return this.renderExtensions();
+    const [, requestedSub] = routeParts(this.route);
+    const allowedTabs = ["general", "accounts", "routing", "extensions", "maintenance"];
+    const sub = allowedTabs.includes(requestedSub) ? requestedSub : (this.isAdministrator() ? "general" : "accounts");
     if (!this.isAdministrator()) {
       return html`
-        <section class="view-stack">
-          <div class="view-header"><div><h2>Settings</h2><p>Manage your own connected provider accounts.</p></div></div>
+        <section class="view-stack settings-view">
+          <div class="view-header"><div><h2>Settings</h2><p>Manage your connected provider accounts.</p></div></div>
+          ${this.renderSettingsNav("accounts", false)}
           <div class="panel">
             <div class="section-heading account-section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary icon-label" @click=${() => this.openProviderAccountModal()}>${icon("plus", 17)}<span>Add account</span></button>` : nothing}</div>
             ${this.renderProviderAccounts()}
@@ -5793,39 +5869,79 @@ class AllstarrApp extends LitElement {
           ${this.renderProviderAccountModal()}
         </section>`;
     }
+    const sections = asArray(this.schema?.configSections);
+    const sectionGroup = (section) => {
+      const label = String(section.label || "").toLowerCase();
+      if (label.includes("matching") || label.includes("playlist")) return "routing";
+      if (label.includes("backup") || label.includes("diagnostic") || label.includes("maintenance")) return "maintenance";
+      return "general";
+    };
+    const groupedSections = (group) => sections.filter((section) => sectionGroup(section) === group);
+    const general = html`
+      <div class="settings-tab-content">
+        <div class="settings-tab-intro"><h3>Application settings</h3><p>Core media-server, storage, cache, network, and security preferences.</p></div>
+        ${groupedSections("general").map((section) => this.renderSettingsDisclosure(section))}
+      </div>`;
+    const accounts = html`
+      <div class="settings-tab-content">
+        <div class="panel">
+          <div class="section-heading account-section-heading"><div><h3>Connected accounts</h3><p>Encrypted personal and shared accounts. Administrators can control who may use each connection.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary icon-label" @click=${() => this.openProviderAccountModal()}>${icon("plus", 17)}<span>Add account</span></button>` : nothing}</div>
+          ${this.renderProviderAccounts()}
+        </div>
+      </div>`;
+    const routing = html`
+      <div class="settings-tab-content">
+        <section class="settings-routing" aria-labelledby="provider-routing-heading">
+          <div class="section-heading"><div><h3 id="provider-routing-heading">Provider routing</h3><p>Local library tracks are always tried first. Remaining tracks follow each capability order from top to bottom.</p></div></div>
+          ${this.renderPriorityGroups()}
+        </section>
+        ${groupedSections("routing").map((section) => this.renderSettingsDisclosure(section))}
+      </div>`;
+    const maintenance = html`
+      <div class="settings-tab-content">
+        <div class="settings-tab-intro"><h3>Maintenance</h3><p>Backups, migration, diagnostics, repair, cache, and restart operations.</p></div>
+        ${groupedSections("maintenance").map((section) => this.renderSettingsDisclosure(section))}
+        ${this.renderSettingsMaintenance()}
+      </div>`;
+    const tabContent = sub === "accounts" ? accounts :
+      sub === "routing" ? routing :
+      sub === "extensions" ? this.renderExtensions() :
+      sub === "maintenance" ? maintenance :
+      general;
     return html`
       <section class="view-stack settings-view">
         <div class="view-header settings-page-header">
           <div>
             <h2>Settings</h2>
-            <p>Accounts, application preferences, and maintenance.</p>
+            <p>Accounts, routing, extensions, application preferences, and maintenance.</p>
           </div>
-          <button @click=${() => this.navigate("/settings/extensions")}>${icon("extensions", 17)} Manage extensions</button>
         </div>
-        <div class="panel">
-          <div class="section-heading account-section-heading"><div><h3>Connected accounts</h3><p>Credentials are encrypted and kept separate from the Sources catalog. Apple MusicKit uses a Music User Token for your library and playlists; the Apple Music extension adds its own account option for subscription lyrics.</p></div>${this.canManageProviderAccounts() ? html`<button class="primary icon-label" @click=${() => this.openProviderAccountModal()}>${icon("plus", 17)}<span>Add account</span></button>` : nothing}</div>
-          ${this.renderProviderAccounts()}
-        </div>
-        <section class="settings-routing" aria-labelledby="provider-routing-heading">
-          <div class="section-heading">
-            <div>
-              <h3 id="provider-routing-heading">Provider routing</h3>
-              <p>Allstarr tries local library tracks first. Remaining tracks follow each provider order from top to bottom.</p>
-              <p class="muted">This section is at: <strong>Settings → Provider routing</strong>.</p>
-            </div>
-          </div>
-          ${this.renderPriorityGroups()}
-        </section>
+        ${this.renderSettingsNav(sub, true)}
+        ${tabContent}
         ${this.renderProviderAccountModal()}
-        ${asArray(this.schema?.configSections).map((section) => html`
-          <details class="content-disclosure panel settings-disclosure">
-            <summary><span><strong>${section.label}</strong><small>Show configuration</small></span></summary>
-            <div class="config-grid disclosure-body">
-              ${asArray(section.fields).map((field) => this.renderConfigField(field))}
-            </div>
-          </details>
-        `)}
-        <details class="content-disclosure panel settings-disclosure">
+      </section>
+    `;
+  }
+
+  renderSettingsNav(active, administrator = true) {
+    const items = administrator
+      ? [["general", "General", "settings"], ["accounts", "Accounts", "user"], ["routing", "Provider routing", "sources"], ["extensions", "Extensions", "extensions"], ["maintenance", "Maintenance", "tasks"]]
+      : [["accounts", "Accounts", "user"]];
+    return html`<nav class="settings-tabs" aria-label="Settings sections">
+      ${items.map(([id, label, iconName]) => html`<a class=${active === id ? "active" : ""} href=${`#/settings/${id}`} aria-current=${active === id ? "page" : nothing}>${icon(iconName, 16)}<span>${label}</span></a>`)}
+    </nav>`;
+  }
+
+  renderSettingsDisclosure(section) {
+    return html`<details class="content-disclosure panel settings-disclosure">
+      <summary><span><strong>${section.label}</strong><small>Show configuration</small></span></summary>
+      <div class="config-grid disclosure-body">${asArray(section.fields).map((field) => this.renderConfigField(field))}</div>
+    </details>`;
+  }
+
+  renderSettingsMaintenance() {
+    return html`
+      <details class="content-disclosure panel settings-disclosure">
           <summary><span><strong>Backup and restore</strong><small>Database backups and bootstrap export</small></span></summary>
           <div class="disclosure-body">
             <div class="stat-list compact">
@@ -5838,7 +5954,7 @@ class AllstarrApp extends LitElement {
             </div>
             <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
           </div>
-        </details>
+      </details>
         <details class="content-disclosure panel settings-disclosure" open>
           <summary><span><strong>Media diagnostics</strong><small>Verify metadata and album artwork through Allstarr</small></span></summary>
           <div class="disclosure-body">
@@ -5857,7 +5973,7 @@ class AllstarrApp extends LitElement {
                 ${this.serviceResults.media.details ? html`<small>${this.serviceResults.media.details}</small>` : nothing}
               </div>` : nothing}
           </div>
-        </details>
+      </details>
         <details class="content-disclosure panel settings-disclosure" open>
           <summary><span><strong>Playlist diagnostics</strong><small>Verify restored playlists and playable entries</small></span></summary>
           <div class="disclosure-body">
@@ -5876,7 +5992,7 @@ class AllstarrApp extends LitElement {
                 ${this.serviceResults.playlists.details ? html`<small>${this.serviceResults.playlists.details}</small>` : nothing}
               </div>` : nothing}
           </div>
-        </details>
+      </details>
         <div class="setup-launcher">
           <div><h3>Setup guide</h3><p>Revisit the media server, sources, and first playlist steps whenever you need them.</p></div>
           <button @click=${() => this.openSetupGuide()}>Open setup guide</button>
@@ -5889,7 +6005,6 @@ class AllstarrApp extends LitElement {
             <button class="danger" @click=${async () => { if (confirm("Restart Allstarr?")) { await API.restart(); this.toast("Restart requested"); } }}>Restart</button>
           </div>
         </details>
-      </section>
     `;
   }
 

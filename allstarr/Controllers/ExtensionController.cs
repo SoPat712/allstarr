@@ -220,6 +220,44 @@ public class ExtensionController : ControllerBase
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
+    [HttpPost("packages/{packageId:guid}/permissions/revoke")]
+    public async Task<IActionResult> RevokePermissionGrants(
+        Guid packageId,
+        [FromBody] RevisionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        try
+        {
+            var package = _runtime == null
+                ? await _controlPlane.ResetPermissionsForReviewAsync(
+                    packageId, request.ExpectedRevision, cancellationToken)
+                : await _runtime.ResetPermissionsForReviewAsync(
+                    packageId, request.ExpectedRevision, cancellationToken);
+            return Ok(PackageResponse(package));
+        }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
+    [HttpPost("packages/{packageId:guid}/staging/cancel")]
+    public async Task<IActionResult> CancelStaging(
+        Guid packageId,
+        [FromBody] RevisionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        try
+        {
+            var package = _runtime == null
+                ? await _controlPlane.CancelStagingAsync(
+                    packageId, request.ExpectedRevision, cancellationToken)
+                : await _runtime.CancelStagingAsync(
+                    packageId, request.ExpectedRevision, cancellationToken);
+            return Ok(PackageResponse(package));
+        }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
     [HttpGet("packages/{packageId:guid}/session")]
     public IActionResult SignedSessionStatus(Guid packageId)
     {
@@ -285,14 +323,14 @@ public class ExtensionController : ControllerBase
 
     [HttpDelete("packages/{packageId:guid}")]
     public async Task<IActionResult> UninstallPackage(
-        Guid packageId, [FromBody] UninstallPackageRequest request, CancellationToken cancellationToken)
+        Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
     {
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         try
         {
-            return Ok(PackageResponse(await _runtime.UninstallAsync(packageId, request.ExpectedRevision,
-                request.RetainProviderAccounts, cancellationToken)));
+            return Ok(PackageResponse(await _runtime.UninstallAsync(
+                packageId, request.ExpectedRevision, cancellationToken)));
         }
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
@@ -535,6 +573,11 @@ public class ExtensionController : ControllerBase
             item.Version,
             item.SdkVersion,
             item.Sha256,
+            lifecycle = item.State.ToString().ToLowerInvariant(),
+            installed = item.State is ExtensionPackageState.Active or
+                ExtensionPackageState.Disabled or ExtensionPackageState.RolledBack,
+            active = item.State == ExtensionPackageState.Active,
+            permissionReviewRequired = item.State == ExtensionPackageState.ReviewRequired,
             description = manifest?.Description,
             author = manifest?.Author,
             iconUrl = hasPackageIcon ? $"/api/admin/extensions/packages/{item.Id}/icon" : null,
@@ -634,11 +677,6 @@ public sealed class RegistryStateRequest
 public class RevisionRequest
 {
     public long ExpectedRevision { get; set; }
-}
-
-public sealed class UninstallPackageRequest : RevisionRequest
-{
-    public bool RetainProviderAccounts { get; set; }
 }
 
 public sealed class PermissionReviewRequest : RevisionRequest

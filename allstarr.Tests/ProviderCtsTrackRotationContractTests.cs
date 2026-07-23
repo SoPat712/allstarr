@@ -8,10 +8,12 @@ public sealed class ProviderCtsTrackRotationContractTests
         var selector = Read("allstarr/Services/Common/ProviderCtsTrackSelector.cs");
 
         Assert.Contains("public const int CorpusLimit = 100", selector, StringComparison.Ordinal);
-        Assert.Contains("item.ProviderId == providerId", selector, StringComparison.Ordinal);
-        Assert.Contains("item.ResourceKind == ProviderResourceKind.Track", selector, StringComparison.Ordinal);
+        Assert.Contains("snapshot.ProviderAccountId == providerAccountId", selector, StringComparison.Ordinal);
+        Assert.Contains("snapshot.ProviderId == providerId", selector, StringComparison.Ordinal);
+        Assert.Contains("identity.ProviderId == providerId", selector, StringComparison.Ordinal);
+        Assert.Contains("identity.ResourceKind == ProviderResourceKind.Track", selector, StringComparison.Ordinal);
         Assert.Contains("(current + 1) % corpus.Length", selector, StringComparison.Ordinal);
-        Assert.Contains("ProviderTrackIdentityId == selected.Id", selector, StringComparison.Ordinal);
+        Assert.Contains("snapshot.ProviderTrackIdentityId equals identity.Id", selector, StringComparison.Ordinal);
     }
 
     [Fact]

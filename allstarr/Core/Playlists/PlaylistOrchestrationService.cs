@@ -329,6 +329,46 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var now = _clock.UtcNow;
         var externalByTrack = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         var externalBySourceEntry = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
+        var distinctEntries = collected.Entries
+            .OrderBy(item => item.SourcePosition)
+            .GroupBy(item => item.ProviderTrackIdHash, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        var payloads = distinctEntries.ToDictionary(
+            entry => entry.ProviderTrackIdHash,
+            entry =>
+            {
+                var payload = JsonSerializer.Serialize(new
+                {
+                    entry.ProviderTrackIdHash,
+                    entry.Title,
+                    entry.Artists,
+                    entry.Album,
+                    durationSeconds = entry.Duration?.TotalSeconds,
+                    entry.Isrc,
+                    entry.IsExplicit,
+                    entry.CanonicalRecordingId
+                });
+                return (Payload: payload, PayloadHash: Hash(payload));
+            },
+            StringComparer.Ordinal);
+        var storedExternals = new List<ExternalMetadataSnapshotRecord>();
+        foreach (var hashes in payloads.Keys.Chunk(500))
+        {
+            storedExternals.AddRange(await db.ExternalMetadataSnapshots.AsNoTracking()
+                .Where(item => item.TenantId == link.TenantId &&
+                               item.ProviderAccountId == link.ProviderAccountId &&
+                               item.ResourceKind == "track" &&
+                               hashes.Contains(item.ExternalIdHash))
+                .ToListAsync(cancellationToken));
+        }
+        var exactExternals = storedExternals
+            .Where(item => item.ProviderRevision == collected.SourceRevision)
+            .GroupBy(item => (item.ExternalIdHash, item.ProviderRevision, item.PayloadSha256))
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.SnapshotVersion).First());
+        var latestVersions = storedExternals
+            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Max(item => item.SnapshotVersion), StringComparer.Ordinal);
         foreach (var entry in collected.Entries.OrderBy(item => item.SourcePosition))
         {
             if (externalByTrack.TryGetValue(entry.ProviderTrackIdHash, out var duplicateExternal))
@@ -336,35 +376,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 externalBySourceEntry[entry.SourceEntryIdHash] = duplicateExternal;
                 continue;
             }
-            var payload = JsonSerializer.Serialize(new
-            {
-                entry.ProviderTrackIdHash,
-                entry.Title,
-                entry.Artists,
-                entry.Album,
-                durationSeconds = entry.Duration?.TotalSeconds,
-                entry.Isrc,
-                entry.IsExplicit,
-                entry.CanonicalRecordingId
-            });
-            var payloadHash = Hash(payload);
-            var external = await db.ExternalMetadataSnapshots.AsNoTracking()
-                .Where(item => item.TenantId == link.TenantId &&
-                               item.ProviderAccountId == link.ProviderAccountId &&
-                               item.ResourceKind == "track" &&
-                               item.ExternalIdHash == entry.ProviderTrackIdHash &&
-                               item.ProviderRevision == collected.SourceRevision &&
-                               item.PayloadSha256 == payloadHash)
-                .OrderByDescending(item => item.SnapshotVersion)
-                .FirstOrDefaultAsync(cancellationToken);
+            var (payload, payloadHash) = payloads[entry.ProviderTrackIdHash];
+            exactExternals.TryGetValue((entry.ProviderTrackIdHash, collected.SourceRevision, payloadHash), out var external);
             if (external == null)
             {
-                var externalVersion = (await db.ExternalMetadataSnapshots
-                    .Where(item => item.TenantId == link.TenantId &&
-                                   item.ProviderAccountId == link.ProviderAccountId &&
-                                   item.ResourceKind == "track" &&
-                                   item.ExternalIdHash == entry.ProviderTrackIdHash)
-                    .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
+                var externalVersion = latestVersions.GetValueOrDefault(entry.ProviderTrackIdHash) + 1;
                 external = new ExternalMetadataSnapshotRecord
                 {
                     Id = Guid.CreateVersion7(),
@@ -473,19 +489,27 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 StringComparer.Ordinal);
         var candidateById = candidates.ToDictionary(item => item.Id);
 
-        // Optimization: Bulk load all matching stored track matches
-        var allStoredMatches = await db.TrackMatches.Where(item =>
-                item.TenantId == link.TenantId &&
-                item.OwnerUserId == link.OwnerUserId &&
-                item.LibraryScopeId == link.LibraryScopeId &&
-                externalIds.Contains(item.ExternalSnapshotId))
-            .ToListAsync(cancellationToken);
-
-        var storedByExternalId = allStoredMatches
+        // Load only the latest stored decision for each source snapshot.
+        var storedMatchScope = db.TrackMatches.AsNoTracking().Where(item =>
+            item.TenantId == link.TenantId &&
+            item.OwnerUserId == link.OwnerUserId &&
+            item.LibraryScopeId == link.LibraryScopeId &&
+            externalIds.Contains(item.ExternalSnapshotId));
+        var latestStoredVersions = storedMatchScope
             .GroupBy(item => item.ExternalSnapshotId)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(item => item.DecisionVersion).First());
+            .Select(group => new
+            {
+                ExternalSnapshotId = group.Key,
+                DecisionVersion = group.Max(item => item.DecisionVersion)
+            });
+        var allStoredMatches = await (
+                from match in storedMatchScope
+                join latest in latestStoredVersions
+                    on new { match.ExternalSnapshotId, match.DecisionVersion }
+                    equals new { latest.ExternalSnapshotId, latest.DecisionVersion }
+                select match)
+            .ToListAsync(cancellationToken);
+        var storedByExternalId = allStoredMatches.ToDictionary(item => item.ExternalSnapshotId);
 
         // Optimization: Bulk load all active manual overrides
         var allManualOverrides = await db.ManualTrackOverrides.AsNoTracking().Where(item =>

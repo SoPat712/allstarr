@@ -20,13 +20,23 @@ public sealed class ProviderCtsTrackSelector(IDbContextFactory<AllstarrDbContext
     {
         providerId = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var corpus = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.ProviderId == providerId && item.ResourceKind == ProviderResourceKind.Track)
-            .OrderByDescending(item => item.UpdatedAt)
-            .ThenBy(item => item.Id)
-            .Take(CorpusLimit)
-            .Select(item => new { item.Id, item.ExternalId })
+        var recentSnapshots = await (
+            from snapshot in db.ExternalMetadataSnapshots.AsNoTracking()
+            join identity in db.ProviderTrackIdentities.AsNoTracking()
+                on snapshot.ProviderTrackIdentityId equals identity.Id
+            where snapshot.ProviderAccountId == providerAccountId &&
+                  snapshot.ProviderId == providerId &&
+                  identity.ProviderId == providerId &&
+                  identity.ResourceKind == ProviderResourceKind.Track
+            orderby snapshot.RetrievedAt descending, identity.Id
+            select new { identity.Id, identity.ExternalId, snapshot.PayloadJson, snapshot.RetrievedAt })
+            .Take(CorpusLimit * 4)
             .ToArrayAsync(cancellationToken);
+        var corpus = recentSnapshots
+            .GroupBy(item => item.Id)
+            .Select(group => group.First())
+            .Take(CorpusLimit)
+            .ToArray();
         if (corpus.Length == 0) return null;
 
         var key = $"{providerId}:{providerAccountId:N}";
@@ -35,12 +45,7 @@ public sealed class ProviderCtsTrackSelector(IDbContextFactory<AllstarrDbContext
             _ => Random.Shared.Next(corpus.Length),
             (_, current) => (current + 1) % corpus.Length);
         var selected = corpus[index % corpus.Length];
-        var payload = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.ProviderTrackIdentityId == selected.Id)
-            .OrderByDescending(item => item.RetrievedAt)
-            .Select(item => item.PayloadJson)
-            .FirstOrDefaultAsync(cancellationToken);
-        return new ProviderCtsTrackSelection(selected.ExternalId, TrackLabel(payload) ?? "Known provider track", corpus.Length);
+        return new ProviderCtsTrackSelection(selected.ExternalId, TrackLabel(selected.PayloadJson) ?? "Known provider track", corpus.Length);
     }
 
     private static string? TrackLabel(string? payload)

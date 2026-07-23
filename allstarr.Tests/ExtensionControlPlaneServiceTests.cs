@@ -64,6 +64,13 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         second = await _service.ActivateAsync(second.Id, second.Revision);
         Assert.Equal(first.Id, second.PreviousPackageId);
 
+        first = (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id);
+        first = await _service.ResetPermissionsForReviewAsync(first.Id, first.Revision);
+        first = await _service.ReviewAsync(first.Id, _reviewer, first.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
         second = await _service.RollbackAsync(second.Id, second.Revision);
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(ExtensionPackageState.Active, second.State);
@@ -82,6 +89,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             new("secret", "accountToken", false)
         ]);
         Assert.Equal(ExtensionPackageState.Failed, package.State);
+        Assert.False(Directory.Exists(package.PackagePath));
         await Assert.ThrowsAsync<InvalidOperationException>(() => _service.ActivateAsync(package.Id, package.Revision));
 
         await _service.WriteLogAsync(package.Id, "warning", "fixture.failed", "token=should-not-survive password:also-secret", "test");
@@ -93,7 +101,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DisabledPackageCanBeEnabledAgain()
+    public async Task DisabledPermissionedPackageRequiresFreshReviewBeforeReactivation()
     {
         var package = await _service.StageAsync(Package("1.0.0", "reenable"));
         package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
@@ -107,8 +115,31 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
         Assert.Equal(ExtensionPackageState.Disabled, package.State);
 
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.ActivateAsync(package.Id, package.Revision));
+        package = await _service.ResetPermissionsForReviewAsync(package.Id, package.Revision);
+        Assert.Equal(ExtensionPackageState.ReviewRequired, package.State);
+        Assert.All(await _service.ListPermissionReviewsAsync(package.Id),
+            item => Assert.Equal(ExtensionPermissionDecision.Pending, item.Decision));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
         package = await _service.ActivateAsync(package.Id, package.Revision);
         Assert.Equal(ExtensionPackageState.Active, package.State);
+    }
+
+    [Fact]
+    public async Task CancellingStagingRemovesContentAndLeavesHistoricalRecord()
+    {
+        var package = await _service.StageAsync(Package("1.0.0", "cancelled"));
+
+        package = await _service.CancelStagingAsync(package.Id, package.Revision);
+
+        Assert.Equal(ExtensionPackageState.Uninstalled, package.State);
+        Assert.Equal("staging_cancelled", package.FailureCode);
+        Assert.False(Directory.Exists(package.PackagePath));
     }
 
     [Fact]
@@ -192,7 +223,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         await coordinator.DisableAsync(package.Id, package.Revision);
         Assert.False(registry.TryGet(package.ExtensionId, out _));
         package = (await _service.ListPackagesAsync(package.ExtensionId)).Single(item => item.Id == package.Id);
-        package = await coordinator.UninstallAsync(package.Id, package.Revision, retainProviderAccounts: true);
+        package = await coordinator.UninstallAsync(package.Id, package.Revision);
         Assert.Equal(ExtensionPackageState.Uninstalled, package.State);
         Assert.False(Directory.Exists(package.PackagePath));
         var reinstalled = await _service.StageAsync(Package("4.0.0", "runtime"));

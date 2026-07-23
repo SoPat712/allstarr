@@ -58,6 +58,13 @@ public sealed partial class ProviderAccountsController : ControllerBase
         var secrets = await context.SecretReferences.AsNoTracking()
             .Where(item => secretIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var ownerIds = accounts.Where(item => item.OwnerUserId.HasValue)
+            .Select(item => item.OwnerUserId!.Value).Distinct().ToArray();
+        var owners = ownerIds.Length == 0
+            ? new Dictionary<Guid, string>()
+            : await context.Users.AsNoTracking()
+                .Where(item => ownerIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
         return Ok(new
         {
             managementMode = _managementMode.ToString(),
@@ -66,7 +73,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 account.SecretReferenceId.HasValue &&
                 secrets.TryGetValue(account.SecretReferenceId.Value, out var secret)
                     ? secret
-                    : null))
+                    : null,
+                account.OwnerUserId.HasValue ? owners.GetValueOrDefault(account.OwnerUserId.Value) : null))
         });
     }
 
@@ -334,6 +342,44 @@ public sealed partial class ProviderAccountsController : ControllerBase
         return Ok(AccountResponse(account, null));
     }
 
+    [HttpPut("{accountId:guid}/audience")]
+    public async Task<IActionResult> UpdateAudience(
+        Guid accountId,
+        [FromBody] UpdateProviderAccountAudienceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error)) return error!;
+        if (!CanManageAllAccounts(session)) return ManagementForbidden();
+        if (!Enum.TryParse<ProviderAccountScope>(request.Scope, true, out var scope) || !Enum.IsDefined(scope))
+            return BadRequest(new { error = "Audience must be Only me, Everyone, or One library." });
+        var libraryScopeId = string.IsNullOrWhiteSpace(request.LibraryScopeId) ? null : request.LibraryScopeId.Trim();
+        if (scope == ProviderAccountScope.Library && libraryScopeId == null)
+            return BadRequest(new { error = "Choose a library for this audience." });
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await ApplyManagementScope(context.ProviderAccounts, session)
+            .SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+        if (account == null) return NotFound();
+        if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != account.Revision)
+            return Conflict(new { error = "The provider account changed. Reload and try again." });
+
+        account.Scope = scope;
+        account.TenantId = scope == ProviderAccountScope.Global ? null : session.TenantId;
+        account.OwnerUserId = scope == ProviderAccountScope.User ? session.AllstarrUserId : null;
+        account.LibraryScopeId = scope == ProviderAccountScope.Library ? libraryScopeId : null;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
+        account.Revision++;
+        AddAudit(context, session, "provider-account.audience-updated", "succeeded", new
+        {
+            accountId = account.Id,
+            account.ProviderId,
+            audience = scope.ToString(),
+            account.LibraryScopeId
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        return Ok(AccountResponse(account, null, scope == ProviderAccountScope.User ? session.UserName : null));
+    }
+
     private bool TryGetSession(
         out AdminAuthSession session,
         out IActionResult? error)
@@ -546,7 +592,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
 
     private static object AccountResponse(
         ProviderAccountRecord account,
-        SecretReferenceRecord? secret) => new
+        SecretReferenceRecord? secret,
+        string? ownerDisplayName = null) => new
         {
             account.Id,
             account.ProviderId,
@@ -554,6 +601,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             scope = account.Scope.ToString(),
             account.TenantId,
             account.OwnerUserId,
+            ownerDisplayName,
             account.LibraryScopeId,
             account.Enabled,
             account.Revision,
@@ -607,6 +655,13 @@ public sealed partial class ProviderAccountsController : ControllerBase
     public sealed class SetProviderAccountEnabledRequest
     {
         public bool Enabled { get; set; }
+        public long? ExpectedRevision { get; set; }
+    }
+
+    public sealed class UpdateProviderAccountAudienceRequest
+    {
+        public string Scope { get; set; } = nameof(ProviderAccountScope.User);
+        public string? LibraryScopeId { get; set; }
         public long? ExpectedRevision { get; set; }
     }
 

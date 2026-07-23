@@ -69,8 +69,14 @@ public class MultiProviderMetadataService : IMusicMetadataService
             if (service == null) return new List<Song>();
             try
             {
-                return await service.SearchSongsAsync(query, limit, cancellationToken)
-                    .WaitAsync(ProviderSearchTimeout, cancellationToken);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(ProviderSearchTimeout);
+                return await service.SearchSongsAsync(query, limit, timeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("SearchSongsAsync timed out for provider: {Provider}", p);
+                return new List<Song>();
             }
             catch (Exception ex)
             {

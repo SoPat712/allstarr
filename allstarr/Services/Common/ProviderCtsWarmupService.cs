@@ -31,23 +31,38 @@ public sealed class ProviderCtsWarmupService(
         ProviderCtsAccount[] accounts;
         await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
         {
-            accounts = await (
-                from account in db.ProviderAccounts.AsNoTracking()
-                where account.Enabled && account.TenantId != null && account.OwnerUserId != null
-                join identity in db.BackendIdentities.AsNoTracking()
-                    on new { TenantId = account.TenantId!.Value, UserId = account.OwnerUserId!.Value }
-                    equals new { identity.TenantId, identity.UserId }
-                orderby account.ProviderId, account.Id, identity.LastSeenAt descending
-                select new ProviderCtsAccount(
-                    account.Id,
-                    account.ProviderId,
-                    account.TenantId.GetValueOrDefault(),
-                    account.OwnerUserId.GetValueOrDefault(),
-                    identity.BackendType,
-                    identity.BackendInstanceId,
-                    identity.PrincipalId,
-                    identity.LastSeenAt))
+            var enabledAccounts = await db.ProviderAccounts
+                .AsNoTracking()
+                .Where(account => account.Enabled)
+                .OrderBy(account => account.ProviderId)
+                .ThenBy(account => account.Id)
                 .ToArrayAsync(cancellationToken);
+            var identities = await db.BackendIdentities
+                .AsNoTracking()
+                .OrderByDescending(identity => identity.LastSeenAt)
+                .ToArrayAsync(cancellationToken);
+
+            accounts = enabledAccounts
+                .Select(account =>
+                {
+                    var identity = identities.FirstOrDefault(candidate =>
+                        (account.TenantId == null || candidate.TenantId == account.TenantId) &&
+                        (account.OwnerUserId == null || candidate.UserId == account.OwnerUserId));
+                    return identity == null
+                        ? null
+                        : new ProviderCtsAccount(
+                            account.Id,
+                            account.ProviderId,
+                            identity.TenantId,
+                            account.OwnerUserId ?? identity.UserId,
+                            identity.BackendType,
+                            identity.BackendInstanceId,
+                            identity.PrincipalId,
+                            identity.LastSeenAt);
+                })
+                .Where(account => account != null)
+                .Cast<ProviderCtsAccount>()
+                .ToArray();
         }
 
         foreach (var account in accounts

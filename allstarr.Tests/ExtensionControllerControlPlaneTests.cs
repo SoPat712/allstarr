@@ -142,7 +142,11 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         Assert.IsType<UnauthorizedObjectResult>(controller.DisableExtension("fixture-extension"));
         Assert.IsType<UnauthorizedObjectResult>(await controller.EnableExtension("fixture-extension"));
         Assert.IsType<UnauthorizedObjectResult>(await controller.UninstallPackage(
-            Guid.CreateVersion7(), new UninstallPackageRequest { RetainProviderAccounts = true }, default));
+            Guid.CreateVersion7(), new RevisionRequest(), default));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.RevokePermissionGrants(
+            Guid.CreateVersion7(), new RevisionRequest(), default));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.CancelStaging(
+            Guid.CreateVersion7(), new RevisionRequest(), default));
     }
 
     private ExtensionController Controller(AdminAuthSession? session = null)

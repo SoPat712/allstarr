@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Filters;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
@@ -354,7 +355,17 @@ public class AdminUiController : ControllerBase
                 TargetProviderId: libraryTrack == null ? null : "library",
                 TargetTitle: libraryTrack?.Title,
                 TargetArtist: libraryTrack?.Artist,
-                ConfidenceLabel: $"{Math.Round(item.Confidence * 100, 1)}%");
+                ConfidenceLabel: $"{Math.Round(item.Confidence * 100, 1)}%",
+                Isrc: snapshot == null ? libraryTrack?.Isrc : AuditDetail(snapshot.PayloadJson, "isrc") ?? libraryTrack?.Isrc,
+                SourceProviderTrackId: identity?.ExternalId,
+                BackendItemId: libraryTrack?.BackendItemId,
+                Action: "track-match.evaluate",
+                TechnicalDetails: new Dictionary<string, string>
+                {
+                    ["decisionId"] = item.Id.ToString("N"),
+                    ["decisionVersion"] = item.DecisionVersion.ToString(),
+                    ["policyVersion"] = item.PolicyVersion
+                });
         }));
         activity.AddRange(audits.Select(AuditActivity));
 
@@ -397,11 +408,69 @@ public class AdminUiController : ControllerBase
             "provider-route" => "Provider request completed",
             _ => HumanizeAuditCategory(item.Action)
         };
+        var details = SafeAuditDetails(item.DetailsJson);
         return new AdminUiActivityItem(
             item.Id.ToString("N"), kind, source, label, item.Outcome, detail, item.CreatedAt,
             item.CorrelationId, SeverityForState(item.Outcome), source,
             AuditDetail(item.DetailsJson, "playlistLinkId"),
-            AuditDetail(item.DetailsJson, "playlistName"));
+            AuditDetail(item.DetailsJson, "playlistName"),
+            Isrc: Detail(details, "isrc"),
+            SourceProviderTrackId: Detail(details, "sourceProviderTrackId", "sourceExternalId", "externalId"),
+            TargetProviderTrackId: Detail(details, "targetProviderTrackId", "targetExternalId"),
+            BackendItemId: Detail(details, "backendItemId", "targetBackendItemId"),
+            RouteDecisionId: Detail(details, "routeDecisionId"),
+            ActorUserId: item.ActorUserId?.ToString("N"),
+            Action: item.Action,
+            TechnicalDetails: details);
+    }
+
+    private static IReadOnlyDictionary<string, string> SafeAuditDetails(string json)
+    {
+        var result = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return result;
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (result.Count >= 24) break;
+                var key = property.Name.Trim();
+                if (key.Length == 0 || IsSensitiveAuditKey(key)) continue;
+                var value = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False =>
+                        property.Value.GetRawText(),
+                    _ => null
+                };
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                result[key] = value.Length > 500 ? value[..500] : value;
+            }
+        }
+        catch (JsonException)
+        {
+            // Invalid legacy details remain represented by the readable event text.
+        }
+        return result;
+    }
+
+    private static bool IsSensitiveAuditKey(string key)
+    {
+        var normalized = key.ToLowerInvariant();
+        return normalized.Contains("secret", StringComparison.Ordinal) ||
+               normalized.Contains("token", StringComparison.Ordinal) ||
+               normalized.Contains("password", StringComparison.Ordinal) ||
+               normalized.Contains("cookie", StringComparison.Ordinal) ||
+               normalized.Contains("credential", StringComparison.Ordinal) ||
+               normalized.Contains("authorization", StringComparison.Ordinal);
+    }
+
+    private static string? Detail(IReadOnlyDictionary<string, string> details, params string[] keys)
+    {
+        foreach (var key in keys)
+            if (details.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+                return value;
+        return null;
     }
 
     private static string SeverityForState(string? state)
@@ -1012,4 +1081,12 @@ public sealed record AdminUiActivityItem(
     string? TargetProviderId = null,
     string? TargetTitle = null,
     string? TargetArtist = null,
-    string? ConfidenceLabel = null);
+    string? ConfidenceLabel = null,
+    string? Isrc = null,
+    string? SourceProviderTrackId = null,
+    string? TargetProviderTrackId = null,
+    string? BackendItemId = null,
+    string? RouteDecisionId = null,
+    string? ActorUserId = null,
+    string? Action = null,
+    IReadOnlyDictionary<string, string>? TechnicalDetails = null);

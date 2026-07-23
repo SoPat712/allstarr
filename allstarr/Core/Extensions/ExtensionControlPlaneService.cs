@@ -194,52 +194,66 @@ public sealed partial class ExtensionControlPlaneService
     {
         ArgumentNullException.ThrowIfNull(verified);
         EnsureContainedPackagePath(verified.PackageRoot);
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        if (registryId.HasValue && !await db.ExtensionRegistries.AnyAsync(item => item.Id == registryId && item.Enabled, cancellationToken))
-            throw new KeyNotFoundException("The enabled extension registry is unavailable.");
-        var existing = await db.ExtensionPackages.SingleOrDefaultAsync(item =>
-            item.ExtensionId == verified.Manifest.Id && item.Version == verified.Manifest.Version &&
-            item.Sha256 == verified.Sha256 && item.State != ExtensionPackageState.Uninstalled,
-            cancellationToken);
-        if (existing != null) return existing;
-        var previous = await db.ExtensionPackages.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.ExtensionId == verified.Manifest.Id && item.State == ExtensionPackageState.Active, cancellationToken);
-        var now = _clock.UtcNow;
-        var package = new ExtensionPackageRecord
+        try
         {
-            Id = Guid.CreateVersion7(),
-            RegistryId = registryId,
-            PreviousPackageId = previous?.Id,
-            ExtensionId = verified.Manifest.Id,
-            DisplayName = verified.Manifest.DisplayName,
-            Version = verified.Manifest.Version,
-            SdkVersion = verified.Manifest.SdkVersion,
-            Sha256 = verified.Sha256,
-            ContentSha256 = verified.ContentSha256,
-            PackagePath = Path.GetFullPath(verified.PackageRoot),
-            ManifestJson = File.ReadAllText(Path.Combine(verified.PackageRoot, "manifest.json")),
-            State = verified.Manifest.Permissions.Count == 0
-                ? ExtensionPackageState.Staged
-                : ExtensionPackageState.ReviewRequired,
-            StagedAt = now
-        };
-        db.ExtensionPackages.Add(package);
-        db.ExtensionPermissionReviews.AddRange(verified.Manifest.Permissions.Select(permission =>
-            new ExtensionPermissionReviewRecord
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+            if (registryId.HasValue && !await db.ExtensionRegistries.AnyAsync(item => item.Id == registryId && item.Enabled, cancellationToken))
+                throw new KeyNotFoundException("The enabled extension registry is unavailable.");
+            var existing = await db.ExtensionPackages.SingleOrDefaultAsync(item =>
+                item.ExtensionId == verified.Manifest.Id && item.Version == verified.Manifest.Version &&
+                item.Sha256 == verified.Sha256 && item.State != ExtensionPackageState.Uninstalled,
+                cancellationToken);
+            if (existing != null)
+            {
+                if (!Path.GetFullPath(existing.PackagePath).Equals(
+                        Path.GetFullPath(verified.PackageRoot), StringComparison.Ordinal))
+                    DeletePackageContents(verified.PackageRoot);
+                return existing;
+            }
+            var previous = await db.ExtensionPackages.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.ExtensionId == verified.Manifest.Id && item.State == ExtensionPackageState.Active, cancellationToken);
+            var now = _clock.UtcNow;
+            var package = new ExtensionPackageRecord
             {
                 Id = Guid.CreateVersion7(),
-                ExtensionPackageId = package.Id,
-                PermissionKind = permission.Kind.ToString().ToLowerInvariant(),
-                PermissionValue = permission.Value,
-                Required = permission.Required,
-                Decision = ExtensionPermissionDecision.Pending,
-                CreatedAt = now
-            }));
-        await AddLogAsync(db, package, "information", "package.staged", "Package staged for permission review.", "extension-stage", now);
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return package;
+                RegistryId = registryId,
+                PreviousPackageId = previous?.Id,
+                ExtensionId = verified.Manifest.Id,
+                DisplayName = verified.Manifest.DisplayName,
+                Version = verified.Manifest.Version,
+                SdkVersion = verified.Manifest.SdkVersion,
+                Sha256 = verified.Sha256,
+                ContentSha256 = verified.ContentSha256,
+                PackagePath = Path.GetFullPath(verified.PackageRoot),
+                ManifestJson = File.ReadAllText(Path.Combine(verified.PackageRoot, "manifest.json")),
+                State = verified.Manifest.Permissions.Count == 0
+                    ? ExtensionPackageState.Staged
+                    : ExtensionPackageState.ReviewRequired,
+                StagedAt = now
+            };
+            db.ExtensionPackages.Add(package);
+            db.ExtensionPermissionReviews.AddRange(verified.Manifest.Permissions.Select(permission =>
+                new ExtensionPermissionReviewRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    ExtensionPackageId = package.Id,
+                    PermissionKind = permission.Kind.ToString().ToLowerInvariant(),
+                    PermissionValue = permission.Value,
+                    Required = permission.Required,
+                    Decision = ExtensionPermissionDecision.Pending,
+                    CreatedAt = now
+                }));
+            await AddLogAsync(db, package, "information", "package.staged", "Package staged for permission review.", "extension-stage", now);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return package;
+        }
+        catch
+        {
+            DeletePackageContents(verified.PackageRoot);
+            throw;
+        }
     }
 
     public async Task<ExtensionPackageRecord> ReviewAsync(
@@ -284,7 +298,104 @@ public sealed partial class ExtensionControlPlaneService
                 : "Permissions reviewed; package is ready for activation.", "extension-review", now);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (package.State == ExtensionPackageState.Failed)
+            DeletePackageContents(package.PackagePath);
         return package;
+    }
+
+    public async Task<ExtensionPackageRecord> ResetPermissionsForReviewAsync(
+        Guid packageId,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var package = await db.ExtensionPackages.SingleOrDefaultAsync(item => item.Id == packageId, cancellationToken)
+                      ?? throw new KeyNotFoundException("Extension package not found.");
+        if (package.Revision != expectedRevision)
+            throw new DbUpdateConcurrencyException("The extension package changed before its grants could be revoked.");
+        if (package.State is not (ExtensionPackageState.Disabled or ExtensionPackageState.RolledBack or ExtensionPackageState.Staged))
+            throw new InvalidOperationException(
+                "Only a disabled, rolled-back, or reviewed staged package can have its grants revoked.");
+
+        var reviews = await db.ExtensionPermissionReviews
+            .Where(item => item.ExtensionPackageId == package.Id)
+            .ToListAsync(cancellationToken);
+        if (reviews.Count == 0)
+            throw new InvalidOperationException("This extension package does not request permissions.");
+
+        var now = _clock.UtcNow;
+        foreach (var review in reviews)
+        {
+            review.Decision = ExtensionPermissionDecision.Pending;
+            review.ReviewedByUserId = null;
+            review.ReviewedAt = null;
+            review.Revision++;
+        }
+
+        package.State = ExtensionPackageState.ReviewRequired;
+        package.ReviewedAt = null;
+        package.FailureCode = null;
+        package.DisabledAt ??= now;
+        package.Revision++;
+        await AddLogAsync(db, package, "warning", "permissions.revoked",
+            "Extension permission grants revoked; review is required before activation.",
+            "extension-permissions-revoked", now);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return package;
+    }
+
+    public async Task<ExtensionPackageRecord> CancelStagingAsync(
+        Guid packageId,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var package = await db.ExtensionPackages.SingleOrDefaultAsync(item => item.Id == packageId, cancellationToken)
+                      ?? throw new KeyNotFoundException("Extension package not found.");
+        if (package.Revision != expectedRevision)
+            throw new DbUpdateConcurrencyException("The extension package changed before staging could be cancelled.");
+        if (package.State is not (ExtensionPackageState.Staged or ExtensionPackageState.ReviewRequired or ExtensionPackageState.Failed))
+            throw new InvalidOperationException("Only a package awaiting activation can be cancelled.");
+
+        package.State = ExtensionPackageState.Uninstalled;
+        package.FailureCode = "staging_cancelled";
+        package.DisabledAt = _clock.UtcNow;
+        package.Revision++;
+        await AddLogAsync(db, package, "information", "package.staging-cancelled",
+            "Extension package staging cancelled and staged content removed.",
+            "extension-staging-cancelled", _clock.UtcNow);
+        await db.SaveChangesAsync(cancellationToken);
+        DeletePackageContents(package.PackagePath);
+        return package;
+    }
+
+    public async Task FailStagingAsync(
+        Guid packageId,
+        long expectedRevision,
+        string failureCode,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var package = await db.ExtensionPackages.SingleOrDefaultAsync(item => item.Id == packageId, cancellationToken)
+                      ?? throw new KeyNotFoundException("Extension package not found.");
+        if (package.Revision != expectedRevision ||
+            package.State is not (ExtensionPackageState.Staged or ExtensionPackageState.ReviewRequired))
+            return;
+
+        var normalizedFailure = string.IsNullOrWhiteSpace(failureCode)
+            ? "activation_failed"
+            : failureCode.Trim();
+        package.State = ExtensionPackageState.Failed;
+        package.FailureCode = normalizedFailure[..Math.Min(normalizedFailure.Length, 100)];
+        package.DisabledAt = _clock.UtcNow;
+        package.Revision++;
+        await AddLogAsync(db, package, "warning", "package.activation-failed",
+            "Extension activation failed and staged content was removed.",
+            "extension-activation-failed", _clock.UtcNow);
+        await db.SaveChangesAsync(cancellationToken);
+        DeletePackageContents(package.PackagePath);
     }
 
     public Task<ExtensionPackageRecord> ActivateAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default) =>
@@ -364,16 +475,45 @@ public sealed partial class ExtensionControlPlaneService
             if (package.State != ExtensionPackageState.Active || !package.PreviousPackageId.HasValue)
                 throw new InvalidOperationException("The active package has no rollback version.");
             target = await db.ExtensionPackages.SingleAsync(item => item.Id == package.PreviousPackageId, cancellationToken);
-            if (target.State is not (ExtensionPackageState.RolledBack or ExtensionPackageState.Disabled))
+            if (target.State is ExtensionPackageState.RolledBack or ExtensionPackageState.Disabled &&
+                await db.ExtensionPermissionReviews.AnyAsync(
+                    item => item.ExtensionPackageId == target.Id,
+                    cancellationToken))
+                throw new InvalidOperationException(
+                    "Rollback requires the previous package permissions to be revoked and reviewed again.");
+            if (target.State is not (ExtensionPackageState.RolledBack or ExtensionPackageState.Disabled or ExtensionPackageState.Staged))
                 throw new InvalidOperationException("The rollback package is not available.");
         }
         else
         {
+            if (package.State == ExtensionPackageState.Disabled &&
+                await db.ExtensionPermissionReviews.AnyAsync(
+                    item => item.ExtensionPackageId == package.Id,
+                    cancellationToken))
+                throw new InvalidOperationException(
+                    "Reactivation requires permission grants to be revoked and reviewed again.");
             if (package.State is not (ExtensionPackageState.Staged or ExtensionPackageState.Disabled))
                 throw new InvalidOperationException("Only a reviewed or previously disabled package can be activated.");
             target = package;
         }
-        VerifyStagedContents(target);
+        try
+        {
+            VerifyStagedContents(target);
+        }
+        catch (ExtensionSdkValidationException)
+        {
+            target.State = ExtensionPackageState.Failed;
+            target.FailureCode = "staged_contents_invalid";
+            target.DisabledAt = _clock.UtcNow;
+            target.Revision++;
+            await AddLogAsync(db, target, "warning", "package.activation-failed",
+                "Extension activation validation failed and staged content was removed.",
+                "extension-activation-failed", _clock.UtcNow);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            DeletePackageContents(target.PackagePath);
+            throw;
+        }
         var current = await db.ExtensionPackages.SingleOrDefaultAsync(item =>
             item.ExtensionId == target.ExtensionId && item.State == ExtensionPackageState.Active, cancellationToken);
         var now = _clock.UtcNow;
@@ -417,6 +557,13 @@ public sealed partial class ExtensionControlPlaneService
         var relative = Path.GetRelativePath(_packageRoot, full);
         if (Path.IsPathRooted(relative) || relative is "" or "." or ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new UnauthorizedAccessException("The extension package path is outside the configured package root.");
+    }
+
+    private void DeletePackageContents(string path)
+    {
+        EnsureContainedPackagePath(path);
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
     }
 
     private static Task AddLogAsync(AllstarrDbContext db, ExtensionPackageRecord package, string level,

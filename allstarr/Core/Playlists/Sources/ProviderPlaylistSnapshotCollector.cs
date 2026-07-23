@@ -130,6 +130,10 @@ public sealed class ProviderPlaylistSnapshotCollector
 
         if (summary == null)
             return Failure(new ProviderError(ProviderErrorKind.PermanentFailure), request.LastKnownGood, pagesRead, context, playlistIdHash);
+        if (entries.Count != summary.TrackCount ||
+            entries.Select(item => item.SourcePosition).Distinct().Count() != entries.Count ||
+            entries.Count > 1 && entries.Zip(entries.Skip(1), (left, right) => right.SourcePosition == left.SourcePosition + 1).Any(contiguous => !contiguous))
+            return Failure(new ProviderError(ProviderErrorKind.PermanentFailure), request.LastKnownGood, pagesRead, context, playlistIdHash);
         var artwork = StableArtworkReference(summary.Artwork);
         var snapshot = new CollectedPlaylistSourceSnapshot(
             capability.ProviderId,
@@ -166,9 +170,11 @@ public sealed class ProviderPlaylistSnapshotCollector
         if (firstSummary != null && page.Tracks.SnapshotVersion != firstPageVersion)
             throw new InvalidProviderPageException();
         var positions = page.Tracks.Items.Select(track => track.Position).ToArray();
-        if (!positions.SequenceEqual(positions.Order()) || positions.Distinct().Count() != positions.Length)
+        if (!positions.SequenceEqual(positions.Order()) ||
+            positions.Distinct().Count() != positions.Length ||
+            positions.Length > 1 && positions.Zip(positions.Skip(1), (left, right) => right == left + 1).Any(contiguous => !contiguous))
             throw new InvalidProviderPageException();
-        if (positions.Length > 0 && collected.Count > 0 && positions[0] <= collected[^1].SourcePosition)
+        if (positions.Length > 0 && collected.Count > 0 && positions[0] != collected[^1].SourcePosition + 1)
             throw new InvalidProviderPageException();
         if (page.Tracks.IsPartial && page.Tracks.NextCursor == null)
             throw new InvalidProviderPageException();

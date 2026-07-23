@@ -1,0 +1,349 @@
+/*
+ * Shared WebUI component contract.
+ * Keep page-specific layout in workspaces.css; reusable interaction and
+ * responsive behavior belongs here.
+ */
+
+.subnav,
+.settings-tabs {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    min-height: 56px;
+    padding: 5px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    scrollbar-width: none;
+}
+
+.subnav::-webkit-scrollbar,
+.settings-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.subnav a,
+.settings-tabs a {
+    display: inline-flex;
+    flex: 1 0 max-content;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    background: transparent;
+    font-weight: 680;
+    text-decoration: none;
+}
+
+.subnav a:hover,
+.settings-tabs a:hover {
+    color: var(--text-primary);
+    background: var(--surface-control-hover);
+}
+
+.subnav a.active,
+.settings-tabs a.active {
+    color: var(--text-primary);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.settings-view {
+    gap: var(--space-4);
+}
+
+.settings-tab-content {
+    display: grid;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.settings-tab-intro {
+    display: grid;
+    gap: var(--space-2);
+    padding: 2px 2px var(--space-2);
+}
+
+.settings-tab-intro p {
+    max-width: 76ch;
+    color: var(--text-secondary);
+}
+
+.settings-disclosure {
+    padding: 0;
+    overflow: clip;
+}
+
+.settings-disclosure > summary {
+    display: flex;
+    min-height: 64px;
+    padding: 14px 18px;
+    align-items: center;
+    cursor: pointer;
+}
+
+.settings-disclosure > summary > span {
+    display: grid;
+    gap: 1px;
+}
+
+.settings-disclosure > summary small {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.settings-disclosure[open] > summary {
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-elevated) 54%, transparent);
+}
+
+.settings-disclosure .disclosure-body {
+    padding: 18px;
+}
+
+.settings-routing {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.settings-routing .section-heading {
+    margin-bottom: var(--space-2);
+}
+
+.priority-group > header,
+.priority-card > header,
+.provider-priority-card > header {
+    margin-bottom: var(--space-4);
+}
+
+.priority-group > header p:last-child,
+.priority-card > header p:last-child,
+.provider-priority-card > header p:last-child {
+    margin-bottom: var(--space-2);
+}
+
+.modal-backdrop,
+.playlist-preview-backdrop,
+.mapping-review-backdrop,
+.injected-playlist-backdrop,
+.track-details-backdrop,
+.extension-manage-backdrop,
+.extension-permission-backdrop,
+.extension-install-backdrop,
+.provider-account-backdrop,
+.source-catalog-backdrop {
+    position: fixed !important;
+    z-index: 1000 !important;
+    inset: 0 !important;
+    display: grid;
+    width: auto !important;
+    height: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    padding: var(--space-5);
+    overflow: auto;
+    background: rgba(5, 7, 11, 0.78);
+    backdrop-filter: blur(12px);
+    place-items: center;
+}
+
+.modal-backdrop > [role="dialog"],
+.playlist-preview-backdrop > [role="dialog"],
+.mapping-review-backdrop > [role="dialog"],
+.injected-playlist-backdrop > [role="dialog"],
+.track-details-backdrop > [role="dialog"] {
+    position: relative !important;
+    inset: auto !important;
+    width: min(100%, 960px) !important;
+    max-height: min(90dvh, 920px) !important;
+    margin: auto !important;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    box-shadow: var(--shadow-modal);
+}
+
+.extension-uninstall-control {
+    position: static !important;
+    width: 100%;
+    margin-top: var(--space-4);
+}
+
+.mapping-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.mapping-metrics .metric-card {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-card);
+}
+
+.mapping-metrics .metric-card span {
+    color: var(--text-secondary);
+}
+
+.mapping-metrics .metric-card strong {
+    font-family: var(--font-display);
+    font-size: 1.65rem;
+}
+
+.event-log-list {
+    position: relative;
+}
+
+.event-log-list::before {
+    position: absolute;
+    width: 2px;
+    background: linear-gradient(var(--accent), color-mix(in srgb, var(--accent-secondary) 45%, transparent));
+    content: "";
+    inset: 20px auto 20px 31px;
+}
+
+.event-log-group {
+    position: relative;
+    overflow: clip;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+}
+
+.event-log-group + .event-log-group {
+    margin-top: var(--space-3);
+}
+
+.event-log-entry {
+    position: relative;
+    z-index: 1;
+}
+
+.event-log-art img,
+.mapping-source-mark img,
+.mapping-result-art img {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    object-fit: cover;
+}
+
+.event-log-technical {
+    margin-top: var(--space-3);
+}
+
+.event-log-technical code {
+    display: block;
+    max-width: 100%;
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    background: var(--surface-elevated);
+}
+
+.icon-button,
+.injected-actions-trigger,
+.track-menu-trigger {
+    display: inline-grid;
+    align-items: center;
+    justify-items: center;
+    line-height: 1;
+}
+
+select,
+input:not(:is([type="checkbox"], [type="radio"], [type="range"], [type="color"])) {
+    font-size: var(--control-font-size) !important;
+}
+
+@media (max-width: 760px) {
+    .subnav,
+    .settings-tabs {
+        justify-content: flex-start;
+        scroll-snap-type: x proximity;
+    }
+
+    .subnav a,
+    .settings-tabs a {
+        flex: 0 0 auto;
+        min-width: max-content;
+        scroll-snap-align: start;
+    }
+
+    .settings-tab-content {
+        gap: var(--space-3);
+    }
+
+    .settings-disclosure > summary {
+        min-height: 56px;
+        padding: 11px 14px;
+    }
+
+    .settings-disclosure .disclosure-body {
+        padding: 14px;
+    }
+
+    .mapping-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .modal-backdrop,
+    .playlist-preview-backdrop,
+    .mapping-review-backdrop,
+    .injected-playlist-backdrop,
+    .track-details-backdrop,
+    .extension-manage-backdrop,
+    .extension-permission-backdrop,
+    .extension-install-backdrop,
+    .provider-account-backdrop,
+    .source-catalog-backdrop {
+        padding: 0;
+        align-items: stretch;
+    }
+
+    .modal-backdrop > [role="dialog"],
+    .playlist-preview-backdrop > [role="dialog"],
+    .mapping-review-backdrop > [role="dialog"],
+    .injected-playlist-backdrop > [role="dialog"],
+    .track-details-backdrop > [role="dialog"] {
+        width: 100% !important;
+        min-height: 100dvh;
+        max-height: 100dvh !important;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .event-log-list::before {
+        inset-inline-start: 23px;
+    }
+
+    .event-log-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .event-log-filters label:last-child {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 480px) {
+    .mapping-metrics,
+    .event-log-filters {
+        grid-template-columns: 1fr;
+    }
+
+    .event-log-filters label:last-child {
+        grid-column: auto;
+    }
+}

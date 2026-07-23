@@ -16,7 +16,6 @@ public sealed class ProviderCtsDiagnosticRunner(
     IDurableProviderHealthObservationStore healthStore)
 {
     private const int SampleLimitBytes = 256 * 1024;
-    private static readonly HttpClient SampleClient = CreateSampleClient();
     private static readonly BoundedOperationGate Concurrency = new(2);
 
     public async Task<ProviderCtsDiagnosticResult> MeasureAsync(
@@ -168,6 +167,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                     resolveMilliseconds);
             }
 
+            using var sampleClient = CreateSampleClient();
             using var sampleRequest = new HttpRequestMessage(HttpMethod.Get, safeUri);
             sampleRequest.Headers.Range = new RangeHeaderValue(0, SampleLimitBytes - 1);
             sampleRequest.Headers.CacheControl = new CacheControlHeaderValue
@@ -177,7 +177,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 MaxAge = TimeSpan.Zero
             };
             sampleRequest.Headers.Pragma.ParseAdd("no-cache");
-            using var response = await SampleClient.SendAsync(
+            using var response = await sampleClient.SendAsync(
                 sampleRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             var headersMilliseconds = total.Elapsed.TotalMilliseconds;
             if (IsRedirect(response.StatusCode) || !response.IsSuccessStatusCode)
@@ -240,6 +240,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 automaticTrack?.CorpusSize,
                 quality,
                 resolveMilliseconds,
+                headersMilliseconds,
                 firstByteMilliseconds.Value,
                 bytesRead,
                 throughputKbps,
@@ -292,7 +293,15 @@ public sealed class ProviderCtsDiagnosticRunner(
 
     private static HttpClient CreateSampleClient()
     {
-        var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }, disposeHandler: true)
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            PooledConnectionLifetime = TimeSpan.Zero,
+            PooledConnectionIdleTimeout = TimeSpan.Zero,
+            MaxConnectionsPerServer = 1,
+            UseCookies = false
+        };
+        var client = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = Timeout.InfiniteTimeSpan
         };
@@ -334,6 +343,7 @@ public sealed class ProviderCtsDiagnosticResult
     public double? ThroughputKbps { get; init; }
     public string? ContentType { get; init; }
     public string? CacheState { get; init; }
+    public string ProbeMode { get; init; } = "cold-connect";
     public int Bars { get; init; }
     public string? Quality { get; init; }
     public DateTimeOffset MeasuredAt { get; init; }
@@ -369,6 +379,7 @@ public sealed class ProviderCtsDiagnosticResult
         int? corpusSize,
         ProviderAudioQuality quality,
         double resolveMilliseconds,
+        double headersMilliseconds,
         double firstByteMilliseconds,
         int sampleBytes,
         double throughputKbps,
@@ -388,12 +399,14 @@ public sealed class ProviderCtsDiagnosticResult
             CorpusSize = corpusSize,
             RequestedQuality = quality.ToString().ToLowerInvariant(),
             ResolveMilliseconds = Round(resolveMilliseconds),
+            HeadersMilliseconds = Round(headersMilliseconds),
             FirstByteMilliseconds = Round(firstByteMilliseconds),
             ClickToStreamMilliseconds = Round(firstByteMilliseconds),
             SampleBytes = sampleBytes,
             ThroughputKbps = Round(throughputKbps),
             ContentType = contentType,
             CacheState = cacheState,
+            ProbeMode = "cold-connect",
             Bars = bars,
             Quality = ConnectivityQuality.Label(bars),
             MeasuredAt = measuredAt
