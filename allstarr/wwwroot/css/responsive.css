@@ -44,6 +44,11 @@
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .playlist-operation-group {
+        grid-template-columns: minmax(140px, .72fr) minmax(0, 1.28fr);
+        gap: 12px;
+    }
+
     .playlist-rematch-action {
         justify-self: end;
     }

@@ -297,7 +297,7 @@
 
 .playlist-operation-summary {
     display: grid;
-    grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr);
+    grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr);
     gap: 0;
     min-width: 0;
     overflow: hidden;
@@ -308,11 +308,11 @@
 
 .playlist-operation-group {
     display: grid;
-    grid-template-columns: minmax(140px, .72fr) minmax(0, 1.28fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
-    gap: 12px;
+    gap: 7px;
     min-width: 0;
-    padding: 9px 12px;
+    padding: 10px 12px;
 }
 
 .playlist-operation-group + .playlist-operation-group {

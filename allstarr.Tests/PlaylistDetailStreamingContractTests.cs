@@ -15,10 +15,18 @@ public sealed class PlaylistDetailStreamingContractTests
         Assert.Contains("playlist-operation-group coverage-group", _script, StringComparison.Ordinal);
         Assert.Contains("playlist-operation-group timing-group", _script, StringComparison.Ordinal);
         Assert.Contains("playlist-operation-metrics", _script, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr)", _workspaceStyles, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: minmax(140px, .72fr) minmax(0, 1.28fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains(".playlist-operation-group {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr)", _workspaceStyles, StringComparison.Ordinal);
         Assert.Contains("grid-column: 1 / -1", _workspaceStyles, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-heading", _workspaceStyles, StringComparison.Ordinal);
+        var tabletBreakpoint = _responsiveStyles.IndexOf("@media (max-width: 900px)", StringComparison.Ordinal);
+        var tabletGroup = _responsiveStyles.IndexOf(".playlist-operation-group", tabletBreakpoint, StringComparison.Ordinal);
+        var tabletGroupEnd = _responsiveStyles.IndexOf('}', tabletGroup);
+        Assert.True(tabletBreakpoint >= 0 && tabletGroup > tabletBreakpoint && tabletGroupEnd > tabletGroup);
+        Assert.Contains(
+            "grid-template-columns: minmax(140px, .72fr) minmax(0, 1.28fr)",
+            _responsiveStyles[tabletGroup..tabletGroupEnd],
+            StringComparison.Ordinal);
         var compactBreakpoint = _responsiveStyles.IndexOf("@media (max-width: 620px)", StringComparison.Ordinal);
         var compactSummary = _responsiveStyles.IndexOf(".playlist-operation-summary", compactBreakpoint, StringComparison.Ordinal);
         var compactSummaryEnd = _responsiveStyles.IndexOf('}', compactSummary);
