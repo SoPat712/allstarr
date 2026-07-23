@@ -15,6 +15,48 @@ namespace allstarr.Tests;
 public sealed class ExtensionCapabilityAdapterTests
 {
     [Fact]
+    public void RepeatedExtensionRuntimeErrors_AreSanitizedAndDeduplicated()
+    {
+        const string manifest = """
+            {"id":"logging-demo","displayName":"Logging demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],
+             "permissions":[]}
+            """;
+        const string script = """
+            registerExtension({
+              searchTracks:function(){
+                log.error('<redacted>');
+                return {items:[]};
+              }
+            });
+            """;
+        var events = new List<(string Level, string Message)>();
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(),
+            new HashSet<string>(),
+            new HashSet<string>(),
+            LogSink: (level, message) => events.Add((level, message)));
+        var sandbox = new ExtensionSandbox(
+            Path.GetTempPath(),
+            manifest,
+            script,
+            new HttpClientFactory(),
+            NullLogger.Instance,
+            permissions);
+
+        sandbox.InvokeJson("searchTracks", "{}");
+        sandbox.InvokeJson("searchTracks", "{}");
+        sandbox.InvokeJson("searchTracks", "{}");
+
+        var runtimeEvent = Assert.Single(events);
+        Assert.Equal("error", runtimeEvent.Level);
+        Assert.Equal(
+            "Provider operation failed without a safe diagnostic.",
+            runtimeEvent.Message);
+        Assert.DoesNotContain("redacted", runtimeEvent.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void RepeatedExtensionHttpFailures_OpenCooldownAndSuppressNetworkCalls()
     {
         const string manifest = """

@@ -1397,6 +1397,7 @@ public class ExtensionHostBridge
     private static readonly TimeSpan HttpFailureWindow = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan HttpInitialCooldown = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan HttpMaximumCooldown = TimeSpan.FromHours(1);
+    private static readonly TimeSpan RuntimeLogDeduplicationWindow = TimeSpan.FromMinutes(5);
     private static readonly Regex SensitiveLogPattern = new(
         "(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -1411,6 +1412,9 @@ public class ExtensionHostBridge
     private readonly Dictionary<string, ExtensionHttpFailureState> _httpFailureStates =
         new(StringComparer.Ordinal);
     private readonly object _httpFailureLock = new();
+    private readonly Dictionary<string, ExtensionRuntimeLogState> _runtimeLogStates =
+        new(StringComparer.Ordinal);
+    private readonly object _runtimeLogLock = new();
     private int _logEvents;
 
     public ExtensionHostBridge(
@@ -1456,6 +1460,11 @@ public class ExtensionHostBridge
         if (Interlocked.Increment(ref _logEvents) > MaximumLogEvents) return;
         message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]");
         if (message.Length > 2_000) message = message[..2_000];
+        if (message is "<redacted>" or "[redacted]" || string.IsNullOrWhiteSpace(message))
+            message = "Provider operation failed without a safe diagnostic.";
+        if (!ShouldEmitRuntimeLog(level, message, out var suppressedCount)) return;
+        if (suppressedCount > 0)
+            message = $"{message} ({suppressedCount} equivalent events suppressed.)";
         _permissions.LogSink?.Invoke(level, message);
         switch (level.ToLowerInvariant())
         {
@@ -1487,6 +1496,29 @@ public class ExtensionHostBridge
                     _extensionId,
                     message);
                 break;
+        }
+    }
+
+    private bool ShouldEmitRuntimeLog(
+        string level,
+        string message,
+        out int suppressedCount)
+    {
+        var key = $"{level.Trim().ToLowerInvariant()}:{message}";
+        var now = DateTimeOffset.UtcNow;
+        lock (_runtimeLogLock)
+        {
+            if (_runtimeLogStates.TryGetValue(key, out var state) &&
+                now - state.LastEmittedAt < RuntimeLogDeduplicationWindow)
+            {
+                _runtimeLogStates[key] = state with { SuppressedCount = state.SuppressedCount + 1 };
+                suppressedCount = 0;
+                return false;
+            }
+
+            suppressedCount = state?.SuppressedCount ?? 0;
+            _runtimeLogStates[key] = new ExtensionRuntimeLogState(now, 0);
+            return true;
         }
     }
 
@@ -1956,6 +1988,10 @@ public class ExtensionHostBridge
         DateTimeOffset LastFailureAt,
         DateTimeOffset BlockedUntil,
         int LastStatusCode);
+
+    private sealed record ExtensionRuntimeLogState(
+        DateTimeOffset LastEmittedAt,
+        int SuppressedCount);
 
     private void AddHeaders(HttpRequestMessage request, object? headersObj)
     {
