@@ -25,7 +25,7 @@ public sealed class ExtensionCapabilityAdapterTests
         const string script = """
             registerExtension({
               searchTracks:function(){
-                log.error('<redacted>');
+                log.error('extension returned <redacted>');
                 return {items:[]};
               }
             });

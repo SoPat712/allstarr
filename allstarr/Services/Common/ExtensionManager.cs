@@ -1461,8 +1461,8 @@ public class ExtensionHostBridge
         if (Interlocked.Increment(ref _logEvents) > MaximumLogEvents) return;
         message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]").Trim();
         if (message.Length > 2_000) message = message[..2_000];
-        if (message.Equals("<redacted>", StringComparison.OrdinalIgnoreCase) ||
-            message.Equals("[redacted]", StringComparison.OrdinalIgnoreCase) ||
+        if ((message.Length <= 128 &&
+             message.Contains("redacted", StringComparison.OrdinalIgnoreCase)) ||
             string.IsNullOrWhiteSpace(message))
             message = "Provider operation failed without a safe diagnostic.";
         if (!ShouldEmitRuntimeLog(level, message, out var suppressedCount)) return;
