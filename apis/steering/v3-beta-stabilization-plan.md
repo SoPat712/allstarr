@@ -116,14 +116,14 @@ Items remain unchecked until the combined local and browser verification pass.
   blocking I/O, and duplicate metadata searches.
 - [ ] Record matching, caching, streaming, playlist, scrobble, extension, and administrative
   events with artwork and stable identifiers.
-- [ ] Review application, worker, database, extension, and container logs; fix reproducible
+- [x] Review application, worker, database, extension, and container logs; fix reproducible
   errors and classify external authentication, rate limiting, and outages.
-- [ ] Add bounded retry/backoff and correct severity for the repeating missing-track-file
+- [x] Add bounded retry/backoff and correct severity for the repeating missing-track-file
   poll instead of logging the same warning every few seconds.
 - [x] Give extension runtime failures safe structured error codes and provider context;
   opaque redacted error messages are not actionable. Investigate the observed Amazon
   search `403` and Spotify client-token `400` without exposing credentials.
-- [ ] Do not initialize or report disabled/missing scrobbling credentials during unrelated
+- [x] Do not initialize or report disabled/missing scrobbling credentials during unrelated
   asset requests such as `/favicon.ico`. Health warnings must belong to the relevant
   account or capability check.
 
