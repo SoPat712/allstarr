@@ -417,9 +417,9 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                                 item = new
                                 {
                                     uri = "spotify:playlist:playlist-direct",
-                                    name = "Direct Mix",
-                                    description = new { text = "Nested description" },
-                                    ownerV2 = new { data = new { username = "owner", name = "Owner" } },
+                                    name = " Direct Mix\u0007 ",
+                                    description = new { text = " Nested description\u0007 " },
+                                    ownerV2 = new { data = new { username = " owner ", name = " Owner " } },
                                     images = new
                                     {
                                         items = new[]
@@ -433,7 +433,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                                             }
                                         }
                                     },
-                                    revisionId = "snapshot-direct",
+                                    revisionId = $" snapshot-direct-{new string('x', 320)} ",
                                     attributes = new[]
                                     {
                                         new { key = "core:item_count", value = "12" }

@@ -68,12 +68,26 @@ public sealed class SpotifyPathfinderPlaylistClient(
 
             var rawItems = Array(library, "items");
             var summaries = new List<ProviderPlaylistSummary>(rawItems.Count);
-            foreach (var entry in rawItems)
+            for (var index = 0; index < rawItems.Count; index++)
             {
+                var entry = rawItems[index];
                 if (!TryPlaylistEntry(entry, out var wrapper, out var playlist, out var playlistId))
                     continue;
-                if (MapSummary(playlist, playlistId) is { } summary)
-                    summaries.Add(summary);
+                try
+                {
+                    if (MapSummary(playlist, playlistId) is { } summary)
+                        summaries.Add(summary);
+                }
+                catch (Exception exception) when (exception is ArgumentException or
+                                                 InvalidOperationException or
+                                                 OverflowException)
+                {
+                    logger?.LogWarning(
+                        exception,
+                        "Spotify Pathfinder operation {Operation} skipped incompatible playlist item {ItemIndex}",
+                        LibraryOperation,
+                        offset + index);
+                }
             }
 
             var consumed = rawItems.Count;
@@ -301,26 +315,30 @@ public sealed class SpotifyPathfinderPlaylistClient(
 
     private ProviderPlaylistSummary? MapSummary(JsonElement value, string id)
     {
-        var name = Text(value, "name");
+        var name = ContractText(Text(value, "name"), 500);
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
             return null;
         var resource = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Playlist, id);
         var ownerData = TryPath(value, out var owner, "ownerV2", "data") ? owner : default;
-        var ownerId = String(ownerData, "username") ?? String(ownerData, "uri") ?? "unknown-owner";
-        var ownerName = String(ownerData, "name") ?? String(ownerData, "username");
+        var ownerId = ContractText(
+            String(ownerData, "username") ?? String(ownerData, "uri"),
+            500) ?? "unknown-owner";
+        var ownerName = ContractText(
+            String(ownerData, "name") ?? String(ownerData, "username"),
+            300);
         var trackCount = Integer(value, "totalCount") ??
                          (TryPath(value, out var content, "content")
                              ? Integer(content, "totalCount")
                              : null) ??
                          AttributeInteger(value, "core:item_count");
-        var revision = String(value, "revisionId") ??
+        var revision = ContractText(String(value, "revisionId"), 300) ??
                        $"pathfinder:{ProviderPlaylistSnapshotCollector.HashResource(resource)}:{trackCount ?? -1}";
         var summary = new ProviderPlaylistSummary(
             resource,
             name,
             new ProviderPlaylistOwner(ownerId, ownerName),
             revision,
-            Text(value, "description"),
+            ContractText(Text(value, "description"), 4000),
             new ProviderArtworkReference(resource, revision: revision),
             trackCount);
         if (ArtworkUri(value) is { } artwork)
@@ -565,6 +583,18 @@ public sealed class SpotifyPathfinderPlaylistClient(
         return value.ValueKind == JsonValueKind.Object
             ? String(value, "text")
             : null;
+    }
+
+    private static string? ContractText(string? value, int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        var normalized = new string(value.Where(character => !char.IsControl(character)).ToArray()).Trim();
+        if (normalized.Length == 0)
+            return null;
+        return normalized.Length <= maximumLength
+            ? normalized
+            : normalized[..maximumLength];
     }
 
     private static int? Integer(JsonElement root, string name)
