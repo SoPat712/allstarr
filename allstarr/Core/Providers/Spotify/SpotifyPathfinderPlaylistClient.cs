@@ -37,14 +37,13 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
             filters = new[] { "Playlists" },
             order = (string?)null,
             textFilter = query?.Trim() ?? "",
-            features = new[] { "LIKED_SONGS", "YOUR_EPISODES_V2", "PRERELEASES", "EVENTS" },
+            features = new[] { "LIKED_SONGS", "YOUR_EPISODES_V2", "PRERELEASES", "PRERELEASES_V2", "EVENTS" },
             offset,
             limit = page.Limit,
             flatten = true,
             expandedFolders = System.Array.Empty<string>(),
             folderUri = (string?)null,
-            includeFoldersWhenFlattening = false,
-            withCuration = false
+            includeFoldersWhenFlattening = true
         };
         var response = await QueryAsync(token, LibraryOperation, LibraryQueryHash, variables, cancellationToken);
         if (!response.Outcome.IsSuccess)
