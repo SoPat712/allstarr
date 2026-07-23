@@ -2927,13 +2927,17 @@ class AllstarrApp extends LitElement {
   }
 
   renderPlaylistsWorkspace() {
-    const imported = asArray(this.playlists);
+    const links = asArray(this.playlistLinks);
+    const imported = asArray(this.playlists?.playlists || this.playlists?.Playlists || this.playlists);
     return html`
-      ${this.renderLinkPlaylists()}
-      ${imported.length ? html`<section class="legacy-playlist-section">
-        <div class="section-heading"><div><span class="eyebrow">Imported configuration</span><h3>Existing playlists</h3><p>These playlists were created by the earlier injected-playlist workflow. They remain fully manageable while you move them into the unified workflow.</p></div></div>
-        ${this.renderInjectedPlaylists()}
-      </section>` : nothing}
+      ${this.renderPlaylistLinkWizard()}
+      <section class="view-stack playlist-inventory" aria-labelledby="playlist-inventory-title">
+        <div class="section-heading"><div><h3 id="playlist-inventory-title">Your playlists</h3><p>Provider links and existing injected playlists live in one workspace. Every row can be synchronized, reviewed, and managed here.</p></div><span class="chip">${links.length + imported.length} total</span></div>
+        ${links.length ? this.renderLinkPlaylists() : nothing}
+        ${imported.length ? this.renderInjectedPlaylists() : nothing}
+        ${!links.length && !imported.length ? html`<div class="panel empty"><strong>No playlists yet.</strong><span>Use the guided setup above to choose a source playlist and media-server target.</span></div>` : nothing}
+      </section>
+      ${this.renderPlaylistLinkPreview()}${this.renderPlaylistBehaviorDialog()}
     `;
   }
 
@@ -2942,14 +2946,12 @@ class AllstarrApp extends LitElement {
     return html`
       <div class="playlist-link-layout">
         <div class="view-stack">
-          ${this.renderPlaylistLinkWizard()}
-
           <div class="table-wrap"><table class="responsive-data-table"><thead><tr><th>Playlist</th><th>Source</th><th>Target</th><th>Mode</th><th>Last run</th><th>Actions</th></tr></thead><tbody>
-            ${links.length ? links.map((link) => this.renderPlaylistLinkRow(link)) : html`<tr class="empty-table-row"><td class="empty-table-cell" colspan="6"><div class="empty">No synchronized playlists yet.</div></td></tr>`}
+            ${links.map((link) => this.renderPlaylistLinkRow(link))}
           </tbody></table></div>
         </div>
       </div>
-      ${this.renderPlaylistLinkPreview()}${this.renderPlaylistBehaviorDialog()}`;
+    `;
   }
 
   renderPlaylistLinkWizard() {

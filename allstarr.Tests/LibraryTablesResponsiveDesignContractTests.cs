@@ -24,7 +24,9 @@ public sealed class LibraryTablesResponsiveDesignContractTests
         var root = FindRepositoryRoot();
         var script = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "js", "webui.js"));
 
-        Assert.Contains("No synchronized playlists yet.", script, StringComparison.Ordinal);
+        Assert.Contains("No playlists yet.", script, StringComparison.Ordinal);
+        Assert.Contains("Provider links and existing injected playlists live in one workspace.", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Imported configuration", script, StringComparison.Ordinal);
         Assert.Contains("No mappings found.", script, StringComparison.Ordinal);
         Assert.Contains("No playlist data loaded.", script, StringComparison.Ordinal);
         Assert.True(CountOccurrences(script, "class=\"empty-table-row\"") >= 3);
