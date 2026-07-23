@@ -297,7 +297,7 @@
 
 .playlist-operation-summary {
     display: grid;
-    grid-template-columns: minmax(250px, .8fr) minmax(390px, 1.2fr);
+    grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
     gap: 8px;
     min-width: 0;
 }

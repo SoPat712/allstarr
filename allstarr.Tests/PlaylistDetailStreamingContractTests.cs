@@ -15,7 +15,7 @@ public sealed class PlaylistDetailStreamingContractTests
         Assert.Contains("playlist-operation-group coverage-group", _script, StringComparison.Ordinal);
         Assert.Contains("playlist-operation-group timing-group", _script, StringComparison.Ordinal);
         Assert.Contains("playlist-operation-metrics", _script, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: minmax(250px, .8fr) minmax(390px, 1.2fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr)", _workspaceStyles, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-heading", _workspaceStyles, StringComparison.Ordinal);
     }
 
