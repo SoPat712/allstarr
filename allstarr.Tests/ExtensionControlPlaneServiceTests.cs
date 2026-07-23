@@ -120,6 +120,33 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RegistryRemovalRequiresEveryDependentPackageToBeUninstalled()
+    {
+        var registry = await _service.AddRegistryAsync(new("Fixture", "https://registry.example.test/index.json"));
+        var package = await _service.StageAsync(Package("1.0.0", "registry-removal"), registry.Id);
+
+        var blocked = await Assert.ThrowsAsync<ExtensionRegistryInUseException>(() =>
+            _service.RemoveRegistryAsync(registry.Id, registry.Revision));
+        var dependency = Assert.Single(blocked.Dependencies);
+        Assert.Equal(package.Id, dependency.PackageId);
+        Assert.Equal("Fixture", dependency.DisplayName);
+
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
+        package = await _service.ActivateAsync(package.Id, package.Revision);
+        await _service.DisableAsync(package.Id, package.Revision);
+        package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
+        package = await _service.UninstallAsync(package.Id, package.Revision);
+
+        await _service.RemoveRegistryAsync(registry.Id, registry.Revision);
+        Assert.Empty(await _service.ListRegistriesAsync());
+        Assert.Null((await _service.ListPackagesAsync()).Single(item => item.Id == package.Id).RegistryId);
+    }
+
+    [Fact]
     public async Task ActivateRejectsPackageContentsChangedAfterStaging()
     {
         var package = await _service.StageAsync(Package("3.0.0", "tamper"));

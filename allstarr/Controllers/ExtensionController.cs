@@ -87,6 +87,21 @@ public class ExtensionController : ControllerBase
         catch (Exception exception) { return ControlPlaneError(exception); }
     }
 
+    [HttpDelete("registries/{registryId:guid}")]
+    public async Task<IActionResult> RemoveRegistry(
+        Guid registryId,
+        [FromQuery] long expectedRevision,
+        CancellationToken cancellationToken)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        try
+        {
+            await _controlPlane.RemoveRegistryAsync(registryId, expectedRevision, cancellationToken);
+            return Ok(new { success = true, message = "Extension registry removed." });
+        }
+        catch (Exception exception) { return ControlPlaneError(exception); }
+    }
+
     [HttpGet("packages")]
     public async Task<IActionResult> ListPackages([FromQuery] string? extensionId, CancellationToken cancellationToken)
     {
@@ -472,6 +487,19 @@ public class ExtensionController : ControllerBase
     {
         KeyNotFoundException => NotFound(new { error = exception.Message }),
         DbUpdateConcurrencyException => Conflict(new { error = "The extension resource changed before this update." }),
+        ExtensionRegistryInUseException registryInUse => Conflict(new
+        {
+            error = registryInUse.Message,
+            code = "registry_in_use",
+            dependencies = registryInUse.Dependencies.Select(item => new
+            {
+                item.PackageId,
+                item.ExtensionId,
+                item.DisplayName,
+                item.Version,
+                state = item.State.ToString().ToLowerInvariant()
+            })
+        }),
         UnauthorizedAccessException => StatusCode(StatusCodes.Status403Forbidden, new { error = exception.Message }),
         ArgumentException or InvalidOperationException or ExtensionSdkValidationException =>
             BadRequest(new { error = exception.Message }),

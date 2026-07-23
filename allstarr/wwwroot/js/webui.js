@@ -601,6 +601,8 @@ const API = {
     requestJson("/api/admin/extensions/registries", jsonBody(payload), "Failed to add extension registry"),
   setExtensionRegistryEnabled: (registryId, enabled, expectedRevision) =>
     requestJson(`/api/admin/extensions/registries/${encodeURIComponent(registryId)}`, jsonBody({ enabled, expectedRevision }, "PATCH"), "Failed to update extension registry"),
+  removeExtensionRegistry: (registryId, expectedRevision) =>
+    requestJson(`/api/admin/extensions/registries/${encodeURIComponent(registryId)}?expectedRevision=${encodeURIComponent(expectedRevision)}`, { method: "DELETE" }, "Failed to remove extension registry"),
   extensionPackages: () => requestJson("/api/admin/extensions/packages", { cache: "no-store" }, "Failed to load extension packages"),
   extensionPermissions: (packageId) =>
     requestJson(`/api/admin/extensions/packages/${encodeURIComponent(packageId)}/permissions`, { cache: "no-store" }, "Failed to load extension permissions"),
@@ -736,6 +738,7 @@ class AllstarrApp extends LitElement {
     serviceResults: { state: true },
     extensionActions: { state: true },
     extensionRegistryError: { state: true },
+    extensionRegistryFormOpen: { state: true },
     providerConfigOpen: { state: true },
     providerAccountConfigOpen: { state: true },
     providerAccountModalOpen: { state: true },
@@ -847,6 +850,7 @@ class AllstarrApp extends LitElement {
     this.serviceResults = {};
     this.extensionActions = {};
     this.extensionRegistryError = "";
+    this.extensionRegistryFormOpen = false;
     this.providerConfigOpen = new Set();
     this.providerAccountConfigOpen = new Set();
     this.providerAccountModalOpen = false;
@@ -1894,6 +1898,7 @@ class AllstarrApp extends LitElement {
       await API.createExtensionRegistry({ name: form.get("name"), registryUrl: form.get("registryUrl"), enabled: true });
       formElement.reset();
       await this.loadExtensionControlPlane();
+      this.extensionRegistryFormOpen = false;
       this.toast("Extension registry validated and added");
     } catch (error) {
       this.extensionRegistryError = error.message;
@@ -1913,6 +1918,34 @@ class AllstarrApp extends LitElement {
       await API.setExtensionRegistryEnabled(id, enabled, item.revision ?? item.Revision ?? 0);
       await this.loadExtensionControlPlane();
       this.toast(`Extension registry ${enabled ? "enabled" : "disabled"}`);
+    } finally {
+      const nextActions = { ...this.extensionActions };
+      delete nextActions[key];
+      this.extensionActions = nextActions;
+    }
+  }
+
+  async removeExtensionRegistry(item, dependencies = []) {
+    const id = item.id || item.Id;
+    const name = item.name || item.Name || "This registry";
+    if (dependencies.length) {
+      const extensionNames = [...new Set(dependencies.map((entry) => entry.displayName || entry.DisplayName || entry.extensionId || entry.ExtensionId))];
+      const message = `${name} still supplies ${dependencies.length} installed package version${dependencies.length === 1 ? "" : "s"}: ${extensionNames.join(", ")}. Disable and uninstall them from the Installed tab, then remove the registry.`;
+      this.extensionRegistryError = message;
+      this.toast(message, "error");
+      return;
+    }
+    if (!window.confirm(`Remove ${name}? You can add its registry URL again later.`)) return;
+    const key = `registry:${id}`;
+    this.extensionRegistryError = "";
+    this.extensionActions = { ...this.extensionActions, [key]: "Removing" };
+    try {
+      await API.removeExtensionRegistry(id, item.revision ?? item.Revision ?? 0);
+      await Promise.all([this.loadExtensionControlPlane(), this.loadExtensionStore()]);
+      this.toast("Extension registry removed");
+    } catch (error) {
+      this.extensionRegistryError = error.message;
+      this.toast(error.message, "error");
     } finally {
       const nextActions = { ...this.extensionActions };
       delete nextActions[key];
@@ -5231,7 +5264,18 @@ class AllstarrApp extends LitElement {
       }) : html`<div class="empty"><strong>No extensions installed</strong><span>Install one from a connected registry.</span></div>`}</div>
     </div><section class="panel extension-activity-summary extension-activity-preview"><div class="section-heading"><div><h3>Recent extension activity</h3><p>Expand an event to inspect its package, level, timestamp, and runtime message.</p></div><button @click=${() => { this.extensionViewTab = "activity"; }}>View all activity</button></div><div class="extension-activity-feed">${asArray(this.extensionLogs).slice(0, 6).map((entry) => renderActivityEntry(entry, true))}</div></section></div>`;
     const renderAvailable = () => html`<div class="panel extension-catalog"><div class="section-heading"><div><h3>Available extensions</h3><p>Packages are verified before permission review.</p></div><label class="extension-search">${icon("search", 17)}<input aria-label="Search available extensions" placeholder="Search extensions…" .value=${this.extensionSearch} @input=${(event) => { this.extensionSearch = event.target.value; }}></label></div>${errors.map((error) => html`<div class="error-text">${error.Repository || error.repository}: ${error.Message || error.message}</div>`)}<div class="extension-store-grid">${available.filter((item) => !this.extensionSearch || `${item.displayName || item.DisplayName} ${item.description || item.Description}`.toLowerCase().includes(this.extensionSearch.toLowerCase())).map((item) => html`<article class="extension-store-card"><div class="extension-store-card-heading"><div class="provider-brand">${this.renderExtensionLogo(item, "large")}<div><strong>${item.displayName || item.DisplayName}</strong><small>v${item.version || item.Version}</small></div></div></div><p>${display(item.description || item.Description)}</p><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><button class="primary" ?disabled=${!(item.sha256 || item.Sha256)} @click=${() => this.installExtension(item)}>Install</button></article>`)}</div></div>`;
-    const renderRegistries = () => html`<div class="panel"><div class="section-heading"><div><h3>Registries</h3><p>Catalog sources that supply verified extension packages.</p></div></div><form class="config-grid extension-registry-form" @submit=${(event) => this.createExtensionRegistry(event)}><label class="config-field"><span>Name</span><input name="name" required maxlength="200" placeholder="Community catalog"></label><label class="config-field"><span>Registry JSON URL</span><input name="registryUrl" type="url" required pattern="https://.*" placeholder="https://example.org/registry.json"></label><button class="primary" ?disabled=${Boolean(this.extensionActions.registry)}>${this.extensionActions.registry || "Add registry"}</button></form>${this.extensionRegistryError ? html`<div class="error-text">${this.extensionRegistryError}</div>` : nothing}<div class="extension-registry-list">${registries.map((item) => { const enabled = item.enabled ?? item.Enabled; return html`<div><span>${icon("link", 18)}</span><p><strong>${item.name || item.Name}</strong><small>${item.registryUrl || item.RegistryUrl}</small></p><span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span><button @click=${() => this.setExtensionRegistryEnabled(item, !enabled)}>${enabled ? "Disable" : "Enable"}</button></div>`; })}</div></div>`;
+    const renderRegistries = () => html`<div class="panel extension-registry-panel">
+      <div class="section-heading"><div><h3>Registries</h3><p>Catalog sources that supply verified extension packages.</p></div><button class="primary compact icon-label" @click=${() => { this.extensionRegistryFormOpen = !this.extensionRegistryFormOpen; this.extensionRegistryError = ""; }}>${icon(this.extensionRegistryFormOpen ? "close" : "plus", 16)}<span>${this.extensionRegistryFormOpen ? "Cancel" : "Add registry"}</span></button></div>
+      ${this.extensionRegistryFormOpen ? html`<form class="extension-registry-editor" @submit=${(event) => this.createExtensionRegistry(event)}><label class="config-field"><span>Name</span><input name="name" required maxlength="200" placeholder="Community catalog" autofocus></label><label class="config-field"><span>Registry JSON URL</span><input name="registryUrl" type="url" required pattern="https://.*" placeholder="https://example.org/registry.json"></label><div class="actions"><button type="button" @click=${() => { this.extensionRegistryFormOpen = false; this.extensionRegistryError = ""; }}>Cancel</button><button class="primary" ?disabled=${Boolean(this.extensionActions.registry)}>${this.extensionActions.registry || "Validate and add"}</button></div></form>` : nothing}
+      ${this.extensionRegistryError ? html`<div class="callout warning extension-registry-message" role="alert">${this.extensionRegistryError}</div>` : nothing}
+      <div class="extension-registry-list">${registries.length ? registries.map((item) => {
+        const enabled = item.enabled ?? item.Enabled;
+        const id = String(item.id || item.Id);
+        const dependencies = packageHistory.filter((entry) => String(entry.registryId || entry.RegistryId || "") === id && String(entry.state || entry.State).toLowerCase() !== "uninstalled");
+        const action = this.extensionActions[`registry:${id}`];
+        return html`<article class="extension-registry-item"><span class="extension-registry-icon">${icon("link", 18)}</span><div class="extension-registry-copy"><strong>${item.name || item.Name}</strong><small>${item.registryUrl || item.RegistryUrl}</small>${dependencies.length ? html`<span class="extension-registry-dependencies">${dependencies.length} installed package version${dependencies.length === 1 ? "" : "s"} must be removed first</span>` : html`<span class="extension-registry-clear">Ready to remove</span>`}</div><span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span><div class="extension-registry-actions"><button ?disabled=${Boolean(action)} @click=${() => this.setExtensionRegistryEnabled(item, !enabled)}>${action || (enabled ? "Disable" : "Enable")}</button><button class="danger-text" ?disabled=${Boolean(action)} @click=${() => this.removeExtensionRegistry(item, dependencies)}>Remove</button></div></article>`;
+      }) : html`<div class="empty compact">No extension registries connected.</div>`}</div>
+    </div>`;
     const renderActivity = () => html`<div class="panel extension-activity-workspace"><div class="section-heading"><div><h3>Extension activity</h3><p>Install, update, authorization, and runtime events. Expand a record for its complete context.</p></div></div><div class="extension-activity-feed">${asArray(this.extensionLogs).length ? asArray(this.extensionLogs).map((entry) => renderActivityEntry(entry)) : html`<div class="empty">No extension activity recorded.</div>`}</div></div>`;
     return html`<section class="view-stack extensions-view"><div class="view-header extensions-page-header"><div class="extensions-page-title"><span class="workspace-icon">${icon("extensions", 28)}</span><div><h2>Extensions</h2><p>Install, enable, update, and manage optional provider modules.</p></div></div><button class="primary" @click=${() => { this.extensionInstallOpen = true; }}>${icon("plus", 17)} Install extension</button></div><div class="workspace-tabs" role="tablist" aria-label="Extension views">${[["installed", "Installed", installedPackages.length], ["available", "Available", available.length], ["registries", "Registries", registries.length], ["activity", "Activity", ""]].map(([id, label, count]) => html`<button role="tab" aria-selected=${this.extensionViewTab === id} tabindex=${this.extensionViewTab === id ? "0" : "-1"} class=${this.extensionViewTab === id ? "active" : ""} @keydown=${(event) => this.moveSegmentedTabFocus(event)} @click=${() => { this.extensionViewTab = id; }}>${label}${count !== "" ? html`<span>${count}</span>` : nothing}</button>`)}</div>${this.extensionViewTab === "installed" ? renderInstalled() : this.extensionViewTab === "available" ? renderAvailable() : this.extensionViewTab === "registries" ? renderRegistries() : renderActivity()}${this.renderExtensionManager(managedPackage, (entry) => this.extensionPackageState(entry))}${this.renderExtensionPermissionModal(permissionPackage)}${this.renderExtensionInstallModal(storeItems, installedByExtension)}</section>`;
   }

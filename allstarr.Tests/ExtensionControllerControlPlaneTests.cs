@@ -76,6 +76,20 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RegistryRemovalRequiresAdministratorAndHonorsRevision()
+    {
+        var registry = await _service.AddRegistryAsync(new("Disposable", "https://extensions.example.test/disposable.json"));
+        var anonymous = Controller();
+        Assert.IsType<UnauthorizedObjectResult>(await anonymous.RemoveRegistry(registry.Id, registry.Revision, default));
+
+        var administrator = Controller(Session(administrator: true));
+        var removed = Assert.IsType<OkObjectResult>(await administrator.RemoveRegistry(
+            registry.Id, registry.Revision, default));
+        Assert.Contains("removed", System.Text.Json.JsonSerializer.Serialize(removed.Value), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(await _service.ListRegistriesAsync());
+    }
+
+    [Fact]
     public void Controller_HasSingleDependencyInjectionConstructor()
     {
         Assert.Single(typeof(ExtensionController).GetConstructors());

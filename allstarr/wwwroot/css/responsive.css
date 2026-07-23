@@ -779,4 +779,22 @@
     .wizard-actions .action-spacer {
         display: none;
     }
+
+    .extension-registry-editor {
+        grid-template-columns: 1fr;
+    }
+
+    .extension-registry-item {
+        grid-template-columns: 38px minmax(0, 1fr);
+    }
+
+    .extension-registry-item > .status-chip,
+    .extension-registry-actions {
+        grid-column: 2;
+        justify-self: start;
+    }
+
+    .extension-registry-actions {
+        flex-wrap: wrap;
+    }
 }

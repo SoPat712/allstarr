@@ -9,6 +9,30 @@ namespace allstarr.Core.Extensions;
 
 public sealed record ExtensionRegistryInput(string Name, string RegistryUrl, bool Enabled = true);
 public sealed record ExtensionPermissionDecisionInput(string Kind, string Value, bool Approved);
+public sealed record ExtensionRegistryDependency(
+    Guid PackageId,
+    string ExtensionId,
+    string DisplayName,
+    string Version,
+    ExtensionPackageState State);
+
+public sealed class ExtensionRegistryInUseException(
+    string registryName,
+    IReadOnlyList<ExtensionRegistryDependency> dependencies)
+    : InvalidOperationException(BuildMessage(registryName, dependencies))
+{
+    public IReadOnlyList<ExtensionRegistryDependency> Dependencies { get; } = dependencies;
+
+    private static string BuildMessage(string registryName, IReadOnlyList<ExtensionRegistryDependency> dependencies)
+    {
+        var names = dependencies
+            .Select(item => item.DisplayName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(item => item, StringComparer.OrdinalIgnoreCase);
+        return $"{registryName} still supplies installed extension packages: {string.Join(", ", names)}. " +
+               "Disable and uninstall every listed package before removing this registry.";
+    }
+}
 
 public sealed partial class ExtensionControlPlaneService
 {
@@ -80,6 +104,42 @@ public sealed partial class ExtensionControlPlaneService
         registry.Revision++;
         await db.SaveChangesAsync(cancellationToken);
         return registry;
+    }
+
+    public async Task RemoveRegistryAsync(
+        Guid registryId,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var registry = await db.ExtensionRegistries.SingleOrDefaultAsync(item => item.Id == registryId, cancellationToken)
+                       ?? throw new KeyNotFoundException("Extension registry not found.");
+        if (registry.Revision != expectedRevision)
+            throw new DbUpdateConcurrencyException("The extension registry changed before removal.");
+
+        var dependencies = await db.ExtensionPackages.AsNoTracking()
+            .Where(item => item.RegistryId == registryId && item.State != ExtensionPackageState.Uninstalled)
+            .OrderBy(item => item.DisplayName)
+            .ThenByDescending(item => item.StagedAt)
+            .Select(item => new ExtensionRegistryDependency(
+                item.Id, item.ExtensionId, item.DisplayName, item.Version, item.State))
+            .ToListAsync(cancellationToken);
+        if (dependencies.Count > 0)
+            throw new ExtensionRegistryInUseException(registry.Name, dependencies);
+
+        var historicalPackages = await db.ExtensionPackages
+            .Where(item => item.RegistryId == registryId)
+            .ToListAsync(cancellationToken);
+        foreach (var package in historicalPackages)
+        {
+            package.RegistryId = null;
+            package.Revision++;
+        }
+
+        db.ExtensionRegistries.Remove(registry);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<ExtensionPackageRecord>> ListPackagesAsync(
