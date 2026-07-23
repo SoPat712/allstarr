@@ -120,7 +120,7 @@ Items remain unchecked until the combined local and browser verification pass.
   errors and classify external authentication, rate limiting, and outages.
 - [ ] Add bounded retry/backoff and correct severity for the repeating missing-track-file
   poll instead of logging the same warning every few seconds.
-- [ ] Give extension runtime failures safe structured error codes and provider context;
+- [x] Give extension runtime failures safe structured error codes and provider context;
   opaque redacted error messages are not actionable. Investigate the observed Amazon
   search `403` and Spotify client-token `400` without exposing credentials.
 - [ ] Do not initialize or report disabled/missing scrobbling credentials during unrelated
