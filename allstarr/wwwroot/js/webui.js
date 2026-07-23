@@ -4204,14 +4204,14 @@ class AllstarrApp extends LitElement {
   renderDeepStreamDiagnostic(accountId, providerId) {
     const result = this.deepStreamDiagnosticResult;
     return html`<form class="deep-stream-diagnostic" @submit=${(event) => this.runDeepStreamDiagnostic(event, accountId, providerId)}>
-      <div class="deep-stream-copy"><strong>Real-track click-to-stream test</strong><p>Reads at most 256 KiB and keeps no media. Use a real track ID from this provider.</p></div>
-      <label><span>Provider track ID</span><input name="trackId" required autocomplete="off" placeholder="Track ID"></label>
+      <div class="deep-stream-copy"><strong>Cold click-to-stream test</strong><p>Reads at most 256 KiB, requests an uncached response, and keeps no media. Allstarr rotates through up to 100 known tracks for this provider.</p></div>
+      <label><span>Provider track ID (optional)</span><input name="trackId" autocomplete="off" placeholder="Choose automatically"></label>
       <label><span>Track label (optional)</span><input name="trackLabel" autocomplete="off" placeholder="Artist - Title"></label>
       <label><span>Quality</span><select name="quality"><option value="Any">Automatic</option><option value="Lossy">Lossy</option><option value="Lossless">Lossless</option><option value="HighResolution">High resolution</option></select></label>
       <button class="primary" ?disabled=${this.deepStreamDiagnosticBusy}>${this.deepStreamDiagnosticBusy ? "Measuring..." : "Run CTS test"}</button>
       ${result ? html`<div class="deep-stream-result" role="status">
         ${this.renderConnectivityMeter({ bars: result.bars, latencyMs: result.clickToStreamMilliseconds, metric: "cts", testedAt: result.measuredAt })}
-        <dl><div><dt>Resolve</dt><dd>${result.resolveMilliseconds} ms</dd></div><div><dt>First byte</dt><dd>${result.firstByteMilliseconds} ms</dd></div><div><dt>Throughput</dt><dd>${result.throughputKbps} kbps</dd></div><div><dt>Sample</dt><dd>${formatBytes(result.sampleBytes)}</dd></div><div><dt>Cache</dt><dd>${titleCase(result.cacheState || "unknown")}</dd></div></dl>
+        <dl><div><dt>Track</dt><dd>${result.trackLabel}</dd></div><div><dt>Selection</dt><dd>${result.selectionMode === "rotating-corpus" ? `Rotating corpus (${result.corpusSize} tracks)` : "Manual track"}</dd></div><div><dt>Resolve</dt><dd>${result.resolveMilliseconds} ms</dd></div><div><dt>First byte</dt><dd>${result.firstByteMilliseconds} ms</dd></div><div><dt>Throughput</dt><dd>${result.throughputKbps} kbps</dd></div><div><dt>Sample</dt><dd>${formatBytes(result.sampleBytes)}</dd></div><div><dt>Cache</dt><dd>${titleCase(result.cacheState || "unknown")}</dd></div></dl>
       </div>` : nothing}
     </form>`;
   }

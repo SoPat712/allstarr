@@ -18,7 +18,8 @@ namespace allstarr.Controllers;
 public sealed class ProviderDiagnosticsController(
     IProviderRegistry providers,
     IProviderRouteAccountResolver accounts,
-    IDbContextFactory<AllstarrDbContext> contextFactory) : ControllerBase
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    ProviderCtsTrackSelector trackSelector) : ControllerBase
 {
     private const int SampleLimitBytes = 256 * 1024;
     private static readonly HttpClient SampleClient = CreateSampleClient();
@@ -32,8 +33,8 @@ public sealed class ProviderDiagnosticsController(
         if (!TryGetAdministrator(out var session, out var authError)) return authError!;
         if (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue)
             return Conflict(new { error = "The administrator session is not linked to an Allstarr user." });
-        if (request.ProviderAccountId == Guid.Empty || string.IsNullOrWhiteSpace(request.TrackId))
-            return BadRequest(new { error = "A provider account and real provider track ID are required." });
+        if (request.ProviderAccountId == Guid.Empty)
+            return BadRequest(new { error = "A provider account is required." });
 
         string providerId;
         try { providerId = ProviderContractValidation.ProviderId(request.ProviderId, nameof(request.ProviderId)); }
@@ -62,6 +63,19 @@ public sealed class ProviderDiagnosticsController(
             .FirstOrDefaultAsync(cancellationToken);
         if (identity == null)
             return Conflict(new { error = "No verified backend identity is available for this administrator." });
+
+        var automaticTrack = string.IsNullOrWhiteSpace(request.TrackId)
+            ? await trackSelector.SelectAsync(providerId, request.ProviderAccountId, cancellationToken)
+            : null;
+        if (string.IsNullOrWhiteSpace(request.TrackId) && automaticTrack == null)
+            return Conflict(new
+            {
+                error = "No known provider tracks are available for automatic CTS rotation. Enter a provider track ID once or refresh playlist metadata first."
+            });
+        var trackId = string.IsNullOrWhiteSpace(request.TrackId) ? automaticTrack!.TrackId : request.TrackId.Trim();
+        var trackLabel = string.IsNullOrWhiteSpace(request.TrackLabel)
+            ? automaticTrack?.Label ?? "Selected diagnostic track"
+            : request.TrackLabel.Trim();
 
         var actor = new ProviderActorContext(
             session.TenantId.Value,
@@ -108,7 +122,7 @@ public sealed class ProviderDiagnosticsController(
             correlationId,
             DateTimeOffset.UtcNow.AddSeconds(30),
             deadline.Token);
-        var track = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, request.TrackId.Trim());
+        var track = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, trackId);
         var total = Stopwatch.StartNew();
 
         try
@@ -156,6 +170,13 @@ public sealed class ProviderDiagnosticsController(
 
             using var sampleRequest = new HttpRequestMessage(HttpMethod.Get, safeUri);
             sampleRequest.Headers.Range = new RangeHeaderValue(0, SampleLimitBytes - 1);
+            sampleRequest.Headers.CacheControl = new CacheControlHeaderValue
+            {
+                NoCache = true,
+                NoStore = true,
+                MaxAge = TimeSpan.Zero
+            };
+            sampleRequest.Headers.Pragma.ParseAdd("no-cache");
             using var response = await SampleClient.SendAsync(
                 sampleRequest, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             var headersMilliseconds = total.Elapsed.TotalMilliseconds;
@@ -204,7 +225,9 @@ public sealed class ProviderDiagnosticsController(
                 succeeded = true,
                 providerId,
                 providerAccountId = request.ProviderAccountId,
-                trackLabel = string.IsNullOrWhiteSpace(request.TrackLabel) ? "Selected diagnostic track" : request.TrackLabel.Trim(),
+                trackLabel,
+                selectionMode = automaticTrack == null ? "manual" : "rotating-corpus",
+                corpusSize = automaticTrack?.CorpusSize,
                 requestedQuality = request.Quality.ToString().ToLowerInvariant(),
                 resolveMilliseconds = Math.Round(resolveMilliseconds, 1),
                 firstByteMilliseconds = Math.Round(firstByteMilliseconds.Value, 1),
@@ -282,7 +305,7 @@ public sealed class DeepStreamDiagnosticRequest
 {
     public string ProviderId { get; set; } = string.Empty;
     public Guid ProviderAccountId { get; set; }
-    public string TrackId { get; set; } = string.Empty;
+    public string? TrackId { get; set; }
     public string? TrackLabel { get; set; }
     public ProviderAudioQuality Quality { get; set; } = ProviderAudioQuality.Any;
 }
