@@ -47,14 +47,18 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SpotifyPlaylistCapabilityAdapter(
         IHttpClientFactory clients,
-        IProviderAccountSecretAccessor secrets)
-        : this(clients.CreateClient(HttpClientName), secrets) { }
+        IProviderAccountSecretAccessor secrets,
+        ILogger<SpotifyPathfinderPlaylistClient> logger)
+        : this(clients.CreateClient(HttpClientName), secrets, logger) { }
 
-    public SpotifyPlaylistCapabilityAdapter(HttpClient http, IProviderAccountSecretAccessor secrets)
+    public SpotifyPlaylistCapabilityAdapter(
+        HttpClient http,
+        IProviderAccountSecretAccessor secrets,
+        ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
     {
         _http = http;
         _secrets = secrets;
-        _pathfinder = new SpotifyPathfinderPlaylistClient(http);
+        _pathfinder = new SpotifyPathfinderPlaylistClient(http, logger);
     }
 
     public string ProviderId => StableProviderId;

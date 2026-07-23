@@ -12,7 +12,9 @@ namespace allstarr.Core.Providers.Spotify;
 /// Pathfinder queries. Authentication is deliberately supplied by the caller so this
 /// transport can be shared by provider-core and compatibility callers.
 /// </summary>
-public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
+public sealed class SpotifyPathfinderPlaylistClient(
+    HttpClient http,
+    ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
 {
     internal const string LibraryOperation = "libraryV3";
     internal const string LibraryQueryHash = "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455";
@@ -52,7 +54,7 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
         try
         {
             using var document = JsonDocument.Parse(response.Body!);
-            if (GraphQlFailure(document.RootElement) is { } failure)
+            if (GraphQlFailure(document.RootElement, LibraryOperation) is { } failure)
                 return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(failure);
             if (!TryPath(document.RootElement, out var library, "data", "me", "libraryV3"))
                 return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
@@ -114,7 +116,7 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
         try
         {
             using var document = JsonDocument.Parse(response.Body!);
-            if (GraphQlFailure(document.RootElement) is { } failure)
+            if (GraphQlFailure(document.RootElement, PlaylistOperation) is { } failure)
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(failure);
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2"))
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
@@ -185,7 +187,7 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
         try
         {
             using var document = JsonDocument.Parse(response.Body!);
-            if (GraphQlFailure(document.RootElement) is { } failure)
+            if (GraphQlFailure(document.RootElement, PlaylistOperation) is { } failure)
                 return ProviderOutcome<Uri>.Failure(failure);
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2") ||
                 ArtworkUri(playlist) is not { } resolvedArtwork)
@@ -252,11 +254,21 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
         _ => new(ProviderErrorKind.PermanentFailure)
     };
 
-    private static ProviderError? GraphQlFailure(JsonElement root)
+    private ProviderError? GraphQlFailure(JsonElement root, string operation)
     {
         var errors = Array(root, "errors");
         if (errors.Count == 0)
             return null;
+        var diagnostics = errors
+            .Select(error => String(error, "message"))
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Select(message => message!.Length > 240 ? message[..240] : message)
+            .Take(3)
+            .ToArray();
+        logger?.LogWarning(
+            "Spotify Pathfinder operation {Operation} returned GraphQL errors: {Diagnostics}",
+            operation,
+            diagnostics.Length == 0 ? "No message supplied" : string.Join(" | ", diagnostics));
         var staleHash = errors.Any(error =>
             String(error, "message")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true ||
             (TryPath(error, out var extensions, "extensions") &&
