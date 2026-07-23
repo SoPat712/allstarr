@@ -30,7 +30,14 @@ public sealed record PerProviderMatchResult(
     string? MatchType,
     string? ProviderUsed,
     double Score,
-    IReadOnlyList<PerProviderAttempt> Walked);
+    IReadOnlyList<PerProviderAttempt> Walked,
+    IReadOnlyList<PerProviderAcceptedMatch> AcceptedMatches);
+
+public sealed record PerProviderAcceptedMatch(
+    Song Song,
+    string MatchType,
+    string Provider,
+    double Score);
 
 /// <summary>
 /// One step in a per-provider walk. The outcome describes why the matcher
@@ -74,10 +81,11 @@ public static class PerProviderTrackMatcher
     public const string OutcomeSkipped = "skip:isrc-disabled";
 
     public static PerProviderMatchResult NoMatch(IReadOnlyList<PerProviderAttempt> walked) =>
-        new(null, null, null, 0.0, walked);
+        new(null, null, null, 0.0, walked, Array.Empty<PerProviderAcceptedMatch>());
 
     public static PerProviderMatchResult FromLocal(Song song, double score) =>
-        new(song, MatchTypeLocal, "local", score, Array.Empty<PerProviderAttempt>());
+        new(song, MatchTypeLocal, "local", score, Array.Empty<PerProviderAttempt>(),
+            Array.Empty<PerProviderAcceptedMatch>());
 
     public static PerProviderMatchResult FromProvider(
         Song song,
@@ -85,7 +93,37 @@ public static class PerProviderTrackMatcher
         string provider,
         double score,
         IReadOnlyList<PerProviderAttempt> walked) =>
-        new(song, matchType, provider, score, walked);
+        new(song, matchType, provider, score, walked,
+            new[] { new PerProviderAcceptedMatch(song, matchType, provider, score) });
+
+    public static PerProviderMatchResult FromCollectedProviders(
+        Song? localMatch,
+        double? localMatchScore,
+        IReadOnlyList<PerProviderAcceptedMatch> acceptedMatches,
+        IReadOnlyList<PerProviderAttempt> walked)
+    {
+        if (localMatch != null)
+        {
+            return new PerProviderMatchResult(
+                localMatch,
+                MatchTypeLocal,
+                "local",
+                localMatchScore ?? 100,
+                walked,
+                acceptedMatches);
+        }
+
+        var primary = acceptedMatches.FirstOrDefault();
+        return primary == null
+            ? NoMatch(walked)
+            : new PerProviderMatchResult(
+                primary.Song,
+                primary.MatchType,
+                primary.Provider,
+                primary.Score,
+                walked,
+                acceptedMatches);
+    }
 }
 
 /// <summary>
@@ -211,11 +249,14 @@ public sealed class PerProviderTrackWalker
         IReadOnlyList<string> playbackProviders,
         Song? localMatch,
         double? localMatchScore,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool collectAllProviderMatches = false)
     {
         var walked = new List<PerProviderAttempt>();
+        var acceptedMatches = new List<PerProviderAcceptedMatch>();
+        var acceptedProviders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        if (localMatch != null)
+        if (localMatch != null && !collectAllProviderMatches)
         {
             return PerProviderTrackMatcher.FromLocal(localMatch, localMatchScore ?? 100);
         }
@@ -262,12 +303,22 @@ public sealed class PerProviderTrackWalker
 
                 if (isrcStep.AcceptedSong != null)
                 {
-                    return PerProviderTrackMatcher.FromProvider(
+                    acceptedProviders.Add(providerId);
+                    acceptedMatches.Add(new PerProviderAcceptedMatch(
                         isrcStep.AcceptedSong,
                         PerProviderTrackMatcher.MatchTypeIsrc,
                         providerId,
-                        100,
-                        walked);
+                        100));
+                    if (!collectAllProviderMatches)
+                    {
+                        return PerProviderTrackMatcher.FromProvider(
+                            isrcStep.AcceptedSong,
+                            PerProviderTrackMatcher.MatchTypeIsrc,
+                            providerId,
+                            100,
+                            walked);
+                    }
+                    continue;
                 }
             }
 
@@ -282,12 +333,22 @@ public sealed class PerProviderTrackWalker
 
             if (stepResult.AcceptedSong != null)
             {
-                return PerProviderTrackMatcher.FromProvider(
+                var matchType = stepResult.MatchType ?? PerProviderTrackMatcher.MatchTypeProviderFuzzy;
+                acceptedProviders.Add(providerId);
+                acceptedMatches.Add(new PerProviderAcceptedMatch(
                     stepResult.AcceptedSong,
-                    stepResult.MatchType ?? PerProviderTrackMatcher.MatchTypeProviderFuzzy,
+                    matchType,
                     providerId,
-                    stepResult.Score,
-                    walked);
+                    stepResult.Score));
+                if (!collectAllProviderMatches)
+                {
+                    return PerProviderTrackMatcher.FromProvider(
+                        stepResult.AcceptedSong,
+                        matchType,
+                        providerId,
+                        stepResult.Score,
+                        walked);
+                }
             }
         }
 
@@ -299,6 +360,7 @@ public sealed class PerProviderTrackWalker
             titleOnlyRetry++;
 
             cancellationToken.ThrowIfCancellationRequested();
+            if (acceptedProviders.Contains(providerId)) continue;
             var normalizedProvider = providerId.Trim().ToLowerInvariant();
             if (normalizedProvider == "jellyfin-local" || normalizedProvider == "subsonic-local") continue;
 
@@ -318,16 +380,29 @@ public sealed class PerProviderTrackWalker
             if (stepResult.AcceptedSong != null)
             {
                 walked.Add(stepResult.Attempt);
-                return PerProviderTrackMatcher.FromProvider(
+                acceptedProviders.Add(providerId);
+                acceptedMatches.Add(new PerProviderAcceptedMatch(
                     stepResult.AcceptedSong,
                     PerProviderTrackMatcher.MatchTypeTitleOnly,
                     providerId,
-                    stepResult.Score,
-                    walked);
+                    stepResult.Score));
+                if (!collectAllProviderMatches)
+                {
+                    return PerProviderTrackMatcher.FromProvider(
+                        stepResult.AcceptedSong,
+                        PerProviderTrackMatcher.MatchTypeTitleOnly,
+                        providerId,
+                        stepResult.Score,
+                        walked);
+                }
             }
         }
 
-        return PerProviderTrackMatcher.NoMatch(walked);
+        return PerProviderTrackMatcher.FromCollectedProviders(
+            localMatch,
+            localMatchScore,
+            acceptedMatches,
+            walked);
     }
 
     private async Task<PerProviderStepResult> StepProviderAsync(

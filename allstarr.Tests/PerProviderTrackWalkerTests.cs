@@ -163,6 +163,60 @@ public sealed class PerProviderTrackWalkerTests
         Assert.Equal(PerProviderTrackMatcher.OutcomeNoService, result.Walked[0].Outcome);
     }
 
+    [Fact]
+    public async Task CollectAllProviderMatches_RetainsLocalAndAcceptsOneRoutePerProvider()
+    {
+        var local = NewSong("local-1", "Never Gonna Give You Up", "Rick Astley", isLocal: true);
+        var deezer = new DeezerFake(new[]
+        {
+            NewSong("ext-deezer-1", "Never Gonna Give You Up", "Rick Astley")
+        });
+        var qobuz = new QobuzFake(new[]
+        {
+            NewSong("ext-qobuz-1", "Never Gonna Give You Up", "Rick Astley")
+        });
+        var walker = NewWalker(deezer, qobuz);
+
+        var result = await walker.WalkAsync(
+            NewSource("Never Gonna Give You Up", "Rick Astley"),
+            new[] { "deezer", "qobuz" },
+            localMatch: local,
+            localMatchScore: 98,
+            default,
+            collectAllProviderMatches: true);
+
+        Assert.Equal(local, result.MatchedSong);
+        Assert.Equal("local", result.ProviderUsed);
+        Assert.Equal(2, result.AcceptedMatches.Count);
+        Assert.Equal(new[] { "deezer", "qobuz" }, result.AcceptedMatches.Select(match => match.Provider));
+        Assert.Equal(2, result.Walked.Count);
+    }
+
+    [Fact]
+    public async Task CollectAllProviderMatches_IsolatesProviderFailureAndKeepsLaterRoute()
+    {
+        var amazon = new AmazonFake();
+        var deezer = new DeezerFake(new[]
+        {
+            NewSong("ext-deezer-1", "Never Gonna Give You Up", "Rick Astley")
+        });
+        var walker = NewWalker(amazon, deezer);
+
+        var result = await walker.WalkAsync(
+            NewSource("Never Gonna Give You Up", "Rick Astley"),
+            new[] { "amazon", "deezer" },
+            localMatch: null,
+            localMatchScore: null,
+            default,
+            collectAllProviderMatches: true);
+
+        Assert.Single(result.AcceptedMatches);
+        Assert.Equal("deezer", result.AcceptedMatches[0].Provider);
+        Assert.Contains(result.Walked, attempt =>
+            attempt.Provider == "amazon" &&
+            attempt.Outcome == PerProviderTrackMatcher.OutcomeError);
+    }
+
     private static PerProviderTrackWalker NewWalker(params IConcreteMetadataService[] services) =>
         new(services, new PerProviderAcceptThresholds(), NullLogger.Instance);
 
@@ -279,5 +333,11 @@ public sealed class PerProviderTrackWalkerTests
             Task.FromResult(_isrcResult);
 
         protected override IReadOnlyList<Song> SelectResults(string query) => _fuzzyResults;
+    }
+
+    private sealed class AmazonFake : SearchFakeBase
+    {
+        protected override IReadOnlyList<Song> SelectResults(string query) =>
+            throw new InvalidOperationException("Provider unavailable");
     }
 }

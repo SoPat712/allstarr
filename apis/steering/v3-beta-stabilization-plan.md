@@ -19,6 +19,13 @@ Items remain unchecked until the combined local and browser verification pass.
 - [x] Run the combined build, targeted tests, and desktop/tablet/mobile browser checks.
 - [x] Push and deploy the verified batch, then verify container health and server logs.
 - [ ] Run a full rematch and investigate the residual unmatched set.
+- [ ] Fix playlist coverage inflation by counting unique source positions rather than
+  provider-route records, so list rows and detail dialogs cannot report values such as
+  `85/47` while the canonical playable result is `44/47`.
+- [ ] Make the playlist-detail Coverage and Synchronization summaries shorter, wider,
+  and more horizontally scannable while preserving responsive wrapping and exact values.
+- [ ] Make force rematch enrich each canonical recording with all valid local and
+  provider backup routes while preserving configured primary-route priority.
 - [ ] Fix or correctly classify the actionable post-deploy log signals.
 - [x] Check CI and formatting together at the end and repair any remaining failures.
 
@@ -67,6 +74,12 @@ Items remain unchecked until the combined local and browser verification pass.
   routing, cache restoration, mappings, and event generation behind one shared
   classification contract. Remove duplicate or legacy paths only after parity tests
   prove the replacement preserves current valid decisions.
+- [ ] Move playlist matching ownership out of `SpotifyTrackMatchingService` into a
+  provider-neutral core orchestration service. Keep Spotify, Apple MusicKit, and
+  extension implementations as source adapters; centralize local-first matching,
+  all-provider route enrichment, durable decisions, scheduling, cache invalidation,
+  progress events, and cancellation in the core. Retire Spotify-specific cache keys
+  and jobs only after parity and migration tests pass.
 - [ ] Inventory duplicate background tasks and job handlers across controllers, hosted
   services, queues, and extension bridges. Give each operation one owner, one
   idempotency model, one progress/event stream, and one retry policy instead of
@@ -84,6 +97,9 @@ Items remain unchecked until the combined local and browser verification pass.
   gray. Preserve the status label and expose exact counts/percentages in text and
   hover/focus details.
 - [ ] Search the local library first, then every eligible provider in configured order.
+- [ ] On force rematch, retain the local/primary route and continue through every eligible
+  provider once, persisting deduplicated playable backup routes without inflating
+  playlist matched/playable counts. Keep normal non-force matching bounded.
 - [ ] Use ISRC plus normalized title, artist, album, duration, and conservative alternate
   queries; record rejection and fallthrough reasons.
 - [ ] Import valid v2 mappings as canonical mappings. Convert unavailable legacy routes
@@ -139,6 +155,9 @@ Items remain unchecked until the combined local and browser verification pass.
 - [x] Derive the playable summary icon/accent from the playable ratio using the shared semantic scale (red through amber to green), with accessible text/contrast and no color-only status communication.
 - [x] Apply the target-icon and playable-ratio treatment consistently at desktop, compact-sidebar, tablet, and mobile modal widths without changing the authoritative coverage calculation.
 - [x] Redesign the synchronization summary as a compact, scannable operation strip with stronger grouping for local, external, unmatched, source-refreshed, last-synced, and next-rematch values; preserve exact values and accessible labels without presenting six equal-weight boxes.
+- [ ] Rework Coverage and Synchronization into a low-height horizontal summary at wide
+  modal widths; prevent narrow cards, excessive vertical whitespace, and truncated
+  next-rematch values, then stack cleanly at tablet and phone widths.
 - [x] Replace the basic playlist-detail track cards/table with one responsive streaming-style track component: artwork, title, explicit badge when applicable, artist, album, duration, source and playable-provider identity, and only the metadata available from the canonical recording/provider route.
 - [ ] Include useful secondary track data on demand, including ISRC, source/provider track IDs, target item ID, codec, bitrate, bit depth/sample rate, match confidence, and route provenance without overcrowding the default row.
 - [x] Center the overflow action within a fixed touch target, use a vertical-ellipsis icon, prevent row-click handling from swallowing the action, and open the same accessible mapping/action menu on pointer and keyboard input.

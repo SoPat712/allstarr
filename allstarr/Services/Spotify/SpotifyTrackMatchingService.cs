@@ -320,7 +320,10 @@ public class SpotifyTrackMatchingService : BackgroundService
     /// Matches tracks for a single playlist WITHOUT clearing cache or refreshing from Spotify.
     /// Used for lightweight re-matching when only local library has changed.
     /// </summary>
-    private async Task MatchSinglePlaylistAsync(string playlistName, CancellationToken cancellationToken)
+    private async Task MatchSinglePlaylistAsync(
+        string playlistName,
+        CancellationToken cancellationToken,
+        bool enrichProviderBackups = false)
     {
         var playlist = _spotifySettings.Playlists
             .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
@@ -347,7 +350,11 @@ public class SpotifyTrackMatchingService : BackgroundService
             {
                 // Use new direct API mode with ISRC support
                 await MatchPlaylistTracksWithIsrcAsync(
-                    playlist.Name, playlistFetcher, metadataService, cancellationToken);
+                    playlist.Name,
+                    playlistFetcher,
+                    metadataService,
+                    cancellationToken,
+                    enrichProviderBackups);
             }
             else
             {
@@ -473,7 +480,10 @@ public class SpotifyTrackMatchingService : BackgroundService
         // Intentionally no cooldown here: this path should react immediately to
         // local library changes and manual mapping updates without waiting for
         // Spotify API cooldown windows.
-        await MatchSinglePlaylistAsync(playlistName, CancellationToken.None);
+        await MatchSinglePlaylistAsync(
+            playlistName,
+            CancellationToken.None,
+            enrichProviderBackups: true);
     }
 
     private async Task RebuildAllPlaylistsAsync(CancellationToken cancellationToken)
@@ -542,7 +552,8 @@ public class SpotifyTrackMatchingService : BackgroundService
         string playlistName,
         SpotifyPlaylistFetcher playlistFetcher,
         IMusicMetadataService metadataService,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool enrichProviderBackups = false)
     {
         var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
 
@@ -632,7 +643,7 @@ public class SpotifyTrackMatchingService : BackgroundService
             .ToList();
         var existingMatched = await _cache.GetAsync<List<MatchedTrack>>(matchedTracksKey);
 
-        if (tracksToMatch.Count == 0)
+        if (tracksToMatch.Count == 0 && !enrichProviderBackups)
         {
             _logger.LogWarning("All {Count} tracks for {Playlist} already exist in Jellyfin, skipping matching",
                 spotifyTracks.Count, playlistName);
@@ -650,7 +661,7 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         // CRITICAL: Skip matching if cache exists and is valid
         // Only re-match if cache is missing OR if we detect manual mappings that need to be applied
-        if (existingMatched != null && existingMatched.Count > 0)
+        if (!enrichProviderBackups && existingMatched != null && existingMatched.Count > 0)
         {
             var trackIdsToMatch = tracksToMatch
                 .Select(track => track.SpotifyId)
@@ -812,7 +823,7 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         // PHASE 3: For remaining unmatched Spotify tracks, search external providers
         var unmatchedSpotifyTracks = spotifyTracks
-            .Where(t => !usedSpotifyIds.Contains(t.SpotifyId))
+            .Where(t => enrichProviderBackups || !usedSpotifyIds.Contains(t.SpotifyId))
             .GroupBy(t => t.SpotifyId, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderBy(track => track.Position).First())
             .ToList();
@@ -898,7 +909,10 @@ public class SpotifyTrackMatchingService : BackgroundService
                                 spotifyTrack.Title,
                                 primaryArtist,
                                 trackStopwatch.ElapsedMilliseconds);
-                            return (spotifyTrack, candidates);
+                            if (!enrichProviderBackups)
+                            {
+                                return (spotifyTrack, candidates);
+                            }
                         }
                     }
 
@@ -917,13 +931,18 @@ public class SpotifyTrackMatchingService : BackgroundService
                         metadataService,
                         localFuzzy: null,
                         localFuzzyScore: null,
-                        trackCancellationToken);
+                        trackCancellationToken,
+                        collectAllProviderMatches: enrichProviderBackups);
 
-                    if (walk.MatchedSong != null && walk.MatchType != null && walk.ProviderUsed != null)
+                    if (walk.AcceptedMatches.Count > 0)
                     {
-                        candidates.Add((walk.MatchedSong, walk.Score, walk.MatchType));
+                        foreach (var accepted in walk.AcceptedMatches)
+                        {
+                            candidates.Add((accepted.Song, accepted.Score, accepted.MatchType));
+                        }
                         _logger.LogDebug(
-                            "Per-provider walk accepted {Playlist} track #{Position}: {Title} → {Provider} ({MatchType}, score {Score:F1}, walked {Steps} step(s))",
+                            "Per-provider walk accepted {AcceptedCount} route(s) for {Playlist} track #{Position}: {Title} (primary {Provider}, {MatchType}, score {Score:F1}, walked {Steps} step(s))",
+                            walk.AcceptedMatches.Count,
                             playlistName,
                             spotifyTrack.Position,
                             spotifyTrack.Title,
@@ -1039,6 +1058,7 @@ public class SpotifyTrackMatchingService : BackgroundService
 
         // playbackProviderRanks is computed once at the start of phase 3 above.
 
+        var persistedProviderRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (spotifyTrack, song, score, matchType) in allCandidates
                      .Where(candidate => !candidate.MatchedSong.IsLocal)
                      .OrderBy(candidate => playbackProviderRanks.TryGetValue(
@@ -1046,13 +1066,21 @@ public class SpotifyTrackMatchingService : BackgroundService
                          out var rank) ? rank : int.MaxValue)
                      .ThenByDescending(candidate => candidate.Score))
         {
-            if (localMatches.ContainsKey(spotifyTrack.SpotifyId)) continue;
-            if (externalAssignments.ContainsKey(spotifyTrack.SpotifyId)) continue;
             if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(song.ExternalProvider, song.Id)) continue;
 
-            externalAssignments[spotifyTrack.SpotifyId] = (song, score, matchType);
+            var providerId = song.ExternalProvider ?? "Unknown";
+            var routeKey = $"{spotifyTrack.SpotifyId}:{providerId}";
+            if (!persistedProviderRoutes.Add(routeKey)) continue;
 
-            // Save external mapping
+            var isPrimaryExternal = !localMatches.ContainsKey(spotifyTrack.SpotifyId)
+                                    && !externalAssignments.ContainsKey(spotifyTrack.SpotifyId);
+            if (!enrichProviderBackups && !isPrimaryExternal) continue;
+
+            if (isPrimaryExternal)
+            {
+                externalAssignments[spotifyTrack.SpotifyId] = (song, score, matchType);
+            }
+
             var metadata = new TrackMetadata
             {
                 Title = spotifyTrack.Title,
@@ -1064,15 +1092,28 @@ public class SpotifyTrackMatchingService : BackgroundService
 
             await _mappingService.SaveExternalMappingAsync(
                 spotifyTrack.SpotifyId,
-                song.ExternalProvider ?? "Unknown",
+                providerId,
                 song.ExternalId ?? song.Id,
                 metadata);
 
-            if (matchType == "isrc") isrcMatches++;
-            else fuzzyMatches++;
+            if (isPrimaryExternal)
+            {
+                if (matchType == "isrc") isrcMatches++;
+                else fuzzyMatches++;
+            }
 
-            _logger.LogInformation("  ✓ External: {Title} → {Provider}:{ExternalId} (score: {Score:F1})",
-                spotifyTrack.Title, song.ExternalProvider, song.ExternalId, score);
+            _logger.LogInformation(
+                "  ✓ External {RouteRole}: {Title} → {Provider}:{ExternalId} (score: {Score:F1})",
+                isPrimaryExternal ? "primary" : "backup",
+                spotifyTrack.Title,
+                providerId,
+                song.ExternalId,
+                score);
+        }
+
+        if (enrichProviderBackups && legacyProjector != null)
+        {
+            await legacyProjector.ProjectSourceTracksAsync(spotifyTracks, cancellationToken);
         }
 
         // PHASE 5: Build final matched tracks list (local + external)
@@ -1764,7 +1805,8 @@ public class SpotifyTrackMatchingService : BackgroundService
         IMusicMetadataService metadataService,
         Song? localFuzzy,
         double? localFuzzyScore,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool collectAllProviderMatches = false)
     {
         var walker = new PerProviderTrackWalker(
             concreteServices,
@@ -1777,7 +1819,8 @@ public class SpotifyTrackMatchingService : BackgroundService
             playbackProviders,
             localFuzzy,
             localFuzzyScore,
-            cancellationToken);
+            cancellationToken,
+            collectAllProviderMatches);
     }
 
     private async Task<List<Song>> SearchPlayableSongsAsync(
