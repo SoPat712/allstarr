@@ -53,8 +53,18 @@ public sealed class SpotifyPathfinderPlaylistClient(
             if (GraphQlFailure(document.RootElement, LibraryOperation) is { } failure)
                 return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(failure);
             if (!TryPath(document.RootElement, out var library, "data", "me", "libraryV3"))
+            {
+                logger?.LogWarning(
+                    "Spotify Pathfinder operation {Operation} returned an unexpected {RootKind} envelope. Root fields: {RootFields}. Data fields: {DataFields}",
+                    LibraryOperation,
+                    document.RootElement.ValueKind,
+                    PropertyNames(document.RootElement),
+                    TryPath(document.RootElement, out var data, "data")
+                        ? PropertyNames(data)
+                        : "none");
                 return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
                     new ProviderError(ProviderErrorKind.CapabilityUnavailable));
+            }
 
             var rawItems = Array(library, "items");
             var summaries = new List<ProviderPlaylistSummary>(rawItems.Count);
@@ -78,8 +88,13 @@ public sealed class SpotifyPathfinderPlaylistClient(
                 hasNext ? nextOffset.ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
                 hasNext));
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
+            logger?.LogWarning(
+                exception,
+                "Spotify Pathfinder operation {Operation} returned {ByteCount} bytes that were not valid JSON",
+                LibraryOperation,
+                response.Body?.Length ?? 0);
             return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
                 new ProviderError(ProviderErrorKind.CapabilityUnavailable));
         }
@@ -324,6 +339,11 @@ public sealed class SpotifyPathfinderPlaylistClient(
 
     private static string ArtworkKey(string playlistId, string? revision) =>
         $"{playlistId}\n{revision ?? ""}";
+
+    private static string PropertyNames(JsonElement value) =>
+        value.ValueKind == JsonValueKind.Object
+            ? string.Join(", ", value.EnumerateObject().Select(property => property.Name).Take(12))
+            : "none";
 
     private static ProviderPlaylistTrack? MapTrack(JsonElement item, int position)
     {
