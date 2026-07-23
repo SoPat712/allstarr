@@ -163,13 +163,21 @@ public sealed class PlaylistLinksController(
                     ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
                     _ => StatusCodes.Status502BadGateway
                 };
+                var retryAfterSeconds = failure.RetryAfter is { } retryAfter
+                    ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+                    : (int?)null;
+                if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
+                {
+                    Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture);
+                }
                 return StatusCode(status, new
                 {
                     error = failure.SafeMessage,
                     reasonCode = failure.Code,
                     providerId,
                     accountId = account.Id,
-                    retryAfterSeconds = failure.RetryAfter?.TotalSeconds
+                    retryAfterSeconds
                 });
             }
             var page = outcome.RequireValue();

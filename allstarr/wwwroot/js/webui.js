@@ -350,18 +350,22 @@ function appleAuthFeedback(value, operation) {
   };
 }
 
-async function readErrorMessage(response, fallback) {
+async function readErrorDetails(response, fallback) {
   try {
     const data = await response.clone().json();
     const protocolError = data?.["subsonic-response"]?.error?.message;
     const directError = typeof data.error === "string" ? data.error : data.error?.message;
-    return data.detail || directError || data.message || protocolError || `${fallback} (HTTP ${response.status})`;
+    return {
+      message: data.detail || directError || data.message || protocolError || `${fallback} (HTTP ${response.status})`,
+      reasonCode: data.reasonCode || data.ReasonCode || "",
+      retryAfterSeconds: Number(data.retryAfterSeconds ?? data.RetryAfterSeconds) || 0,
+    };
   } catch {
     try {
       const text = await response.text();
-      return text || `${fallback} (HTTP ${response.status})`;
+      return { message: text || `${fallback} (HTTP ${response.status})`, reasonCode: "", retryAfterSeconds: 0 };
     } catch {
-      return `${fallback} (HTTP ${response.status})`;
+      return { message: `${fallback} (HTTP ${response.status})`, reasonCode: "", retryAfterSeconds: 0 };
     }
   }
 }
@@ -373,8 +377,11 @@ async function requestJson(url, options = {}, fallback = "Request failed") {
   });
 
   if (!response.ok) {
-    const error = new Error(await readErrorMessage(response, fallback));
+    const details = await readErrorDetails(response, fallback);
+    const error = new Error(details.message);
     error.status = response.status;
+    error.reasonCode = details.reasonCode;
+    error.retryAfterSeconds = details.retryAfterSeconds;
     throw error;
   }
 
@@ -388,8 +395,11 @@ async function requestBlob(url, options = {}, fallback = "Request failed") {
   });
 
   if (!response.ok) {
-    const error = new Error(await readErrorMessage(response, fallback));
+    const details = await readErrorDetails(response, fallback);
+    const error = new Error(details.message);
     error.status = response.status;
+    error.reasonCode = details.reasonCode;
+    error.retryAfterSeconds = details.retryAfterSeconds;
     throw error;
   }
 
@@ -1645,6 +1655,8 @@ class AllstarrApp extends LitElement {
       legacyHandoff: null,
       loading: false,
       error: "",
+      sourceRetryAt: 0,
+      sourceRetryAfterSeconds: 0,
     };
   }
 
@@ -1662,7 +1674,7 @@ class AllstarrApp extends LitElement {
   }
 
   async choosePlaylistSourceAccount(accountId) {
-    this.updatePlaylistWizard({ sourceAccountId: accountId, sourcePlaylist: null, sourceQuery: "", sourceNextCursor: "", loading: true, error: "" });
+    this.updatePlaylistWizard({ sourceAccountId: accountId, sourcePlaylist: null, sourceQuery: "", sourceNextCursor: "", loading: true, error: "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     this.sourcePlaylistResults = [];
     try {
       const response = await API.sourcePlaylists(accountId);
@@ -1671,9 +1683,9 @@ class AllstarrApp extends LitElement {
       const preferred = preferredId
         ? this.sourcePlaylistResults.find((item) => String(item.id || item.Id) === String(preferredId))
         : null;
-      this.updatePlaylistWizard({ loading: false, sourcePlaylist: preferred || null, sourceNextCursor: response?.nextCursor || response?.NextCursor || "" });
+      this.updatePlaylistWizard({ loading: false, sourcePlaylist: preferred || null, sourceNextCursor: response?.nextCursor || response?.NextCursor || "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     } catch (error) {
-      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+      this.setPlaylistSourceFailure(error);
     }
   }
 
@@ -1684,9 +1696,9 @@ class AllstarrApp extends LitElement {
     try {
       const response = await API.sourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim());
       this.sourcePlaylistResults = asArray(response?.items || response?.Items);
-      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "" });
+      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     } catch (error) {
-      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+      this.setPlaylistSourceFailure(error);
     }
   }
 
@@ -1699,10 +1711,48 @@ class AllstarrApp extends LitElement {
       const incoming = asArray(response?.items || response?.Items);
       const existing = new Set(this.sourcePlaylistResults.map((item) => String(item.id || item.Id)));
       this.sourcePlaylistResults = [...this.sourcePlaylistResults, ...incoming.filter((item) => !existing.has(String(item.id || item.Id)))];
-      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "" });
+      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     } catch (error) {
-      this.playlistWizard = { ...this.playlistWizard, loading: false, error: error.message };
+      this.setPlaylistSourceFailure(error);
     }
+  }
+
+  setPlaylistSourceFailure(error) {
+    const isRateLimited = Number(error?.status) === 429;
+    const requestedDelay = Math.ceil(Number(error?.retryAfterSeconds) || 30);
+    const retryAfterSeconds = isRateLimited ? Math.max(1, Math.min(900, requestedDelay)) : 0;
+    const sourceRetryAt = retryAfterSeconds ? Date.now() + retryAfterSeconds * 1000 : 0;
+    const selected = this.playlistSources.find((item) =>
+      String(item.id || item.Id) === String(this.playlistWizard.sourceAccountId));
+    const provider = providerDisplayName(
+      selected?.providerId || selected?.ProviderId || "provider",
+      this.schema?.providers);
+    const message = isRateLimited
+      ? `${provider} is temporarily limiting playlist requests.`
+      : error.message;
+    this.playlistWizard = {
+      ...this.playlistWizard,
+      loading: false,
+      error: message,
+      sourceRetryAt,
+      sourceRetryAfterSeconds: retryAfterSeconds,
+    };
+    if (this.playlistSourceRetryTimer) clearTimeout(this.playlistSourceRetryTimer);
+    if (retryAfterSeconds) {
+      this.playlistSourceRetryTimer = setTimeout(() => {
+        this.playlistSourceRetryTimer = null;
+        this.requestUpdate();
+      }, retryAfterSeconds * 1000);
+    }
+  }
+
+  retrySourcePlaylistDiscovery() {
+    const remaining = Math.ceil((Number(this.playlistWizard.sourceRetryAt) - Date.now()) / 1000);
+    if (remaining > 0) {
+      this.toast(`Playlist browsing can retry in ${remaining} second${remaining === 1 ? "" : "s"}.`);
+      return;
+    }
+    this.searchSourcePlaylists();
   }
 
   async chooseMediaTarget(identityId) {
@@ -3043,7 +3093,7 @@ class AllstarrApp extends LitElement {
       <ol class="wizard-steps" aria-label="Playlist link progress">
         ${steps.map((label, index) => html`<li class=${index === draft.step ? "current" : index < draft.step ? "complete" : ""} aria-current=${index === draft.step ? "step" : nothing}><span>${index + 1}</span>${label}</li>`)}
       </ol>
-      ${draft.error ? html`<div class="inline-alert error" role="alert">${draft.error}</div>` : nothing}
+      ${draft.error && !draft.sourceRetryAt ? html`<div class="inline-alert error" role="alert">${draft.error}</div>` : nothing}
       <div class="wizard-body">
         ${draft.step === 0 ? this.renderPlaylistSourceStep() :
           draft.step === 1 ? this.renderPlaylistTargetStep() :
@@ -3062,6 +3112,13 @@ class AllstarrApp extends LitElement {
     const draft = this.playlistWizard;
     const blocked = this.playlistSourceBlockedAccounts;
     const providerNames = this.playlistSourceProviders.map((provider) => provider.displayName || provider.DisplayName).filter(Boolean);
+    const selectedAccount = this.playlistSources.find((item) =>
+      String(item.id || item.Id) === String(draft.sourceAccountId));
+    const selectedProvider = providerDisplayName(
+      selectedAccount?.providerId || selectedAccount?.ProviderId || "provider",
+      this.schema?.providers);
+    const retryRemaining = Math.max(0, Math.ceil((Number(draft.sourceRetryAt) - Date.now()) / 1000));
+    const retryReady = Boolean(draft.sourceRetryAt) && retryRemaining === 0;
     return html`<div class="wizard-step-panel"><div class="step-copy"><h4>Choose the source playlist</h4><p class="muted">Every connected provider or extension that exposes the Playlist capability can appear here.</p></div>
       ${draft.legacyHandoff ? html`<div class="callout"><strong>Imported from Allstarr 2.x</strong><p>Choose the Spotify account that owns <strong>${draft.legacyHandoff.name || draft.legacyHandoff.Name}</strong>. Allstarr will select source ID <span class="mono">${draft.legacyHandoff.sourcePlaylistId || draft.legacyHandoff.SourcePlaylistId}</span> when that account can see it.</p></div>` : nothing}
       ${this.playlistSources.length ? html`<div class="choice-grid account-choice-grid">
@@ -3075,7 +3132,13 @@ class AllstarrApp extends LitElement {
         })}
       </div>` : blocked.length ? html`<div class="inline-alert warning playlist-source-policy"><strong>Shared playlist credentials are configured but disabled by policy.</strong><span>${blocked.map((account) => `${providerDisplayName(account.providerId || account.ProviderId, this.schema?.providers)} (${account.displayName || account.DisplayName})`).join(", ")}</span><small>Enable shared credentials for personal playlist operations in deployment settings, or connect a personal provider account.</small><button @click=${() => this.navigate("/settings")}>Review Settings</button></div>` : html`<div class="empty playlist-source-empty"><strong>No playlist source is connected.</strong><span>Connect any provider or extension with Playlist capability${providerNames.length ? `. Available now: ${providerNames.join(", ")}.` : "."}</span><button @click=${() => this.navigate("/sources")}>Open Sources</button></div>`}
       ${this.playlistSources.length && blocked.length ? html`<div class="inline-alert warning playlist-source-policy"><strong>${blocked.length} shared source${blocked.length === 1 ? " is" : "s are"} hidden by policy.</strong><span>Use a personal or library-shared account, or explicitly allow deployment-shared credentials.</span></div>` : nothing}
-      ${draft.sourceAccountId ? html`<div class="picker-search"><input aria-label="Search source playlists" placeholder="Search playlists" .value=${draft.sourceQuery} @input=${(event) => this.updatePlaylistWizard({ sourceQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchSourcePlaylists(); }}><button @click=${() => this.searchSourcePlaylists()}>Search</button></div>${this.renderPlaylistChoices(this.sourcePlaylistResults, draft.sourcePlaylist, (playlist) => this.updatePlaylistWizard({ sourcePlaylist: playlist }), "source")}${draft.sourceNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreSourcePlaylists()}>Load more playlists</button>` : nothing}` : nothing}
+      ${draft.sourceAccountId ? html`<div class="picker-search"><input aria-label="Search source playlists" placeholder="Search playlists" .value=${draft.sourceQuery} @input=${(event) => this.updatePlaylistWizard({ sourceQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchSourcePlaylists(); }}><button @click=${() => this.searchSourcePlaylists()}>Search</button></div>
+        ${draft.sourceRetryAt ? html`<div class="callout warning playlist-source-retry" role="alert">
+          <span class="playlist-source-retry-icon">${icon("clock", 20)}</span>
+          <span><strong>${selectedProvider} asked Allstarr to slow down</strong><small>${retryReady ? "Playlist browsing is ready to retry." : `Try again in ${retryRemaining} second${retryRemaining === 1 ? "" : "s"}. No playlist data was lost.`}</small></span>
+          <button ?disabled=${!retryReady || draft.loading} @click=${() => this.retrySourcePlaylistDiscovery()}>Retry playlist browsing</button>
+        </div>` : nothing}
+        ${this.renderPlaylistChoices(this.sourcePlaylistResults, draft.sourcePlaylist, (playlist) => this.updatePlaylistWizard({ sourcePlaylist: playlist }), "source")}${draft.sourceNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreSourcePlaylists()}>Load more playlists</button>` : nothing}` : nothing}
     </div>`;
   }
 

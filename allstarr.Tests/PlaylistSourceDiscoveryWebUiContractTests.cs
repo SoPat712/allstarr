@@ -15,6 +15,15 @@ public sealed class PlaylistSourceDiscoveryWebUiContractTests
             _script, StringComparison.Ordinal);
         Assert.DoesNotContain("No playlists found. Try a search or choose another account.",
             _script, StringComparison.Ordinal);
+        Assert.Contains("error.retryAfterSeconds = details.retryAfterSeconds;",
+            _script, StringComparison.Ordinal);
+        Assert.Contains("setPlaylistSourceFailure(error)",
+            _script, StringComparison.Ordinal);
+        Assert.Contains("Spotify is temporarily limiting playlist requests", _script.Replace(
+            "`${provider} is temporarily limiting playlist requests.`",
+            "Spotify is temporarily limiting playlist requests"), StringComparison.Ordinal);
+        Assert.Contains("Retry playlist browsing", _script, StringComparison.Ordinal);
+        Assert.Contains("Math.min(900, requestedDelay)", _script, StringComparison.Ordinal);
     }
 
     private static string ReadRepositoryFile(params string[] segments)

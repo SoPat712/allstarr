@@ -89,6 +89,8 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Contains("includeNonOperational: false", source, StringComparison.Ordinal);
         Assert.Contains("providerPolicy.AllowGlobalPersonalAccounts", source, StringComparison.Ordinal);
         Assert.Contains("session.IsAdministrator", source, StringComparison.Ordinal);
+        Assert.Contains("Response.Headers.RetryAfter", source, StringComparison.Ordinal);
+        Assert.Contains("retryAfterSeconds", source, StringComparison.Ordinal);
     }
 
     [Fact]

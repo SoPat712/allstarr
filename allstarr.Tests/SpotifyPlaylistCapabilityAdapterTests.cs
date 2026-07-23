@@ -26,7 +26,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.True(outcome.IsSuccess);
         var page = outcome.RequireValue();
         Assert.Equal("snapshot-9", page.Playlist.SourceRevision);
-        Assert.Equal("\"etag-9\"", page.Playlist.SourceETag);
+        Assert.Null(page.Playlist.SourceETag);
         Assert.Equal("Road Mix", page.Playlist.Name);
         Assert.Equal("Description", page.Playlist.Description);
         Assert.NotNull(page.Playlist.Artwork?.ResourceId);
@@ -74,9 +74,10 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.True(search.IsSuccess);
         Assert.Equal("6", user.RequireValue().NextCursor);
         Assert.Equal("9", search.RequireValue().NextCursor);
-        Assert.Contains(handler.Paths, path => path.Contains("offset=5", StringComparison.Ordinal));
-        Assert.Contains(handler.Paths, path => path.Contains("offset=8", StringComparison.Ordinal));
+        Assert.Contains(handler.Paths, path => path.Contains("\"offset\":5", StringComparison.Ordinal));
+        Assert.Contains(handler.Paths, path => path.Contains("\"offset\":8", StringComparison.Ordinal));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
+        Assert.All(handler.ApiPaths, path => Assert.Contains("api-partner.spotify.com/pathfinder", path, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -110,10 +111,28 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.Equal(ProviderErrorKind.RateLimited, limited.Error!.Kind);
         Assert.Equal(TimeSpan.FromSeconds(12), limited.Error.RetryAfter);
 
+        handler.UseRetryAfterDate = true;
+        var limitedByDate = await adapter.GetPlaylistTracksAsync(Context(), new(playlist, new ProviderPageRequest()));
+        Assert.Equal(ProviderErrorKind.RateLimited, limitedByDate.Error!.Kind);
+        Assert.InRange(limitedByDate.Error.RetryAfter!.Value.TotalSeconds, 10, 13);
+
         handler.ApiStatus = null;
         var conflict = await adapter.GetPlaylistTracksAsync(Context(), new(playlist, new ProviderPageRequest(), "old-snapshot"));
         Assert.Equal(ProviderErrorKind.PermanentFailure, conflict.Error!.Kind);
         Assert.DoesNotContain("upstream-secret-body", conflict.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Stale_pathfinder_query_hash_is_not_reported_as_an_empty_playlist()
+    {
+        var handler = new SpotifyFakeHandler { ReturnPersistedQueryError = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
+
+        var outcome = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal(ProviderErrorKind.CapabilityUnavailable, outcome.Error!.Kind);
+        Assert.Equal("capability-unavailable", outcome.Error.Code);
     }
 
     [Fact]
@@ -206,7 +225,10 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         public string? CookieHeader { get; private set; }
         public List<string> ApiAuthorizationHeaders { get; } = [];
         public List<string> Paths { get; } = [];
+        public List<string> ApiPaths { get; } = [];
         public byte[] ArtworkBytes { get; set; } = [1, 2, 3, 4];
+        public bool UseRetryAfterDate { get; set; }
+        public bool ReturnPersistedQueryError { get; set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -234,58 +256,157 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
             }
 
             ApiAuthorizationHeaders.Add(request.Headers.Authorization!.ToString());
+            ApiPaths.Add($"{request.RequestUri.Scheme}://{request.RequestUri.Host}{request.RequestUri.AbsolutePath}");
             if (ApiStatus != null)
             {
                 var failure = Json(ApiStatus.Value, new { error = "upstream-secret-body" });
                 if (ApiStatus == HttpStatusCode.TooManyRequests)
-                    failure.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(12));
+                    failure.Headers.RetryAfter = UseRetryAfterDate
+                        ? new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(12))
+                        : new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(12));
                 return Task.FromResult(failure);
             }
-            var path = request.RequestUri.AbsolutePath;
-            if (path.EndsWith("/tracks", StringComparison.Ordinal))
+            if (ReturnPersistedQueryError)
                 return Task.FromResult(Json(HttpStatusCode.OK, new
                 {
-                    items = new[]
+                    errors = new[]
                     {
-                        new { track = Track("track-a", "First") },
-                        new { track = Track("track-a", "Duplicate") }
-                    },
-                    next = "https://api.spotify.com/next",
-                    total = 8
+                        new
+                        {
+                            message = "PersistedQueryNotFound",
+                            extensions = new { code = "PERSISTED_QUERY_NOT_FOUND" }
+                        }
+                    }
                 }));
-            if (path.StartsWith("/v1/playlists/", StringComparison.Ordinal))
-            {
-                var response = Json(HttpStatusCode.OK, Playlist());
-                response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"etag-9\"");
-                return Task.FromResult(response);
-            }
-            if (path == "/v1/me/playlists")
-                return Task.FromResult(Json(HttpStatusCode.OK, new { items = new[] { Playlist() }, next = "https://api.spotify.com/next", total = 10 }));
-            if (path == "/v1/search")
-                return Task.FromResult(Json(HttpStatusCode.OK, new { playlists = new { items = new[] { Playlist() }, next = "https://api.spotify.com/next", total = 10 } }));
+
+            var decoded = Uri.UnescapeDataString(request.RequestUri.Query);
+            Paths[^1] = $"{request.RequestUri.AbsolutePath}{decoded}";
+            if (decoded.Contains("operationName=fetchPlaylist", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.OK, PlaylistResponse()));
+            if (decoded.Contains("operationName=libraryV3", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.OK, LibraryResponse()));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
-        private static object Playlist() => new
+        private static object PlaylistData() => new
         {
-            id = "playlist-opaque",
             name = "Road Mix",
             description = "Description",
-            owner = new { id = "owner", display_name = "Owner" },
-            images = new[] { new { url = "https://i.scdn.co/signed?token=secret" } },
-            snapshot_id = "snapshot-9",
-            tracks = new { total = 8 }
+            ownerV2 = new { data = new { username = "owner", name = "Owner" } },
+            images = new
+            {
+                items = new[]
+                {
+                    new
+                    {
+                        sources = new[]
+                        {
+                            new { url = "https://i.scdn.co/signed?token=secret", width = 640 }
+                        }
+                    }
+                }
+            },
+            revisionId = "snapshot-9",
+            attributes = new[] { new { key = "core:item_count", value = "8" } }
+        };
+
+        private static object LibraryResponse() => new
+        {
+            data = new
+            {
+                me = new
+                {
+                    libraryV3 = new
+                    {
+                        totalCount = 10,
+                        items = new[]
+                        {
+                            new
+                            {
+                                item = new
+                                {
+                                    uri = "spotify:playlist:playlist-opaque",
+                                    data = PlaylistData()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        private static object PlaylistResponse() => new
+        {
+            data = new
+            {
+                playlistV2 = new
+                {
+                    name = "Road Mix",
+                    description = "Description",
+                    ownerV2 = new { data = new { username = "owner", name = "Owner" } },
+                    images = new
+                    {
+                        items = new[]
+                        {
+                            new
+                            {
+                                sources = new[]
+                                {
+                                    new { url = "https://i.scdn.co/signed?token=secret", width = 640 }
+                                }
+                            }
+                        }
+                    },
+                    revisionId = "snapshot-9",
+                    content = new
+                    {
+                        totalCount = 8,
+                        items = new[]
+                        {
+                            Track("track-a", "First"),
+                            Track("track-a", "Duplicate")
+                        }
+                    }
+                }
+            }
         };
 
         private static object Track(string id, string name) => new
         {
-            id,
-            name,
-            album = new { id = "album", name = "Album" },
-            artists = new[] { new { id = "artist", name = "Artist" } },
-            duration_ms = 180000,
-            @explicit = false,
-            external_ids = new { isrc = "USABC1234567" }
+            addedAt = new { isoString = "2026-02-16T05:00:00Z" },
+            itemV2 = new
+            {
+                data = new
+                {
+                    uri = $"spotify:track:{id}",
+                    name,
+                    artists = new
+                    {
+                        items = new[]
+                        {
+                            new
+                            {
+                                uri = "spotify:artist:artist",
+                                profile = new { name = "Artist" }
+                            }
+                        }
+                    },
+                    albumOfTrack = new
+                    {
+                        uri = "spotify:album:album",
+                        name = "Album",
+                        coverArt = new
+                        {
+                            sources = new[]
+                            {
+                                new { url = "https://i.scdn.co/album.jpg", width = 640 }
+                            }
+                        }
+                    },
+                    trackDuration = new { totalMilliseconds = 180000 },
+                    contentRating = new { label = "NONE" }
+                }
+            }
         };
 
         private static HttpResponseMessage Json(HttpStatusCode status, object value) => new(status)
