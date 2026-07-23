@@ -572,11 +572,13 @@ public sealed class TrackMatchesController(
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    private static TrackMetadata ToTrackMetadata((string? Title, string? Artist, string? Album) value) => new()
+    private static TrackMetadata ToTrackMetadata(
+        (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc) value) => new()
     {
         Title = value.Title,
         Artist = value.Artist,
-        Album = value.Album
+        Album = value.Album,
+        ArtworkUrl = value.ArtworkUrl
     };
 
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
@@ -609,6 +611,8 @@ public sealed class TrackMatchesController(
             title = metadata.Title,
             artist = metadata.Artist,
             album = metadata.Album,
+            artworkUrl = metadata.ArtworkUrl,
+            isrc = metadata.Isrc,
             localTrack = track == null ? null : new { track.Id, track.BackendItemId, track.Title, track.Artist, track.Album },
             providerIdentities,
             candidates = ParseCandidates(decision?.CandidateResultsJson),
@@ -620,7 +624,7 @@ public sealed class TrackMatchesController(
         return new(state, $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}", value);
     }
 
-    private static (string? Title, string? Artist, string? Album) Metadata(string json)
+    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc) Metadata(string json)
     {
         try
         {
@@ -630,9 +634,15 @@ public sealed class TrackMatchesController(
             var artist = Text(root, "artist") ?? Text(root, "Artist");
             if (artist == null && (root.TryGetProperty("artists", out var artists) || root.TryGetProperty("Artists", out artists)) && artists.ValueKind == JsonValueKind.Array)
                 artist = string.Join(", ", artists.EnumerateArray().Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : Text(item, "name")).Where(item => item != null));
-            return (title, artist, Text(root, "album") ?? Text(root, "Album") ?? Text(root, "albumTitle") ?? Text(root, "AlbumTitle"));
+            return (
+                title,
+                artist,
+                Text(root, "album") ?? Text(root, "Album") ?? Text(root, "albumTitle") ?? Text(root, "AlbumTitle"),
+                Text(root, "artworkUrl") ?? Text(root, "ArtworkUrl") ?? Text(root, "coverUrl") ?? Text(root, "CoverUrl") ??
+                    Text(root, "imageUrl") ?? Text(root, "ImageUrl"),
+                Text(root, "isrc") ?? Text(root, "Isrc") ?? Text(root, "ISRC"));
         }
-        catch (JsonException) { return (null, null, null); }
+        catch (JsonException) { return (null, null, null, null, null); }
     }
 
     private static string? Text(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&

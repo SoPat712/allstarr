@@ -58,12 +58,20 @@ public sealed class PlaylistLinksController(
                 return capability.AllowedAccountScopes.Contains(item.Scope);
             }).ToArray();
             var availableAccounts = capableAccounts
-                .Where(item => item.Scope != ProviderAccountScope.Global || providerPolicy.AllowGlobalPersonalAccounts)
+                .Where(item => item.Scope != ProviderAccountScope.Global ||
+                               providerPolicy.AllowGlobalPersonalAccounts ||
+                               session.IsAdministrator)
                 .ToArray();
             var blockedAccounts = capableAccounts.Except(availableAccounts).ToArray();
             return Ok(new
             {
-                accounts = availableAccounts.Select(item => ToPlaylistSourceAccountDto(item, true, null)),
+                accounts = availableAccounts.Select(item => ToPlaylistSourceAccountDto(
+                    item,
+                    true,
+                    null,
+                    item.Scope == ProviderAccountScope.Global &&
+                    session.IsAdministrator &&
+                    !providerPolicy.AllowGlobalPersonalAccounts)),
                 blockedAccounts = blockedAccounts.Select(item => ToPlaylistSourceAccountDto(
                     item,
                     false,
@@ -81,7 +89,8 @@ public sealed class PlaylistLinksController(
                 }),
                 policy = new
                 {
-                    allowSharedPlaylistCredentials = providerPolicy.AllowGlobalPersonalAccounts
+                    allowSharedPlaylistCredentials = providerPolicy.AllowGlobalPersonalAccounts,
+                    administratorCanUseSharedPlaylistCredentials = session.IsAdministrator
                 }
             });
         });
@@ -663,7 +672,8 @@ public sealed class PlaylistLinksController(
     private static object ToPlaylistSourceAccountDto(
         ProviderAccountRecord account,
         bool available,
-        string? reasonCode) => new
+        string? reasonCode,
+        bool administratorAccess = false) => new
         {
             id = account.Id,
             providerId = account.ProviderId,
@@ -674,6 +684,7 @@ public sealed class PlaylistLinksController(
             {
                 ProviderAccountScope.User => "Personal account",
                 ProviderAccountScope.Library => "Library-shared account",
+                ProviderAccountScope.Global when administratorAccess => "Administrator account",
                 _ => "Deployment-shared account"
             },
             revision = account.Revision,

@@ -2165,16 +2165,59 @@
 }
 
 .mapping-card-title > div {
+  display: grid;
+  gap: 0.22rem;
   min-width: 0;
 }
 
 .mapping-card-title strong {
-  font-size: 1.05rem;
+  font-size: 1.12rem;
+  line-height: 1.25;
 }
 
 .mapping-card-title p {
-  margin: 0.2rem 0 0;
+  margin: 0;
   color: var(--text-secondary);
+}
+
+.mapping-source-label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.2rem;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mapping-track-artist {
+  font-weight: 650;
+}
+
+.mapping-track-album {
+  font-size: 0.86rem;
+}
+
+.mapping-card-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mapping-card-meta > span {
+  display: inline-flex;
+  gap: 0.32rem;
+  align-items: center;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-page);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 650;
 }
 
 .mapping-route {

@@ -81,13 +81,14 @@ public sealed class PlaylistLinksControllerContractTests
     }
 
     [Fact]
-    public void SourceDiscovery_ExcludesNonOperationalAndUnapprovedGlobalPersonalAccounts()
+    public void SourceDiscovery_ExcludesNonOperationalProvidersAndAllowsAdministratorsToManageGlobalAccounts()
     {
         var source = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "PlaylistLinksController.cs"));
 
         Assert.Contains("includeNonOperational: false", source, StringComparison.Ordinal);
         Assert.Contains("providerPolicy.AllowGlobalPersonalAccounts", source, StringComparison.Ordinal);
+        Assert.Contains("session.IsAdministrator", source, StringComparison.Ordinal);
     }
 
     [Fact]

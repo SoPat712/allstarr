@@ -3849,10 +3849,14 @@ class AllstarrApp extends LitElement {
     const providerId = mapping.providerId || "provider";
     const targetProvider = mapping.localTrack ? String(this.status?.backendType || "jellyfin").toLowerCase() : routes[0]?.providerId;
     const artwork = mapping.artworkUrl || mapping.ArtworkUrl;
+    const confidence = Number(mapping.confidence ?? mapping.Confidence);
+    const confidenceLabel = Number.isFinite(confidence) ? `${Math.round(confidence * 1000) / 10}% confidence` : "";
+    const isrc = mapping.isrc || mapping.Isrc;
     return html`<article class="mapping-review-card ${["unresolved", "suggested", "ambiguous", "rejected"].includes(state) ? "needs-attention" : ""}">
       <div class="mapping-source-mark" aria-hidden="true">${artwork ? html`<img src=${artwork} alt="" loading="lazy" decoding="async">` : this.renderProviderLogo(providerId, "large")}</div>
       <div class="mapping-track-copy">
-        <div class="mapping-card-title"><div><strong>${display(mapping.title, "Unknown track")}</strong><p>${display(mapping.artist, "Unknown artist")}${mapping.album ? html`<span> · ${mapping.album}</span>` : ""}</p></div><span class="status-pill ${state}">${titleCase(state)}</span></div>
+        <div class="mapping-card-title"><div><span class="mapping-source-label">${this.renderProviderLogo(providerId, "tiny")}${providerDisplayName(providerId, this.schema?.providers)} source</span><strong>${display(mapping.title, "Unknown track")}</strong><p class="mapping-track-artist">${display(mapping.artist, "Unknown artist")}</p>${mapping.album ? html`<p class="mapping-track-album">${mapping.album}</p>` : nothing}</div><span class="status-pill ${state}">${titleCase(state)}</span></div>
+        <div class="mapping-card-meta">${confidenceLabel ? html`<span>${icon("activity", 14)} ${confidenceLabel}</span>` : nothing}${isrc ? html`<span class="mono">ISRC ${isrc}</span>` : nothing}${mapping.decidedAt ? html`<span>${icon("clock", 14)} ${formatRelativeTime(mapping.decidedAt)}</span>` : nothing}</div>
         <div class="mapping-route">
           <span class="mapping-route-node">${this.renderProviderLogo(providerId, "tiny")}<span><small>Source</small><strong>${providerDisplayName(providerId, this.schema?.providers)}</strong></span></span>
           <span class="mapping-route-arrow" aria-hidden="true">${icon("chevronRight", 18)}</span>
