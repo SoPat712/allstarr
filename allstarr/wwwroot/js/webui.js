@@ -884,6 +884,8 @@ class AllstarrApp extends LitElement {
     this.envMigrationExpiryTimer = null;
     this.nowPlayingTimer = null;
     this.onVisibilityChange = null;
+    this.activeDialogElement = null;
+    this.dialogReturnFocus = null;
   }
 
   createRenderRoot() {
@@ -935,25 +937,33 @@ class AllstarrApp extends LitElement {
   }
 
   updated() {
-    if (this.providerAccountModalOpen) {
-      const dialog = this.querySelector(".provider-account-dialog");
-      if (dialog && !dialog.contains(document.activeElement)) {
-        dialog.querySelector("[autofocus]")?.focus();
+    const activeDialog = this.querySelector(
+      ".provider-account-dialog, .provider-detail-dialog, .source-catalog-dialog, .compact-dialog, .injected-playlist-dialog, .track-details-dialog, .extension-manage-dialog, .extension-permission-dialog, .extension-install-dialog, .setup-guide",
+    );
+    if (activeDialog) {
+      if (!this.activeDialogElement) {
+        this.dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      }
+      this.activeDialogElement = activeDialog;
+      if (!activeDialog.contains(document.activeElement)) {
+        (activeDialog.querySelector("[autofocus]") || activeDialog).focus();
       }
       return;
     }
-    const activeDialog = this.querySelector(
-      ".provider-detail-dialog, .source-catalog-dialog, .compact-dialog, .injected-playlist-dialog, .extension-manage-dialog, .extension-permission-dialog, .extension-install-dialog",
-    );
-    if (activeDialog && !activeDialog.contains(document.activeElement)) {
-      (activeDialog.querySelector("[autofocus]") || activeDialog).focus();
-      return;
+    if (this.activeDialogElement) {
+      const returnFocus = this.dialogReturnFocus;
+      this.activeDialogElement = null;
+      this.dialogReturnFocus = null;
+      if (returnFocus?.isConnected) window.requestAnimationFrame(() => returnFocus.focus());
     }
-    if (!this.shouldShowSetupGuide()) return;
-    const dialog = this.querySelector(".setup-guide");
-    if (dialog && !dialog.contains(document.activeElement)) {
-      dialog.querySelector("[autofocus]")?.focus();
-    }
+  }
+
+  handleActionMenuKeydown(event) {
+    if (event.key !== "Escape" || !event.currentTarget.open) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.open = false;
+    event.currentTarget.querySelector(":scope > summary")?.focus();
   }
 
   handleDialogKeydown(event, close) {
@@ -2356,7 +2366,7 @@ class AllstarrApp extends LitElement {
           <div class="nav-section">${primaryRoutes.map(renderNavLink)}</div>
         </nav>
         <div class="sidebar-footer">
-          <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
+          <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="" decoding="async">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
           ${administrator ? html`<button class="ghost" title=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-label=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
           <button class="ghost" title="Logout" aria-label="Logout" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
         </div>
@@ -2667,7 +2677,7 @@ class AllstarrApp extends LitElement {
       ${playlists.length ? html`<div class="compact-playlist-table">
         <div class="compact-playlist-head"><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Provider</span><span>Last sync</span><span>Status</span></div>
         ${playlists.slice(0, 6).map((playlist) => html`<button class="compact-playlist-row" @click=${() => { this.navigate("/library/playlists"); window.setTimeout(() => this.openInjectedPlaylist(playlist.name), 0); }}>
-          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt=""><span><strong>${playlist.name}</strong><small>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Managed playlist"}</small></span></span>
+          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong><small>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Managed playlist"}</small></span></span>
           <span>${display(playlist.trackCount, 0)}</span>
           <span>${display(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0), 0)} <small>${display(playlist.matchPercent, 0)}%</small></span>
           <span class="provider-row-label">${playlist.sourceProvider ? this.renderProviderLogo(playlist.sourceProvider, "tiny") : icon("warning", 15)}<span>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Unknown source"}</span></span>
@@ -2681,7 +2691,7 @@ class AllstarrApp extends LitElement {
   renderProviderLogo(providerId, size = "default") {
     const provider = asArray(this.schema?.providers).find((item) => String(item.id || item.Id).toLowerCase() === String(providerId).toLowerCase()) || { id: providerId, name: providerDisplayName(providerId, this.schema?.providers) };
     const logoUrl = providerLogoUrl(provider);
-    return html`<span class="provider-logo provider-${String(providerId).toLowerCase()} logo-${size}">${logoUrl ? html`<img src=${logoUrl} alt="">` : html`<span>${providerMark(provider).slice(0, 2)}</span>`}</span>`;
+    return html`<span class="provider-logo provider-${String(providerId).toLowerCase()} logo-${size}">${logoUrl ? html`<img src=${logoUrl} alt="" loading="lazy" decoding="async">` : html`<span>${providerMark(provider).slice(0, 2)}</span>`}</span>`;
   }
 
   renderExtensionLogo(item, size = "default") {
@@ -2692,7 +2702,7 @@ class AllstarrApp extends LitElement {
     const logoUrl = packageIcon || builtInIcon;
     return html`<span class="provider-logo extension-logo provider-${extensionId} logo-${size}">
       ${logoUrl
-        ? html`<img src=${logoUrl} alt="" @error=${(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling?.removeAttribute("hidden"); }}><span class="extension-logo-fallback" hidden>${icon("extensions", size === "hero" ? 28 : 20)}</span>`
+        ? html`<img src=${logoUrl} alt="" loading="lazy" decoding="async" @error=${(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling?.removeAttribute("hidden"); }}><span class="extension-logo-fallback" hidden>${icon("extensions", size === "hero" ? 28 : 20)}</span>`
         : html`<span class="extension-logo-fallback">${icon("extensions", size === "hero" ? 28 : 20)}</span>`}
     </span>`;
   }
@@ -2941,7 +2951,7 @@ class AllstarrApp extends LitElement {
 
   renderPlaylistArtwork(playlist, side, large = false, providerOverride = "") {
     const artwork = this.playlistArtworkUrl(playlist);
-    if (artwork) return html`<img src=${artwork} alt="" loading="lazy">`;
+    if (artwork) return html`<img src=${artwork} alt="" loading="lazy" decoding="async">`;
     const draft = this.playlistWizard;
     const source = this.playlistSources.find((item) => String(item.id || item.Id) === draft.sourceAccountId);
     const target = this.mediaTargets.find((item) => String(item.id || item.Id) === draft.targetIdentityId);
@@ -3051,7 +3061,7 @@ class AllstarrApp extends LitElement {
       <td data-label="Target">${String(target).toLowerCase() === "subsonic" ? "Navidrome / Subsonic" : display(target)}</td>
       <td data-label="Mode">${titleCase(link.mode || link.Mode)} · ${titleCase(link.materializationMode || link.MaterializationMode)}</td>
       <td data-label="Last run"><span class="status-chip ${String(state).toLowerCase()}">${titleCase(state)}</span><div class="muted">${formatDate(link.lastRunAt || link.LastRunAt)}</div></td>
-      <td class="row-actions mobile-actions" data-label="Actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
+      <td class="row-actions mobile-actions" data-label="Actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
     </tr>`;
   }
 
@@ -3343,14 +3353,14 @@ class AllstarrApp extends LitElement {
               aria-label="Open ${playlist.name} playlist details" @click=${openRow}
               @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
               <td class="selection-cell"><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></td>
-              <td class="playlist-main-cell" data-label="Playlist"><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt=""><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
+              <td class="playlist-main-cell" data-label="Playlist"><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
               <td data-label="Tracks">${display(playlist.trackCount, 0)}</td>
               <td data-label="Matched"><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
               <td data-label="Unmatched"><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>
               <td data-label="Schedule"><span class="schedule-cell">${icon("clock", 15)}<span>${formatSchedule(playlist.syncSchedule)}<small>${playlist.nextSyncAt ? `Next ${formatRelativeTime(playlist.nextSyncAt)}` : ""}</small></span></span></td>
               <td data-label="Status"><span class="status-chip ${status}">${titleCase(status)}</span></td>
               <td data-label="Last sync">${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</td>
-              <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu"><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>
+              <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>
             </tr>`;
           }) : html`<tr><td colspan="9"><div class="empty">No playlists match these filters.</div></td></tr>`}
             </tbody>
@@ -3444,7 +3454,7 @@ class AllstarrApp extends LitElement {
       <section class="panel injected-playlist-dialog redesigned-dialog" role="dialog" aria-modal="true" data-testid="playlist-dialog"
         aria-labelledby="injected-playlist-title" tabindex="-1">
         <div class="playlist-dialog-hero">
-          <img class="playlist-hero-art" src=${details?.artworkUrl || "/images/playlist-placeholder.svg"} alt="">
+          <img class="playlist-hero-art" src=${details?.artworkUrl || "/images/playlist-placeholder.svg"} alt="" decoding="async">
           <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
             <div class="playlist-hero-stats">
               <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
@@ -3477,7 +3487,7 @@ class AllstarrApp extends LitElement {
                 aria-label="Open mapping details for ${display(track.title, "track")}" @click=${() => this.openTrackDetails(track)}
                 @keydown=${(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openTrackDetails(track); } }}>
                 <span class="track-position" title=${track.sourcePosition ? `Provider position ${track.sourcePosition}` : ""}>${display(track.position ?? index + 1)}</span>
-                <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt=""><strong>${display(track.title)}</strong></span>
+                <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt="" loading="lazy" decoding="async"><strong>${display(track.title)}</strong></span>
                 <span class="track-artist-cell" data-label="Artist">${asArray(track.artists).join(", ") || "Unknown artist"}</span>
                 <span class="track-album-cell" data-label="Album">${display(track.album)}</span>
                 <span class="track-provider-cell" data-label="Provider"><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
@@ -3537,7 +3547,7 @@ class AllstarrApp extends LitElement {
       @keydown=${(event) => { event.stopPropagation(); this.handleDialogKeydown(event, close); }}>
       <section class="panel track-details-dialog redesigned-dialog" role="dialog" aria-modal="true" aria-labelledby="track-details-title" tabindex="-1" data-testid="track-details-dialog">
         <header class="track-details-hero">
-          <img src=${metadata.artworkUrl || context.albumArtUrl || "/placeholder.png"} alt="">
+          <img src=${metadata.artworkUrl || context.albumArtUrl || "/placeholder.png"} alt="" decoding="async">
           <div><span class="eyebrow">Track details</span><h3 id="track-details-title">${display(title)}</h3><p>${display(artist)}${(metadata.album || context.album) ? ` · ${metadata.album || context.album}` : ""}</p>
             <div class="track-detail-badges"><span class="chip">${durationMs ? formatDuration(durationMs / 1000) : "Duration unavailable"}</span><span class="chip mono">Spotify ${display(context.spotifyId)}</span></div>
           </div>
@@ -3594,9 +3604,16 @@ class AllstarrApp extends LitElement {
           event.stopPropagation();
           toggleMenu();
         }}>
-        &#8942;
+        ${icon("more", 18)}
       </button>
-      ${open ? html`<div class="track-action-popover" role="menu" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>
+      ${open ? html`<div class="track-action-popover" role="menu" @click=${(event) => event.stopPropagation()} @keydown=${(event) => {
+        event.stopPropagation();
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        const trigger = event.currentTarget.previousElementSibling;
+        this.injectedTrackMenuId = "";
+        window.requestAnimationFrame(() => trigger?.focus());
+      }}>
         <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.openInjectedTrackEditor(track, "local"); }}>Search local library</button>
         <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.openInjectedTrackEditor(track, "external"); }}>Search music providers</button>
         <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.rematchInjectedTrack(track); }}>Rematch automatically</button>
@@ -4144,7 +4161,7 @@ class AllstarrApp extends LitElement {
     const capabilities = this.providerHealth.filter((item) => String(item.providerAccountId || item.ProviderAccountId).toLowerCase() === String(id).toLowerCase());
     return html`<article class="card provider-account-card">
       <div class="provider-head">
-        <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="">` : providerMark(provider)}</span><div class="provider-title"><strong>${providerAccountDisplayName(account.DisplayName || account.displayName, provider.name || titleCase(providerId))}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
+        <div class="provider-brand"><span class="provider-logo provider-${providerId}">${providerLogoUrl(provider) ? html`<img src=${providerLogoUrl(provider)} alt="" loading="lazy" decoding="async">` : providerMark(provider)}</span><div class="provider-title"><strong>${providerAccountDisplayName(account.DisplayName || account.displayName, provider.name || titleCase(providerId))}</strong><span>${provider.name || titleCase(providerId)}</span></div></div>
         <span class="status-chip ${enabled ? "configured" : "disabled"}">${enabled ? "Enabled" : "Disabled"}</span>
       </div>
       <div class="account-meta"><span class="chip">${titleCase(account.scope || account.Scope)}</span><span class="chip ${secret.configured ? "success" : "warning"}">${secret.configured ? "Account details stored" : "Account setup needed"}</span>${account.LibraryScopeId || account.libraryScopeId ? html`<span class="chip">Library ${account.LibraryScopeId || account.libraryScopeId}</span>` : nothing}</div>
@@ -4818,7 +4835,7 @@ class AllstarrApp extends LitElement {
     return html`
       <span class="provider-token provider-token-pinned" title=${pinned.reason || ""}>
         <span class="provider-token-logo provider-${String(pinned.id).toLowerCase()} pinned">
-          ${logoUrl ? html`<img src="${logoUrl}" alt="">` : providerMark({ id: pinned.id, name: pinned.name }).slice(0, 2)}
+          ${logoUrl ? html`<img src="${logoUrl}" alt="" loading="lazy" decoding="async">` : providerMark({ id: pinned.id, name: pinned.name }).slice(0, 2)}
         </span>
         <span>${pinned.name}</span>
       </span>
@@ -4834,7 +4851,7 @@ class AllstarrApp extends LitElement {
       <span class="provider-token">
         ${showBrandMark ? html`
           <span class="provider-token-logo provider-${normalizedProviderId}">
-            ${logoUrl ? html`<img src="${logoUrl}" alt="">` : providerMark({ id: normalizedProviderId, name: label }).slice(0, 2)}
+            ${logoUrl ? html`<img src="${logoUrl}" alt="" loading="lazy" decoding="async">` : providerMark({ id: normalizedProviderId, name: label }).slice(0, 2)}
           </span>
         ` : nothing}
         <span>${label}</span>
@@ -6403,7 +6420,7 @@ class AllstarrApp extends LitElement {
     return html`
       <footer class="now-playing" data-testid="now-playing">
         <div class="now-track">
-          <img class="art" src=${coverArtUrl} alt="">
+          <img class="art" src=${coverArtUrl} alt="" decoding="async">
           <div>
             <div class="now-title">${title}</div>
             <div class="now-meta">${artist}</div>
