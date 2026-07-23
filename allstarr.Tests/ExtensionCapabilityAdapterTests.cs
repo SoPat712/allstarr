@@ -36,7 +36,14 @@ public sealed class ExtensionCapabilityAdapterTests
             new HashSet<string>(),
             new HashSet<string>(),
             LogSink: (level, message) => events.Add((level, message)));
-        var sandbox = new ExtensionSandbox(
+        var firstSandbox = new ExtensionSandbox(
+            Path.GetTempPath(),
+            manifest,
+            script,
+            new HttpClientFactory(),
+            NullLogger.Instance,
+            permissions);
+        var recreatedSandbox = new ExtensionSandbox(
             Path.GetTempPath(),
             manifest,
             script,
@@ -44,9 +51,9 @@ public sealed class ExtensionCapabilityAdapterTests
             NullLogger.Instance,
             permissions);
 
-        sandbox.InvokeJson("searchTracks", "{}");
-        sandbox.InvokeJson("searchTracks", "{}");
-        sandbox.InvokeJson("searchTracks", "{}");
+        firstSandbox.InvokeJson("searchTracks", "{}");
+        recreatedSandbox.InvokeJson("searchTracks", "{}");
+        recreatedSandbox.InvokeJson("searchTracks", "{}");
 
         var runtimeEvent = Assert.Single(events);
         Assert.Equal("error", runtimeEvent.Level);

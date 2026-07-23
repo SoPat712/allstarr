@@ -1393,6 +1393,7 @@ public class ExtensionHostBridge
     private const int MaximumCacheBytes = 4 * 1024 * 1024;
     private const int MaximumCacheKeys = 256;
     private const int MaximumLogEvents = 1_000;
+    private const int MaximumRuntimeLogFingerprints = 4_096;
     private const int HttpFailureThreshold = 2;
     private static readonly TimeSpan HttpFailureWindow = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan HttpInitialCooldown = TimeSpan.FromMinutes(5);
@@ -1401,6 +1402,9 @@ public class ExtensionHostBridge
     private static readonly Regex SensitiveLogPattern = new(
         "(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Dictionary<string, ExtensionRuntimeLogState> RuntimeLogStates =
+        new(StringComparer.Ordinal);
+    private static readonly object RuntimeLogLock = new();
     private readonly string _folderPath;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
@@ -1412,9 +1416,6 @@ public class ExtensionHostBridge
     private readonly Dictionary<string, ExtensionHttpFailureState> _httpFailureStates =
         new(StringComparer.Ordinal);
     private readonly object _httpFailureLock = new();
-    private readonly Dictionary<string, ExtensionRuntimeLogState> _runtimeLogStates =
-        new(StringComparer.Ordinal);
-    private readonly object _runtimeLogLock = new();
     private int _logEvents;
 
     public ExtensionHostBridge(
@@ -1458,9 +1459,11 @@ public class ExtensionHostBridge
     public void Log(string level, string message)
     {
         if (Interlocked.Increment(ref _logEvents) > MaximumLogEvents) return;
-        message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]");
+        message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]").Trim();
         if (message.Length > 2_000) message = message[..2_000];
-        if (message is "<redacted>" or "[redacted]" || string.IsNullOrWhiteSpace(message))
+        if (message.Equals("<redacted>", StringComparison.OrdinalIgnoreCase) ||
+            message.Equals("[redacted]", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(message))
             message = "Provider operation failed without a safe diagnostic.";
         if (!ShouldEmitRuntimeLog(level, message, out var suppressedCount)) return;
         if (suppressedCount > 0)
@@ -1504,20 +1507,30 @@ public class ExtensionHostBridge
         string message,
         out int suppressedCount)
     {
-        var key = $"{level.Trim().ToLowerInvariant()}:{message}";
+        var key = $"{_extensionId}:{level.Trim().ToLowerInvariant()}:{message}";
         var now = DateTimeOffset.UtcNow;
-        lock (_runtimeLogLock)
+        lock (RuntimeLogLock)
         {
-            if (_runtimeLogStates.TryGetValue(key, out var state) &&
+            if (RuntimeLogStates.TryGetValue(key, out var state) &&
                 now - state.LastEmittedAt < RuntimeLogDeduplicationWindow)
             {
-                _runtimeLogStates[key] = state with { SuppressedCount = state.SuppressedCount + 1 };
+                RuntimeLogStates[key] = state with { SuppressedCount = state.SuppressedCount + 1 };
                 suppressedCount = 0;
                 return false;
             }
 
             suppressedCount = state?.SuppressedCount ?? 0;
-            _runtimeLogStates[key] = new ExtensionRuntimeLogState(now, 0);
+            if (state == null && RuntimeLogStates.Count >= MaximumRuntimeLogFingerprints)
+            {
+                foreach (var expired in RuntimeLogStates
+                             .Where(item => now - item.Value.LastEmittedAt >= RuntimeLogDeduplicationWindow)
+                             .Select(item => item.Key)
+                             .ToArray())
+                    RuntimeLogStates.Remove(expired);
+                if (RuntimeLogStates.Count >= MaximumRuntimeLogFingerprints)
+                    RuntimeLogStates.Remove(RuntimeLogStates.MinBy(item => item.Value.LastEmittedAt).Key);
+            }
+            RuntimeLogStates[key] = new ExtensionRuntimeLogState(now, 0);
             return true;
         }
     }
