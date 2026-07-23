@@ -80,15 +80,18 @@ public sealed class ExtensionCapabilityAdapterTests
             registerExtension({
               searchTracks:function(){
                 var response = http.get('https://api.example.test/search', {});
+                if (response.statusCode === 503) log.error('provider bad response 503');
                 return {items:[], statusCode:response.statusCode, error:response.error || null};
               }
             });
             """;
         var handler = new StatusHandler(HttpStatusCode.Forbidden);
+        var events = new List<(string Level, string Message)>();
         var permissions = new ExtensionRuntimePermissionSet(
             new HashSet<string>(["https://api.example.test/"]),
             new HashSet<string>(),
-            new HashSet<string>());
+            new HashSet<string>(),
+            LogSink: (level, message) => events.Add((level, message)));
         var sandbox = new ExtensionSandbox(
             Path.GetTempPath(),
             manifest,
@@ -106,6 +109,7 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Contains("\"statusCode\":503", suppressed, StringComparison.Ordinal);
         Assert.Contains("provider_temporarily_unavailable", suppressed, StringComparison.Ordinal);
         Assert.Equal(2, handler.CallCount);
+        Assert.Empty(events);
     }
 
     [Fact]

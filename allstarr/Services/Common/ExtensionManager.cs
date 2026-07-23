@@ -1416,6 +1416,7 @@ public class ExtensionHostBridge
     private readonly Dictionary<string, ExtensionHttpFailureState> _httpFailureStates =
         new(StringComparer.Ordinal);
     private readonly object _httpFailureLock = new();
+    private DateTimeOffset _lastSyntheticCooldownResponseAt;
     private int _logEvents;
 
     public ExtensionHostBridge(
@@ -1458,8 +1459,12 @@ public class ExtensionHostBridge
 
     public void Log(string level, string message)
     {
-        if (Interlocked.Increment(ref _logEvents) > MaximumLogEvents) return;
         message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]").Trim();
+        if (level.Equals("error", StringComparison.OrdinalIgnoreCase) &&
+            DateTimeOffset.UtcNow - _lastSyntheticCooldownResponseAt < TimeSpan.FromSeconds(5) &&
+            message.Contains("503", StringComparison.Ordinal))
+            return;
+        if (Interlocked.Increment(ref _logEvents) > MaximumLogEvents) return;
         if (message.Length > 2_000) message = message[..2_000];
         if ((message.Length <= 128 &&
              message.Contains("redacted", StringComparison.OrdinalIgnoreCase)) ||
@@ -1821,6 +1826,7 @@ public class ExtensionHostBridge
             var routeKey = $"{normalizedMethod} {safeUri.GetLeftPart(UriPartial.Authority)}{safeUri.AbsolutePath}";
             if (TryGetHttpCooldown(routeKey, out var retryAfterSeconds, out var lastStatusCode))
             {
+                _lastSyntheticCooldownResponseAt = DateTimeOffset.UtcNow;
                 return new
                 {
                     statusCode = 503,
