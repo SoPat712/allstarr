@@ -3653,12 +3653,22 @@ class AllstarrApp extends LitElement {
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
           ${details ? html`<div class="playlist-operation-row"><div class="playlist-operation-summary" aria-label="Playlist synchronization details">
-            <span><small>Local</small><strong>${localTracks}</strong></span>
-            <span><small>External</small><strong>${externalTracks}</strong></span>
-            <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
-            <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
-            <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not synced yet"}</strong></span>
-            <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
+            <section class="playlist-operation-group coverage-group" aria-label="Playlist coverage">
+              <div class="playlist-operation-heading"><span>${icon("playlist", 16)}</span><div><small>Coverage</small><strong>${playableRatio === null ? "Waiting for tracks" : `${Math.round(playableRatio * 100)}% playable`}</strong></div></div>
+              <div class="playlist-operation-metrics">
+                <span><small>Local</small><strong>${localTracks}</strong></span>
+                <span><small>External</small><strong>${externalTracks}</strong></span>
+                <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
+              </div>
+            </section>
+            <section class="playlist-operation-group timing-group" aria-label="Synchronization timing">
+              <div class="playlist-operation-heading"><span>${icon("clock", 16)}</span><div><small>Synchronization</small><strong>${lastSuccessfulSyncAt ? `Last ran ${formatRelativeTime(lastSuccessfulSyncAt)}` : "Not synced yet"}</strong></div></div>
+              <div class="playlist-operation-metrics">
+                <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
+                <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not yet"}</strong></span>
+                <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
+              </div>
+            </section>
           </div><button class="primary compact playlist-rematch-action" @click=${async () => {
             await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
             await this.reloadInjectedPlaylistDetails();
@@ -3671,23 +3681,57 @@ class AllstarrApp extends LitElement {
           ${this.renderInjectedTrackEditor()}
           ${details ? html`<label class="search-control playlist-track-search">${icon("search")}<input aria-label="Filter playlist tracks" placeholder="Filter tracks…" .value=${this.injectedTrackFilter} @input=${(event) => { this.injectedTrackFilter = event.target.value; }}></label>
             <div class="playlist-track-table">
-              <div class="playlist-track-head"><span>#</span><span>Track</span><span>Artist</span><span>Album</span><span>Provider</span><span></span></div>
-              ${filtered.length ? filtered.map((track, index) => html`<div class="playlist-track-row playlist-track-inspectable" role="button" tabindex="0"
-                aria-label="Open mapping details for ${display(track.title, "track")}" @click=${() => this.openTrackDetails(track)}
-                @keydown=${(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openTrackDetails(track); } }}>
-                <span class="track-position" title=${track.sourcePosition ? `Provider position ${track.sourcePosition}` : ""}>${display(track.position ?? index + 1)}</span>
-                <span class="track-title-cell"><img src=${track.albumArtUrl || "/placeholder.png"} alt="" loading="lazy" decoding="async"><strong>${display(track.title)}</strong></span>
-                <span class="track-artist-cell" data-label="Artist">${asArray(track.artists).join(", ") || "Unknown artist"}</span>
-                <span class="track-album-cell" data-label="Album">${display(track.album)}</span>
-                <span class="track-provider-cell" data-label="Provider"><span class="provider-badge ${track.matchState || "unmatched"}">${track.isLocal === true ? this.renderProviderLogo(targetBackend, "tiny") : track.isLocal === false ? this.renderProviderLogo(track.externalProvider, "tiny") : icon("warning", 14)}${track.isLocal === true ? titleCase(targetBackend) : track.isLocal === false ? providerDisplayName(track.externalProvider, this.schema?.providers) : "Unmatched"}</span></span>
-                <span class="track-menu-cell" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track, index)}</span>
-              </div>`) : html`<div class="empty compact">No tracks match this filter.</div>`}
+              <div class="playlist-track-head"><span>#</span><span>Track</span><span>Playback route</span><span>Duration</span><span class="visually-hidden">Actions</span></div>
+              ${filtered.length ? filtered.map((track, index) => this.renderPlaylistTrackRow(track, index, targetBackend)) : html`<div class="empty compact">No tracks match this filter.</div>`}
             </div>
             <div class="playlist-track-summary">${query ? `Showing ${filtered.length} of ${tracks.length} tracks` : `All ${tracks.length} tracks`}</div>
           ` : html`<div class="empty">Loading playlist tracks…</div>`}
         </div>
       </section>
     </div>${this.renderTrackDetailsModal()}`;
+  }
+
+  renderPlaylistTrackRow(track, index, targetBackend) {
+    const artists = asArray(track.artists).join(", ") || "Unknown artist";
+    const album = display(track.album, "Unknown album");
+    const durationMs = Number(track.durationMs ?? track.DurationMs ?? 0);
+    const routeProvider = track.isLocal === true
+      ? targetBackend
+      : track.isLocal === false
+        ? track.externalProvider
+        : "";
+    const routeName = track.isLocal === true
+      ? titleCase(targetBackend)
+      : track.isLocal === false
+        ? providerDisplayName(track.externalProvider, this.schema?.providers)
+        : "Unmatched";
+    const identifiers = [
+      track.isrc ? `ISRC ${track.isrc}` : "",
+      track.spotifyId ? `Spotify ${track.spotifyId}` : "",
+      track.backendItemId ? `${titleCase(targetBackend)} ${track.backendItemId}` : "",
+    ].filter(Boolean).join(" · ");
+    const openDetails = () => this.openTrackDetails(track);
+    return html`<article class="playlist-track-row playlist-track-inspectable">
+      <span class="track-position" title=${track.sourcePosition ? `Provider position ${track.sourcePosition}` : ""}>${display(track.position ?? index + 1)}</span>
+      <button class="track-primary-action" type="button" title=${identifiers || "Open mapping details"}
+        aria-label="Open mapping details for ${display(track.title, "track")} by ${artists}" @click=${openDetails}>
+        <img src=${track.albumArtUrl || "/placeholder.png"} alt="" loading="lazy" decoding="async">
+        <span class="track-copy">
+          <span class="track-title-line"><strong>${display(track.title)}</strong>${track.explicit === true ? html`<span class="explicit-badge" title="Explicit">E</span>` : nothing}</span>
+          <small class="track-byline">${artists}</small>
+          <small class="track-album">${album}</small>
+        </span>
+      </button>
+      <span class="track-provider-cell">
+        <span class="provider-badge ${track.matchState || "unmatched"}">${routeProvider ? this.renderProviderLogo(routeProvider, "tiny") : icon("warning", 14)}${routeName}</span>
+        <small>${track.isLocal === true ? "Local library" : track.isLocal === false ? "Provider playback" : "Needs review"}</small>
+      </span>
+      <span class="track-duration-cell" aria-label=${durationMs > 0 ? `Duration ${formatDuration(durationMs / 1000)}` : "Duration unavailable"}>
+        <strong>${durationMs > 0 ? formatDuration(durationMs / 1000) : "–:––"}</strong>
+        ${track.hasLyrics ? html`<span class="track-lyrics-indicator" title="Lyrics available" aria-label="Lyrics available">${icon("lyrics", 14)}</span>` : nothing}
+      </span>
+      <span class="track-menu-cell" @click=${(event) => event.stopPropagation()} @keydown=${(event) => event.stopPropagation()}>${this.renderInjectedTrackMenu(track, index)}</span>
+    </article>`;
   }
 
   async openTrackDetails(track) {
@@ -3793,7 +3837,7 @@ class AllstarrApp extends LitElement {
           event.stopPropagation();
           toggleMenu();
         }}>
-        ${icon("more", 18)}
+        ${icon("moreVertical", 18)}
       </button>
       ${open ? html`<div class="track-action-popover" role="menu" @click=${(event) => event.stopPropagation()} @keydown=${(event) => {
         event.stopPropagation();

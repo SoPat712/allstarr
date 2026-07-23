@@ -2,7 +2,7 @@ import { html, nothing } from "/js/lit-3.3.3.js";
 
 const iconNames = new Set([
   "home", "library", "sources", "activity", "settings", "search", "refresh", "plus",
-  "shield", "playlist", "tasks", "server", "clock", "check", "warning", "more",
+  "shield", "playlist", "tasks", "server", "clock", "check", "warning", "more", "moreVertical",
   "filter", "logout", "user", "close", "chevronLeft", "chevronRight", "extensions",
   "metadata", "download", "streaming", "lyrics", "externalApi", "edit", "upload", "link",
   "headphones", "lock", "pin",

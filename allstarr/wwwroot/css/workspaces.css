@@ -297,34 +297,80 @@
 
 .playlist-operation-summary {
     display: grid;
-    grid-template-columns: repeat(6, minmax(86px, 1fr));
-    align-items: stretch;
-    gap: 0;
-    overflow: hidden;
+    grid-template-columns: minmax(250px, .8fr) minmax(390px, 1.2fr);
+    gap: 8px;
+    min-width: 0;
+}
+
+.playlist-operation-group {
+    display: grid;
+    gap: 9px;
+    min-width: 0;
+    padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
 }
 
-.playlist-operation-summary > span {
-    display: grid;
-    gap: 2px;
-    align-content: center;
-    min-height: 44px;
-    padding: 6px 10px;
-    border-right: 1px solid var(--border);
+.playlist-operation-heading {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
 }
 
-.playlist-operation-summary small {
+.playlist-operation-heading > span {
+    display: grid;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--signal) 12%, var(--surface-raised));
+    color: var(--signal);
+}
+
+.playlist-operation-heading > div {
+    display: grid;
+    min-width: 0;
+}
+
+.playlist-operation-heading small,
+.playlist-operation-metrics small {
     color: var(--text-muted);
     font-size: .72rem;
 }
 
-.playlist-operation-summary strong {
+.playlist-operation-heading strong,
+.playlist-operation-metrics strong {
     font-size: .88rem;
 }
 
-.playlist-operation-summary .needs-attention strong {
+.playlist-operation-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
+}
+
+.playlist-operation-metrics > span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding-right: 9px;
+}
+
+.playlist-operation-metrics > span + span {
+    padding-left: 9px;
+    border-left: 1px solid var(--border);
+}
+
+.playlist-operation-metrics strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.playlist-operation-metrics .needs-attention strong {
     color: var(--warning);
 }
 
@@ -365,13 +411,11 @@
 }
 
 .playlist-track-inspectable {
-    cursor: pointer;
+    position: relative;
 }
 
-.playlist-track-inspectable:hover,
-.playlist-track-inspectable:focus-visible {
+.playlist-track-inspectable:hover {
     background: color-mix(in srgb, var(--signal) 8%, var(--surface-raised));
-    outline: none;
 }
 
 .track-details-backdrop {
