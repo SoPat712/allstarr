@@ -47,6 +47,10 @@ RUN install -d /app/downloads /app/kept /app/cache /app/state/backups
 
 COPY --from=build /app/publish .
 
+# Program.cs owns both listeners. Clear the base image's default HTTP_PORTS value
+# so Kestrel does not report a duplicate address override during every startup.
+ENV ASPNETCORE_HTTP_PORTS=
+
 EXPOSE 8080 5275
 
 ENTRYPOINT ["dotnet", "allstarr.dll"]
