@@ -3,6 +3,7 @@ using allstarr.Models.Spotify;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.Extensions.Options;
+using System.Net;
 using System.Text.Json;
 
 namespace allstarr.Services.Spotify;
@@ -19,6 +20,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private readonly ILogger<SpotifyMissingTracksFetcher> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
+    private readonly MissingTrackExportRetryPolicy _retryPolicy = new();
     private readonly string _cacheDirectory;
     private readonly SemaphoreSlim _fetchGate = new(1, 1);
     private bool _hasRunOnce = false;
@@ -51,7 +53,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     public async Task TriggerFetchAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Manual fetch triggered");
-        await RunFetchAsync(cancellationToken, waitForActiveRun: true);
+        await RunFetchAsync(cancellationToken, waitForActiveRun: true, force: true);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -112,7 +114,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 _logger.LogInformation("Running initial fetch on startup");
                 try
                 {
-                    await RunFetchAsync(stoppingToken, waitForActiveRun: false);
+                    await RunFetchAsync(stoppingToken, waitForActiveRun: false, force: false);
                     _hasRunOnce = true;
                 }
                 catch (Exception ex)
@@ -135,7 +137,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 var shouldFetch = await ShouldFetchNowAsync();
                 if (shouldFetch)
                 {
-                    await RunFetchAsync(stoppingToken, waitForActiveRun: false);
+                    await RunFetchAsync(stoppingToken, waitForActiveRun: false, force: false);
                 }
             }
             catch (Exception ex)
@@ -147,32 +149,27 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
     }
 
-    private async Task<bool> ShouldFetchNowAsync()
+    private Task<bool> ShouldFetchNowAsync()
     {
-        // Check if we have recent cache files (within last 24 hours)
-        var now = DateTime.UtcNow;
-        var cacheThreshold = now.AddHours(-24);
+        var now = DateTimeOffset.UtcNow;
 
         foreach (var playlistName in _playlistIdToName.Values)
         {
-            var filePath = GetCacheFilePath(playlistName);
-
-            if (!File.Exists(filePath))
+            if (NeedsRefresh(playlistName, now.UtcDateTime) &&
+                _retryPolicy.IsDue(playlistName, now))
             {
-                // Missing cache file for this playlist
-                return true;
-            }
-
-            var fileTime = File.GetLastWriteTimeUtc(filePath);
-            if (fileTime < cacheThreshold)
-            {
-                // Cache file is older than 24 hours
-                return true;
+                return Task.FromResult(true);
             }
         }
 
-        // All playlists have recent cache files
-        return false;
+        return Task.FromResult(false);
+    }
+
+    private bool NeedsRefresh(string playlistName, DateTime now)
+    {
+        var filePath = GetCacheFilePath(playlistName);
+        return !File.Exists(filePath) ||
+               File.GetLastWriteTimeUtc(filePath) < now.AddHours(-24);
     }
 
     private async Task LoadPlaylistNamesAsync()
@@ -283,18 +280,29 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
     }
 
-    private async Task FetchMissingTracksAsync(CancellationToken cancellationToken)
+    private async Task FetchMissingTracksAsync(
+        CancellationToken cancellationToken,
+        bool force)
     {
         Directory.CreateDirectory(_cacheDirectory);
         _logger.LogInformation("=== FETCHING MISSING TRACKS ===");
         _logger.LogDebug("Processing {Count} playlists", _playlistIdToName.Count);
 
-        // Track when we find files to optimize search for other playlists
         DateTime? firstFoundTime = null;
         var foundPlaylists = new HashSet<string>();
+        var attemptedPlaylists = 0;
+        var now = DateTimeOffset.UtcNow;
 
         foreach (var kvp in _playlistIdToName)
         {
+            if (!force &&
+                (!NeedsRefresh(kvp.Value, now.UtcDateTime) ||
+                 !_retryPolicy.IsDue(kvp.Value, now)))
+            {
+                continue;
+            }
+
+            attemptedPlaylists++;
             _logger.LogDebug("Fetching playlist: {Name}", kvp.Value);
             var foundTime = await FetchPlaylistMissingTracksAsync(kvp.Value, cancellationToken, firstFoundTime);
 
@@ -309,11 +317,16 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             }
         }
 
-        _logger.LogInformation("=== FINISHED FETCHING MISSING TRACKS ({Found}/{Total} playlists found) ===",
-            foundPlaylists.Count, _playlistIdToName.Count);
+        _logger.LogInformation(
+            "=== FINISHED FETCHING MISSING TRACKS ({Found}/{Attempted} attempted playlists found) ===",
+            foundPlaylists.Count,
+            attemptedPlaylists);
     }
 
-    private async Task RunFetchAsync(CancellationToken cancellationToken, bool waitForActiveRun)
+    private async Task RunFetchAsync(
+        CancellationToken cancellationToken,
+        bool waitForActiveRun,
+        bool force)
     {
         var entered = await _fetchGate.WaitAsync(
             waitForActiveRun ? Timeout.Infinite : 0,
@@ -326,7 +339,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
 
         try
         {
-            await FetchMissingTracksAsync(cancellationToken);
+            await FetchMissingTracksAsync(cancellationToken, force);
         }
         finally
         {
@@ -384,19 +397,52 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var result = await TryFetchMissingTracksFile(playlistName, time, jellyfinUrl, apiKey, httpClient, cancellationToken);
-            if (result.found)
+            var result = await TryFetchMissingTracksFile(
+                playlistName,
+                time,
+                jellyfinUrl,
+                apiKey,
+                httpClient,
+                cancellationToken);
+            if (result.Status == MissingTrackFileProbeStatus.Found)
             {
-                foundFileTime = result.fileTime;
+                _retryPolicy.RecordSuccess(playlistName);
+                foundFileTime = result.FileTime;
                 return foundFileTime;
+            }
+
+            if (result.Status == MissingTrackFileProbeStatus.Unavailable)
+            {
+                var retryAfter = _retryPolicy.RecordMiss(playlistName, DateTimeOffset.UtcNow);
+                if (result.StatusCode.HasValue)
+                {
+                    _logger.LogWarning(
+                        result.Exception,
+                        "Missing-track export endpoint for {Playlist} returned HTTP {StatusCode}; stopped the candidate scan and will retry in {RetryAfterMinutes} minutes",
+                        playlistName,
+                        (int)result.StatusCode.Value,
+                        retryAfter.TotalMinutes);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        result.Exception,
+                        "Missing-track export endpoint for {Playlist} was unavailable; stopped the candidate scan and will retry in {RetryAfterMinutes} minutes",
+                        playlistName,
+                        retryAfter.TotalMinutes);
+                }
+
+                return null;
             }
         }
 
+        var missRetryAfter = _retryPolicy.RecordMiss(playlistName, DateTimeOffset.UtcNow);
         if (existingTracks != null || File.Exists(filePath))
         {
             _logger.LogDebug(
-                "No newer missing-track file found for {Playlist}; preserving the existing cache",
-                playlistName);
+                "No newer missing-track export found for {Playlist}; preserving the existing cache and retrying in {RetryAfterMinutes} minutes",
+                playlistName,
+                missRetryAfter.TotalMinutes);
             if (existingTracks != null)
             {
                 await _cache.SetAsync(cacheKey, existingTracks, TimeSpan.FromDays(365));
@@ -425,9 +471,10 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
         else
         {
-            _logger.LogInformation(
-                "No missing-track export is available for {Playlist} in the bounded schedule window",
-                playlistName);
+            _logger.LogDebug(
+                "No missing-track export is available for {Playlist} in the bounded schedule window; retrying in {RetryAfterMinutes} minutes",
+                playlistName,
+                missRetryAfter.TotalMinutes);
         }
 
         return foundFileTime;
@@ -489,7 +536,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             .ToArray();
     }
 
-    private async Task<(bool found, DateTime? fileTime)> TryFetchMissingTracksFile(
+    private async Task<MissingTrackFileProbeResult> TryFetchMissingTracksFile(
         string playlistName,
         DateTime time,
         string jellyfinUrl,
@@ -507,31 +554,58 @@ public class SpotifyMissingTracksFetcher : BackgroundService
             _logger.LogDebug("Checking: {Playlist} at {DateTime}", playlistName, time.ToString("yyyy-MM-dd HH:mm"));
 
             var response = await httpClient.GetAsync(url, cancellationToken);
-            if (response.IsSuccessStatusCode)
+            if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                var tracks = ParseMissingTracks(json);
-
-                if (tracks != null)
-                {
-                    var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
-
-                    await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365));
-                    await SaveToFileCache(playlistName, tracks);
-
-                    _logger.LogInformation(
-                        "Cached {Count} missing tracks for {Playlist} from {Filename}",
-                        tracks.Count, playlistName, filename);
-                    return (true, time);
-                }
+                return MissingTrackFileProbeResult.NotFound;
             }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new MissingTrackFileProbeResult(
+                    MissingTrackFileProbeStatus.Unavailable,
+                    null,
+                    response.StatusCode,
+                    null);
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var tracks = ParseMissingTracks(json);
+
+            if (tracks != null)
+            {
+                var cacheKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
+
+                await _cache.SetAsync(cacheKey, tracks, TimeSpan.FromDays(365));
+                await SaveToFileCache(playlistName, tracks);
+
+                _logger.LogInformation(
+                    "Cached {Count} missing tracks for {Playlist} from {Filename}",
+                    tracks.Count, playlistName, filename);
+                return new MissingTrackFileProbeResult(
+                    MissingTrackFileProbeStatus.Found,
+                    time,
+                    response.StatusCode,
+                    null);
+            }
+
+            return new MissingTrackFileProbeResult(
+                MissingTrackFileProbeStatus.Unavailable,
+                null,
+                response.StatusCode,
+                null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch {Filename}", filename);
+            return new MissingTrackFileProbeResult(
+                MissingTrackFileProbeStatus.Unavailable,
+                null,
+                null,
+                ex);
         }
-
-        return (false, null);
     }
 
     private List<MissingTrack>? ParseMissingTracks(string json)
@@ -569,5 +643,25 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         }
 
         return tracks;
+    }
+
+    private enum MissingTrackFileProbeStatus
+    {
+        Found,
+        NotFound,
+        Unavailable
+    }
+
+    private readonly record struct MissingTrackFileProbeResult(
+        MissingTrackFileProbeStatus Status,
+        DateTime? FileTime,
+        HttpStatusCode? StatusCode,
+        Exception? Exception)
+    {
+        public static MissingTrackFileProbeResult NotFound { get; } = new(
+            MissingTrackFileProbeStatus.NotFound,
+            null,
+            HttpStatusCode.NotFound,
+            null);
     }
 }
