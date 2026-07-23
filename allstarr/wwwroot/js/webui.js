@@ -3608,6 +3608,8 @@ class AllstarrApp extends LitElement {
     const localTracks = Number(details?.localTracks ?? details?.LocalTracks ?? 0);
     const externalTracks = Number(details?.externalTracks ?? details?.ExternalTracks ?? 0);
     const unmatchedTracks = Number(details?.unmatchedTracks ?? details?.UnmatchedTracks ?? Math.max(0, tracks.length - playable));
+    const playableRatio = tracks.length > 0 ? Math.min(1, Math.max(0, playable / tracks.length)) : null;
+    const playableHue = playableRatio === null ? null : Math.round(playableRatio * 120);
     const lastSourceRefreshAt = details?.lastSourceRefreshAt || details?.LastSourceRefreshAt;
     const lastSuccessfulSyncAt = details?.lastSuccessfulSyncAt || details?.LastSuccessfulSyncAt;
     const nextSyncAt = details?.nextSyncAt || details?.NextSyncAt;
@@ -3641,8 +3643,12 @@ class AllstarrApp extends LitElement {
           <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
             <div class="playlist-hero-stats">
               <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
-              <div><span class="hero-stat-icon">${icon("check")}</span><span><small>Playable</small><strong>${playable} / ${tracks.length}</strong></span></div>
-              <div><span class="hero-stat-icon">${icon("library")}</span><span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
+              <div class="playlist-playable-stat ${playableRatio === null ? "unknown" : ""}"
+                style=${playableHue === null ? nothing : `--playable-hue: ${playableHue};`}
+                aria-label=${playableRatio === null ? "Playable coverage is loading" : `${Math.round(playableRatio * 100)} percent playable`}>
+                <span class="hero-stat-icon">${icon("check")}</span><span><small>Playable</small><strong>${playable} / ${tracks.length}</strong></span>
+              </div>
+              <div>${this.renderProviderLogo(targetBackend, "small")}<span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
             </div>
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>

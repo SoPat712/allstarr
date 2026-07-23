@@ -262,6 +262,30 @@
     display: block;
 }
 
+.playlist-playable-stat {
+    --playable-hue: 0;
+    --playable-color: hsl(var(--playable-hue) 72% 56%);
+}
+
+.playlist-playable-stat .hero-stat-icon {
+    color: #fff;
+    border-color: color-mix(in srgb, var(--playable-color) 72%, var(--border));
+    background:
+        linear-gradient(
+            145deg,
+            color-mix(in srgb, var(--playable-color) 84%, #fff 16%),
+            color-mix(in srgb, var(--playable-color) 70%, var(--surface-elevated))
+        );
+    box-shadow: 0 5px 14px color-mix(in srgb, var(--playable-color) 22%, transparent);
+}
+
+.playlist-playable-stat.unknown .hero-stat-icon {
+    color: var(--text-muted);
+    border-color: var(--border);
+    background: var(--surface-subtle);
+    box-shadow: none;
+}
+
 .playlist-operation-row {
     display: grid;
     grid-column: 2;
