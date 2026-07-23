@@ -511,7 +511,7 @@ const API = {
   playlistSources: () =>
     requestJson("/api/admin/playlist-sources", { cache: "no-store" }, "Failed to load playlist sources"),
   sourcePlaylists: (accountId, query = "", cursor = "") => {
-    const params = new URLSearchParams({ limit: "30" });
+    const params = new URLSearchParams({ limit: "100" });
     if (query) params.set("query", query);
     if (cursor) params.set("cursor", cursor);
     return requestJson(`/api/admin/playlist-sources/${encodeURIComponent(accountId)}/playlists?${params}`, { cache: "no-store" }, "Failed to browse source playlists");
@@ -1677,13 +1677,13 @@ class AllstarrApp extends LitElement {
     this.updatePlaylistWizard({ sourceAccountId: accountId, sourcePlaylist: null, sourceQuery: "", sourceNextCursor: "", loading: true, error: "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     this.sourcePlaylistResults = [];
     try {
-      const response = await API.sourcePlaylists(accountId);
-      this.sourcePlaylistResults = asArray(response?.items || response?.Items);
+      const response = await this.fetchAllSourcePlaylists(accountId);
+      this.sourcePlaylistResults = response.items;
       const preferredId = this.playlistWizard.legacyHandoff?.sourcePlaylistId || this.playlistWizard.legacyHandoff?.SourcePlaylistId;
       const preferred = preferredId
         ? this.sourcePlaylistResults.find((item) => String(item.id || item.Id) === String(preferredId))
         : null;
-      this.updatePlaylistWizard({ loading: false, sourcePlaylist: preferred || null, sourceNextCursor: response?.nextCursor || response?.NextCursor || "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
+      this.updatePlaylistWizard({ loading: false, sourcePlaylist: preferred || null, sourceNextCursor: response.nextCursor, sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     } catch (error) {
       this.setPlaylistSourceFailure(error);
     }
@@ -1694,12 +1694,35 @@ class AllstarrApp extends LitElement {
     if (!draft.sourceAccountId) return;
     this.updatePlaylistWizard({ loading: true, error: "" });
     try {
-      const response = await API.sourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim());
-      this.sourcePlaylistResults = asArray(response?.items || response?.Items);
-      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response?.nextCursor || response?.NextCursor || "", sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
+      const response = await this.fetchAllSourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim());
+      this.sourcePlaylistResults = response.items;
+      this.updatePlaylistWizard({ loading: false, sourceNextCursor: response.nextCursor, sourceRetryAt: 0, sourceRetryAfterSeconds: 0 });
     } catch (error) {
       this.setPlaylistSourceFailure(error);
     }
+  }
+
+  async fetchAllSourcePlaylists(accountId, query = "") {
+    const items = [];
+    const itemIds = new Set();
+    const cursors = new Set();
+    let cursor = "";
+    for (let page = 0; page < 20; page += 1) {
+      const response = await API.sourcePlaylists(accountId, query, cursor);
+      for (const item of asArray(response?.items || response?.Items)) {
+        const id = String(item.id || item.Id);
+        if (!itemIds.has(id)) {
+          itemIds.add(id);
+          items.push(item);
+        }
+      }
+      const nextCursor = response?.nextCursor || response?.NextCursor || "";
+      if (!nextCursor || cursors.has(nextCursor))
+        return { items, nextCursor: "" };
+      cursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    return { items, nextCursor: cursor };
   }
 
   async loadMoreSourcePlaylists() {

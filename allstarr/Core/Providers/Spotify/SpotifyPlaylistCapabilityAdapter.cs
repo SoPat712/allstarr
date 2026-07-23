@@ -43,6 +43,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly SpotifyPathfinderPlaylistClient _pathfinder;
+    private readonly ILogger<SpotifyPathfinderPlaylistClient>? _logger;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SpotifyPlaylistCapabilityAdapter(
@@ -58,6 +59,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     {
         _http = http;
         _secrets = secrets;
+        _logger = logger;
         _pathfinder = new SpotifyPathfinderPlaylistClient(http, logger);
     }
 
@@ -168,8 +170,12 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         {
             return ProviderOutcome<T>.Failure(new ProviderError(ProviderErrorKind.AccountNeedsConfiguration));
         }
-        catch
+        catch (Exception exception)
         {
+            _logger?.LogWarning(
+                exception,
+                "Spotify account-bound playlist operation {OperationId} failed before producing a typed provider outcome",
+                context.OperationId);
             return ProviderOutcome<T>.Failure(new ProviderError(ProviderErrorKind.TransientFailure));
         }
     }

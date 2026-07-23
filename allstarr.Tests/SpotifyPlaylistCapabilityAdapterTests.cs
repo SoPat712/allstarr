@@ -100,6 +100,28 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task User_library_accepts_direct_playlist_items_and_string_counts()
+    {
+        var handler = new SpotifyFakeHandler { ReturnAlternativeLibraryEnvelope = true };
+        var adapter = new SpotifyPlaylistCapabilityAdapter(
+            new HttpClient(handler),
+            new FakeSecretAccessor("cookie"));
+
+        var outcome = await adapter.GetUserPlaylistsAsync(
+            Context(),
+            new(new ProviderPageRequest(100)));
+
+        Assert.True(outcome.IsSuccess);
+        var playlist = Assert.Single(outcome.RequireValue().Items);
+        Assert.Equal("playlist-direct", playlist.Id.Value);
+        Assert.Equal("Direct Mix", playlist.Name);
+        Assert.Equal("Nested description", playlist.Description);
+        Assert.Equal(12, playlist.TrackCount);
+        Assert.Null(outcome.RequireValue().NextCursor);
+        Assert.NotNull(playlist.Artwork);
+    }
+
+    [Fact]
     public async Task Missing_secret_and_auth_failure_are_typed_and_do_not_fallback_to_global_configuration()
     {
         var handler = new SpotifyFakeHandler();
@@ -268,6 +290,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         public byte[] ArtworkBytes { get; set; } = [1, 2, 3, 4];
         public bool UseRetryAfterDate { get; set; }
         public bool ReturnPersistedQueryError { get; set; }
+        public bool ReturnAlternativeLibraryEnvelope { get; set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -323,7 +346,11 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
             if (decoded.Contains("operationName=fetchPlaylist", StringComparison.Ordinal))
                 return Task.FromResult(Json(HttpStatusCode.OK, PlaylistResponse()));
             if (decoded.Contains("operationName=libraryV3", StringComparison.Ordinal))
-                return Task.FromResult(Json(HttpStatusCode.OK, LibraryResponse()));
+                return Task.FromResult(Json(
+                    HttpStatusCode.OK,
+                    ReturnAlternativeLibraryEnvelope
+                        ? AlternativeLibraryResponse()
+                        : LibraryResponse()));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
 
@@ -366,6 +393,51 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                                 {
                                     uri = "spotify:playlist:playlist-opaque",
                                     data = PlaylistData()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        private static object AlternativeLibraryResponse() => new
+        {
+            data = new
+            {
+                me = new
+                {
+                    libraryV3 = new
+                    {
+                        totalCount = "1",
+                        items = new[]
+                        {
+                            new
+                            {
+                                item = new
+                                {
+                                    uri = "spotify:playlist:playlist-direct",
+                                    name = "Direct Mix",
+                                    description = new { text = "Nested description" },
+                                    ownerV2 = new { data = new { username = "owner", name = "Owner" } },
+                                    images = new
+                                    {
+                                        items = new[]
+                                        {
+                                            new
+                                            {
+                                                sources = new[]
+                                                {
+                                                    new { url = "https://i.scdn.co/direct.jpg", width = 640 }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    revisionId = "snapshot-direct",
+                                    attributes = new[]
+                                    {
+                                        new { key = "core:item_count", value = "12" }
+                                    }
                                 }
                             }
                         }

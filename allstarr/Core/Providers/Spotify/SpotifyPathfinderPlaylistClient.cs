@@ -70,9 +70,7 @@ public sealed class SpotifyPathfinderPlaylistClient(
             var summaries = new List<ProviderPlaylistSummary>(rawItems.Count);
             foreach (var entry in rawItems)
             {
-                if (!TryPath(entry, out var wrapper, "item") ||
-                    !TryPath(wrapper, out var playlist, "data") ||
-                    !TryPlaylistId(wrapper, playlist, out var playlistId))
+                if (!TryPlaylistEntry(entry, out var wrapper, out var playlist, out var playlistId))
                     continue;
                 if (MapSummary(playlist, playlistId) is { } summary)
                     summaries.Add(summary);
@@ -95,6 +93,18 @@ public sealed class SpotifyPathfinderPlaylistClient(
                 "Spotify Pathfinder operation {Operation} returned {ByteCount} bytes that were not valid JSON",
                 LibraryOperation,
                 response.Body?.Length ?? 0);
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
+                new ProviderError(ProviderErrorKind.CapabilityUnavailable));
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or
+                                         FormatException or
+                                         ArgumentException or
+                                         OverflowException)
+        {
+            logger?.LogWarning(
+                exception,
+                "Spotify Pathfinder operation {Operation} returned a structurally incompatible playlist envelope",
+                LibraryOperation);
             return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
                 new ProviderError(ProviderErrorKind.CapabilityUnavailable));
         }
@@ -291,7 +301,7 @@ public sealed class SpotifyPathfinderPlaylistClient(
 
     private ProviderPlaylistSummary? MapSummary(JsonElement value, string id)
     {
-        var name = String(value, "name");
+        var name = Text(value, "name");
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
             return null;
         var resource = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Playlist, id);
@@ -310,7 +320,7 @@ public sealed class SpotifyPathfinderPlaylistClient(
             name,
             new ProviderPlaylistOwner(ownerId, ownerName),
             revision,
-            String(value, "description"),
+            Text(value, "description"),
             new ProviderArtworkReference(resource, revision: revision),
             trackCount);
         if (ArtworkUri(value) is { } artwork)
@@ -404,12 +414,35 @@ public sealed class SpotifyPathfinderPlaylistClient(
         return new ProviderPlaylistTrack(position, trackId, metadata: metadata);
     }
 
+    private static bool TryPlaylistEntry(
+        JsonElement entry,
+        out JsonElement wrapper,
+        out JsonElement playlist,
+        out string id)
+    {
+        wrapper = TryPath(entry, out var wrapped, "item") ? wrapped : entry;
+        playlist = TryPath(wrapper, out var data, "data") ? data : wrapper;
+        if (playlist.ValueKind != JsonValueKind.Object)
+        {
+            id = "";
+            return false;
+        }
+        return TryPlaylistId(entry, wrapper, playlist, out id);
+    }
+
     private static bool TryPlaylistId(
+        JsonElement entry,
         JsonElement wrapper,
         JsonElement playlist,
         out string id)
     {
-        id = SpotifyId(String(wrapper, "uri") ?? String(wrapper, "_uri") ?? String(playlist, "uri"), "playlist") ?? "";
+        id = SpotifyId(
+            String(entry, "uri") ??
+            String(entry, "_uri") ??
+            String(wrapper, "uri") ??
+            String(wrapper, "_uri") ??
+            String(playlist, "uri"),
+            "playlist") ?? "";
         return id.Length > 0;
     }
 
@@ -522,12 +555,34 @@ public sealed class SpotifyPathfinderPlaylistClient(
             ? value.GetString()
             : null;
 
-    private static int? Integer(JsonElement root, string name) =>
-        root.ValueKind == JsonValueKind.Object &&
-        root.TryGetProperty(name, out var value) &&
-        value.TryGetInt32(out var number)
+    private static string? Text(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(name, out var value))
+            return null;
+        if (value.ValueKind == JsonValueKind.String)
+            return value.GetString();
+        return value.ValueKind == JsonValueKind.Object
+            ? String(value, "text")
+            : null;
+    }
+
+    private static int? Integer(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(name, out var value))
+            return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+            return number;
+        return value.ValueKind == JsonValueKind.String &&
+               int.TryParse(
+                   value.GetString(),
+                   System.Globalization.NumberStyles.None,
+                   System.Globalization.CultureInfo.InvariantCulture,
+                   out number)
             ? number
             : null;
+    }
 
     private sealed record PathfinderResponse(ProviderOutcome<byte[]> Outcome, byte[]? Body);
     private sealed record ArtworkCacheEntry(Uri Uri, DateTimeOffset ExpiresAt);
