@@ -969,8 +969,8 @@ class AllstarrApp extends LitElement {
     this.selectedTrackDetails = null;
     this.trackDetailsLoading = false;
     this.providerAccountModalOpen = false;
-    this.providerAccountConfigOpen = "";
-    this.providerConfigOpen = "";
+    this.providerAccountConfigOpen = new Set();
+    this.providerConfigOpen = new Set();
     this.selectedProviderId = "";
     this.sourceCatalogOpen = false;
     this.selectedExtensionPackageId = "";
@@ -5200,7 +5200,7 @@ class AllstarrApp extends LitElement {
                   <div class="section-heading"><div><h4>Provider configuration</h4><p>${requiredSettings.length ? `${requiredSettings.length} required field${requiredSettings.length === 1 ? "" : "s"}` : "Optional provider preferences"}</p></div><span class="status-chip ${accounts.length ? "configured" : requiredSettings.length ? "warning" : "disabled"}">${accounts.length ? "Account saved" : requiredSettings.length ? "Setup required" : "Optional"}</span></div>
                   ${state !== "active" ? html`<div class="empty"><strong>Enable this extension first</strong><span>Configuration becomes available after its runtime is loaded.</span></div>` : accounts.length ? html`
                     <div class="extension-account-summary">${accounts.map((account) => html`<div><strong>${providerAccountDisplayName(account.displayName || account.DisplayName, name)}</strong><span class="muted">${account.enabled ?? account.Enabled ? "Enabled" : "Disabled"}</span></div>`)}</div>
-                    <button @click=${() => { close(); location.hash = "#/settings"; this.providerAccountConfigOpen = new Set(accounts.map((account) => account.id || account.Id)); }}>Manage saved account</button>
+                    <button @click=${() => { close(); location.hash = "#/settings/accounts"; this.providerAccountConfigOpen = new Set(accounts.map((account) => account.id || account.Id)); }}>Manage saved account</button>
                   ` : html`
                     <form class="config-grid extension-config-form" @submit=${this.createProviderAccount}>
                       <input type="hidden" name="providerId" value=${extensionId}>
