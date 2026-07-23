@@ -665,10 +665,21 @@ class ThemeManager {
   }
 }
 
+const BOOT_MESSAGES = Object.freeze([
+  "Tuning provider routes",
+  "Warming the waveform",
+  "Aligning playlist constellations",
+  "Checking the signal chain",
+  "Negotiating with the aux cable",
+  "Counting beats, not sheep",
+  "Preparing your music control center",
+]);
+
 class AllstarrApp extends LitElement {
   static properties = {
     authenticated: { type: Boolean },
     loading: { type: Boolean },
+    bootMessageIndex: { state: true },
     route: { type: String },
     navOpen: { type: Boolean },
     sidebarCollapsed: { type: Boolean },
@@ -774,6 +785,8 @@ class AllstarrApp extends LitElement {
     super();
     this.authenticated = false;
     this.loading = true;
+    this.bootMessageIndex = 0;
+    this.bootMessageTimer = null;
     this.route = normalizeRoute();
     this.navOpen = false;
     this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
@@ -935,6 +948,7 @@ class AllstarrApp extends LitElement {
     window.removeEventListener("hashchange", this.onHashChange);
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.stopNowPlayingClock();
+    this.stopSignalBoot();
     this.stopActivityStream();
     clearTimeout(this.envMigrationExpiryTimer);
     super.disconnectedCallback();
@@ -998,6 +1012,7 @@ class AllstarrApp extends LitElement {
 
   async bootstrap() {
     this.loading = true;
+    this.startSignalBoot();
     try {
       const authState = await API.me();
       this.authBackend = authState.backend || authState.Backend || "media server";
@@ -1046,8 +1061,22 @@ class AllstarrApp extends LitElement {
         this.toast(error.message, "error");
       }
     } finally {
+      this.stopSignalBoot();
       this.loading = false;
     }
+  }
+
+  startSignalBoot() {
+    this.stopSignalBoot();
+    this.bootMessageIndex = 0;
+    this.bootMessageTimer = window.setInterval(() => {
+      this.bootMessageIndex = (this.bootMessageIndex + 1) % BOOT_MESSAGES.length;
+    }, 1400);
+  }
+
+  stopSignalBoot() {
+    clearInterval(this.bootMessageTimer);
+    this.bootMessageTimer = null;
   }
 
   async loadSchema() {
@@ -2274,7 +2303,7 @@ class AllstarrApp extends LitElement {
 
   render() {
     if (this.loading) {
-      return html`<div class="app-loading"><div class="chip">Loading Allstarr</div></div>`;
+      return this.renderSignalBoot();
     }
 
     if (!this.authenticated) {
@@ -2306,6 +2335,21 @@ class AllstarrApp extends LitElement {
       ${administrator ? this.renderSetupGuide() : nothing}
       ${this.renderToasts()}
     `;
+  }
+
+  renderSignalBoot() {
+    return html`<section class="signal-boot" aria-label="Loading Allstarr">
+      <div class="signal-boot-grid" aria-hidden="true"></div>
+      <div class="signal-boot-console">
+        <div class="signal-boot-mark" aria-hidden="true"><span class="signal-boot-orbit"></span><span class="signal-boot-pulse"></span><span class="signal-boot-core">A</span></div>
+        <p class="signal-boot-eyebrow">Allstarr signal boot</p>
+        <h1>Bringing your music universe online</h1>
+        <p class="signal-boot-status" aria-hidden="true">${BOOT_MESSAGES[this.bootMessageIndex]}</p>
+        <div class="signal-boot-meter" aria-hidden="true">${Array.from({ length: 9 }, () => html`<span></span>`)}</div>
+        <small>Providers · Library · Playback</small>
+        <span class="signal-boot-accessible" role="status">Loading Allstarr. Preparing your music control center.</span>
+      </div>
+    </section>`;
   }
 
   renderAuth() {

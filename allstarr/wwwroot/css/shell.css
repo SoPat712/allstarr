@@ -295,3 +295,249 @@
     width: min(360px, calc(100vw - 32px));
     inset: auto auto calc(var(--now-playing-height) + 16px) 16px;
 }
+
+.signal-boot {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    width: 100%;
+    min-height: 100dvh;
+    place-items: center;
+    padding: 32px;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
+        radial-gradient(circle at 20% 80%, color-mix(in srgb, var(--success) 9%, transparent), transparent 30%),
+        var(--surface-page);
+}
+
+.signal-boot::before,
+.signal-boot::after {
+    position: absolute;
+    z-index: -1;
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+    border-radius: 50%;
+    content: "";
+    pointer-events: none;
+}
+
+.signal-boot::before {
+    width: min(70vw, 720px);
+    aspect-ratio: 1;
+    animation: signal-boot-breathe 4s ease-in-out infinite;
+}
+
+.signal-boot::after {
+    width: min(52vw, 520px);
+    aspect-ratio: 1;
+    border-style: dashed;
+    animation: signal-boot-spin 24s linear infinite reverse;
+}
+
+.signal-boot-grid {
+    position: absolute;
+    z-index: -2;
+    opacity: 0.28;
+    background-image:
+        linear-gradient(color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px),
+        linear-gradient(90deg, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(circle at center, #000 0%, transparent 72%);
+    inset: 0;
+}
+
+.signal-boot-console {
+    display: grid;
+    justify-items: center;
+    width: min(560px, 100%);
+    text-align: center;
+}
+
+.signal-boot-mark {
+    position: relative;
+    display: grid;
+    width: 96px;
+    height: 96px;
+    margin-bottom: 24px;
+    place-items: center;
+}
+
+.signal-boot-core {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    width: 64px;
+    height: 64px;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--accent) 70%, white 10%);
+    border-radius: 20px;
+    background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 92%, white 8%), var(--accent));
+    color: white;
+    box-shadow: 0 16px 40px color-mix(in srgb, var(--accent) 30%, transparent);
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 750;
+}
+
+.signal-boot-orbit,
+.signal-boot-pulse {
+    position: absolute;
+    border-radius: 50%;
+    inset: 0;
+}
+
+.signal-boot-orbit {
+    border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
+    border-right-color: var(--success);
+    border-left-color: transparent;
+    animation: signal-boot-spin 3.2s linear infinite;
+}
+
+.signal-boot-pulse {
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    animation: signal-boot-pulse 2.4s ease-out infinite;
+}
+
+.signal-boot-eyebrow {
+    margin-bottom: 8px;
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+.signal-boot h1 {
+    max-width: 520px;
+    color: var(--text-primary);
+    font-size: clamp(1.75rem, 5vw, 2.75rem);
+    line-height: 1.08;
+}
+
+.signal-boot-status {
+    min-height: 24px;
+    margin-top: 16px;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 650;
+    animation: signal-boot-status 1.4s ease-in-out infinite;
+}
+
+.signal-boot-meter {
+    display: flex;
+    gap: 5px;
+    align-items: end;
+    height: 40px;
+    margin: 20px 0 12px;
+}
+
+.signal-boot-meter span {
+    width: 4px;
+    height: 32px;
+    border-radius: 999px;
+    background: linear-gradient(to top, var(--accent), var(--success));
+    transform: scaleY(0.25);
+    transform-origin: bottom;
+    animation: signal-boot-meter 1.1s ease-in-out infinite alternate;
+}
+
+.signal-boot-meter span:nth-child(2n) {
+    animation-delay: -0.7s;
+}
+
+.signal-boot-meter span:nth-child(3n) {
+    animation-delay: -0.35s;
+}
+
+.signal-boot-meter span:nth-child(4n) {
+    animation-delay: -0.9s;
+}
+
+.signal-boot-console > small {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.signal-boot-accessible {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@keyframes signal-boot-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes signal-boot-pulse {
+    0% {
+        opacity: 0.7;
+        transform: scale(0.72);
+    }
+
+    75%,
+    100% {
+        opacity: 0;
+        transform: scale(1.45);
+    }
+}
+
+@keyframes signal-boot-breathe {
+    0%,
+    100% {
+        opacity: 0.4;
+        transform: scale(0.92);
+    }
+
+    50% {
+        opacity: 0.9;
+        transform: scale(1);
+    }
+}
+
+@keyframes signal-boot-meter {
+    0% {
+        transform: scaleY(0.2);
+    }
+
+    100% {
+        transform: scaleY(1);
+    }
+}
+
+@keyframes signal-boot-status {
+    0%,
+    100% {
+        opacity: 0.62;
+        transform: translateY(1px);
+    }
+
+    50% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .signal-boot::before,
+    .signal-boot::after,
+    .signal-boot-orbit,
+    .signal-boot-pulse,
+    .signal-boot-status,
+    .signal-boot-meter span {
+        animation: none;
+    }
+
+    .signal-boot-meter span {
+        transform: scaleY(0.5);
+    }
+}
