@@ -327,18 +327,34 @@ public class AdminUiController : ControllerBase
             var identity = snapshot?.ProviderTrackIdentityId is { } identityId
                 ? providerIdentities.GetValueOrDefault(identityId)
                 : null;
+            var libraryTrack = libraryTracks.GetValueOrDefault(item.LibraryTrackId ?? Guid.Empty);
             var providerId = identity?.ProviderId ?? snapshot?.ProviderId ?? "matching";
+            var sourceTitle = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "title");
+            var sourceArtist = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "artist");
+            var sourceAlbum = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "album");
+            var artworkUrl = snapshot == null ? null
+                : AuditDetail(snapshot.PayloadJson, "artworkUrl")
+                  ?? AuditDetail(snapshot.PayloadJson, "coverUrl")
+                  ?? AuditDetail(snapshot.PayloadJson, "imageUrl");
             return new AdminUiActivityItem(
                 item.Id.ToString("N"),
                 "matching",
                 providerId,
                 MatchActivityLabel(item.State),
                 item.State.ToString().ToLowerInvariant(),
-                MatchActivityDetail(item, snapshot, identity, libraryTracks.GetValueOrDefault(item.LibraryTrackId ?? Guid.Empty)),
+                MatchActivityDetail(item, snapshot, identity, libraryTrack),
                 item.DecidedAt,
                 item.CorrelationId,
                 SeverityForState(item.State.ToString()),
-                providerId);
+                ProviderId: providerId,
+                ArtworkUrl: artworkUrl,
+                SourceTitle: sourceTitle,
+                SourceArtist: sourceArtist,
+                SourceAlbum: sourceAlbum,
+                TargetProviderId: libraryTrack == null ? null : "library",
+                TargetTitle: libraryTrack?.Title,
+                TargetArtist: libraryTrack?.Artist,
+                ConfidenceLabel: $"{Math.Round(item.Confidence * 100, 1)}%");
         }));
         activity.AddRange(audits.Select(AuditActivity));
 
@@ -988,4 +1004,12 @@ public sealed record AdminUiActivityItem(
     string Severity = "info",
     string? ProviderId = null,
     string? PlaylistLinkId = null,
-    string? PlaylistName = null);
+    string? PlaylistName = null,
+    string? ArtworkUrl = null,
+    string? SourceTitle = null,
+    string? SourceArtist = null,
+    string? SourceAlbum = null,
+    string? TargetProviderId = null,
+    string? TargetTitle = null,
+    string? TargetArtist = null,
+    string? ConfidenceLabel = null);

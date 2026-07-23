@@ -3846,7 +3846,22 @@ class AllstarrApp extends LitElement {
     const routes = asArray(mapping.providerIdentities).filter((identity) => identity.providerId !== mapping.providerId);
     const route = mapping.localTrack ? `${display(mapping.localTrack.artist, "Local library")} · ${display(mapping.localTrack.title, mapping.localTrack.backendItemId)}` : routes.map((identity) => `${identity.providerId}:${identity.externalId}`).join(", ");
     const notes = [...asArray(mapping.reasons), ...asArray(mapping.warnings)].filter(Boolean);
-    return html`<article class="mapping-review-card ${["unresolved", "suggested", "ambiguous", "rejected"].includes(state) ? "needs-attention" : ""}"><div class="mapping-source-mark" aria-hidden="true">${String(mapping.providerId || "?").slice(0, 2).toUpperCase()}</div><div class="mapping-track-copy"><div class="mapping-card-title"><strong>${display(mapping.title, "Unknown track")}</strong><span class="status-pill ${state}">${humanize(state)}</span></div><p>${display(mapping.artist, "Unknown artist")}${mapping.album ? html`<span> · ${mapping.album}</span>` : ""}</p><div class="mapping-route"><span>Source</span><strong>${humanize(mapping.providerId || "provider")}</strong><span>Current match</span><strong>${route || "No playable match"}</strong></div>${notes.length ? html`<div class="mapping-notes">${notes.slice(0, 3).map((note) => html`<span>${note}</span>`)}</div>` : ""}</div><div class="mapping-card-actions"><button class="primary" @click=${() => this.openMappingReview(mapping)}>Review match</button><button @click=${async () => { await API.rematchMapping(mapping.externalSnapshotId); await this.loadMappings(); this.toast("Rematch requested"); }}>Rematch</button><button @click=${async () => { await API.resolveMapping(mapping.externalSnapshotId, { targetType: "reject", reason: "Rejected from the match review queue" }); await this.loadMappings(); this.toast("Track rejected"); }}>Reject</button>${mapping.overrideId ? html`<button class="danger" @click=${async () => { await API.deleteMapping(mapping.overrideId, mapping.overrideRevision ?? 0); await this.loadMappings(); this.toast("Manual review cleared"); }}>Clear review</button>` : ""}</div></article>`;
+    const providerId = mapping.providerId || "provider";
+    const targetProvider = mapping.localTrack ? String(this.status?.backendType || "jellyfin").toLowerCase() : routes[0]?.providerId;
+    const artwork = mapping.artworkUrl || mapping.ArtworkUrl;
+    return html`<article class="mapping-review-card ${["unresolved", "suggested", "ambiguous", "rejected"].includes(state) ? "needs-attention" : ""}">
+      <div class="mapping-source-mark" aria-hidden="true">${artwork ? html`<img src=${artwork} alt="" loading="lazy" decoding="async">` : this.renderProviderLogo(providerId, "large")}</div>
+      <div class="mapping-track-copy">
+        <div class="mapping-card-title"><div><strong>${display(mapping.title, "Unknown track")}</strong><p>${display(mapping.artist, "Unknown artist")}${mapping.album ? html`<span> · ${mapping.album}</span>` : ""}</p></div><span class="status-pill ${state}">${titleCase(state)}</span></div>
+        <div class="mapping-route">
+          <span class="mapping-route-node">${this.renderProviderLogo(providerId, "tiny")}<span><small>Source</small><strong>${providerDisplayName(providerId, this.schema?.providers)}</strong></span></span>
+          <span class="mapping-route-arrow" aria-hidden="true">${icon("chevronRight", 18)}</span>
+          <span class="mapping-route-node ${targetProvider ? "" : "unresolved"}">${targetProvider ? this.renderProviderLogo(targetProvider, "tiny") : icon("search", 18)}<span><small>Current match</small><strong>${route || "No playable match"}</strong></span></span>
+        </div>
+        ${notes.length ? html`<div class="mapping-notes">${notes.slice(0, 3).map((note) => html`<span>${note}</span>`)}</div>` : ""}
+      </div>
+      <div class="mapping-card-actions"><button class="primary" @click=${() => this.openMappingReview(mapping)}>Review match</button><button @click=${async () => { await API.rematchMapping(mapping.externalSnapshotId); await this.loadMappings(); this.toast("Rematch requested"); }}>Rematch</button><button @click=${async () => { await API.resolveMapping(mapping.externalSnapshotId, { targetType: "reject", reason: "Rejected from the match review queue" }); await this.loadMappings(); this.toast("Track rejected"); }}>Reject</button>${mapping.overrideId ? html`<button class="danger" @click=${async () => { await API.deleteMapping(mapping.overrideId, mapping.overrideRevision ?? 0); await this.loadMappings(); this.toast("Manual review cleared"); }}>Clear review</button>` : ""}</div>
+    </article>`;
   }
 
   mappingReviewProviders(mapping) {
@@ -3864,14 +3879,16 @@ class AllstarrApp extends LitElement {
     if (!editor) return nothing;
     const mapping = editor.mapping;
     const local = editor.targetType === "local";
-    return html`<div class="playlist-preview-backdrop mapping-review-backdrop" @click=${(event) => { if (event.target === event.currentTarget) this.mappingEditor = null; }}><section class="playlist-preview-modal mapping-review-modal" role="dialog" aria-modal="true" aria-label="Review track match"><header><div><div class="eyebrow">Review match</div><h2>${display(mapping.title, "Unknown track")}</h2><p>${display(mapping.artist, "Unknown artist")} · source: ${humanize(mapping.providerId)}</p></div><button class="icon-button" aria-label="Close match review" @click=${() => { this.mappingEditor = null; }}>×</button></header><div class="mapping-target-tabs" role="tablist"><button class=${local ? "active" : ""} @click=${() => { editor.targetType = "local"; editor.results = []; this.requestUpdate(); }}>Search local library</button><button class=${!local ? "active" : ""} @click=${() => { editor.targetType = "provider"; editor.results = []; this.requestUpdate(); }}>Search a playback provider</button></div><form class="mapping-target-search" @submit=${(event) => { event.preventDefault(); this.searchMappingTargets(); }}>${!local ? html`<label><span>Provider</span><input list="mapping-provider-options" .value=${editor.provider} @input=${(event) => { editor.provider = event.target.value; }}><datalist id="mapping-provider-options">${this.mappingReviewProviders(mapping).map((provider) => html`<option value=${provider}></option>`)}</datalist></label>` : ""}<label class="grow"><span>Track</span><input .value=${editor.query} @input=${(event) => { editor.query = event.target.value; }} placeholder="Artist and title"></label><button class="primary" type="submit" ?disabled=${editor.busy}>${editor.busy ? "Searching…" : "Search"}</button></form><div class="mapping-target-results">${editor.error ? html`<div class="callout danger">${editor.error}</div>` : ""}${asArray(editor.results).map((result) => this.renderMappingTargetResult(result, local))}${editor.searched && !editor.busy && !editor.results.length ? html`<div class="empty-state compact"><strong>No playable results.</strong><span>Try another provider or a more exact query.</span></div>` : ""}</div></section></div>`;
+    return html`<div class="playlist-preview-backdrop mapping-review-backdrop" @click=${(event) => { if (event.target === event.currentTarget) this.mappingEditor = null; }}><section class="playlist-preview-modal mapping-review-modal" role="dialog" aria-modal="true" aria-label="Review track match"><header><div><div class="eyebrow">Review match</div><h2>${display(mapping.title, "Unknown track")}</h2><p>${display(mapping.artist, "Unknown artist")} · source: ${titleCase(mapping.providerId)}</p></div><button class="icon-button" aria-label="Close match review" @click=${() => { this.mappingEditor = null; }}>×</button></header><div class="mapping-target-tabs" role="tablist"><button class=${local ? "active" : ""} @click=${() => { editor.targetType = "local"; editor.results = []; this.requestUpdate(); }}>Search local library</button><button class=${!local ? "active" : ""} @click=${() => { editor.targetType = "provider"; editor.results = []; this.requestUpdate(); }}>Search a playback provider</button></div><form class="mapping-target-search" @submit=${(event) => { event.preventDefault(); this.searchMappingTargets(); }}>${!local ? html`<label><span>Provider</span><input list="mapping-provider-options" .value=${editor.provider} @input=${(event) => { editor.provider = event.target.value; }}><datalist id="mapping-provider-options">${this.mappingReviewProviders(mapping).map((provider) => html`<option value=${provider}></option>`)}</datalist></label>` : ""}<label class="grow"><span>Track</span><input .value=${editor.query} @input=${(event) => { editor.query = event.target.value; }} placeholder="Artist and title"></label><button class="primary" type="submit" ?disabled=${editor.busy}>${editor.busy ? "Searching…" : "Search"}</button></form><div class="mapping-target-results">${editor.error ? html`<div class="callout danger">${editor.error}</div>` : ""}${asArray(editor.results).map((result) => this.renderMappingTargetResult(result, local))}${editor.searched && !editor.busy && !editor.results.length ? html`<div class="empty-state compact"><strong>No playable results.</strong><span>Try another provider or a more exact query.</span></div>` : ""}</div></section></div>`;
   }
 
   renderMappingTargetResult(result, local) {
     const title = display(result.title ?? result.Title ?? result.name ?? result.Name, "Unknown track");
     const artist = display(result.artist ?? result.Artist ?? result.artistName ?? result.ArtistName, "Unknown artist");
     const album = result.album ?? result.Album ?? result.albumTitle ?? result.AlbumTitle;
-    return html`<button class="mapping-target-result" @click=${() => this.applyMappingTarget(result, local)}><span class="mapping-result-art" aria-hidden="true">♫</span><span><strong>${title}</strong><small>${artist}${album ? ` · ${album}` : ""}</small></span><span class="choose-label">Choose</span></button>`;
+    const artwork = result.artworkUrl ?? result.ArtworkUrl ?? result.coverArtUrl ?? result.CoverArtUrl ?? result.imageUrl ?? result.ImageUrl;
+    const provider = local ? String(this.status?.backendType || "jellyfin").toLowerCase() : result.externalProvider ?? result.ExternalProvider ?? this.mappingEditor?.provider;
+    return html`<button class="mapping-target-result" @click=${() => this.applyMappingTarget(result, local)}><span class="mapping-result-art" aria-hidden="true">${artwork ? html`<img src=${artwork} alt="" loading="lazy" decoding="async">` : this.renderProviderLogo(provider || "library", "large")}</span><span><strong>${title}</strong><small>${artist}${album ? ` · ${album}` : ""}</small></span><span class="choose-label">Choose</span></button>`;
   }
 
   async searchMappingTargets() {
@@ -5507,6 +5524,35 @@ class AllstarrApp extends LitElement {
     const eventStatusClass = (state) => ["accepted", "delivered", "healthy", "pinned", "succeeded", "success"].includes(String(state).toLowerCase())
       ? "configured"
       : state;
+    const eventArtwork = (entry, size = "large") => {
+      const artwork = entry.artworkUrl || entry.ArtworkUrl;
+      const provider = entry.providerId || entry.ProviderId || entry.source || entry.Source || "system";
+      return html`<span class=${`event-log-art event-log-art-${size}`}>${artwork ? html`<img src=${artwork} alt="" loading="lazy" decoding="async">` : this.renderProviderLogo(provider, size)}</span>`;
+    };
+    const matchRoute = (entry) => {
+      const sourceProvider = entry.providerId || entry.ProviderId || entry.source || entry.Source || "matching";
+      const rawTargetProvider = entry.targetProviderId || entry.TargetProviderId;
+      const targetProvider = rawTargetProvider === "library" ? String(this.status?.backendType || "jellyfin").toLowerCase() : rawTargetProvider;
+      return {
+        sourceProvider,
+        sourceTitle: entry.sourceTitle || entry.SourceTitle || entry.detail || entry.Detail || "External track",
+        sourceArtist: entry.sourceArtist || entry.SourceArtist || "",
+        sourceAlbum: entry.sourceAlbum || entry.SourceAlbum || "",
+        targetProvider,
+        targetTitle: entry.targetTitle || entry.TargetTitle || "No playable match",
+        targetArtist: entry.targetArtist || entry.TargetArtist || "",
+        confidence: entry.confidenceLabel || entry.ConfidenceLabel || "",
+      };
+    };
+    const renderMatchRoute = (entry, detailed = false) => {
+      const route = matchRoute(entry);
+      return html`<div class=${`event-match-route ${detailed ? "detailed" : ""}`}>
+        <span class="event-route-node">${this.renderProviderLogo(route.sourceProvider, "tiny")}<span><small>${providerDisplayName(route.sourceProvider, this.schema?.providers)}</small><strong>${route.sourceTitle}</strong>${detailed && route.sourceArtist ? html`<em>${route.sourceArtist}${route.sourceAlbum ? ` · ${route.sourceAlbum}` : ""}</em>` : nothing}</span></span>
+        <span class="event-route-arrow" aria-hidden="true">${icon("chevronRight", detailed ? 20 : 16)}</span>
+        <span class=${`event-route-node ${route.targetProvider ? "" : "unresolved"}`}>${route.targetProvider ? this.renderProviderLogo(route.targetProvider, "tiny") : icon("search", 17)}<span><small>${route.targetProvider ? providerDisplayName(route.targetProvider, this.schema?.providers) : "Unmatched"}</small><strong>${route.targetTitle}</strong>${detailed && route.targetArtist ? html`<em>${route.targetArtist}</em>` : nothing}</span></span>
+        ${route.confidence ? html`<span class="event-route-confidence">${route.confidence}</span>` : nothing}
+      </div>`;
+    };
     const groups = [];
     for (const entry of items) {
       const key = [entry.kind || entry.Kind, entry.source || entry.Source, entry.label || entry.Label, entry.state || entry.State]
@@ -5537,9 +5583,8 @@ class AllstarrApp extends LitElement {
           const sourceName = providerDisplayName(entry.source || entry.Source || "system", this.schema?.providers);
           return html`<details class="event-log-group" role="listitem">
             <summary class="event-log-entry">
-              <span class=${`event-kind event-${kind}`}>${icon(eventIcon(kind), 17)}</span>
-              <span class="event-log-summary-copy"><strong>${titleCase(entry.label || entry.Label || kind)}</strong><small>${sourceName} · ${entry.detail || entry.Detail || "No additional detail"}</small></span>
-              ${group.entries.length > 1 ? html`<span class="event-log-group-count">${group.entries.length} events</span>` : nothing}
+              ${eventArtwork(entry)}
+              <span class="event-log-summary-copy"><span class="event-log-title-line"><strong>${titleCase(entry.label || entry.Label || kind)}</strong>${group.entries.length > 1 ? html`<span class="event-log-group-count">${group.entries.length} events</span>` : nothing}</span>${kind === "matching" ? renderMatchRoute(entry) : html`<small>${sourceName} · ${entry.detail || entry.Detail || "No additional detail"}</small>`}</span>
               <span class=${`status-chip ${eventStatusClass(state)}`} title=${`${titleCase(severity)} severity`}>${titleCase(state)}</span>
               <time datetime=${entry.occurredAt || entry.OccurredAt}>${formatRelativeTime(entry.occurredAt || entry.OccurredAt)}</time>
               ${icon("chevronRight", 16)}
@@ -5550,13 +5595,18 @@ class AllstarrApp extends LitElement {
                 const provider = item.providerId || item.ProviderId;
                 const playlist = item.playlistName || item.PlaylistName;
                 return html`<article class="event-log-detail">
-                  <div><strong>${item.detail || item.Detail || "No additional detail"}</strong><time datetime=${item.occurredAt || item.OccurredAt}>${formatDate(item.occurredAt || item.OccurredAt)}</time></div>
-                  <dl>
-                    <div><dt>Source</dt><dd>${providerDisplayName(item.source || item.Source || "system", this.schema?.providers)}</dd></div>
-                    ${provider ? html`<div><dt>Provider</dt><dd>${providerDisplayName(provider, this.schema?.providers)}</dd></div>` : nothing}
-                    ${playlist ? html`<div><dt>Playlist</dt><dd>${playlist}</dd></div>` : nothing}
-                    ${correlation ? html`<div><dt>Correlation ID</dt><dd><code>${correlation}</code></dd></div>` : nothing}
-                  </dl>
+                  ${eventArtwork(item, "detail")}
+                  <div class="event-log-detail-body">
+                    <header><strong>${titleCase(item.label || item.Label || kind)}</strong><time datetime=${item.occurredAt || item.OccurredAt}>${formatDate(item.occurredAt || item.OccurredAt)}</time></header>
+                    ${kind === "matching" ? renderMatchRoute(item, true) : html`<p>${item.detail || item.Detail || "No additional detail"}</p>`}
+                    <dl>
+                      <div><dt>Source</dt><dd>${providerDisplayName(item.source || item.Source || "system", this.schema?.providers)}</dd></div>
+                      ${provider ? html`<div><dt>Provider</dt><dd>${providerDisplayName(provider, this.schema?.providers)}</dd></div>` : nothing}
+                      ${playlist ? html`<div><dt>Playlist</dt><dd>${playlist}</dd></div>` : nothing}
+                      <div><dt>Outcome</dt><dd><span class=${`status-chip ${eventStatusClass(item.state || item.State || "unknown")}`}>${titleCase(item.state || item.State || "unknown")}</span></dd></div>
+                    </dl>
+                    ${correlation ? html`<details class="event-log-technical"><summary>Technical details</summary><code>${correlation}</code></details>` : nothing}
+                  </div>
                 </article>`;
               })}
               ${group.entries.length > 1 ? html`<button class="event-log-collapse" @click=${(event) => event.currentTarget.closest("details")?.removeAttribute("open")}>Collapse ${group.entries.length} events</button>` : nothing}
