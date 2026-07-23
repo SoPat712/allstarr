@@ -17,9 +17,9 @@ public sealed class SpotifyPathfinderPlaylistClient(
     ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
 {
     internal const string LibraryOperation = "libraryV3";
-    internal const string LibraryQueryHash = "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455";
+    internal const string LibraryQueryHash = "50650f72ea32a99b5b46240bee22fea83024eec302478a9a75cfd05a0814ba99";
     internal const string PlaylistOperation = "fetchPlaylist";
-    internal const string PlaylistQueryHash = "e4b2953f160e58e38ac025d79b5a9b3aceee5c4c716598e9830bfceb69faff5f";
+    internal const string PlaylistQueryHash = "19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d";
     private const string ProviderId = SpotifyPlaylistCapabilityAdapter.StableProviderId;
     private static readonly Uri Endpoint = new("https://api-partner.spotify.com/pathfinder/v1/query");
     private readonly ConcurrentDictionary<string, ArtworkCacheEntry> _artwork = new(StringComparer.Ordinal);
@@ -39,13 +39,9 @@ public sealed class SpotifyPathfinderPlaylistClient(
             filters = new[] { "Playlists" },
             order = (string?)null,
             textFilter = query?.Trim() ?? "",
-            features = new[] { "LIKED_SONGS", "YOUR_EPISODES_V2", "PRERELEASES", "PRERELEASES_V2", "EVENTS" },
+            features = new[] { "LIKED_SONGS", "YOUR_EPISODES" },
             offset,
-            limit = page.Limit,
-            flatten = true,
-            expandedFolders = System.Array.Empty<string>(),
-            folderUri = (string?)null,
-            includeFoldersWhenFlattening = true
+            limit = page.Limit
         };
         var response = await QueryAsync(token, LibraryOperation, LibraryQueryHash, variables, cancellationToken);
         if (!response.Outcome.IsSuccess)

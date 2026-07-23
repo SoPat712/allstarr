@@ -81,7 +81,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task User_library_requests_all_playlists_across_folders_without_the_spotify_owned_filter()
+    public async Task User_library_requests_all_playlists_without_the_spotify_owned_filter()
     {
         var handler = new SpotifyFakeHandler();
         var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
@@ -93,11 +93,9 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
             path.Contains("operationName=libraryV3", StringComparison.Ordinal));
         Assert.Contains("\"filters\":[\"Playlists\"]", request, StringComparison.Ordinal);
         Assert.DoesNotContain("By Spotify", request, StringComparison.Ordinal);
-        Assert.Contains("\"flatten\":true", request, StringComparison.Ordinal);
-        Assert.Contains("\"includeFoldersWhenFlattening\":true", request, StringComparison.Ordinal);
-        Assert.Contains("\"PRERELEASES_V2\"", request, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"flatten\"", request, StringComparison.Ordinal);
         Assert.DoesNotContain("withCuration", request, StringComparison.Ordinal);
-        Assert.Contains("390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455",
+        Assert.Contains("50650f72ea32a99b5b46240bee22fea83024eec302478a9a75cfd05a0814ba99",
             request, StringComparison.Ordinal);
     }
 
