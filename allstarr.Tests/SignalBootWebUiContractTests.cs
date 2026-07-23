@@ -20,8 +20,9 @@ public sealed class SignalBootWebUiContractTests
     public void SignalBootHasQuirkyMusicTechCopyWithoutFakeProgress()
     {
         Assert.Contains("Tuning provider routes", _script, StringComparison.Ordinal);
-        Assert.DoesNotContain("Aligning playlist constellations", _script, StringComparison.Ordinal);
-        Assert.DoesNotContain("Negotiating with the aux cable", _script, StringComparison.Ordinal);
+        Assert.Contains("Warming the waveform", _script, StringComparison.Ordinal);
+        Assert.Contains("Aligning playlist constellations", _script, StringComparison.Ordinal);
+        Assert.Contains("Negotiating with the aux cable", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("Bringing your music universe online", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("signal-boot-meter\" role=\"progressbar\"", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("signal-boot-meter\" role=\"progressbar\"", _index, StringComparison.Ordinal);

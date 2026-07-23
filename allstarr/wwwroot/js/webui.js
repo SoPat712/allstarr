@@ -709,6 +709,12 @@ class ThemeManager {
 
 const BOOT_MESSAGES = Object.freeze([
   "Tuning provider routes",
+  "Warming the waveform",
+  "Aligning playlist constellations",
+  "Checking the signal chain",
+  "Negotiating with the aux cable",
+  "Counting beats, not sheep",
+  "Preparing your music control center",
 ]);
 
 class AllstarrApp extends LitElement {
