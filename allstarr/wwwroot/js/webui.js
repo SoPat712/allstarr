@@ -528,6 +528,8 @@ const API = {
     requestJson(`/api/admin/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }, "Failed to cancel job"),
   providerAccounts: () =>
     requestJson("/api/admin/provider-accounts", {}, "Failed to load provider accounts"),
+  ctsMeasurements: () =>
+    requestJson("/api/admin/provider-diagnostics/deep-stream/latest", { cache: "no-store" }, "Failed to load click-to-stream measurements"),
   favoriteActionPolicy: (scope) =>
     requestJson(`/api/admin/favorite-action-policies?${new URLSearchParams(scope)}`, { cache: "no-store" }, "Failed to load favorite policy"),
   saveFavoriteActionPolicy: (scope, administrator) =>
@@ -712,6 +714,7 @@ class AllstarrApp extends LitElement {
     eventLogCorrelation: { state: true },
     providerTests: { state: true },
     providerTestResults: { state: true },
+    ctsMeasurements: { state: true },
     endpointUsage: { state: true },
     mappings: { state: true },
     legacyMappings: { state: true },
@@ -821,6 +824,7 @@ class AllstarrApp extends LitElement {
     this.eventLogQuery = "";
     this.providerTests = new Set();
     this.providerTestResults = new Map();
+    this.ctsMeasurements = [];
     this.endpointUsage = null;
     this.mappings = null;
     this.legacyMappings = null;
@@ -1642,12 +1646,14 @@ class AllstarrApp extends LitElement {
       return;
     }
 
-    const [response, health] = await Promise.all([
+    const [response, health, cts] = await Promise.all([
       API.providerAccounts(),
       administrator ? API.providerHealth() : Promise.resolve([]),
+      administrator ? API.ctsMeasurements() : Promise.resolve({ measurements: [] }),
     ]);
     this.providerAccounts = asArray(response?.accounts || response?.Accounts);
     this.providerHealth = asArray(health);
+    this.ctsMeasurements = asArray(cts?.measurements || cts?.Measurements);
   }
 
   saveFavoritePolicy = async (event) => {
@@ -4179,7 +4185,10 @@ class AllstarrApp extends LitElement {
     const testing = this.providerTests.has(testKey);
     const canTest = Boolean(capability.canTest ?? capability.CanTest);
     const ctsOpen = this.deepStreamDiagnosticTarget?.accountId === String(id);
-    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div>${this.renderConnectivityMeter(this.providerTestResults.get(testKey))}<span class="capability-test-actions">${canTest ? html`<button class="compact" ?disabled=${testing || !enabled} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Enable to test"}</button>` : html`<span class="muted">No probe</span>`}${capabilityId === "streaming" && enabled ? html`<button class="compact" @click=${() => this.toggleDeepStreamDiagnostic(id, providerId)}>${ctsOpen ? "Close CTS" : "Measure CTS"}</button>` : nothing}</span></div>${capabilityId === "streaming" && ctsOpen ? this.renderDeepStreamDiagnostic(id, providerId) : nothing}`;
+    const cts = capabilityId === "streaming"
+      ? this.ctsMeasurements.find((item) => String(item.providerAccountId || item.ProviderAccountId) === String(id))
+      : null;
+    return html`<div class="account-capability"><div><strong>${titleCase(capabilityId)}</strong><small>${configuration === "not_required" ? "No account needed" : configuration === "configured" ? "Ready" : "Needs setup"} · ${health === "unknown" ? "Not tested" : titleCase(health)}</small></div>${this.renderConnectivityMeter(this.providerTestResults.get(testKey))}${cts ? html`<span class="cts-persisted"><small>CTS ${cts.latencyMs ?? cts.LatencyMs} ms</small>${this.renderConnectivityMeter(cts)}</span>` : nothing}<span class="capability-test-actions">${canTest ? html`<button class="compact" ?disabled=${testing || !enabled} @click=${() => this.testProviderAccountCapability(id, providerId, capabilityId)}>${testing ? "Testing..." : enabled ? "Test" : "Enable to test"}</button>` : html`<span class="muted">No probe</span>`}${capabilityId === "streaming" && enabled ? html`<button class="compact" @click=${() => this.toggleDeepStreamDiagnostic(id, providerId)}>${ctsOpen ? "Close CTS" : "Measure CTS"}</button>` : nothing}</span></div>${capabilityId === "streaming" && ctsOpen ? this.renderDeepStreamDiagnostic(id, providerId) : nothing}`;
   }
 
   renderConnectivityMeter(result) {
@@ -4231,6 +4240,7 @@ class AllstarrApp extends LitElement {
         trackLabel: String(data.get("trackLabel") || "").trim() || null,
         quality: ({ Any: 0, Lossy: 1, Lossless: 2, HighResolution: 3 })[String(data.get("quality") || "Any")],
       }), "Failed to measure click-to-stream time");
+      await this.loadProviderAccounts();
       this.toast("Click-to-stream measurement completed");
     } catch (error) {
       this.toast(error?.message || "Click-to-stream measurement failed", "error");

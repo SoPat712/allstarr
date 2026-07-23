@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Health;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Filters;
@@ -19,11 +20,55 @@ public sealed class ProviderDiagnosticsController(
     IProviderRegistry providers,
     IProviderRouteAccountResolver accounts,
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    ProviderCtsTrackSelector trackSelector) : ControllerBase
+    ProviderCtsTrackSelector trackSelector,
+    DurableProviderHealthStore healthStore) : ControllerBase
 {
     private const int SampleLimitBytes = 256 * 1024;
     private static readonly HttpClient SampleClient = CreateSampleClient();
     private static readonly BoundedOperationGate DeepStreamConcurrency = new(2);
+
+    [HttpGet("deep-stream/latest")]
+    public async Task<IActionResult> LatestDeepStream(CancellationToken cancellationToken)
+    {
+        if (!TryGetAdministrator(out var session, out var authError)) return authError!;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var rows = await (
+            from sample in db.ProviderHealthSamples.AsNoTracking()
+            join account in db.ProviderAccounts.AsNoTracking() on sample.ProviderAccountId equals account.Id
+            where sample.Capability == "click-to-stream" &&
+                  (account.TenantId == null || account.TenantId == session.TenantId) &&
+                  (account.OwnerUserId == null || account.OwnerUserId == session.AllstarrUserId)
+            orderby sample.ObservedAt descending
+            select new
+            {
+                account.Id,
+                account.ProviderId,
+                sample.State,
+                sample.LatencyMilliseconds,
+                sample.FailureCode,
+                sample.ObservedAt
+            })
+            .Take(500)
+            .ToArrayAsync(cancellationToken);
+        var measurements = rows.GroupBy(item => item.Id).Select(group =>
+        {
+            var latest = group.First();
+            var succeeded = latest.State == allstarr.Core.Storage.ProviderHealthState.Healthy;
+            var latency = latest.LatencyMilliseconds ?? 0;
+            return new
+            {
+                providerAccountId = latest.Id,
+                providerId = latest.ProviderId,
+                health = latest.State.ToString().ToLowerInvariant(),
+                latencyMs = latency,
+                bars = ConnectivityQuality.Bars(latency, succeeded, ConnectivityMetric.ClickToStream),
+                metric = "cts",
+                testedAt = latest.ObservedAt,
+                failureCode = latest.FailureCode
+            };
+        });
+        return Ok(new { measurements });
+    }
 
     [HttpPost("deep-stream")]
     public async Task<IActionResult> DeepStream(
@@ -220,6 +265,13 @@ public sealed class ProviderDiagnosticsController(
 
             var transferSeconds = Math.Max((total.Elapsed - transferStart).TotalSeconds, 0.001);
             var throughputKbps = bytesRead * 8d / 1000d / transferSeconds;
+            await healthStore.RecordAsync(
+                providerId,
+                request.ProviderAccountId.ToString("N"),
+                "click-to-stream",
+                allstarr.Core.Storage.ProviderHealthState.Healthy,
+                (long)Math.Round(firstByteMilliseconds.Value),
+                cancellationToken: cancellationToken);
             return Ok(new
             {
                 succeeded = true,

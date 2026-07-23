@@ -1353,6 +1353,15 @@
   flex-wrap: wrap;
 }
 
+.cts-persisted {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .deep-stream-diagnostic {
   display: grid;
   grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) minmax(9rem, 0.65fr) auto;

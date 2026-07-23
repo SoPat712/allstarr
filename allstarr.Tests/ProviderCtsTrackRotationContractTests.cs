@@ -29,6 +29,19 @@ public sealed class ProviderCtsTrackRotationContractTests
         Assert.Contains("Rotating corpus", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Measurements_AreDurableAndReloadedIntoSources()
+    {
+        var controller = Read("allstarr/Controllers/ProviderDiagnosticsController.cs");
+        var script = Read("allstarr/wwwroot/js/webui.js");
+
+        Assert.Contains("healthStore.RecordAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("\"click-to-stream\"", controller, StringComparison.Ordinal);
+        Assert.Contains("[HttpGet(\"deep-stream/latest\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("API.ctsMeasurements()", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"cts-persisted\"", script, StringComparison.Ordinal);
+    }
+
     private static string Read(string relativePath)
     {
         var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", relativePath));
