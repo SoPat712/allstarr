@@ -93,7 +93,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
             var resource = request.Artwork.ResourceId;
             if (resource == null || resource.ProviderId != StableProviderId || resource.ResourceKind != ProviderResourceKind.Playlist)
                 return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.PermanentFailure));
-            var artwork = await _pathfinder.GetPlaylistArtworkUriAsync(token, resource, cancellationToken);
+            var artwork = await _pathfinder.GetPlaylistArtworkUriAsync(token, request.Artwork, cancellationToken);
             return artwork.IsSuccess
                 ? await DownloadArtworkAsync(artwork.RequireValue(), request.MaximumBytes, cancellationToken)
                 : ProviderOutcome<ProviderPlaylistArtwork>.Failure(artwork.Error!);

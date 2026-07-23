@@ -23,7 +23,9 @@ public sealed class InjectedPlaylistResponsiveDesignContractTests
         var script = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "js", "webui.js"));
         var styles = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "css", "responsive.css"));
 
-        Assert.Contains("class=\"track-artist-cell\" data-label=\"Artist\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"track-primary-action\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"track-byline\"", script, StringComparison.Ordinal);
+        Assert.Contains("class=\"track-provider-cell\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"track-menu-cell\"", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-track-head", styles, StringComparison.Ordinal);
         Assert.Contains("grid-template-columns: 30px minmax(0, 1fr) 44px", styles, StringComparison.Ordinal);

@@ -81,6 +81,25 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task User_library_requests_all_playlists_across_folders_without_the_spotify_owned_filter()
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
+
+        var outcome = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest(30)));
+
+        Assert.True(outcome.IsSuccess);
+        var request = Assert.Single(handler.Paths, path =>
+            path.Contains("operationName=libraryV3", StringComparison.Ordinal));
+        Assert.Contains("\"filters\":[\"Playlists\"]", request, StringComparison.Ordinal);
+        Assert.DoesNotContain("By Spotify", request, StringComparison.Ordinal);
+        Assert.Contains("\"flatten\":true", request, StringComparison.Ordinal);
+        Assert.Contains("\"includeFoldersWhenFlattening\":false", request, StringComparison.Ordinal);
+        Assert.Contains("973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3",
+            request, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Missing_secret_and_auth_failure_are_typed_and_do_not_fallback_to_global_configuration()
     {
         var handler = new SpotifyFakeHandler();
@@ -155,6 +174,26 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         handler.ArtworkBytes = new byte[17];
         var oversized = await adapter.ResolveArtworkAsync(Context(), new(reference, maximumBytes: 16));
         Assert.Equal(ProviderErrorKind.PermanentFailure, oversized.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task Discovery_artwork_is_reused_by_the_authenticated_proxy_without_a_second_graphql_query()
+    {
+        var handler = new SpotifyFakeHandler();
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
+        var discovery = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
+        var artworkReference = discovery.RequireValue().Items.Single().Artwork!;
+        var graphQlRequestsBeforeArtwork = handler.ApiPaths.Count(path =>
+            path.Contains("api-partner.spotify.com/pathfinder", StringComparison.Ordinal));
+
+        var artwork = await adapter.ResolveArtworkAsync(
+            Context(),
+            new ProviderPlaylistArtworkRequest(artworkReference, maximumBytes: 16));
+
+        Assert.True(artwork.IsSuccess);
+        Assert.Equal(graphQlRequestsBeforeArtwork, handler.ApiPaths.Count(path =>
+            path.Contains("api-partner.spotify.com/pathfinder", StringComparison.Ordinal)));
+        Assert.Contains(handler.Paths, path => path == "/signed?token=secret");
     }
 
     [Fact]

@@ -19,7 +19,9 @@ public sealed class WebUiInteractionPolishContractTests
         Assert.Contains("event.currentTarget.querySelector(\":scope > summary\")?.focus()", _script, StringComparison.Ordinal);
         Assert.True(CountOccurrences(_script, "this.handleActionMenuKeydown(event)") >= 2);
         Assert.Contains("const trigger = event.currentTarget.previousElementSibling", _script, StringComparison.Ordinal);
-        Assert.Contains("${icon(\"more\", 18)}", _script, StringComparison.Ordinal);
+        Assert.Contains("class=\"track-action-trigger\"", _script, StringComparison.Ordinal);
+        Assert.Contains("aria-haspopup=\"menu\"", _script, StringComparison.Ordinal);
+        Assert.Contains("${icon(\"moreVertical\", 18)}", _script, StringComparison.Ordinal);
     }
 
     [Fact]

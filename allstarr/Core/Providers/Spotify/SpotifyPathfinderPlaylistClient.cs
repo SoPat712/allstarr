@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -14,11 +15,12 @@ namespace allstarr.Core.Providers.Spotify;
 public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
 {
     internal const string LibraryOperation = "libraryV3";
-    internal const string LibraryQueryHash = "50650f72ea32a99b5b46240bee22fea83024eec302478a9a75cfd05a0814ba99";
+    internal const string LibraryQueryHash = "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3";
     internal const string PlaylistOperation = "fetchPlaylist";
-    internal const string PlaylistQueryHash = "19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d";
+    internal const string PlaylistQueryHash = "a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4";
     private const string ProviderId = SpotifyPlaylistCapabilityAdapter.StableProviderId;
     private static readonly Uri Endpoint = new("https://api-partner.spotify.com/pathfinder/v1/query");
+    private readonly ConcurrentDictionary<string, ArtworkCacheEntry> _artwork = new(StringComparer.Ordinal);
 
     public async Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         string token,
@@ -32,12 +34,17 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
 
         var variables = new
         {
-            filters = new[] { "Playlists", "By Spotify" },
+            filters = new[] { "Playlists" },
             order = (string?)null,
             textFilter = query?.Trim() ?? "",
-            features = new[] { "LIKED_SONGS", "YOUR_EPISODES" },
+            features = new[] { "LIKED_SONGS", "YOUR_EPISODES_V2", "PRERELEASES", "EVENTS" },
             offset,
-            limit = page.Limit
+            limit = page.Limit,
+            flatten = true,
+            expandedFolders = System.Array.Empty<string>(),
+            folderUri = (string?)null,
+            includeFoldersWhenFlattening = false,
+            withCuration = false
         };
         var response = await QueryAsync(token, LibraryOperation, LibraryQueryHash, variables, cancellationToken);
         if (!response.Outcome.IsSuccess)
@@ -158,9 +165,15 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
 
     public async Task<ProviderOutcome<Uri>> GetPlaylistArtworkUriAsync(
         string token,
-        ProviderExternalResourceId playlistId,
+        ProviderArtworkReference artwork,
         CancellationToken cancellationToken)
     {
+        var playlistId = artwork.ResourceId;
+        if (playlistId == null)
+            return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
+        if (TryCachedArtwork(playlistId.Value, artwork.Revision, out var cached))
+            return ProviderOutcome<Uri>.Success(cached);
+
         var variables = new { uri = $"spotify:playlist:{playlistId.Value}", offset = 0, limit = 1 };
         var response = await QueryAsync(
             token,
@@ -176,9 +189,10 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
             if (GraphQlFailure(document.RootElement) is { } failure)
                 return ProviderOutcome<Uri>.Failure(failure);
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2") ||
-                ArtworkUri(playlist) is not { } artwork)
+                ArtworkUri(playlist) is not { } resolvedArtwork)
                 return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
-            return ProviderOutcome<Uri>.Success(artwork);
+            CacheArtwork(playlistId.Value, artwork.Revision, resolvedArtwork);
+            return ProviderOutcome<Uri>.Success(resolvedArtwork);
         }
         catch (JsonException)
         {
@@ -253,7 +267,7 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
             : ProviderErrorKind.PermanentFailure);
     }
 
-    private static ProviderPlaylistSummary? MapSummary(JsonElement value, string id)
+    private ProviderPlaylistSummary? MapSummary(JsonElement value, string id)
     {
         var name = String(value, "name");
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
@@ -269,7 +283,7 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
                          AttributeInteger(value, "core:item_count");
         var revision = String(value, "revisionId") ??
                        $"pathfinder:{ProviderPlaylistSnapshotCollector.HashResource(resource)}:{trackCount ?? -1}";
-        return new(
+        var summary = new ProviderPlaylistSummary(
             resource,
             name,
             new ProviderPlaylistOwner(ownerId, ownerName),
@@ -277,7 +291,32 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
             String(value, "description"),
             new ProviderArtworkReference(resource, revision: revision),
             trackCount);
+        if (ArtworkUri(value) is { } artwork)
+            CacheArtwork(id, revision, artwork);
+        return summary;
     }
+
+    private bool TryCachedArtwork(string playlistId, string? revision, out Uri artwork)
+    {
+        var key = ArtworkKey(playlistId, revision);
+        if (_artwork.TryGetValue(key, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow)
+        {
+            artwork = entry.Uri;
+            return true;
+        }
+        _artwork.TryRemove(key, out _);
+        artwork = null!;
+        return false;
+    }
+
+    private void CacheArtwork(string playlistId, string? revision, Uri artwork)
+    {
+        _artwork[ArtworkKey(playlistId, revision)] =
+            new ArtworkCacheEntry(artwork, DateTimeOffset.UtcNow.AddMinutes(30));
+    }
+
+    private static string ArtworkKey(string playlistId, string? revision) =>
+        $"{playlistId}\n{revision ?? ""}";
 
     private static ProviderPlaylistTrack? MapTrack(JsonElement item, int position)
     {
@@ -464,4 +503,5 @@ public sealed class SpotifyPathfinderPlaylistClient(HttpClient http)
             : null;
 
     private sealed record PathfinderResponse(ProviderOutcome<byte[]> Outcome, byte[]? Body);
+    private sealed record ArtworkCacheEntry(Uri Uri, DateTimeOffset ExpiresAt);
 }
