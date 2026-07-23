@@ -31,6 +31,7 @@ public sealed class ExtensionCapabilityAdapterTests
             });
             """;
         var events = new List<(string Level, string Message)>();
+        var logger = new CapturingLogger();
         var permissions = new ExtensionRuntimePermissionSet(
             new HashSet<string>(),
             new HashSet<string>(),
@@ -41,14 +42,14 @@ public sealed class ExtensionCapabilityAdapterTests
             manifest,
             script,
             new HttpClientFactory(),
-            NullLogger.Instance,
+            logger,
             permissions);
         var recreatedSandbox = new ExtensionSandbox(
             Path.GetTempPath(),
             manifest,
             script,
             new HttpClientFactory(),
-            NullLogger.Instance,
+            logger,
             permissions);
 
         firstSandbox.InvokeJson("searchTracks", "{}");
@@ -61,6 +62,10 @@ public sealed class ExtensionCapabilityAdapterTests
             "Provider operation failed without a safe diagnostic.",
             runtimeEvent.Message);
         Assert.DoesNotContain("redacted", runtimeEvent.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            "Provider operation failed without a safe diagnostic.",
+            logger.LastState!["Diagnostic"]);
+        Assert.DoesNotContain("Message", logger.LastState.Keys);
     }
 
     [Fact]
@@ -595,6 +600,25 @@ public sealed class ExtensionCapabilityAdapterTests
                 RequestMessage = request
             };
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        public IReadOnlyDictionary<string, object?>? LastState { get; private set; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (state is IEnumerable<KeyValuePair<string, object?>> fields)
+                LastState = fields.ToDictionary(item => item.Key, item => item.Value);
         }
     }
 

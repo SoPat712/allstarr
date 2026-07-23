@@ -1473,28 +1473,28 @@ public class ExtensionHostBridge
         {
             case "error":
                 _logger.LogError(
-                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Diagnostic}",
                     "extension.runtime.error",
                     _extensionId,
                     message);
                 break;
             case "warn":
                 _logger.LogWarning(
-                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Diagnostic}",
                     "extension.runtime.warning",
                     _extensionId,
                     message);
                 break;
             case "debug":
                 _logger.LogDebug(
-                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Diagnostic}",
                     "extension.runtime.debug",
                     _extensionId,
                     message);
                 break;
             default:
                 _logger.LogDebug(
-                    "Extension runtime event {EventCode} from {ExtensionId}: {Message}",
+                    "Extension runtime event {EventCode} from {ExtensionId}: {Diagnostic}",
                     "extension.runtime.info",
                     _extensionId,
                     message);
