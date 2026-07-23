@@ -89,7 +89,6 @@ builder.Services.AddPlatformOperations(builder.Configuration);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ProviderCtsTrackSelector>();
 builder.Services.AddSingleton<ProviderCtsDiagnosticRunner>();
-builder.Services.AddHostedService<ProviderCtsWarmupService>();
 builder.Services.AddHostedService<AuditEventRetentionService>();
 
 // Configure forwarded headers for reverse proxy support (nginx, etc.)
@@ -499,6 +498,7 @@ if (probeOptionalProvidersAtStartup)
 // Tests and local contract hosts must never call live providers during startup.
 if (!builder.Environment.IsEnvironment("Testing"))
 {
+    builder.Services.AddHostedService<ProviderCtsWarmupService>();
     builder.Services.AddHostedService<ManagedProviderAccountHealthWarmupService>();
     builder.Services.AddHostedService<StartupValidationOrchestrator>();
 }

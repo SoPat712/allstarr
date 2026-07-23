@@ -49,6 +49,10 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("ProjectSourceTracksAsync(spotifyTracks", matcher, StringComparison.Ordinal);
         Assert.Contains("ProviderTrackIdentities", projector, StringComparison.Ordinal);
         Assert.Contains("LibraryTracks", projector, StringComparison.Ordinal);
+        Assert.Contains("ExternalMetadataSnapshots", projector, StringComparison.Ordinal);
+        Assert.Contains("TrackMatches", projector, StringComparison.Ordinal);
+        Assert.Contains("TrackMatchState.Unresolved", projector, StringComparison.Ordinal);
+        Assert.Contains("legacy-v2-convergence", projector, StringComparison.Ordinal);
         Assert.Contains("ProjectAllAsync", projector, StringComparison.Ordinal);
         Assert.Contains("ProjectSourceTracksAsync", projector, StringComparison.Ordinal);
         Assert.Contains("ProjectConfiguredSourceTracksAsync", projector, StringComparison.Ordinal);
