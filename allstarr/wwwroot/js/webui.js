@@ -676,12 +676,6 @@ class ThemeManager {
 
 const BOOT_MESSAGES = Object.freeze([
   "Tuning provider routes",
-  "Warming the waveform",
-  "Aligning playlist constellations",
-  "Checking the signal chain",
-  "Negotiating with the aux cable",
-  "Counting beats, not sheep",
-  "Preparing your music control center",
 ]);
 
 class AllstarrApp extends LitElement {
@@ -2356,12 +2350,9 @@ class AllstarrApp extends LitElement {
       <div class="signal-boot-grid" aria-hidden="true"></div>
       <div class="signal-boot-console">
         <div class="signal-boot-mark" aria-hidden="true"><span class="signal-boot-orbit"></span><span class="signal-boot-pulse"></span><span class="signal-boot-core">A</span></div>
-        <p class="signal-boot-eyebrow">Allstarr signal boot</p>
-        <h1>Bringing your music universe online</h1>
-        <p class="signal-boot-status" aria-hidden="true">${BOOT_MESSAGES[this.bootMessageIndex]}</p>
+        <h1 class="signal-boot-status">${BOOT_MESSAGES[this.bootMessageIndex]}</h1>
         <div class="signal-boot-meter" aria-hidden="true">${Array.from({ length: 9 }, () => html`<span></span>`)}</div>
-        <small>Providers · Library · Playback</small>
-        <span class="signal-boot-accessible" role="status">Loading Allstarr. Preparing your music control center.</span>
+        <span class="signal-boot-accessible" role="status">Loading Allstarr. Tuning provider routes.</span>
       </div>
     </section>`;
   }
