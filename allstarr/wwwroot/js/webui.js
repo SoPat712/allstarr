@@ -1662,7 +1662,7 @@ class AllstarrApp extends LitElement {
   }
 
   async choosePlaylistSourceAccount(accountId) {
-    this.updatePlaylistWizard({ sourceAccountId: accountId, sourcePlaylist: null, sourceQuery: "", sourceNextCursor: "", loading: true });
+    this.updatePlaylistWizard({ sourceAccountId: accountId, sourcePlaylist: null, sourceQuery: "", sourceNextCursor: "", loading: true, error: "" });
     this.sourcePlaylistResults = [];
     try {
       const response = await API.sourcePlaylists(accountId);
@@ -1680,7 +1680,7 @@ class AllstarrApp extends LitElement {
   async searchSourcePlaylists() {
     const draft = this.playlistWizard;
     if (!draft.sourceAccountId) return;
-    this.updatePlaylistWizard({ loading: true });
+    this.updatePlaylistWizard({ loading: true, error: "" });
     try {
       const response = await API.sourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim());
       this.sourcePlaylistResults = asArray(response?.items || response?.Items);
@@ -1693,7 +1693,7 @@ class AllstarrApp extends LitElement {
   async loadMoreSourcePlaylists() {
     const draft = this.playlistWizard;
     if (!draft.sourceAccountId || !draft.sourceNextCursor || draft.loading) return;
-    this.updatePlaylistWizard({ loading: true });
+    this.updatePlaylistWizard({ loading: true, error: "" });
     try {
       const response = await API.sourcePlaylists(draft.sourceAccountId, draft.sourceQuery.trim(), draft.sourceNextCursor);
       const incoming = asArray(response?.items || response?.Items);
@@ -3096,7 +3096,8 @@ class AllstarrApp extends LitElement {
 
   renderPlaylistChoices(items, selected, choose, side) {
     if (this.playlistWizard.loading) return html`<div class="empty">Loading playlists…</div>`;
-    if (!items.length) return html`<div class="empty">No playlists found. Try a search or choose another account.</div>`;
+    if (!items.length && this.playlistWizard.error) return nothing;
+    if (!items.length) return html`<div class="empty">No playlists found for this account. Try a search.</div>`;
     return html`<div class="playlist-choice-grid">${items.map((playlist) => {
       const id = String(playlist.id || playlist.Id);
       return html`<button class="playlist-choice ${String(selected?.id || selected?.Id) === id ? "selected" : ""}" @click=${() => choose(playlist)}>${this.renderPlaylistArtwork(playlist, side)}<span><strong>${playlist.name || playlist.Name}</strong><small>${display(playlist.owner || playlist.Owner, `${display(playlist.trackCount || playlist.TrackCount, 0)} tracks`)}</small></span></button>`;

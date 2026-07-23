@@ -129,6 +129,44 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AdministratorCanExplicitlySelectGlobalPersonalAccountWithoutEnablingImplicitUse()
+    {
+        var identityResolver = Resolver(Options(MultiUserMode.Hybrid));
+        var user = (await identityResolver.ResolveAsync(
+            new BackendIdentityDescriptor("Jellyfin", "administrator")))!;
+        var administrator = user with { IsAdministrator = true };
+        var global = Account("spotify", ProviderAccountScope.Global, null, null);
+        await AddAccounts(global);
+        var resolver = new ProviderAccountResolver(
+            _factory,
+            new ProviderPolicyOptions
+            {
+                AllowGlobalAccounts = true,
+                AllowGlobalPersonalAccounts = false
+            });
+
+        var implicitResolution = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
+            administrator,
+            "spotify",
+            "playlist"));
+        var explicitResolution = await resolver.ResolveAsync(new ProviderAccountResolutionRequest(
+            administrator,
+            "spotify",
+            "playlist",
+            global.Id));
+
+        Assert.Null(implicitResolution);
+        Assert.Equal(global.Id, explicitResolution!.Account.Id);
+        Assert.Equal("explicit_account", explicitResolution.Reason);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(
+            new ProviderAccountResolutionRequest(
+                user,
+                "spotify",
+                "playlist",
+                global.Id)));
+    }
+
+    [Fact]
     public async Task SharedDownloaderPolicy_AppliesOnlyToDownloadLane()
     {
         var identityResolver = Resolver(Options(MultiUserMode.Hybrid));

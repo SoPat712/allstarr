@@ -120,7 +120,9 @@ public sealed class ProviderAccountResolver
                 account.TenantId == null &&
                 _policy.AllowGlobalAccounts &&
                 (!PersonalCapabilities.Contains(request.Capability) ||
-                 _policy.AllowGlobalPersonalAccounts),
+                 _policy.AllowGlobalPersonalAccounts ||
+                 request.Principal.IsAdministrator &&
+                 request.RequestedAccountId == account.Id),
             _ => false
         };
     }
