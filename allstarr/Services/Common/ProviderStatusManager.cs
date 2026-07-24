@@ -878,18 +878,25 @@ public class ProviderStatusManager
             return false;
         }
 
-        var url = $"{_spotifySettings.LyricsApiUrl!.TrimEnd('/')}/?trackid={SpotifyLyricsTestTrackId}&format=id3";
-        using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        try
+        {
+            var url = $"{_spotifySettings.LyricsApiUrl!.TrimEnd('/')}/?trackid={SpotifyLyricsTestTrackId}&format=id3";
+            using var client = _httpClientFactory.CreateClient();
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            return !(document.RootElement.TryGetProperty("error", out var error) &&
+                     error.ValueKind == JsonValueKind.True);
+        }
+        catch (Exception)
         {
             return false;
         }
-
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        return !(document.RootElement.TryGetProperty("error", out var error) &&
-                 error.ValueKind == JsonValueKind.True);
     }
 
     private async Task<bool> TestAppleDownloadAsync(string capability, CancellationToken cancellationToken)
