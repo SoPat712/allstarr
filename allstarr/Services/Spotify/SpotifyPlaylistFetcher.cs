@@ -17,7 +17,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
     private readonly SpotifyApiClient _spotifyClient;
     private readonly SpotifyApiClientFactory _spotifyClientFactory;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
 
     // Track Spotify playlist IDs after discovery
     private readonly Dictionary<string, string> _playlistNameToSpotifyId = new();
@@ -29,7 +29,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
         SpotifyApiClient spotifyClient,
         SpotifyApiClientFactory spotifyClientFactory,
         SpotifySessionCookieService spotifySessionCookieService,
-        RedisCacheService cache)
+        IApplicationCache cache)
     {
         _logger = logger;
         _spotifyApiSettings = spotifyApiSettings.Value;
@@ -51,7 +51,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
         var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName);
         var playlistConfig = _spotifyImportSettings.GetPlaylistByName(playlistName);
 
-        // Try Redis cache first
+        // Try the shared application cache first.
         var cached = await _cache.GetAsync<SpotifyPlaylist>(cacheKey);
         if (cached != null && cached.Tracks.Count > 0)
         {
@@ -181,7 +181,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
                 }
             }
 
-            // Update Redis cache with cron-based expiration
+            // Update the shared cache with cron-based expiration.
             var cacheWriteSucceeded = await _cache.SetAsync(cacheKey, playlist, cacheExpiration);
 
             if (cacheWriteSucceeded)
@@ -192,7 +192,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
             else
             {
                 _logger.LogWarning(
-                    "Fetched playlist '{Name}' with {Count} tracks, but Redis cache write failed (intended expiry: {Hours:F1}h)",
+                    "Fetched playlist '{Name}' with {Count} tracks, but shared cache write failed (intended expiry: {Hours:F1}h)",
                     playlistName,
                     playlist.Tracks.Count,
                     cacheExpiration.TotalHours);
@@ -270,7 +270,8 @@ public class SpotifyPlaylistFetcher : BackgroundService
             return;
         }
 
-        var deletedCount = await _cache.DeleteByPatternAsync($"image:{playlistConfig.JellyfinId}:*");
+        var deletedCount = await _cache.DeleteByPatternAsync(
+            CacheKeyBuilder.BuildJellyfinImagePattern(playlistConfig.JellyfinId));
         _logger.LogDebug("Cleared {Count} cached local image entries for playlist {Playlist}",
             deletedCount,
             playlistName);

@@ -8,12 +8,15 @@ public class RoundRobinFallbackHelper
 {
     private const int PreferredFastEndpointCount = 2;
     private const int MaximumConcurrentEndpointOperations = 8;
+    private static readonly HttpClient HealthCheckClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(3)
+    };
     private readonly List<string> _apiUrls;
     private int _currentUrlIndex = 0;
     private readonly object _urlIndexLock = new object();
     private readonly ILogger _logger;
     private readonly string _serviceName;
-    private readonly HttpClient _healthCheckClient;
 
     // Cache health check results for 30 seconds to avoid excessive checks
     private readonly Dictionary<string, (bool isHealthy, DateTime checkedAt)> _healthCache = new();
@@ -27,12 +30,6 @@ public class RoundRobinFallbackHelper
         _apiUrls = apiUrls ?? throw new ArgumentNullException(nameof(apiUrls));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _serviceName = serviceName ?? "Service";
-
-        // Create a dedicated HttpClient for health checks with short timeout
-        _healthCheckClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(3) // Quick health check timeout
-        };
 
         if (_apiUrls.Count == 0)
         {
@@ -63,7 +60,9 @@ public class RoundRobinFallbackHelper
         // Perform health check
         try
         {
-            var response = await _healthCheckClient.GetAsync(baseUrl, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await HealthCheckClient.GetAsync(
+                baseUrl,
+                HttpCompletionOption.ResponseHeadersRead);
             var isHealthy = response.IsSuccessStatusCode;
 
             // Cache result

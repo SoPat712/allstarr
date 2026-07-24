@@ -66,11 +66,10 @@ runtime-image, backup/restore, and Compose exit gates are complete.
   secret references and versions, jobs, attempts, outbox messages, provider health, circuits, and backup
   records. Audio stays in configured media folders. The database stores paths and control-plane state, not
   song payloads.
-- `DurableStorageInitializer` selects only the configured `Postgres` or `Sqlite` provider. It applies checked-in
-  migrations under a Postgres advisory lock or an exclusive SQLite file lock, reports durable readiness, and
-  never opens another database as a fallback. `DurableStorageRuntimeProbe` checks connectivity and exact schema
-  on a bounded cadence after startup. A missing SQLite database is opened in existing-file-only mode and cannot
-  be created without a one-shot confirmation file that is consumed after verified migration.
+- `DurableStorageInitializer` initializes PostgreSQL, applies checked-in migrations under a database advisory
+  lock, and reports durable readiness. `DurableStorageRuntimeProbe` checks connectivity and exact schema on a
+  bounded cadence after startup. SQLite can be selected only by an offline `storage` command while verifying or
+  exporting an existing legacy database for migration; it is never an application runtime or fallback.
 - `DurableBackupService`, `DurableRestoreTargetVerifier`, `DurableStateTransferService`, and the offline
   `storage` command provide verified backup, isolated restore, export, and empty-target import operations.
   Backup manifests are strict inputs, not advisory notes. Restore accepts only an artifact and manifest that
@@ -176,7 +175,7 @@ Durable playback/scrobble work and scoped recommendation policy now build on tho
   and visible failure state. The implemented chain covers virtual liked state, local matching, provider download
   artifacts, managed placement, MusicBrainz/provider enrichment plans, and Jellyfin or Subsonic library refresh.
 - Provider download artifacts and managed-file records hold checksums, lengths, scope, lifecycle, and job lineage.
-  Audio bytes stay in accessible filesystem roots. Postgres and SQLite store control data and paths only.
+  Audio bytes stay in accessible filesystem roots. PostgreSQL stores control data and paths only.
 - `FilePlacementService` stages and verifies an owned output, rejects traversal and symlink escapes, and uses a
   native reflink or verified-copy decision. Hardlinks remain disabled until immutability is a durable lease. Managed outputs retain filesystem identity where the OS
   supports it, and each consumer owns an idempotent durable reference with explicit release semantics. Metadata
@@ -219,8 +218,8 @@ gates pass. The bundle lock keeps incomplete switchovers blocked.
 - `allstarr/Program.cs`: Kestrel listeners, forwarded headers, conditional controller registration, DI, hosted services, middleware order.
 - `allstarr/Middleware`: proxy websocket support, admin surface isolation, request logging, bot-probe blocking, global exception handling.
 - `allstarr/Filters`: admin port gating and backend-verified Jellyfin controller authentication.
-- `allstarr/Core/Storage`: explicit Postgres/SQLite selection, EF migrations, migration locking, backup/restore,
-  provider-neutral state transfer, readiness, and the offline storage command.
+- `allstarr/Core/Storage`: mandatory PostgreSQL runtime, EF migrations, migration locking, backup/restore,
+  SQLite-to-PostgreSQL state transfer, readiness, and offline storage commands.
 - `allstarr/Core/Identity`: backend identity bootstrap/resolution and provider-account scope policy.
 - `allstarr/Core/Secrets`: AES-GCM secret versions and the external key-ring provider.
 - `allstarr/Core/Jobs`: durable queue, worker, leases, attempts, outbox dispatch, retry, cancellation, and sidecar deferral policy.
@@ -312,8 +311,7 @@ The host also runs several important maintenance and precomputation services:
 
 - `StartupValidationOrchestrator`
 - `CacheCleanupService`
-- `CacheWarmingService`
-- `RedisPersistenceService`
+- `LegacyMappingImportService`
 - `SpotifyPlaylistFetcher`
 - `SpotifyMissingTracksFetcher`
 - `SpotifyTrackMatchingService`
@@ -369,7 +367,7 @@ the source of truth.
 
 Current state is split by ownership:
 
-- Postgres or SQLite is selected explicitly and stores control-plane state: tenants, users, backend identities,
+- PostgreSQL stores control-plane state: tenants, users, backend identities,
   provider accounts, encrypted secret versions, durable jobs/outbox, provider health/circuits, canonical
   recordings, exact provider track identities, library-track paths and metadata, immutable provider snapshots,
   match decisions and overrides, playlist links/runs/membership, audit records, and backup metadata.
@@ -382,7 +380,7 @@ Current state is split by ownership:
   old environment, mapping, favorite, or version-state files and convert them into the new baseline.
 - Valkey/Redis and `/app/cache` remain cache and compatibility inputs. Neither is a durable record of a
   job, outbox action, account, or health rollup.
-- `downloads/*`, kept media, and configured library mounts contain the actual files. Postgres and SQLite never
+- `downloads/*`, kept media, and configured library mounts contain the actual files. PostgreSQL never
   contain encoded song bytes.
 
 ## Architectural Guardrails

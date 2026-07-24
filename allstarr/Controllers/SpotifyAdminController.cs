@@ -8,6 +8,7 @@ using allstarr.Services.Common;
 using allstarr.Services;
 using allstarr.Services.Admin;
 using allstarr.Filters;
+using allstarr.Core.Matching;
 using System.Text.Json;
 
 namespace allstarr.Controllers;
@@ -21,8 +22,7 @@ public class SpotifyAdminController : ControllerBase
     private readonly SpotifyApiClient _spotifyClient;
     private readonly SpotifyApiClientFactory _spotifyClientFactory;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
-    private readonly SpotifyMappingService _mappingService;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
@@ -33,8 +33,7 @@ public class SpotifyAdminController : ControllerBase
         SpotifyApiClient spotifyClient,
         SpotifyApiClientFactory spotifyClientFactory,
         SpotifySessionCookieService spotifySessionCookieService,
-        SpotifyMappingService mappingService,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IServiceProvider serviceProvider,
         IOptions<SpotifyApiSettings> spotifyApiSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
@@ -44,7 +43,6 @@ public class SpotifyAdminController : ControllerBase
         _spotifyClient = spotifyClient;
         _spotifyClientFactory = spotifyClientFactory;
         _spotifySessionCookieService = spotifySessionCookieService;
-        _mappingService = mappingService;
         _cache = cache;
         _serviceProvider = serviceProvider;
         _spotifyApiSettings = spotifyApiSettings.Value;
@@ -254,7 +252,7 @@ public class SpotifyAdminController : ControllerBase
     /// </summary>
     [HttpGet("spotify/match")]
     public async Task<IActionResult> TriggerSpotifyMatch(
-        [FromServices] SpotifyTrackMatchingService matchingService)
+        [FromServices] IPlaylistMatchingCoordinator matchingService)
     {
         try
         {
@@ -290,7 +288,7 @@ public class SpotifyAdminController : ControllerBase
         {
             var clearedKeys = new List<string>();
 
-            // Clear Redis cache for all configured playlists
+            // Clear shared cache entries for all configured playlists.
             foreach (var playlist in _spotifyImportSettings.Playlists)
             {
                 var keys = new[]
@@ -324,307 +322,6 @@ public class SpotifyAdminController : ControllerBase
     }
 
 
-
-    /// <summary>
-    /// Gets endpoint usage statistics from the log file.
-    /// </summary>
-    [HttpGet("spotify/mappings")]
-    public async Task<IActionResult> GetSpotifyMappings(
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50,
-        [FromQuery] bool enrichMetadata = true,
-        [FromQuery] string? targetType = null,
-        [FromQuery] string? source = null,
-        [FromQuery] string? search = null,
-        [FromQuery] string? sortBy = null,
-        [FromQuery] string? sortOrder = "asc")
-    {
-        try
-        {
-            // Get all mappings (we'll filter and sort in memory for now)
-            var allMappings = await _mappingService.GetAllMappingsAsync(0, int.MaxValue);
-            var stats = await _mappingService.GetStatsAsync();
-
-            // Enrich metadata for external tracks that are missing it
-            if (enrichMetadata)
-            {
-                await EnrichExternalMappingsMetadataAsync(allMappings);
-            }
-
-            // Apply filters
-            var filteredMappings = allMappings.AsEnumerable();
-
-            if (!string.IsNullOrEmpty(targetType) && targetType != "all")
-            {
-                filteredMappings = filteredMappings.Where(m =>
-                    m.TargetType.Equals(targetType, StringComparison.OrdinalIgnoreCase));
-            }
-
-            if (!string.IsNullOrEmpty(source) && source != "all")
-            {
-                filteredMappings = filteredMappings.Where(m =>
-                    m.Source.Equals(source, StringComparison.OrdinalIgnoreCase));
-            }
-
-            if (!string.IsNullOrEmpty(search))
-            {
-                var searchLower = search.ToLower();
-                filteredMappings = filteredMappings.Where(m =>
-                    m.SpotifyId.ToLower().Contains(searchLower) ||
-                    (m.Metadata?.Title?.ToLower().Contains(searchLower) ?? false) ||
-                    (m.Metadata?.Artist?.ToLower().Contains(searchLower) ?? false));
-            }
-
-            // Apply sorting
-            if (!string.IsNullOrEmpty(sortBy))
-            {
-                var isDescending = sortOrder?.ToLower() == "desc";
-
-                filteredMappings = sortBy.ToLower() switch
-                {
-                    "title" => isDescending
-                        ? filteredMappings.OrderByDescending(m => m.Metadata?.Title ?? "")
-                        : filteredMappings.OrderBy(m => m.Metadata?.Title ?? ""),
-                    "artist" => isDescending
-                        ? filteredMappings.OrderByDescending(m => m.Metadata?.Artist ?? "")
-                        : filteredMappings.OrderBy(m => m.Metadata?.Artist ?? ""),
-                    "spotifyid" => isDescending
-                        ? filteredMappings.OrderByDescending(m => m.SpotifyId)
-                        : filteredMappings.OrderBy(m => m.SpotifyId),
-                    "type" => isDescending
-                        ? filteredMappings.OrderByDescending(m => m.TargetType)
-                        : filteredMappings.OrderBy(m => m.TargetType),
-                    "source" => isDescending
-                        ? filteredMappings.OrderByDescending(m => m.Source)
-                        : filteredMappings.OrderBy(m => m.Source),
-                    "created" => isDescending
-                        ? filteredMappings.OrderByDescending(m => m.CreatedAt)
-                        : filteredMappings.OrderBy(m => m.CreatedAt),
-                    _ => filteredMappings
-                };
-            }
-
-            var filteredList = filteredMappings.ToList();
-            var totalCount = filteredList.Count;
-
-            // Apply pagination
-            var skip = (page - 1) * pageSize;
-            var pagedMappings = filteredList.Skip(skip).Take(pageSize).ToList();
-
-            return Ok(new
-            {
-                mappings = pagedMappings,
-                pagination = new
-                {
-                    page,
-                    pageSize,
-                    totalCount,
-                    totalPages = (int)Math.Ceiling((double)totalCount / pageSize)
-                },
-                stats
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Spotify mappings");
-            return StatusCode(500, new { error = "Failed to get mappings" });
-        }
-    }
-
-    /// <summary>
-    /// Gets a specific Spotify track mapping
-    /// </summary>
-    [HttpGet("spotify/mappings/{spotifyId}")]
-    public async Task<IActionResult> GetSpotifyMapping(string spotifyId)
-    {
-        try
-        {
-            var mapping = await _mappingService.GetMappingAsync(spotifyId);
-            if (mapping == null)
-            {
-                return NotFound(new { error = "Mapping not found" });
-            }
-
-            return Ok(mapping);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Spotify mapping for {SpotifyId}", spotifyId);
-            return StatusCode(500, new { error = "Failed to get mapping" });
-        }
-    }
-
-    /// <summary>
-    /// Creates or updates a Spotify track mapping (manual override)
-    /// </summary>
-    [HttpPost("spotify/mappings")]
-    public async Task<IActionResult> SaveSpotifyMapping([FromBody] SpotifyMappingRequest request)
-    {
-        try
-        {
-            if (string.Equals(request.TargetType, "external", StringComparison.OrdinalIgnoreCase) &&
-                !ExternalTrackPlaybackPolicy.CanUseForPlayback(request.ExternalProvider))
-            {
-                return BadRequest(new
-                {
-                    error = $"{request.ExternalProvider} is metadata-only and cannot be used as a playable track mapping"
-                });
-            }
-
-            var metadata = request.Metadata != null ? new TrackMetadata
-            {
-                Title = request.Metadata.Title,
-                Artist = request.Metadata.Artist,
-                Album = request.Metadata.Album,
-                ArtworkUrl = request.Metadata.ArtworkUrl,
-                DurationMs = request.Metadata.DurationMs
-            } : null;
-
-            var success = await _mappingService.SaveManualMappingAsync(
-                request.SpotifyId,
-                request.TargetType,
-                request.LocalId,
-                request.ExternalProvider,
-                request.ExternalId,
-                metadata);
-
-            if (success)
-            {
-                _logger.LogInformation("Saved manual mapping: {SpotifyId} → {TargetType}",
-                    request.SpotifyId, request.TargetType);
-                return Ok(new { success = true });
-            }
-
-            return StatusCode(500, new { error = "Failed to save mapping" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save Spotify mapping");
-            return StatusCode(500, new { error = "Failed to save mapping" });
-        }
-    }
-
-    /// <summary>
-    /// Deletes a Spotify track mapping
-    /// </summary>
-    [HttpDelete("spotify/mappings/{spotifyId}")]
-    public async Task<IActionResult> DeleteSpotifyMapping(
-        string spotifyId,
-        [FromQuery] string? provider = null)
-    {
-        try
-        {
-            var success = string.IsNullOrWhiteSpace(provider)
-                ? await _mappingService.DeleteMappingAsync(spotifyId)
-                : await _mappingService.RemoveExternalProviderAsync(spotifyId, provider);
-
-            if (success)
-            {
-                if (string.IsNullOrWhiteSpace(provider))
-                {
-                    _logger.LogInformation("Deleted mapping for {SpotifyId}", spotifyId);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "Removed provider {Provider} from mapping for {SpotifyId}",
-                        provider,
-                        spotifyId);
-                }
-
-                return Ok(new { success = true });
-            }
-
-            return NotFound(new { error = "Mapping not found" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete Spotify mapping for {SpotifyId}", spotifyId);
-            return StatusCode(500, new { error = "Failed to delete mapping" });
-        }
-    }
-
-    /// <summary>
-    /// Gets statistics about Spotify track mappings
-    /// </summary>
-    [HttpGet("spotify/mappings/stats")]
-    public async Task<IActionResult> GetSpotifyMappingStats()
-    {
-        try
-        {
-            var stats = await _mappingService.GetStatsAsync();
-            return Ok(stats);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Spotify mapping stats");
-            return StatusCode(500, new { error = "Failed to get stats" });
-        }
-    }
-
-    /// <summary>
-    /// Enriches metadata for external mappings that are missing title/artist/artwork
-    /// </summary>
-    private async Task EnrichExternalMappingsMetadataAsync(List<SpotifyTrackMapping> mappings)
-    {
-        var metadataService = _serviceProvider.GetService<IMusicMetadataService>();
-        if (metadataService == null)
-        {
-            _logger.LogWarning("No metadata service available for enrichment");
-            return;
-        }
-
-        foreach (var mapping in mappings)
-        {
-            // Skip if not external or already has metadata
-            if (mapping.TargetType != "external" ||
-                string.IsNullOrEmpty(mapping.ExternalProvider) ||
-                string.IsNullOrEmpty(mapping.ExternalId))
-            {
-                continue;
-            }
-
-            // Skip if already has complete metadata
-            if (mapping.Metadata != null &&
-                !string.IsNullOrEmpty(mapping.Metadata.Title) &&
-                !string.IsNullOrEmpty(mapping.Metadata.Artist))
-            {
-                continue;
-            }
-
-            try
-            {
-                // Fetch track details from external provider
-                var song = await metadataService.GetSongAsync(mapping.ExternalProvider.ToLowerInvariant(), mapping.ExternalId);
-
-                if (song != null)
-                {
-                    // Update metadata
-                    if (mapping.Metadata == null)
-                    {
-                        mapping.Metadata = new TrackMetadata();
-                    }
-
-                    mapping.Metadata.Title = song.Title;
-                    mapping.Metadata.Artist = song.Artist;
-                    mapping.Metadata.Album = song.Album;
-                    mapping.Metadata.ArtworkUrl = song.CoverArtUrl;
-                    mapping.Metadata.DurationMs = song.Duration.HasValue ? song.Duration.Value * 1000 : null;
-
-                    // Save enriched metadata back to cache
-                    await _mappingService.SaveMappingAsync(mapping);
-
-                    _logger.LogDebug("Enriched metadata for {SpotifyId} from {Provider}: {Title} by {Artist}",
-                        mapping.SpotifyId, mapping.ExternalProvider, song.Title, song.Artist);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to enrich metadata for {SpotifyId} from {Provider}:{ExternalId}",
-                    mapping.SpotifyId, mapping.ExternalProvider, mapping.ExternalId);
-            }
-        }
-    }
 
     public class SetSpotifySessionCookieRequest
     {

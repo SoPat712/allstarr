@@ -1,8 +1,8 @@
 using System.Text.Json;
+using allstarr.Core.Downloads;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
-using allstarr.Models.Download;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services;
@@ -11,17 +11,14 @@ namespace allstarr.Services.Local;
 
 /// <summary>
 /// Local library service implementation
-/// Uses a simple JSON file to store mappings (can be replaced with a database)
 /// </summary>
 public class LocalLibraryService : ILocalLibraryService
 {
-    private readonly string _mappingFilePath;
     private readonly string _downloadDirectory;
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly ILogger<LocalLibraryService> _logger;
-    private Dictionary<string, LocalSongMapping>? _mappings;
-    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly IDownloadedSongMappingStore _downloadedSongs;
 
     // Debounce to avoid triggering too many scans
     private DateTime _lastScanTrigger = DateTime.MinValue;
@@ -31,12 +28,13 @@ public class LocalLibraryService : ILocalLibraryService
         IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
         IOptions<SubsonicSettings> subsonicSettings,
+        IDownloadedSongMappingStore downloadedSongs,
         ILogger<LocalLibraryService> logger)
     {
         _downloadDirectory = configuration["Library:DownloadPath"] ?? Path.Combine(Directory.GetCurrentDirectory(), "downloads");
-        _mappingFilePath = Path.Combine(_downloadDirectory, ".mappings.json");
         _httpClient = httpClientFactory.CreateClient();
         _subsonicSettings = subsonicSettings.Value;
+        _downloadedSongs = downloadedSongs;
         _logger = logger;
 
         if (!Directory.Exists(_downloadDirectory))
@@ -47,12 +45,21 @@ public class LocalLibraryService : ILocalLibraryService
 
     public async Task<string?> GetLocalPathForExternalSongAsync(string externalProvider, string externalId)
     {
-        var mappings = await LoadMappingsAsync();
-        var key = $"{externalProvider}:{externalId}";
-
-        if (mappings.TryGetValue(key, out var mapping) && File.Exists(mapping.LocalPath))
+        var mapping = await _downloadedSongs.FindAsync(
+            NormalizeProvider(externalProvider),
+            externalId.Trim());
+        if (mapping is not null)
         {
-            return mapping.LocalPath;
+            if (File.Exists(mapping.LocalPath))
+            {
+                return mapping.LocalPath;
+            }
+
+            await _downloadedSongs.RemoveAsync(mapping.Id, mapping.Revision);
+            _logger.LogDebug(
+                "Removed stale downloaded-song mapping for {ProviderId}:{ExternalId} because its file is missing",
+                mapping.ProviderId,
+                mapping.ExternalId);
         }
 
         return null;
@@ -62,31 +69,18 @@ public class LocalLibraryService : ILocalLibraryService
     {
         if (song.ExternalProvider == null || song.ExternalId == null) return;
 
-        // Load mappings first (this acquires the lock internally if needed)
-        var mappings = await LoadMappingsAsync();
-
-        await _lock.WaitAsync();
-        try
+        await _downloadedSongs.UpsertAsync(new DownloadedSongMappingEntity
         {
-            var key = $"{song.ExternalProvider}:{song.ExternalId}";
-
-            mappings[key] = new LocalSongMapping
-            {
-                ExternalProvider = song.ExternalProvider,
-                ExternalId = song.ExternalId,
-                LocalPath = localPath,
-                Title = song.Title,
-                Artist = song.Artist,
-                Album = song.Album,
-                DownloadedAt = DateTime.UtcNow
-            };
-
-            await SaveMappingsAsync(mappings);
-        }
-        finally
-        {
-            _lock.Release();
-        }
+            Id = Guid.CreateVersion7(),
+            ProviderId = NormalizeProvider(song.ExternalProvider),
+            ExternalId = song.ExternalId.Trim(),
+            LocalPath = Path.GetFullPath(localPath),
+            Title = song.Title,
+            Artist = song.Artist,
+            Album = song.Album,
+            DownloadedAt = DateTimeOffset.UtcNow,
+            Revision = 1
+        });
     }
 
     public async Task<string?> GetLocalIdForExternalSongAsync(string externalProvider, string externalId)
@@ -140,46 +134,8 @@ public class LocalLibraryService : ILocalLibraryService
         return (false, null, null, null);
     }
 
-    private async Task<Dictionary<string, LocalSongMapping>> LoadMappingsAsync()
-    {
-        // Fast path: return cached mappings if available
-        if (_mappings != null) return _mappings;
-
-        // Slow path: acquire lock to load from file (prevents race condition)
-        await _lock.WaitAsync();
-        try
-        {
-            // Double-check after acquiring lock
-            if (_mappings != null) return _mappings;
-
-            if (File.Exists(_mappingFilePath))
-            {
-                var json = await File.ReadAllTextAsync(_mappingFilePath);
-                _mappings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, LocalSongMapping>>(json)
-                            ?? new Dictionary<string, LocalSongMapping>();
-            }
-            else
-            {
-                _mappings = new Dictionary<string, LocalSongMapping>();
-            }
-
-            return _mappings;
-        }
-        finally
-        {
-            _lock.Release();
-        }
-    }
-
-    private async Task SaveMappingsAsync(Dictionary<string, LocalSongMapping> mappings)
-    {
-        _mappings = mappings;
-        var json = System.Text.Json.JsonSerializer.Serialize(mappings, new System.Text.Json.JsonSerializerOptions
-        {
-            WriteIndented = true
-        });
-        await File.WriteAllTextAsync(_mappingFilePath, json);
-    }
+    private static string NormalizeProvider(string providerId) =>
+        providerId.Trim().ToLowerInvariant();
 
     public string GetDownloadDirectory() => _downloadDirectory;
 
@@ -260,19 +216,4 @@ public class LocalLibraryService : ILocalLibraryService
 
         return null;
     }
-}
-
-/// <summary>
-/// Represents the mapping between an external song and its local file
-/// </summary>
-public class LocalSongMapping
-{
-    public string ExternalProvider { get; set; } = string.Empty;
-    public string ExternalId { get; set; } = string.Empty;
-    public string LocalPath { get; set; } = string.Empty;
-    public string? LocalSubsonicId { get; set; }
-    public string Title { get; set; } = string.Empty;
-    public string Artist { get; set; } = string.Empty;
-    public string Album { get; set; } = string.Empty;
-    public DateTime DownloadedAt { get; set; }
 }

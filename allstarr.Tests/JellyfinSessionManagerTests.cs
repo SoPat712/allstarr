@@ -181,9 +181,7 @@ public class JellyfinSessionManagerTests
             HttpContext = new DefaultHttpContext()
         };
 
-        var cache = new RedisCacheService(
-            Options.Create(new RedisSettings { Enabled = false }),
-            NullLogger<RedisCacheService>.Instance);
+        var cache = new DisabledApplicationCache();
 
         return new JellyfinProxyService(
             httpClientFactory,

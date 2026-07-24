@@ -50,9 +50,12 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<ManagedFileReferenceEntity> ManagedFileReferences => Set<ManagedFileReferenceEntity>();
     public DbSet<ProviderDownloadWorkspaceEntity> ProviderDownloadWorkspaces => Set<ProviderDownloadWorkspaceEntity>();
     public DbSet<ProviderDownloadArtifactEntity> ProviderDownloadArtifacts => Set<ProviderDownloadArtifactEntity>();
+    public DbSet<DownloadedSongMappingEntity> DownloadedSongMappings => Set<DownloadedSongMappingEntity>();
     public DbSet<PlaybackDeliveryCheckpointEntity> PlaybackDeliveryCheckpoints => Set<PlaybackDeliveryCheckpointEntity>();
     public DbSet<ProviderRouteDecisionEntity> ProviderRouteDecisions => Set<ProviderRouteDecisionEntity>();
     public DbSet<ProviderRouteOutcomeEntity> ProviderRouteOutcomes => Set<ProviderRouteOutcomeEntity>();
+    public DbSet<ApplicationCacheEntryRecord> ApplicationCacheEntries => Set<ApplicationCacheEntryRecord>();
+    public DbSet<ManualLyricsMappingRecord> ManualLyricsMappings => Set<ManualLyricsMappingRecord>();
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -81,6 +84,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         FavoriteModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigureManagedFileOwnership();
         modelBuilder.ConfigureProviderDownloadArtifacts();
+        modelBuilder.ConfigureDownloadedSongMappings();
         ConfigurePhase6Enrichment(modelBuilder);
         ConfigureFavoriteActionPolicies(modelBuilder);
         IntelligenceModelConfiguration.Configure(modelBuilder);
@@ -88,6 +92,8 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureOperations(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
         modelBuilder.ConfigureProviderRouteDecisions();
+        ConfigureApplicationCache(modelBuilder);
+        modelBuilder.ConfigureManualLyricsMappings();
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Keep the checked-in snapshot provider-neutral. Neither convention is
         // required because Allstarr assigns durable identifiers explicitly.
@@ -160,6 +166,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.ProviderId, item.TenantId, item.OwnerUserId });
+            entity.HasIndex(item => item.CreatedByUserId);
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<PlatformUserRecord>().WithMany()
@@ -167,6 +174,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 .HasPrincipalKey(item => new { item.TenantId, item.Id })
                 .HasConstraintName("FK_provider_account_tenant_owner")
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<PlatformUserRecord>().WithMany()
+                .HasForeignKey(item => item.CreatedByUserId)
+                .HasConstraintName("FK_provider_account_creator")
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 
@@ -491,7 +502,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
 
     private static void ConfigurePortableDateTimeOffsets(ModelBuilder modelBuilder)
     {
-        // UTC ticks keep lease/order semantics identical across SQLite and Postgres.
+        // UTC ticks keep lease/order semantics portable for PostgreSQL and offline state transfer.
         var required = new ValueConverter<DateTimeOffset, long>(
             value => value.UtcTicks,
             value => new DateTimeOffset(value, TimeSpan.Zero));

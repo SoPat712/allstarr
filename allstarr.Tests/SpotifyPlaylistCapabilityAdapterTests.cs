@@ -93,8 +93,9 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
             path.Contains("operationName=libraryV3", StringComparison.Ordinal));
         Assert.Contains("\"filters\":[\"Playlists\"]", request, StringComparison.Ordinal);
         Assert.DoesNotContain("By Spotify", request, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"flatten\"", request, StringComparison.Ordinal);
-        Assert.DoesNotContain("withCuration", request, StringComparison.Ordinal);
+        Assert.Contains("\"flatten\":true", request, StringComparison.Ordinal);
+        Assert.Contains("\"includeFoldersWhenFlattening\":false", request, StringComparison.Ordinal);
+        Assert.Contains("\"withCuration\":true", request, StringComparison.Ordinal);
         Assert.Contains("50650f72ea32a99b5b46240bee22fea83024eec302478a9a75cfd05a0814ba99",
             request, StringComparison.Ordinal);
     }
@@ -173,7 +174,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
 
         Assert.False(outcome.IsSuccess);
         Assert.Equal(ProviderErrorKind.CapabilityUnavailable, outcome.Error!.Kind);
-        Assert.Equal("capability-unavailable", outcome.Error.Code);
+        Assert.Equal("provider-contract-changed", outcome.Error.Code);
     }
 
     [Fact]
@@ -202,7 +203,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
     public async Task Discovery_artwork_is_reused_by_the_authenticated_proxy_without_a_second_graphql_query()
     {
         var handler = new SpotifyFakeHandler();
-        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"));
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("cookie"), cache: new TestMemoryApplicationCache());
         var discovery = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
         var artworkReference = discovery.RequireValue().Items.Single().Artwork!;
         var graphQlRequestsBeforeArtwork = handler.ApiPaths.Count(path =>

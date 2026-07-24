@@ -5,13 +5,28 @@ public sealed class EventLogContractTests
     [Fact]
     public void ActivityProjection_DescribesDurableTrackMatches()
     {
+        var service = Read("allstarr/Core/Matching/TrackMatchCommandService.cs");
+
+        Assert.Contains("TrackMatchDetailData", service, StringComparison.Ordinal);
+        Assert.Contains("TrackMatchActivityData", service, StringComparison.Ordinal);
+        Assert.Contains("ExternalMetadataSnapshots.AsNoTracking()", service, StringComparison.Ordinal);
+        Assert.Contains("ProviderTrackIdentities.AsNoTracking()", service, StringComparison.Ordinal);
+        Assert.Contains("LibraryTracks.AsNoTracking()", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ActivityProjection_IncludesDurableExtensionAndCachingEvents()
+    {
         var controller = Read("allstarr/Controllers/AdminUiController.cs");
 
-        Assert.Contains("MatchActivityLabel(item.State)", controller, StringComparison.Ordinal);
-        Assert.Contains("MatchActivityDetail(item, snapshot, identity", controller, StringComparison.Ordinal);
-        Assert.Contains("ExternalMetadataSnapshots.AsNoTracking()", controller, StringComparison.Ordinal);
-        Assert.Contains("ProviderTrackIdentities.AsNoTracking()", controller, StringComparison.Ordinal);
-        Assert.Contains("LibraryTracks.AsNoTracking()", controller, StringComparison.Ordinal);
+        Assert.Contains("ExtensionLogs.AsNoTracking()", controller, StringComparison.Ordinal);
+        Assert.Contains("\"extension\"", controller, StringComparison.Ordinal);
+        Assert.Contains("[\"extensionPackageId\"]", controller, StringComparison.Ordinal);
+        Assert.Contains("ProviderDownloadArtifacts.AsNoTracking()", controller, StringComparison.Ordinal);
+        Assert.Contains("\"caching\"", controller, StringComparison.Ordinal);
+        Assert.Contains("[\"providerArtifactId\"]", controller, StringComparison.Ordinal);
+        Assert.Contains("[\"durableJobId\"]", controller, StringComparison.Ordinal);
+        Assert.Contains("[\"sizeBytes\"]", controller, StringComparison.Ordinal);
     }
 
     [Fact]

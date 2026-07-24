@@ -39,15 +39,32 @@ public static class CacheExtensions
         return _cacheSettings;
     }
 
-    // Convenience methods for getting TTLs
-    public static TimeSpan SearchResultsTTL => GetCacheSettings().SearchResultsTTL;
-    public static TimeSpan PlaylistImagesTTL => GetCacheSettings().PlaylistImagesTTL;
-    public static TimeSpan SpotifyPlaylistItemsTTL => GetCacheSettings().SpotifyPlaylistItemsTTL;
-    public static TimeSpan SpotifyMatchedTracksTTL => GetCacheSettings().SpotifyMatchedTracksTTL;
-    public static TimeSpan LyricsTTL => GetCacheSettings().LyricsTTL;
-    public static TimeSpan GenreTTL => GetCacheSettings().GenreTTL;
-    public static TimeSpan MetadataTTL => GetCacheSettings().MetadataTTL;
-    public static TimeSpan OdesliLookupTTL => GetCacheSettings().OdesliLookupTTL;
-    public static TimeSpan ProxyImagesTTL => GetCacheSettings().ProxyImagesTTL;
-    public static TimeSpan TranscodeCacheTTL => GetCacheSettings().TranscodeCacheTTL;
+    public static ApplicationCacheCategoryPolicy Policy(ApplicationCacheCategory category) =>
+        ApplicationCachePolicyRegistry.Resolve(category, GetCacheSettings());
+
+    private static ApplicationCacheCategoryPolicy Policy(
+        ApplicationCacheCategory category,
+        TimeSpan freshFor) =>
+        Policy(category) with { FreshFor = freshFor };
+
+    public static TimeSpan SearchResultsTTL =>
+        Policy(ApplicationCacheCategory.SearchResults).FreshFor;
+    public static TimeSpan PlaylistImagesTTL =>
+        Policy(ApplicationCacheCategory.Artwork, GetCacheSettings().PlaylistImagesTTL).FreshFor;
+    public static TimeSpan SpotifyPlaylistItemsTTL =>
+        Policy(ApplicationCacheCategory.PlaylistDiscovery).FreshFor;
+    public static TimeSpan SpotifyMatchedTracksTTL =>
+        Policy(ApplicationCacheCategory.LegacyCompatibility).FreshFor;
+    public static TimeSpan LyricsTTL =>
+        Policy(ApplicationCacheCategory.Lyrics).FreshFor;
+    public static TimeSpan GenreTTL =>
+        Policy(ApplicationCacheCategory.CanonicalMetadata, GetCacheSettings().GenreTTL).FreshFor;
+    public static TimeSpan MetadataTTL =>
+        Policy(ApplicationCacheCategory.CanonicalMetadata).FreshFor;
+    public static TimeSpan OdesliLookupTTL =>
+        Policy(ApplicationCacheCategory.ProviderResponse, GetCacheSettings().OdesliLookupTTL).FreshFor;
+    public static TimeSpan ProxyImagesTTL =>
+        Policy(ApplicationCacheCategory.Artwork).FreshFor;
+    public static TimeSpan TranscodeCacheTTL =>
+        Policy(ApplicationCacheCategory.TemporaryAudio).FreshFor;
 }

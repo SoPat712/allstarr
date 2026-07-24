@@ -49,9 +49,9 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
         var unavailable = await probe.CheckAsync();
 
         Assert.Equal(DurableStorageReadiness.Unavailable, unavailable.Readiness);
-        Assert.Equal("sqlite_database_missing", unavailable.ErrorCode);
+        Assert.Equal("database_unavailable", unavailable.ErrorCode);
         Assert.False(File.Exists(databasePath));
-        Assert.Equal(1, factory.CreateCount);
+        Assert.Equal(2, factory.CreateCount);
 
         File.Move(offlinePath, databasePath);
         _clock.Advance(TimeSpan.FromSeconds(options.RuntimeProbeIntervalSeconds));
@@ -61,7 +61,7 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
         Assert.Equal(DurableStorageReadiness.Ready, recovered.Readiness);
         await using var recoveredContext = new AllstarrDbContext(CreateOptions(options.ConnectionString));
         Assert.Equal(recoveredContext.Database.GetMigrations().Last(), recovered.SchemaVersion);
-        Assert.Equal(2, factory.CreateCount);
+        Assert.Equal(3, factory.CreateCount);
     }
 
     [Fact]
@@ -105,7 +105,6 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
             RuntimeProbeIntervalSeconds = 30,
             RuntimeProbeTimeoutSeconds = 5
         };
-        options.RequireExistingSqliteFile(options.ParseProvider());
         return options;
     }
 

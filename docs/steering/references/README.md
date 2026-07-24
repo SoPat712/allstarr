@@ -11,7 +11,7 @@ The root plan owns cross-cutting decisions, phase order, and exit criteria. Thes
 - [providers-and-extensions.md](providers-and-extensions.md): provider split, account-scoped routing and identity translation, SpotiFLAC-style registries, Apple MusicKit, and the SDK v1 package/runtime contract.
 - [metadata-matching-and-placement.md](metadata-matching-and-placement.md): MusicBrainz, provider-neutral recording identity, scoped matching, virtual and materialized playlist lifecycle, beets/Picard naming, hardlinks, and add-only managed storage.
 - [recommendations-and-intelligence.md](recommendations-and-intelligence.md): Jellyfin InstantMix, AudioMuse-AI, dashboards, and recommendation extension points.
-- [runtime-and-compose.md](runtime-and-compose.md): fresh-install policy, explicit Postgres/SQLite selection, filesystem media ownership, durable jobs/outbox, Valkey, modular compose files, sidecars, migrations, backups, and resource profiles.
+- [runtime-and-compose.md](runtime-and-compose.md): mandatory PostgreSQL runtime, offline SQLite migration, filesystem media ownership, durable jobs/outbox, Valkey, modular compose files, sidecars, migrations, backups, and resource profiles.
 
 When a change spans files, update the root decision and every affected owned specification in the same patch. Keep low-level code maps and current behavior in the parent steering files rather than duplicating them here.
 

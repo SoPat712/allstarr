@@ -157,7 +157,8 @@ public partial class JellyfinController
                             // Fallback to legacy cache format
                             if (matchedTracks == null || matchedTracks.Count == 0)
                             {
-                                var legacyKey = $"spotify:matched:{playlistName}";
+                                var legacyKey =
+                                    CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlistName);
                                 var legacySongs = await _cache.GetAsync<List<Song>>(legacyKey);
                                 if (legacySongs != null && legacySongs.Count > 0)
                                 {
@@ -184,7 +185,7 @@ public partial class JellyfinController
                                 exactServedRunTimeTicks =
                                     SpotifyPlaylistCountHelper.SumCachedPlaylistRunTimeTicks(cachedPlaylistItems);
                                 _logger.LogDebug(
-                                    "Using Redis playlist items cache metrics for {Playlist}: count={Count}, runtimeTicks={RunTimeTicks}",
+                                    "Using shared playlist cache metrics for {Playlist}: count={Count}, runtimeTicks={RunTimeTicks}",
                                     playlistName, exactServedCount, exactServedRunTimeTicks);
                             }
 

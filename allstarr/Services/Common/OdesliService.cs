@@ -10,12 +10,12 @@ public class OdesliService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<OdesliService> _logger;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
 
     public OdesliService(
         IHttpClientFactory httpClientFactory,
         ILogger<OdesliService> logger,
-        RedisCacheService cache)
+        IApplicationCache cache)
     {
         _httpClient = httpClientFactory.CreateClient();
         _logger = logger;
@@ -159,7 +159,7 @@ public class OdesliService
 
         if (targetPlatform == null) return null;
 
-        var cacheKey = $"odesli:translate:{sourceUrl}:{targetPlatform}";
+        var cacheKey = CacheKeyBuilder.BuildOdesliTranslationKey(sourceUrl, targetPlatform);
         var cached = await _cache.GetAsync<string>(cacheKey);
         if (!string.IsNullOrEmpty(cached))
         {

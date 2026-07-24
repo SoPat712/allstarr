@@ -4,6 +4,10 @@ public sealed class WebUiPriorityOrderingContractTests
 {
     private readonly string _script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
     private readonly string _css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
+    private readonly string _designSystemCss = File.ReadAllText(
+        FindRepositoryFile("allstarr", "wwwroot", "css", "design-system.css"));
+    private readonly string _controller = File.ReadAllText(
+        FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
 
     [Fact]
     public void ProviderPriority_UsesAccessibleDragAndDropWithoutDuplicateChips()
@@ -21,6 +25,35 @@ public sealed class WebUiPriorityOrderingContractTests
         Assert.DoesNotContain("provider-enabled-list", _script, StringComparison.Ordinal);
         Assert.Contains("cursor: grab", _css, StringComparison.Ordinal);
         Assert.Contains(".priority-item.dragging", _css, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PrioritySettings_ExposeLocalLyricsFirstAndUseConsistentSpacing()
+    {
+        var lyricsLabel = _controller.IndexOf("\"Lyrics priority\"", StringComparison.Ordinal);
+        var lyricsGroupEnd = _controller.IndexOf("];", lyricsLabel, StringComparison.Ordinal);
+        var lyricsGroup = _controller[lyricsLabel..lyricsGroupEnd];
+
+        Assert.Contains("\"MULTI_PROVIDER_LYRICS_ORDER\"", lyricsGroup, StringComparison.Ordinal);
+        Assert.Contains("pinnedProvider: pinnedLocalProvider", lyricsGroup, StringComparison.Ordinal);
+        Assert.Contains(
+            ".settings-routing .section-heading {\n    margin-bottom: var(--space-4);",
+            _designSystemCss,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AppleQualityOptions_AreHighestFirstWithFactualLabels()
+    {
+        const string orderedOptions =
+            "[\"alac-24-192\", \"alac-24-96\", \"alac-24-48\", \"alac-16-44\"]";
+
+        Assert.Contains(orderedOptions, _controller, StringComparison.Ordinal);
+        Assert.Contains(
+            "\"alac-24-96\": \"High-resolution · 24-bit / 96 kHz\"",
+            _script,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("one below maximum", _script, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string FindRepositoryFile(params string[] parts)

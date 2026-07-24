@@ -28,7 +28,7 @@ public class DiagnosticsController : ControllerBase
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWTFSettings _squidWtfSettings;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly List<string> _squidWtfApiUrls;
     private readonly DurableStorageState _storageState;
@@ -47,7 +47,7 @@ public class DiagnosticsController : ControllerBase
         IOptions<SquidWTFSettings> squidWtfSettings,
         SpotifySessionCookieService spotifySessionCookieService,
         SquidWtfEndpointCatalog squidWtfEndpointCatalog,
-        RedisCacheService cache,
+        IApplicationCache cache,
         DurableStorageState storageState,
         ISafeJsonProxyClient safeJsonProxyClient)
     {

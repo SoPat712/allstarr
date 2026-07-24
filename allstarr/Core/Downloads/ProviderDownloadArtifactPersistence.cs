@@ -43,6 +43,9 @@ public static class ProviderDownloadArtifactModelConfiguration
             entity.Property(item => item.RelativePath).HasMaxLength(1000).IsRequired();
             entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
             entity.Property(item => item.ContentSha256).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.MimeType).HasMaxLength(100);
+            entity.Property(item => item.Container).HasMaxLength(100);
+            entity.Property(item => item.Codec).HasMaxLength(100);
             entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.WorkspaceRecordId, item.ProviderArtifactId }).IsUnique().HasDatabaseName("IX_download_artifact_identity");

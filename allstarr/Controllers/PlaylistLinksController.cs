@@ -3,6 +3,7 @@ using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
+using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
@@ -23,7 +24,7 @@ namespace allstarr.Controllers;
 public sealed class PlaylistLinksController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     IPlaylistPersistenceService playlists,
-    ITrackMatchPersistenceService matches,
+    ITrackMatchRepository matches,
     PlaylistOrchestrationService orchestration,
     DurableJobQueue jobs,
     EncryptedSecretStore secretStore,
@@ -51,9 +52,14 @@ public sealed class PlaylistLinksController(
                 .OrderBy(item => item.ProviderId)
                 .ThenBy(item => item.DisplayName)
                 .ToListAsync(cancellationToken);
-            var ownerIds = accounts.Where(item => item.OwnerUserId.HasValue).Select(item => item.OwnerUserId!.Value).Distinct().ToArray();
-            var ownerNames = await db.Users.AsNoTracking()
-                .Where(item => ownerIds.Contains(item.Id))
+            var creatorIds = accounts
+                .Select(item => item.CreatedByUserId ?? item.OwnerUserId)
+                .Where(item => item.HasValue)
+                .Select(item => item!.Value)
+                .Distinct()
+                .ToArray();
+            var creatorNames = await db.Users.AsNoTracking()
+                .Where(item => creatorIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
             var capableAccounts = accounts.Where(item =>
             {
@@ -73,7 +79,9 @@ public sealed class PlaylistLinksController(
                     item,
                     true,
                     null,
-                    item.OwnerUserId.HasValue ? ownerNames.GetValueOrDefault(item.OwnerUserId.Value) : null,
+                    (item.CreatedByUserId ?? item.OwnerUserId) is { } creatorId
+                        ? creatorNames.GetValueOrDefault(creatorId)
+                        : null,
                     item.Scope == ProviderAccountScope.Global &&
                     session.IsAdministrator &&
                     !providerPolicy.AllowGlobalPersonalAccounts)),
@@ -81,7 +89,9 @@ public sealed class PlaylistLinksController(
                     item,
                     false,
                     "shared-playlist-credentials-disabled",
-                    item.OwnerUserId.HasValue ? ownerNames.GetValueOrDefault(item.OwnerUserId.Value) : null)),
+                    (item.CreatedByUserId ?? item.OwnerUserId) is { } creatorId
+                        ? creatorNames.GetValueOrDefault(creatorId)
+                        : null)),
                 providers = supportedProviders.Values.Select(provider =>
                 {
                     var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
@@ -107,7 +117,7 @@ public sealed class PlaylistLinksController(
         Guid accountId,
         [FromQuery] string? query,
         [FromQuery] string? cursor,
-        [FromQuery] int limit = 30,
+        [FromQuery] int limit = 100,
         CancellationToken cancellationToken = default)
     {
         return await Execute(async session =>
@@ -147,48 +157,82 @@ public sealed class PlaylistLinksController(
             if (candidate == null)
                 return Conflict(new { error = "The selected account cannot currently browse playlists", reasonCode = plan.Decision.Candidates.FirstOrDefault()?.ReasonCode });
 
-            var pageRequest = new ProviderPageRequest(limit, cursor);
-            var outcome = string.IsNullOrWhiteSpace(query)
-                ? await candidate.Implementation.GetUserPlaylistsAsync(candidate.Context, new ProviderUserPlaylistsRequest(pageRequest))
-                : await candidate.Implementation.SearchPlaylistsAsync(candidate.Context, new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
-            if (!outcome.IsSuccess)
+            var requestedCursor = cursor;
+            var currentCursor = cursor;
+            var items = new List<ProviderPlaylistSummary>();
+            var seenPlaylistIds = new HashSet<string>(StringComparer.Ordinal);
+            string? nextCursor = null;
+            string? snapshotVersion = null;
+            var isPartial = false;
+            const int maximumPages = 40;
+
+            for (var pageNumber = 0; pageNumber < maximumPages; pageNumber++)
             {
-                var failure = outcome.Error!;
-                var status = failure.Kind switch
+                var pageRequest = new ProviderPageRequest(limit, currentCursor);
+                var outcome = string.IsNullOrWhiteSpace(query)
+                    ? await candidate.Implementation.GetUserPlaylistsAsync(
+                        candidate.Context,
+                        new ProviderUserPlaylistsRequest(pageRequest))
+                    : await candidate.Implementation.SearchPlaylistsAsync(
+                        candidate.Context,
+                        new ProviderPlaylistSearchRequest(query.Trim(), pageRequest));
+                if (!outcome.IsSuccess)
                 {
-                    ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
-                    ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
-                    ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
-                    ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
-                    ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
-                    _ => StatusCodes.Status502BadGateway
-                };
-                var retryAfterSeconds = failure.RetryAfter is { } retryAfter
-                    ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
-                    : (int?)null;
-                if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
-                {
-                    Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture);
+                    var failure = outcome.Error!;
+                    var status = failure.Kind switch
+                    {
+                        ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
+                        ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
+                        ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
+                        ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
+                        ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
+                        _ => StatusCodes.Status502BadGateway
+                    };
+                    var retryAfterSeconds = failure.RetryAfter is { } retryAfter
+                        ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+                        : (int?)null;
+                    if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
+                    {
+                        Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    return StatusCode(status, new
+                    {
+                        error = failure.SafeMessage,
+                        reasonCode = failure.Code,
+                        providerId,
+                        accountId = account.Id,
+                        retryAfterSeconds
+                    });
                 }
-                return StatusCode(status, new
+
+                var page = outcome.RequireValue();
+                foreach (var item in page.Items)
                 {
-                    error = failure.SafeMessage,
-                    reasonCode = failure.Code,
-                    providerId,
-                    accountId = account.Id,
-                    retryAfterSeconds
-                });
+                    if (seenPlaylistIds.Add(item.Id.Value))
+                    {
+                        items.Add(item);
+                    }
+                }
+
+                nextCursor = page.NextCursor;
+                snapshotVersion = page.SnapshotVersion ?? snapshotVersion;
+                isPartial = page.IsPartial;
+                if (requestedCursor != null || !page.IsPartial || string.IsNullOrWhiteSpace(nextCursor))
+                {
+                    break;
+                }
+                currentCursor = nextCursor;
             }
-            var page = outcome.RequireValue();
+
             return Ok(new
             {
                 providerId,
                 accountId = account.Id,
-                items = page.Items.Select(item => ToPlaylistSummaryDto(item, account.Id)),
-                nextCursor = page.NextCursor,
-                isPartial = page.IsPartial,
-                snapshotVersion = page.SnapshotVersion
+                items = items.Select(item => ToPlaylistSummaryDto(item, account.Id)),
+                nextCursor,
+                isPartial,
+                snapshotVersion
             });
         });
     }
@@ -381,15 +425,18 @@ public sealed class PlaylistLinksController(
                 .Where(item => snapshotIds.Contains(item.PlaylistSourceSnapshotId))
                 .ToListAsync(cancellationToken);
             var externalSnapshotIds = sourceEntries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
-            var matchRows = externalSnapshotIds.Length == 0 ? [] : await db.TrackMatches.AsNoTracking()
-                .Where(item => externalSnapshotIds.Contains(item.ExternalSnapshotId))
-                .ToListAsync(cancellationToken);
-            var latestMatches = matchRows
-                .GroupBy(item => item.ExternalSnapshotId)
-                .ToDictionary(group => group.Key, group => group
-                    .OrderByDescending(item => item.DecisionVersion)
-                    .ThenByDescending(item => item.DecidedAt)
-                    .First());
+            var actor = context.Actor ?? throw new UnauthorizedAccessException("Actor context is required.");
+            var matchResolution = await matches.GetResolutionDataAsync(
+                new TrackMatchActor(
+                    actor.TenantId,
+                    actor.EffectiveUserId ?? session.AllstarrUserId!.Value,
+                    actor.Kind == ProviderActorKind.Administrator),
+                session.AllstarrUserId!.Value,
+                context.LibraryScopeId ?? libraryScopeId,
+                externalSnapshotIds,
+                cancellationToken);
+            var latestMatches = matchResolution.LatestDecisions
+                .ToDictionary(item => item.ExternalSnapshotId);
             var runIds = runs.Select(item => item.Id).ToArray();
             var runEntries = runIds.Length == 0 ? [] : await db.PlaylistSyncEntryResults.AsNoTracking()
                 .Where(item => runIds.Contains(item.PlaylistSyncRunId))
@@ -549,8 +596,10 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             if (!Enum.TryParse<ManualOverrideDecision>(request.Decision, true, out var decision)) return BadRequest(new { error = "Decision must be pin or reject" });
-            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item => item.Id == externalSnapshotId, cancellationToken) ?? throw new KeyNotFoundException("External snapshot not found.");
+            var snapshot = await matches.FindSnapshotAsync(
+                session.TenantId!.Value,
+                externalSnapshotId,
+                cancellationToken) ?? throw new KeyNotFoundException("External snapshot not found.");
             EnsureSessionScope(session, snapshot.TenantId, snapshot.OwnerUserId);
             var context = await CreateExecutionAsync(session, snapshot.LibraryScopeId, cancellationToken);
             var value = await matches.SetOverrideAsync(context, new ManualOverrideInput(externalSnapshotId,
@@ -567,8 +616,10 @@ public sealed class PlaylistLinksController(
         {
             var revision = expectedRevision ?? request?.ExpectedRevision;
             if (!revision.HasValue) return BadRequest(new { error = "ExpectedRevision is required" });
-            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var value = await db.ManualTrackOverrides.AsNoTracking().SingleOrDefaultAsync(item => item.Id == overrideId, cancellationToken) ?? throw new KeyNotFoundException("Override not found.");
+            var value = await matches.FindOverrideAsync(
+                session.TenantId!.Value,
+                overrideId,
+                cancellationToken) ?? throw new KeyNotFoundException("Override not found.");
             EnsureSessionScope(session, value.TenantId, value.OwnerUserId);
             var context = await CreateExecutionAsync(session, value.LibraryScopeId, cancellationToken);
             await matches.RevokeOverrideAsync(context, overrideId, revision.Value, cancellationToken);

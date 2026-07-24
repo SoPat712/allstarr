@@ -42,7 +42,6 @@ public partial class JellyfinController : ControllerBase
     private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
     private readonly IMusicMetadataService _metadataService;
-    private readonly ParallelMetadataService? _parallelMetadataService;
     private readonly ILocalLibraryService _localLibraryService;
     private readonly IDownloadService _downloadService;
     private readonly JellyfinResponseBuilder _responseBuilder;
@@ -65,7 +64,7 @@ public partial class JellyfinController : ControllerBase
     private readonly ScrobblingOrchestrator? _scrobblingOrchestrator;
     private readonly ScrobblingHelper? _scrobblingHelper;
     private readonly OdesliService _odesliService;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly IConfiguration _configuration;
     private readonly ILogger<JellyfinController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
@@ -92,10 +91,9 @@ public partial class JellyfinController : ControllerBase
         JellyfinProxyService proxyService,
         JellyfinSessionManager sessionManager,
         OdesliService odesliService,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IConfiguration configuration,
         ILogger<JellyfinController> logger,
-        ParallelMetadataService? parallelMetadataService = null,
         PlaylistSyncService? playlistSyncService = null,
         SpotifyPlaylistFetcher? spotifyPlaylistFetcher = null,
         SpotifyLyricsService? spotifyLyricsService = null,
@@ -113,7 +111,6 @@ public partial class JellyfinController : ControllerBase
         _spotifyApiSettings = spotifyApiSettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
         _metadataService = metadataService;
-        _parallelMetadataService = parallelMetadataService;
         _localLibraryService = localLibraryService;
         _downloadService = downloadService;
         _responseBuilder = responseBuilder;
@@ -534,17 +531,10 @@ public partial class JellyfinController : ControllerBase
             // Run local and external searches in parallel
             var jellyfinTask = GetLocalArtistsResultForCurrentRequest(cleanQuery);
 
-            // Use parallel metadata service if available (races providers), otherwise use primary
-            Task<List<Artist>> externalTask;
-            if (_parallelMetadataService != null)
-            {
-                externalTask = _parallelMetadataService.SearchAllAsync(cleanQuery, 0, 0, limit, HttpContext.RequestAborted)
-                    .ContinueWith(t => t.Result.Artists, HttpContext.RequestAborted);
-            }
-            else
-            {
-                externalTask = _metadataService.SearchArtistsAsync(cleanQuery, limit, HttpContext.RequestAborted);
-            }
+            var externalTask = _metadataService.SearchArtistsAsync(
+                cleanQuery,
+                limit,
+                HttpContext.RequestAborted);
 
             await Task.WhenAll(jellyfinTask, externalTask);
 
@@ -791,7 +781,7 @@ public partial class JellyfinController : ControllerBase
             return CreateConditionalImageResponse(imageBytes, contentType);
         }
 
-        // Check Redis cache for previously fetched external image
+        // Check the shared cache for previously fetched external image.
         var imageCacheKey = CacheKeyBuilder.BuildExternalImageKey(provider!, type!, externalId!);
         var cachedImageBytes = await _cache.GetAsync<byte[]>(imageCacheKey);
         if (cachedImageBytes != null)
@@ -872,7 +862,7 @@ public partial class JellyfinController : ControllerBase
                 return await GetPlaceholderImageAsync();
             }
 
-            // Cache the fetched image bytes in Redis for future requests
+            // Cache the fetched image bytes in the bounded media tier for future requests.
             await _cache.SetAsync(imageCacheKey, imageBytes, CacheExtensions.ProxyImagesTTL);
 
             _logger.LogDebug("Successfully fetched and cached external image from host {Host}, size: {Size} bytes",

@@ -23,34 +23,6 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  valkey:
-    profiles: ["cache"]
-    image: valkey/valkey:8.1.8-alpine3.23@sha256:cfe71288f087704b06be45e270afa7a2abbf820093d6b11a23762081f5ff321d
-    restart: unless-stopped
-    command:
-      - valkey-server
-      - --maxmemory
-      - ${VALKEY_MAX_MEMORY:-512mb}
-      - --maxmemory-policy
-      - allkeys-lru
-      - --save
-      - "60"
-      - "1"
-      - --appendonly
-      - "yes"
-    volumes:
-      - valkey-data:/data
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-    networks:
-      - allstarr
-    security_opt:
-      - no-new-privileges:true
-
   allstarr:
     image: ${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.1.0-beta.1}
     restart: unless-stopped
@@ -91,8 +63,6 @@ services:
       Readiness__RequiredDirectories__1: /app/downloads
       Readiness__RequiredDirectories__2: /app/kept
 
-      Redis__ConnectionString: valkey:6379
-      Redis__Enabled: ${REDIS_ENABLED:-false}
       Subsonic__Url: ${SUBSONIC_URL:-http://host.docker.internal:4533}
       Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}
       Jellyfin__Url: ${JELLYFIN_URL:-http://host.docker.internal:8096}
@@ -103,7 +73,6 @@ services:
 
       Library__DownloadPath: /app/downloads
       Library__KeptPath: /app/kept
-      Cache__GenreDirectory: /app/cache/genres
       Extensions__Directory: /app/state/extensions
       Extensions__AllowRemoteInstall: ${EXTENSIONS_ALLOW_REMOTE_INSTALL:-true}
       Admin__SessionStorePath: /app/state/admin-sessions.protected
@@ -152,7 +121,6 @@ secrets:
 
 volumes:
   postgres-data:
-  valkey-data:
   allstarr-state:
   allstarr-cache:
 

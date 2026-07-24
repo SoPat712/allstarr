@@ -67,9 +67,10 @@ public class AppleMusicDownloadService : BaseDownloadService
 
         var songId = BuildTrackedSongId(externalProvider, externalId);
         var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_streamingDownloads.TryAdd(songId, completion))
+        var activeCompletion = _streamingDownloads.GetOrAdd(songId, completion);
+        if (!ReferenceEquals(activeCompletion, completion))
         {
-            var completedPath = await _streamingDownloads[songId].Task.WaitAsync(cancellationToken);
+            var completedPath = await activeCompletion.Task.WaitAsync(cancellationToken);
             return IOFile.OpenRead(completedPath);
         }
 

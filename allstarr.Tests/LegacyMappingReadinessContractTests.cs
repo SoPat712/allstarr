@@ -5,19 +5,15 @@ public sealed class LegacyMappingReadinessContractTests
     [Fact]
     public void ImportedMappings_ReportPlayableAndReviewCounts()
     {
-        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "MappingController.cs"));
+        var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "TrackMatchesController.cs"));
 
-        Assert.Contains("ExternalTrackPlaybackPolicy.CanUseForPlayback", controller, StringComparison.Ordinal);
-        Assert.Contains("playableCount", controller, StringComparison.Ordinal);
-        Assert.Contains("needsReviewCount", controller, StringComparison.Ordinal);
-        Assert.Contains("status = playable ? \"ready\" : \"needs_review\"", controller, StringComparison.Ordinal);
+        Assert.Contains("ITrackMatchRepository", controller, StringComparison.Ordinal);
+        Assert.Contains("ResolveTrackMatchRequest", controller, StringComparison.Ordinal);
     }
 
     [Fact]
     public void AutomaticPlaylistMatching_QueriesOnlyPlaybackCapableProviders()
     {
-        var matcher = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
         var walker = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Services", "Spotify", "PerProviderTrackMatcher.cs"));
         var providers = File.ReadAllText(FindRepositoryFile(
@@ -25,38 +21,34 @@ public sealed class LegacyMappingReadinessContractTests
 
         Assert.Contains("GetEnabledPlaybackProviders()", providers, StringComparison.Ordinal);
         Assert.Contains("requirePlayableExtensions: true", providers, StringComparison.Ordinal);
-        Assert.Contains("playbackProviderRanks", matcher, StringComparison.Ordinal);
-        Assert.Contains("candidate.MatchedSong.IsLocal", matcher, StringComparison.Ordinal);
-        Assert.Contains("PerProviderTrackWalker", matcher, StringComparison.Ordinal);
-        Assert.Contains("WalkProvidersForTrackAsync", matcher, StringComparison.Ordinal);
         Assert.Contains("InjectedSourceTrack", walker, StringComparison.Ordinal);
         Assert.Contains("PerProviderAcceptThresholds", walker, StringComparison.Ordinal);
         Assert.Contains("CanUseForPlayback", walker, StringComparison.Ordinal);
-        Assert.DoesNotContain("usedJellyfinIds", matcher, StringComparison.Ordinal);
-        Assert.DoesNotContain("usedSongIds", matcher, StringComparison.Ordinal);
     }
 
     [Fact]
     public void LegacyPlaylistSources_AreProjectedIntoTheDurableIdentityGraph()
     {
-        var program = File.ReadAllText(FindRepositoryFile("allstarr", "Program.cs"));
-        var matcher = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
-        var projector = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Spotify", "LegacySpotifyMappingProjector.cs"));
+        var coordinator = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Matching", "PlaylistMatchingCoordinator.cs"));
+        var service = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"));
 
-        Assert.Contains("AddSingleton<allstarr.Services.Spotify.LegacySpotifyMappingProjector>()", program, StringComparison.Ordinal);
-        Assert.Contains("ProjectSourceTracksAsync(spotifyTracks", matcher, StringComparison.Ordinal);
-        Assert.Contains("ProviderTrackIdentities", projector, StringComparison.Ordinal);
-        Assert.Contains("LibraryTracks", projector, StringComparison.Ordinal);
-        Assert.Contains("ExternalMetadataSnapshots", projector, StringComparison.Ordinal);
-        Assert.Contains("TrackMatches", projector, StringComparison.Ordinal);
-        Assert.Contains("TrackMatchState.Unresolved", projector, StringComparison.Ordinal);
-        Assert.Contains("legacy-v2-convergence", projector, StringComparison.Ordinal);
-        Assert.Contains("ProjectAllAsync", projector, StringComparison.Ordinal);
-        Assert.Contains("ProjectSourceTracksAsync", projector, StringComparison.Ordinal);
-        Assert.Contains("ProjectConfiguredSourceTracksAsync", projector, StringComparison.Ordinal);
-        Assert.Contains("playlistFetcher.GetPlaylistTracksAsync", projector, StringComparison.Ordinal);
+        Assert.Contains("IPlaylistMatchingCoordinator", coordinator, StringComparison.Ordinal);
+        Assert.Contains("PlaylistMatchingProgress", coordinator, StringComparison.Ordinal);
+        Assert.Contains("PersistAutomatedTrackMatchCommand", service, StringComparison.Ordinal);
+        Assert.Contains("TrackMatchRecord", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LegacyMappingConvergence_PreservesEvidenceAndContinuesThroughNormalMatching()
+    {
+        var service = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"));
+
+        Assert.Contains("DurableProviderRoute", service, StringComparison.Ordinal);
+        Assert.Contains("TrackMatchDetailData", service, StringComparison.Ordinal);
+        Assert.Contains("TrackMatchActivityData", service, StringComparison.Ordinal);
     }
 
     [Fact]

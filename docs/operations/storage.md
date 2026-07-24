@@ -1,6 +1,8 @@
 # Storage operations
 
-This runbook covers the durable storage behavior shipped with Allstarr's new baseline. It is written for the standard [Compose deployment](../../docker-compose.yml), which runs Allstarr with Postgres and Valkey. SQLite is available for an explicitly configured local or custom deployment, but the standard Compose file does not switch between databases.
+This runbook covers the durable storage behavior shipped with Allstarr's new baseline. Every supported runtime
+uses PostgreSQL. SQLite is accepted only by offline storage commands that verify or export an existing legacy
+database for controlled migration into PostgreSQL.
 
 ## What Postgres stores
 
@@ -21,9 +23,12 @@ The database stores application state such as users, backend identities, provide
 
 A database backup does **not** include `/app/downloads`, `/app/kept`, the secret key ring, or unrelated files under `/app/state`. Back up those items separately when they matter to your recovery plan. Valkey and the two cache locations are not authoritative state.
 
-## Select one database on purpose
+## PostgreSQL is mandatory at runtime
 
-Allstarr accepts only `Postgres` or `Sqlite` in `Storage:Provider`. It does not fall back from an unavailable Postgres database to a new SQLite file, or the other way around. If the selected database is unavailable or has a pending migration, readiness fails and state-changing requests are rejected. A bounded runtime probe keeps checking the selected database after startup. Readiness, mutations, durable jobs, and outbox delivery pause when connectivity or schema compatibility is lost, then resume after the same database returns with the current schema.
+The application runtime requires `Postgres` in `Storage:Provider`. It never falls back to SQLite. If PostgreSQL
+is unavailable or has a pending migration, readiness fails and state-changing requests are rejected. A bounded
+runtime probe keeps checking the same database; mutations, durable jobs, and outbox delivery resume only after
+that PostgreSQL database returns with the current schema.
 
 ### Standard Compose: Postgres
 
@@ -37,29 +42,11 @@ Storage__PasswordFile=/run/secrets/postgres_password
 
 Changing an unrelated `.env` value cannot silently select SQLite. The Postgres password is read from the mounted secret file and is not placed on a process command line.
 
-### Local or custom deployment: SQLite
+`Storage:Provider=Sqlite` is valid only when the executable is invoked with an offline
+`storage` command. Normal application startup rejects it before opening the database.
 
-`appsettings.json` defaults to SQLite for manual development, using `/app/state/allstarr.db`. Allstarr will not create a missing SQLite file unless you provide a one-shot confirmation file containing the exact text `create-new-allstarr-database`. This keeps a lost or unmounted SQLite volume from turning into a new empty installation.
-
-For the first local run, select SQLite explicitly, use persistent absolute paths, and create the confirmation file yourself:
-
-```bash
-database=/absolute/path/to/allstarr.db
-confirmation="${database}.create-confirmation"
-mkdir -p "$(dirname "$database")"
-umask 077
-printf '%s\n' 'create-new-allstarr-database' > "$confirmation"
-
-Storage__Provider=Sqlite \
-Storage__ConnectionString="Data Source=$database" \
-Storage__SqliteBootstrapConfirmationFile="$confirmation" \
-Secrets__KeyRingPath=/absolute/path/to/allstarr-keyring.json \
-dotnet run --project allstarr/allstarr.csproj
-```
-
-Allstarr deletes the confirmation only after the checked-in migrations finish and the schema passes verification. Do not recreate it unless you have deliberately selected a missing path and want a genuinely new database. An existing SQLite database, including a verified restore, does not need a confirmation file. If the database later disappears, readiness reports `sqlite_database_missing` and Allstarr opens SQLite in existing-file-only mode so normal requests cannot recreate it.
-
-`Storage:RuntimeProbeIntervalSeconds` controls the bounded check cadence and defaults to 5 seconds. `Storage:RuntimeProbeTimeoutSeconds` also defaults to 5 seconds. `Storage:PasswordFile` is Postgres-only. The standard Compose file still selects Postgres even though the application default is SQLite. There is no supported SQLite Compose overlay in the repository right now.
+`Storage:RuntimeProbeIntervalSeconds` controls the bounded PostgreSQL check cadence and
+defaults to 5 seconds. `Storage:RuntimeProbeTimeoutSeconds` also defaults to 5 seconds.
 
 ## Fresh standard install
 
@@ -292,11 +279,16 @@ dotnet allstarr.dll storage restore-sqlite \
   --confirm-target-offline
 ```
 
-The neighboring `.manifest.json` is used by default. Pass `--manifest <path>` only when it was copied to a different name. A pre-existing target is rejected unless `--overwrite` is explicit. Allstarr verifies the restored temporary database against its checked-in migrations before moving it into the requested target path. The command reports `verified` only after that check and records the restore verification result in the backup catalog. After restore, start Allstarr with `Storage:ConnectionString` pointing at the isolated file, run readiness and smoke checks, and keep the original file for rollback. Do not copy a backup over a live `allstarr.db`.
+The neighboring `.manifest.json` is used by default. Pass `--manifest <path>` only when it was copied to a
+different name. A pre-existing target is rejected unless `--overwrite` is explicit. Allstarr verifies the
+restored temporary database against its checked-in migrations before moving it into the requested target path.
+Do not start the application against this file; export its state offline and import it into empty PostgreSQL.
 
-## Controlled SQLite and Postgres state transfer
+## Controlled SQLite-to-PostgreSQL state transfer
 
-Database-native dumps are for restoring the same provider. The code also has a provider-neutral state transfer format for a planned SQLite to Postgres or Postgres to SQLite move. It exports a checksummed zip of durable tables and imports only into a target explicitly confirmed to be empty.
+Database-native dumps restore PostgreSQL. The provider-neutral state-transfer format moves an existing SQLite
+installation into PostgreSQL. It exports a checksummed zip of durable tables and imports only into a PostgreSQL
+target explicitly confirmed to be empty.
 
 The transfer has these hard rules:
 
@@ -310,7 +302,7 @@ The transfer has these hard rules:
 - Every durable target table must be empty. Import does not treat a database with only health, outbox, audit, or backup rows as empty.
 - Encrypted secret bytes are transferred unchanged.
 - Encryption key material, song files, caches, and unrelated app-state files are not included.
-- A provider change is a cutover, never automatic failover.
+- The target must be PostgreSQL; the application cannot cut back to SQLite.
 
 The existing executable now exposes that offline export and import path. Stop every normal Allstarr instance that can write the source, then export into the durable state volume:
 
@@ -330,7 +322,10 @@ docker compose run --rm --no-deps allstarr storage import \
   --confirm-empty-target
 ```
 
-Import verifies the checksum, exact archive shape, manifest fields, source provider, schema, application version, and artifact metadata before it migrates the selected target. It then verifies the migrated schema and rejects the operation if any durable target table already contains rows. Use the same Allstarr image for export and import. Import never changes `Storage:Provider` for you. Use an explicit Compose override or manual environment for the new target, review `docker compose config`, and keep the source database unchanged for rollback.
+Import verifies the checksum, exact archive shape, manifest fields, source provider, schema, application version,
+and artifact metadata before it migrates the PostgreSQL target. It rejects the operation if any durable target
+table already contains rows. Use the same Allstarr image for export and import, review `docker compose config`,
+and keep the SQLite source unchanged for rollback.
 
 If a transfer is implemented and used later, carry the original key ring through a separate protected channel. Validate encrypted provider credentials, row counts, job recovery, audit history, and `/health/ready` before cutover. Keep the source database unchanged for rollback.
 

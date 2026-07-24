@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
+using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 
 namespace allstarr.Middleware;
@@ -9,9 +9,11 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
     ILogger<JellyfinMusicEndpointPolicyMiddleware> logger)
 {
     private static readonly TimeSpan ItemTypeCacheDuration = TimeSpan.FromMinutes(5);
-    private readonly ConcurrentDictionary<string, ItemTypeCacheEntry> itemTypes = new(StringComparer.Ordinal);
 
-    public async Task InvokeAsync(HttpContext context, JellyfinProxyService proxyService)
+    public async Task InvokeAsync(
+        HttpContext context,
+        JellyfinProxyService proxyService,
+        IApplicationCache cache)
     {
         // The administration application is separately protected by its port, network,
         // and session middleware. This policy governs only the public Jellyfin proxy.
@@ -26,7 +28,7 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
         if (decision.Access == JellyfinEndpointAccess.RequiresMusicItem)
         {
             var itemId = JellyfinMusicEndpointPolicy.ReferencedItemId(context.Request.Path.Value);
-            if (itemId == null || !await IsMusicItemAsync(itemId, proxyService))
+            if (itemId == null || !await IsMusicItemAsync(itemId, proxyService, cache))
             {
                 await DenyAsync(context, "The referenced Jellyfin item is not music-related.");
                 return;
@@ -44,16 +46,16 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
 
     private async Task<bool> IsMusicItemAsync(
         string itemId,
-        JellyfinProxyService proxyService)
+        JellyfinProxyService proxyService,
+        IApplicationCache cache)
     {
         // All synthesized resources use explicit music resource identifiers.
         if (itemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase) ||
             itemId.StartsWith("vplaylist-", StringComparison.OrdinalIgnoreCase)) return true;
 
-        if (itemTypes.TryGetValue(itemId, out var cached) && cached.ExpiresAtUtc > DateTime.UtcNow)
-        {
-            return cached.IsMusic;
-        }
+        var cacheKey = CacheKeyBuilder.BuildJellyfinItemTypeKey(itemId);
+        var cached = await cache.GetAsync<ItemTypeCacheEntry>(cacheKey);
+        if (cached != null) return cached.IsMusic;
 
         // Resolve the item type with Allstarr's internal Jellyfin credential. Public
         // artwork requests intentionally have no client token, while authenticated
@@ -65,7 +67,7 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
             var isMusic = statusCode == StatusCodes.Status200OK && item != null &&
                           item.RootElement.TryGetProperty("Type", out var type) &&
                           JellyfinMusicEndpointPolicy.IsMusicItemType(type.GetString());
-            itemTypes[itemId] = new ItemTypeCacheEntry(isMusic, DateTime.UtcNow + ItemTypeCacheDuration);
+            await cache.SetAsync(cacheKey, new ItemTypeCacheEntry(isMusic), ItemTypeCacheDuration);
             return isMusic;
         }
     }
@@ -90,5 +92,5 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
     private static bool IsInfrastructureRoute(PathString path) =>
         path.StartsWithSegments("/health") || path.StartsWithSegments("/metrics");
 
-    private sealed record ItemTypeCacheEntry(bool IsMusic, DateTime ExpiresAtUtc);
+    private sealed record ItemTypeCacheEntry(bool IsMusic);
 }

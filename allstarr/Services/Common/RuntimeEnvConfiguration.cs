@@ -28,7 +28,6 @@ public static class RuntimeEnvConfiguration
             ["ALLSTARR_STORAGE_PASSWORD_FILE"] = ["Storage:PasswordFile"],
             ["ALLSTARR_STORAGE_AUTO_MIGRATE"] = ["Storage:AutoMigrate"],
             ["ALLSTARR_STORAGE_ENFORCE_MUTATION_GUARD"] = ["Storage:EnforceMutationGuard"],
-            ["ALLSTARR_STORAGE_SQLITE_BOOTSTRAP_CONFIRMATION_FILE"] = ["Storage:SqliteBootstrapConfirmationFile"],
             ["ALLSTARR_BACKUP_DIRECTORY"] = ["Storage:BackupDirectory"],
             ["ALLSTARR_SECRET_KEY_RING_PATH"] = ["Secrets:KeyRingPath"],
             ["ALLSTARR_MULTI_USER_MODE"] = ["Identity:Mode"],
@@ -45,9 +44,6 @@ public static class RuntimeEnvConfiguration
 
             ["LIBRARY_DOWNLOAD_PATH"] = ["Library:DownloadPath"],
             ["LIBRARY_KEPT_PATH"] = ["Library:KeptPath"],
-
-            ["REDIS_ENABLED"] = ["Redis:Enabled"],
-            ["REDIS_CONNECTION_STRING"] = ["Redis:ConnectionString"],
 
             ["SPOTIFY_IMPORT_ENABLED"] = ["SpotifyImport:Enabled"],
             ["SPOTIFY_IMPORT_SYNC_START_HOUR"] = ["SpotifyImport:SyncStartHour"],
@@ -118,6 +114,10 @@ public static class RuntimeEnvConfiguration
             ["CACHE_METADATA_DAYS"] = ["Cache:MetadataDays"],
             ["CACHE_ODESLI_LOOKUP_DAYS"] = ["Cache:OdesliLookupDays"],
             ["CACHE_PROXY_IMAGES_DAYS"] = ["Cache:ProxyImagesDays"],
+            ["CACHE_MEDIA_DIRECTORY"] = ["Cache:MediaDirectory"],
+            ["CACHE_MEDIA_MAXIMUM_MEGABYTES"] = ["Cache:MediaMaximumMegabytes"],
+            ["CACHE_MEDIA_MAXIMUM_ENTRY_MEGABYTES"] = ["Cache:MediaMaximumEntryMegabytes"],
+            ["CACHE_MEDIA_CLEANUP_FILE_LIMIT"] = ["Cache:MediaCleanupFileLimit"],
             ["CACHE_TRANSCODE_MINUTES"] = ["Cache:TranscodeCacheMinutes"]
         };
 

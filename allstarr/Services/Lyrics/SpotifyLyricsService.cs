@@ -24,13 +24,13 @@ public class SpotifyLyricsService
 {
     private readonly ILogger<SpotifyLyricsService> _logger;
     private readonly SpotifyApiSettings _settings;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly HttpClient _httpClient;
 
     public SpotifyLyricsService(
         ILogger<SpotifyLyricsService> logger,
         IOptions<SpotifyApiSettings> settings,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IHttpClientFactory httpClientFactory)
     {
         _logger = logger;

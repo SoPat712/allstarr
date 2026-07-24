@@ -95,9 +95,7 @@ public sealed class DiagnosticsControllerTests : IDisposable
         var httpClientFactory = new Mock<IHttpClientFactory>();
         httpClientFactory.Setup(factory => factory.CreateClient(It.IsAny<string>()))
             .Returns(new HttpClient(handler));
-        var cache = new RedisCacheService(
-            Options.Create(new RedisSettings { Enabled = false }),
-            NullLogger<RedisCacheService>.Instance);
+        var cache = new DisabledApplicationCache();
         var proxy = new JellyfinProxyService(
             httpClientFactory.Object,
             Options.Create(settings),
@@ -310,9 +308,7 @@ public sealed class DiagnosticsControllerTests : IDisposable
             Options.Create(spotifySettings),
             adminHelper,
             NullLogger<SpotifySessionCookieService>.Instance);
-        var redis = new RedisCacheService(
-            Options.Create(new RedisSettings { Enabled = false }),
-            NullLogger<RedisCacheService>.Instance);
+        var redis = new DisabledApplicationCache();
         var storageOptions = new DurableStorageOptions
         {
             Provider = "Sqlite",

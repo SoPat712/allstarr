@@ -210,6 +210,9 @@ public class AppleMusicController : ControllerBase
             {
                 state = "staged",
                 fileName = safeName,
+                sizeBytes = file.Length,
+                stagedAt = DateTimeOffset.UtcNow,
+                architecture = "auto",
                 message = "Package uploaded. Run ./allstarr.sh install-apple on the Docker host to verify, build, and start the Apple gateway."
             });
         }

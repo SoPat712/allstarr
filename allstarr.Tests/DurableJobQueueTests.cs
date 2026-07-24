@@ -391,6 +391,45 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Progress_IsPersistedForTheActiveLeaseAndRedactsUnsafeDetails()
+    {
+        await Enqueue("playlist.match-all", "match-all-progress");
+        var claim = (await _queue.ClaimNextAsync("worker-progress"))!;
+
+        var reported = await _queue.ReportProgressAsync(
+            claim,
+            new DurableJobProgressUpdate(
+                "provider-started",
+                "Searching https://provider.invalid/catalog?token=fixture token=fixture",
+                2,
+                4,
+                "spotify",
+                "Release Radar",
+                "Fixture track"));
+
+        Assert.True(reported);
+        await using (var context = await _factory.CreateDbContextAsync())
+        {
+            var progress = Assert.Single(await context.AuditEvents.ToListAsync());
+            Assert.Equal("job-progress", progress.Category);
+            Assert.Equal("provider-started", progress.Action);
+            Assert.Equal(claim.CorrelationId, progress.CorrelationId);
+            Assert.Contains("\"completed\":2", progress.DetailsJson, StringComparison.Ordinal);
+            Assert.Contains("\"total\":4", progress.DetailsJson, StringComparison.Ordinal);
+            Assert.Contains("Release Radar", progress.DetailsJson, StringComparison.Ordinal);
+            Assert.DoesNotContain("fixture", progress.DetailsJson, StringComparison.Ordinal);
+            Assert.Contains("redacted", progress.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        }
+
+        await _queue.CompleteAsync(claim, DurableJobCompletion.Success());
+        Assert.False(await _queue.ReportProgressAsync(
+            claim,
+            new DurableJobProgressUpdate("late", "This must not be persisted.")));
+        await using var finalContext = await _factory.CreateDbContextAsync();
+        Assert.Single(await finalContext.AuditEvents.ToListAsync());
+    }
+
+    [Fact]
     public async Task RetryAndTerminalFailure_AreDurableAndErrorsAreRedacted()
     {
         await Enqueue("provider.download", "download-1");

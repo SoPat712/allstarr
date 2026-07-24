@@ -105,6 +105,20 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("Heebiejeebies - Bonus", "Heebiejeebies")]
+    [InlineData("Homemade Dynamite (Feat. Khalid, Post Malone & SZA) - REMIX", "Homemade Dynamite")]
+    [InlineData("Song Title - Bonus Track", "Song Title")]
+    [InlineData("Song Title - Deluxe Edition", "Song Title")]
+    [InlineData("Song Title (Deluxe Edition)", "Song Title")]
+    [InlineData("Song Title [Bonus Track]", "Song Title")]
+    [InlineData("[Bonus Track] Song Title", "Song Title")]
+    [InlineData("Song Title (Album Version)", "Song Title")]
+    public void CalculateSimilarityAggressive_StripsTrailingReleaseDecorators(string source, string candidate)
+    {
+        Assert.Equal(100, FuzzyMatcher.CalculateSimilarityAggressive(source, candidate));
+    }
+
+    [Theory]
     [InlineData("", "", 0)]
     [InlineData("Test", "", 0)]
     [InlineData("", "Test", 0)]
@@ -176,4 +190,3 @@ public class FuzzyMatcherTests
         Assert.True(FuzzyMatcher.CalculateSimilarity(str130, str130b) > 70);
     }
 }
-

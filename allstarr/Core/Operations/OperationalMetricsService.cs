@@ -256,10 +256,6 @@ public sealed class OperationalMetricsService
         Gauge(output, "allstarr_migrations_total", "Schema migration attempts.", runtime.MigrationAttempts);
         Gauge(output, "allstarr_migration_failures_total", "Schema migration failures.", runtime.MigrationFailures);
         Gauge(output, "allstarr_migration_last_duration_milliseconds", "Duration of the latest schema migration attempt.", runtime.LastMigrationDurationMilliseconds);
-        Gauge(output, "allstarr_valkey_configured", "Whether Valkey acceleration is configured.", runtime.ValkeyConfigured ? 1 : 0);
-        Gauge(output, "allstarr_valkey_available", "Whether configured Valkey acceleration is connected.", runtime.ValkeyAvailable ? 1 : 0);
-        Gauge(output, "allstarr_valkey_degradation_events_total", "Observed Valkey availability losses.", runtime.ValkeyDegradationEvents);
-        Gauge(output, "allstarr_valkey_recovery_events_total", "Observed Valkey recoveries.", runtime.ValkeyRecoveryEvents);
         Gauge(output, "allstarr_sidecar_degradation_events_total", "Observed sidecar transitions away from ready.", runtime.SidecarDegradationEvents);
         Gauge(output, "allstarr_sidecar_recovery_events_total", "Observed sidecar transitions to ready.", runtime.SidecarRecoveryEvents);
     }

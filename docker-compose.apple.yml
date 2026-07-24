@@ -53,6 +53,7 @@ services:
       WRAPPER_BASE_DIR: /data/data/com.apple.android.music/files
       WRAPPER_RESTORE_SESSION: "1"
     volumes:
+      - apple-wrapper-app-data:/app/rootfs/data/data/com.apple.android.music
       - apple-wrapper-session:/app/rootfs/data/data/com.apple.android.music/files
     networks:
       - allstarr
@@ -64,4 +65,5 @@ services:
       - apparmor:unconfined
 volumes:
   apple-gateway-data:
+  apple-wrapper-app-data:
   apple-wrapper-session:

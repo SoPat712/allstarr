@@ -100,6 +100,10 @@ public static class LegacyEnvParser
             ["CACHE_METADATA_DAYS"] = "Cache:MetadataDays",
             ["CACHE_ODESLI_LOOKUP_DAYS"] = "Cache:OdesliLookupDays",
             ["CACHE_PROXY_IMAGES_DAYS"] = "Cache:ProxyImagesDays",
+            ["CACHE_MEDIA_DIRECTORY"] = "Cache:MediaDirectory",
+            ["CACHE_MEDIA_MAXIMUM_MEGABYTES"] = "Cache:MediaMaximumMegabytes",
+            ["CACHE_MEDIA_MAXIMUM_ENTRY_MEGABYTES"] = "Cache:MediaMaximumEntryMegabytes",
+            ["CACHE_MEDIA_CLEANUP_FILE_LIMIT"] = "Cache:MediaCleanupFileLimit",
             ["CACHE_TRANSCODE_MINUTES"] = "Cache:TranscodeCacheMinutes"
         };
 

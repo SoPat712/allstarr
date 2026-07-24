@@ -98,6 +98,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
                 return res.Songs;
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchSongsAsync timed out for extension: {ExtensionId}", ext.Id);
+                return new List<Song>();
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "SearchSongsAsync failed for extension: {ExtensionId}", ext.Id);
@@ -181,6 +190,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 return await service.SearchAlbumsAsync(query, limit, cancellationToken)
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchAlbumsAsync timed out for provider: {Provider}", p);
+                return new List<Album>();
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "SearchAlbumsAsync failed for provider: {Provider}", p);
@@ -196,6 +214,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
                 return res.Albums;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchAlbumsAsync timed out for extension: {ExtensionId}", ext.Id);
+                return new List<Album>();
             }
             catch (Exception ex)
             {
@@ -224,6 +251,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 return await service.SearchArtistsAsync(query, limit, cancellationToken)
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchArtistsAsync timed out for provider: {Provider}", p);
+                return new List<Artist>();
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "SearchArtistsAsync failed for provider: {Provider}", p);
@@ -239,6 +275,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 var res = await Task.Run(() => ext.Search(query, limit), cancellationToken)
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
                 return res.Artists;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchArtistsAsync timed out for extension: {ExtensionId}", ext.Id);
+                return new List<Artist>();
             }
             catch (Exception ex)
             {
@@ -267,6 +312,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
                 return await service.SearchAllAsync(query, songLimit, albumLimit, artistLimit, cancellationToken)
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchAllAsync timed out for provider: {Provider}", p);
+                return null;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "SearchAllAsync failed for provider: {Provider}", p);
@@ -281,6 +335,15 @@ public class MultiProviderMetadataService : IMusicMetadataService
             {
                 return await Task.Run(() => ext.Search(query, songLimit), cancellationToken)
                     .WaitAsync(ProviderSearchTimeout, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _logger.LogWarning("SearchAllAsync timed out for extension: {ExtensionId}", ext.Id);
+                return new SearchResult();
             }
             catch (Exception ex)
             {

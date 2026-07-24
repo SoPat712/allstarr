@@ -1,7 +1,5 @@
 using allstarr.Models.Domain;
 using allstarr.Services.MusicBrainz;
-using allstarr.Services.Common;
-using System.Text.Json;
 
 namespace allstarr.Services.Common;
 
@@ -11,23 +9,18 @@ namespace allstarr.Services.Common;
 public class GenreEnrichmentService
 {
     private readonly MusicBrainzService _musicBrainz;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly ILogger<GenreEnrichmentService> _logger;
-    private readonly string _genreCacheDirectory;
     private static readonly TimeSpan GenreCacheDuration = TimeSpan.FromDays(30);
 
     public GenreEnrichmentService(
         MusicBrainzService musicBrainz,
-        RedisCacheService cache,
-        IConfiguration configuration,
+        IApplicationCache cache,
         ILogger<GenreEnrichmentService> logger)
     {
         _musicBrainz = musicBrainz;
         _cache = cache;
         _logger = logger;
-        _genreCacheDirectory = configuration["Cache:GenreDirectory"] ?? "/app/cache/genres";
-
-        Directory.CreateDirectory(_genreCacheDirectory);
     }
 
     /// <summary>
@@ -44,27 +37,17 @@ public class GenreEnrichmentService
 
         var cacheKey = $"{song.Title}:{song.Artist}";
 
-        // Check Redis cache first
-        var redisCacheKey = CacheKeyBuilder.BuildGenreEnrichmentKey(cacheKey);
-        var cachedGenre = await _cache.GetAsync<string>(redisCacheKey);
+        var cacheEntryKey = CacheKeyBuilder.BuildGenreEnrichmentKey(cacheKey);
+        var cachedGenre = await _cache.GetAsync<string>(cacheEntryKey);
 
         if (cachedGenre != null)
         {
-            song.Genre = cachedGenre;
-            _logger.LogDebug("Using Redis cached genre for {Title} - {Artist}: {Genre}",
-                song.Title, song.Artist, cachedGenre);
-            return;
-        }
-
-        // Check file cache
-        var fileCachedGenre = await GetFromFileCacheAsync(cacheKey);
-        if (fileCachedGenre != null)
-        {
-            song.Genre = fileCachedGenre;
-            // Restore to Redis cache
-            await _cache.SetAsync(redisCacheKey, fileCachedGenre, GenreCacheDuration);
-            _logger.LogDebug("Using file cached genre for {Title} - {Artist}: {Genre}",
-                song.Title, song.Artist, fileCachedGenre);
+            if (cachedGenre.Length > 0)
+            {
+                song.Genre = cachedGenre;
+            }
+            _logger.LogDebug("Using cached genre for {Title} - {Artist}: {Genre}",
+                song.Title, song.Artist, cachedGenre.Length > 0 ? cachedGenre : "(none)");
             return;
         }
 
@@ -78,17 +61,14 @@ public class GenreEnrichmentService
                 // Use the top genre
                 song.Genre = genres[0];
 
-                // Cache in both Redis and file
-                await _cache.SetAsync(redisCacheKey, song.Genre, GenreCacheDuration);
-                await SaveToFileCacheAsync(cacheKey, song.Genre);
+                await _cache.SetAsync(cacheEntryKey, song.Genre, GenreCacheDuration);
 
                 _logger.LogInformation("Enriched {Title} - {Artist} with genre: {Genre}",
                     song.Title, song.Artist, song.Genre);
             }
             else
             {
-                // Cache negative result to avoid repeated lookups
-                await SaveToFileCacheAsync(cacheKey, "");
+                await _cache.SetAsync(cacheEntryKey, string.Empty, GenreCacheDuration);
             }
         }
         catch (Exception ex)
@@ -123,89 +103,4 @@ public class GenreEnrichmentService
             .ToList();
     }
 
-    /// <summary>
-    /// Gets genre from file cache.
-    /// </summary>
-    private async Task<string?> GetFromFileCacheAsync(string cacheKey)
-    {
-        try
-        {
-            var fileName = GetCacheFileName(cacheKey);
-            var filePath = Path.Combine(_genreCacheDirectory, fileName);
-
-            if (!File.Exists(filePath))
-            {
-                return null;
-            }
-
-            // Check if cache is expired (30 days)
-            var fileInfo = new FileInfo(filePath);
-            if (DateTime.UtcNow - fileInfo.LastWriteTimeUtc > GenreCacheDuration)
-            {
-                File.Delete(filePath);
-                return null;
-            }
-
-            var json = await File.ReadAllTextAsync(filePath);
-            var cacheEntry = JsonSerializer.Deserialize<GenreCacheEntry>(json);
-
-            return cacheEntry?.Genre;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to read genre from file cache for {Key}", cacheKey);
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Saves genre to file cache.
-    /// </summary>
-    private async Task SaveToFileCacheAsync(string cacheKey, string genre)
-    {
-        try
-        {
-            var fileName = GetCacheFileName(cacheKey);
-            var filePath = Path.Combine(_genreCacheDirectory, fileName);
-
-            var cacheEntry = new GenreCacheEntry
-            {
-                CacheKey = cacheKey,
-                Genre = genre,
-                CachedAt = DateTime.UtcNow
-            };
-
-            var json = JsonSerializer.Serialize(cacheEntry, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
-
-            await File.WriteAllTextAsync(filePath, json);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save genre to file cache for {Key}", cacheKey);
-        }
-    }
-
-    /// <summary>
-    /// Generates a safe file name from cache key.
-    /// </summary>
-    private static string GetCacheFileName(string cacheKey)
-    {
-        // Use base64 encoding to create safe file names
-        var bytes = System.Text.Encoding.UTF8.GetBytes(cacheKey);
-        var base64 = Convert.ToBase64String(bytes)
-            .Replace("+", "-")
-            .Replace("/", "_")
-            .Replace("=", "");
-        return $"{base64}.json";
-    }
-
-    private class GenreCacheEntry
-    {
-        public string CacheKey { get; set; } = "";
-        public string Genre { get; set; } = "";
-        public DateTime CachedAt { get; set; }
-    }
 }

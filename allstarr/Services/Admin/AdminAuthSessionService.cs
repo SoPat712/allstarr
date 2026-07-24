@@ -27,7 +27,7 @@ public sealed class AdminAuthSession
 /// Session IDs stay in the browser cookie, while the resolved backend identity
 /// is protected and persisted so brief app restarts do not force a relogin.
 /// </summary>
-public class AdminAuthSessionService
+public class AdminAuthSessionService : IDisposable
 {
     public const string SessionCookieName = "allstarr_admin_session_v3";
     public const string LegacySessionCookieName = "allstarr_admin_session";
@@ -42,6 +42,7 @@ public class AdminAuthSessionService
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
     private readonly object _persistLock = new();
     private readonly string _sessionStoreFilePath;
+    private readonly Timer _cleanupTimer;
 
     public AdminAuthSessionService(
         IDataProtectionProvider dataProtectionProvider,
@@ -77,6 +78,11 @@ public class AdminAuthSessionService
         }
 
         LoadSessionsFromDisk();
+        _cleanupTimer = new Timer(
+            _ => CleanupExpiredSessionsSafely(),
+            null,
+            TimeSpan.FromMinutes(15),
+            TimeSpan.FromMinutes(15));
     }
 
     public AdminAuthSessionService(ILogger<AdminAuthSessionService> logger)
@@ -225,6 +231,20 @@ public class AdminAuthSessionService
             PersistSessions();
         }
     }
+
+    private void CleanupExpiredSessionsSafely()
+    {
+        try
+        {
+            RemoveExpiredSessions();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clean expired administrator sessions");
+        }
+    }
+
+    public void Dispose() => _cleanupTimer.Dispose();
 
     private void LoadSessionsFromDisk()
     {

@@ -21,7 +21,7 @@ public class SquidWTFMetadataServiceTests
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
     private readonly IOptions<SubsonicSettings> _subsonicSettings;
     private readonly IOptions<SquidWTFSettings> _squidwtfSettings;
-    private readonly Mock<RedisCacheService> _mockCache;
+    private readonly Mock<IApplicationCache> _mockCache;
     private readonly List<string> _apiUrls;
 
     public SquidWTFMetadataServiceTests()
@@ -40,9 +40,7 @@ public class SquidWTFMetadataServiceTests
         });
 
         // Create mock Redis cache
-        var mockRedisLogger = new Mock<ILogger<RedisCacheService>>();
-        var mockRedisSettings = Options.Create(new RedisSettings { Enabled = false });
-        _mockCache = new Mock<RedisCacheService>(mockRedisSettings, mockRedisLogger.Object);
+        _mockCache = new Mock<IApplicationCache>();
 
         _apiUrls = new List<string>
         {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using allstarr.Core.Storage;
 using allstarr.Models.Lyrics;
 using allstarr.Services.Common;
 
@@ -8,18 +9,21 @@ namespace allstarr.Services.Lyrics;
 public class LrclibService
 {
     private readonly HttpClient _httpClient;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
+    private readonly IManualLyricsMappingStore _mappingStore;
     private readonly ILogger<LrclibService> _logger;
     private const string BaseUrl = "https://lrclib.net/api";
 
     public LrclibService(
         IHttpClientFactory httpClientFactory,
-        RedisCacheService cache,
+        IApplicationCache cache,
+        IManualLyricsMappingStore mappingStore,
         ILogger<LrclibService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Allstarr/1.0.3 (https://github.com/SoPat712/allstarr)");
         _cache = cache;
+        _mappingStore = mappingStore;
         _logger = logger;
     }
 
@@ -42,20 +46,18 @@ public class LrclibService
         var cacheKey = CacheKeyBuilder.BuildLyricsKey(artistName, trackName, albumName, durationSeconds);
 
         // FIRST: Check for manual lyrics mapping
-        var manualMappingKey = CacheKeyBuilder.BuildLyricsManualMappingKey(artistName, trackName);
-        var manualLyricsIdStr = await _cache.GetStringAsync(manualMappingKey);
-
-        if (!string.IsNullOrEmpty(manualLyricsIdStr) && int.TryParse(manualLyricsIdStr, out var manualLyricsId) && manualLyricsId > 0)
+        var manualLyricsId = await _mappingStore.FindLyricsIdAsync(artistName, trackName);
+        if (manualLyricsId is > 0)
         {
             _logger.LogInformation("✓ Manual lyrics mapping found for {Artist} - {Track}: Lyrics ID {Id}",
                 artistName, trackName, manualLyricsId);
 
             // Fetch lyrics by ID
-            var manualLyrics = await GetLyricsByIdAsync(manualLyricsId);
+            var manualLyrics = await GetLyricsByIdAsync(manualLyricsId.Value);
             if (manualLyrics != null && !string.IsNullOrEmpty(manualLyrics.PlainLyrics))
             {
                 // Cache the lyrics using the standard cache key
-                await _cache.SetAsync(cacheKey, manualLyrics.PlainLyrics!);
+                await _cache.SetAsync(cacheKey, manualLyrics.PlainLyrics!, CacheExtensions.LyricsTTL);
                 return manualLyrics;
             }
             else

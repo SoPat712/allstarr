@@ -1,4 +1,5 @@
 using allstarr.Core.Capabilities;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.Spotify;
 
@@ -11,6 +12,7 @@ public static class SpotifyPlaylistCapabilityRegistration
         services.AddSingleton(provider => new SpotifyPlaylistCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<IProviderAccountSecretAccessor>(),
+            provider.GetRequiredService<IApplicationCache>(),
             provider.GetRequiredService<ILogger<SpotifyPathfinderPlaylistClient>>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(

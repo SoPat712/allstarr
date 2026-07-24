@@ -1,20 +1,20 @@
-using System.Collections.Concurrent;
-
 namespace allstarr.Services.Common;
 
 public sealed class ExternalPlaybackMetadataResolver(
     IMusicMetadataService metadataService,
+    IApplicationCache cache,
     ILogger<ExternalPlaybackMetadataResolver> logger) : IPlaybackMetadataResolver
 {
-    private readonly ConcurrentDictionary<string, CacheEntry> _cache =
-        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
 
     public async Task<PlaybackTrackMetadata?> ResolveAsync(string itemId, CancellationToken cancellationToken)
     {
         var identity = ParseTrackIdentity(itemId);
         if (identity == null) return null;
-        if (_cache.TryGetValue(itemId, out var cached) && cached.ExpiresAtUtc > DateTime.UtcNow)
-            return cached.Metadata;
+        var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey(identity.Value.Provider, identity.Value.ExternalId);
+        var cached = await cache.GetAsync<PlaybackMetadataCacheEntry>(cacheKey);
+        if (cached != null) return cached.Metadata;
 
         PlaybackTrackMetadata? metadata = null;
         try
@@ -36,9 +36,10 @@ public sealed class ExternalPlaybackMetadataResolver(
             logger.LogDebug(ex, "Unable to resolve external playback metadata for {ItemId}", itemId);
         }
 
-        _cache[itemId] = new(metadata, DateTime.UtcNow.Add(metadata == null
-            ? TimeSpan.FromSeconds(30)
-            : TimeSpan.FromMinutes(10)));
+        await cache.SetAsync(
+            cacheKey,
+            new PlaybackMetadataCacheEntry(metadata),
+            metadata == null ? FailureCacheDuration : MetadataCacheDuration);
         return metadata;
     }
 
@@ -62,5 +63,5 @@ public sealed class ExternalPlaybackMetadataResolver(
             : null;
     }
 
-    private sealed record CacheEntry(PlaybackTrackMetadata? Metadata, DateTime ExpiresAtUtc);
+    private sealed record PlaybackMetadataCacheEntry(PlaybackTrackMetadata? Metadata);
 }

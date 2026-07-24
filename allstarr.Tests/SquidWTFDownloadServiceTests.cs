@@ -21,7 +21,6 @@ public class SquidWTFDownloadServiceTests : IDisposable
     private readonly Mock<IServiceProvider> _serviceProviderMock = new();
     private readonly Mock<ILogger<SquidWTFDownloadService>> _loggerMock = new();
     private readonly Mock<ILogger<OdesliService>> _odesliLoggerMock = new();
-    private readonly Mock<ILogger<RedisCacheService>> _redisLoggerMock = new();
     private readonly string _testDownloadPath;
     private readonly List<string> _apiUrls =
     [
@@ -83,9 +82,7 @@ public class SquidWTFDownloadServiceTests : IDisposable
             Quality = quality
         });
 
-        var cache = new RedisCacheService(
-            Options.Create(new RedisSettings { Enabled = false }),
-            _redisLoggerMock.Object);
+        var cache = new DisabledApplicationCache();
 
         var odesliService = new OdesliService(_httpClientFactoryMock.Object, _odesliLoggerMock.Object, cache);
 

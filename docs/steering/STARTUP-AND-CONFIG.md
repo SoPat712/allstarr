@@ -39,8 +39,7 @@ For `IMusicMetadataService` and `IDownloadService`, registration order matters.
 
 Before steady-state serving starts, the app:
 
-- initializes the explicitly selected Postgres or SQLite store and applies checked-in schema migrations under
-  the provider-specific migration lock
+- initializes PostgreSQL and applies checked-in schema migrations under the database advisory lock
 - bootstraps the configured tenant and backend identity policy
 - initializes `CacheExtensions`
 
@@ -48,6 +47,10 @@ These are part of boot correctness, not optional helpers. Startup does not impor
 Spotify mapping, Redis, cache, or version-state formats. The overhaul baseline is a fresh install. After the new
 database and identity are ready, an administrator can explicitly open the WebUI migration wizard for a reviewed
 subset of legacy configuration.
+
+SQLite is not an application runtime target. Offline `storage` commands may open an
+existing SQLite database only to verify, restore, or export legacy state for a controlled
+import into PostgreSQL.
 
 The WebUI importer follows the exact classification, scope, redaction, conflict, and transaction contract in
 [Legacy `.env` Import Contract](../operations/legacy-env-import.md). In particular, deployment keys remain in
@@ -116,8 +119,7 @@ Startup and long-running services currently include:
 
 - `StartupValidationOrchestrator`
 - `CacheCleanupService`
-- `CacheWarmingService`
-- `RedisPersistenceService`
+- `LegacyMappingImportService`
 - `SpotifyPlaylistFetcher`
 - `SpotifyMissingTracksFetcher`
 - `SpotifyTrackMatchingService`

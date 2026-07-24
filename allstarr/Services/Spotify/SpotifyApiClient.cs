@@ -4,10 +4,13 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Globalization;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.Spotify;
 using allstarr.Models.Settings;
 using allstarr.Models.Spotify;
 using Microsoft.Extensions.Options;
 using OtpNet;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Spotify;
 
@@ -30,6 +33,7 @@ public class SpotifyApiClient : IDisposable
     private readonly HttpClient _httpClient;
     private readonly HttpClient _webApiClient;
     private readonly CookieContainer _cookieContainer;
+    private readonly IApplicationCache? _cache;
 
     // Spotify API endpoints
     private const string OfficialApiBase = "https://api.spotify.com/v1";
@@ -51,10 +55,12 @@ public class SpotifyApiClient : IDisposable
 
     public SpotifyApiClient(
         ILogger<SpotifyApiClient> logger,
-        IOptions<SpotifyApiSettings> settings)
+        IOptions<SpotifyApiSettings> settings,
+        IApplicationCache? cache = null)
     {
         _logger = logger;
         _settings = settings.Value;
+        _cache = cache;
 
         // Client for official API
         _httpClient = new HttpClient
@@ -290,605 +296,125 @@ public class SpotifyApiClient : IDisposable
     /// <param name="playlistId">Spotify playlist ID or URI</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Playlist with tracks in correct order, or null if not found</returns>
-    public async Task<SpotifyPlaylist?> GetPlaylistAsync(string playlistId, CancellationToken cancellationToken = default)
+    public async Task<SpotifyPlaylist?> GetPlaylistAsync(
+        string playlistId,
+        CancellationToken cancellationToken = default)
     {
-        // Extract ID from URI if needed (spotify:playlist:xxxxx or https://open.spotify.com/playlist/xxxxx)
-        playlistId = ExtractPlaylistId(playlistId);
+        if (string.IsNullOrWhiteSpace(playlistId))
+        {
+            return null;
+        }
 
         var token = await GetWebAccessTokenAsync(cancellationToken);
-        if (string.IsNullOrEmpty(token))
+        if (string.IsNullOrWhiteSpace(token))
         {
-            _logger.LogError("Cannot fetch playlist without access token");
             return null;
         }
 
-        try
+        var pathfinder = new SpotifyPathfinderPlaylistClient(_webApiClient, _cache);
+        var resource = new ProviderExternalResourceId(
+            SpotifyPlaylistCapabilityAdapter.StableProviderId,
+            ProviderResourceKind.Playlist,
+            playlistId.Trim());
+        var tracks = new List<SpotifyPlaylistTrack>();
+        var seenTrackPositions = new HashSet<int>();
+        var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+        ProviderPlaylistSummary? summary = null;
+        string? cursor = null;
+
+        do
         {
-            // Use GraphQL API (same as Jellyfin plugin) - more reliable and less rate-limited
-            return await FetchPlaylistViaGraphQLAsync(playlistId, token, cancellationToken);
-        }
-        catch (Exception ex)
+            var outcome = await pathfinder.GetPlaylistTracksAsync(
+                token,
+                new ProviderPlaylistTracksRequest(
+                    resource,
+                    new ProviderPageRequest(100, cursor),
+                    summary?.SourceRevision),
+                cancellationToken);
+            if (!outcome.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Spotify Pathfinder track discovery stopped with {ErrorCode} after {Count} tracks for playlist {PlaylistId}",
+                    outcome.Error?.Code ?? "unknown",
+                    tracks.Count,
+                    playlistId);
+                return summary == null ? null : BuildCompatibilityPlaylist(summary, tracks, null);
+            }
+
+            var page = outcome.RequireValue();
+            summary ??= page.Playlist;
+            foreach (var item in page.Tracks.Items)
+            {
+                if (!seenTrackPositions.Add(item.Position))
+                {
+                    continue;
+                }
+
+                var metadata = item.Metadata;
+                tracks.Add(new SpotifyPlaylistTrack
+                {
+                    SpotifyId = item.TrackId.Value,
+                    Position = item.Position,
+                    Title = metadata?.Title ?? string.Empty,
+                    Album = metadata?.AlbumTitle ?? string.Empty,
+                    AlbumId = metadata?.AlbumId?.Value ?? string.Empty,
+                    Artists = metadata?.Artists.Select(artist => artist.Name).ToList() ?? [],
+                    ArtistIds = metadata?.Artists
+                        .Where(artist => artist.ArtistId != null)
+                        .Select(artist => artist.ArtistId!.Value)
+                        .ToList() ?? [],
+                    Isrc = metadata?.Isrc,
+                    DurationMs = metadata?.Duration is { } duration
+                        ? (int)Math.Min(int.MaxValue, Math.Max(0, duration.TotalMilliseconds))
+                        : 0,
+                    Explicit = metadata?.IsExplicit ?? false,
+                    AlbumArtUrl = metadata?.Artwork?.PublicUri?.ToString()
+                });
+            }
+
+            cursor = page.Tracks.IsPartial ? page.Tracks.NextCursor : null;
+        } while (!string.IsNullOrWhiteSpace(cursor) && seenCursors.Add(cursor));
+
+        if (summary == null)
         {
-            _logger.LogError(ex, "Error fetching playlist {PlaylistId}", playlistId);
             return null;
         }
+
+        string? artworkUrl = null;
+        if (summary.Artwork != null)
+        {
+            var artwork = await pathfinder.GetPlaylistArtworkUriAsync(
+                token,
+                summary.Artwork,
+                cancellationToken);
+            if (artwork.IsSuccess)
+            {
+                artworkUrl = artwork.RequireValue().ToString();
+            }
+        }
+
+        return BuildCompatibilityPlaylist(summary, tracks, artworkUrl);
     }
+
+    private static SpotifyPlaylist BuildCompatibilityPlaylist(
+        ProviderPlaylistSummary summary,
+        List<SpotifyPlaylistTrack> tracks,
+        string? artworkUrl) => new()
+    {
+        SpotifyId = summary.Id.Value,
+        Name = summary.Name,
+        Description = summary.Description,
+        OwnerId = summary.Owner.ProviderUserId,
+        OwnerName = summary.Owner.DisplayName ?? summary.Owner.ProviderUserId,
+        TotalTracks = summary.TrackCount ?? tracks.Count,
+        ImageUrl = artworkUrl ?? summary.Artwork?.PublicUri?.ToString(),
+        Tracks = tracks.OrderBy(track => track.Position).ToList(),
+        SnapshotId = summary.SourceRevision,
+        FetchedAt = DateTime.UtcNow
+    };
 
     /// <summary>
-    /// Fetch playlist using Spotify's GraphQL API (api-partner.spotify.com/pathfinder/v1/query)
-    /// This is the same approach used by the Jellyfin Spotify Import plugin
-    /// </summary>
-    private async Task<SpotifyPlaylist?> FetchPlaylistViaGraphQLAsync(
-        string playlistId,
-        string token,
-        CancellationToken cancellationToken)
-    {
-        const int pageLimit = 50;
-        var offset = 0;
-        var totalTrackCount = pageLimit;
-        var tracks = new List<SpotifyPlaylistTrack>();
-
-        SpotifyPlaylist? playlist = null;
-
-        while (tracks.Count < totalTrackCount && offset < totalTrackCount)
-        {
-            if (cancellationToken.IsCancellationRequested) break;
-
-            // Build GraphQL query URL (same as Jellyfin plugin)
-            var queryParams = new Dictionary<string, string>
-            {
-                { "operationName", "fetchPlaylist" },
-                { "variables", $"{{\"uri\":\"spotify:playlist:{playlistId}\",\"offset\":{offset},\"limit\":{pageLimit}}}" },
-                { "extensions", "{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d\"}}" }
-            };
-
-            var queryString = string.Join("&", queryParams.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-            var url = $"{WebApiBase}/query?{queryString}";
-
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            var response = await _webApiClient.SendAsync(request, cancellationToken);
-
-            // Handle 429 rate limiting with exponential backoff
-            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(5);
-                _logger.LogWarning("Spotify rate limit hit (429) when fetching playlist {PlaylistId}. Waiting {Seconds}s before retry...", playlistId, retryAfter.TotalSeconds);
-                await Task.Delay(retryAfter, cancellationToken);
-
-                // Retry the request
-                response = await _webApiClient.SendAsync(request, cancellationToken);
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError("Failed to fetch playlist via GraphQL: {StatusCode}", response.StatusCode);
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            using var doc = JsonDocument.Parse(json);
-
-            if (!doc.RootElement.TryGetProperty("data", out var data) ||
-                !data.TryGetProperty("playlistV2", out var playlistV2))
-            {
-                _logger.LogError("Invalid GraphQL response structure");
-                return null;
-            }
-
-            // Parse playlist metadata on first iteration
-            if (playlist == null)
-            {
-                playlist = ParseGraphQLPlaylist(playlistV2, playlistId);
-                if (playlist == null) return null;
-            }
-
-            // Parse tracks from this page
-            if (playlistV2.TryGetProperty("content", out var content))
-            {
-                if (content.TryGetProperty("totalCount", out var totalCount))
-                {
-                    totalTrackCount = totalCount.GetInt32();
-                }
-
-                if (content.TryGetProperty("items", out var items))
-                {
-                    foreach (var item in items.EnumerateArray())
-                    {
-                        var track = ParseGraphQLTrack(item, offset + tracks.Count);
-                        if (track != null)
-                        {
-                            tracks.Add(track);
-                        }
-                    }
-                }
-            }
-
-            offset += pageLimit;
-        }
-
-        if (playlist != null)
-        {
-            playlist.Tracks = tracks;
-            playlist.TotalTracks = tracks.Count;
-            if (!playlist.CreatedAt.HasValue)
-            {
-                playlist.CreatedAt = tracks
-                    .Where(t => t.AddedAt.HasValue)
-                    .Select(t => t.AddedAt!.Value.ToUniversalTime())
-                    .DefaultIfEmpty()
-                    .Min();
-
-                if (playlist.CreatedAt == default)
-                {
-                    playlist.CreatedAt = null;
-                }
-            }
-            _logger.LogInformation("Fetched playlist '{Name}' with {Count} tracks via GraphQL", playlist.Name, tracks.Count);
-        }
-
-        return playlist;
-    }
-
-    private SpotifyPlaylist? ParseGraphQLPlaylist(JsonElement playlistV2, string playlistId)
-    {
-        try
-        {
-            var name = playlistV2.TryGetProperty("name", out var n) ? n.GetString() : "Unknown Playlist";
-            var description = playlistV2.TryGetProperty("description", out var d) ? d.GetString() : null;
-
-            // Parse owner information
-            string? ownerName = null;
-            string? ownerId = null;
-            if (playlistV2.TryGetProperty("ownerV2", out var owner) &&
-                owner.TryGetProperty("data", out var ownerData))
-            {
-                if (ownerData.TryGetProperty("name", out var ownerNameProp))
-                {
-                    ownerName = ownerNameProp.GetString();
-                }
-
-                if (ownerData.TryGetProperty("username", out var usernameProp))
-                {
-                    ownerId = usernameProp.GetString();
-                }
-            }
-
-            // Parse playlist image
-            string? imageUrl = null;
-            if (playlistV2.TryGetProperty("images", out var images) &&
-                images.TryGetProperty("items", out var imageItems) &&
-                imageItems.GetArrayLength() > 0)
-            {
-                var firstImage = imageItems[0];
-                if (firstImage.TryGetProperty("sources", out var sources) &&
-                    sources.GetArrayLength() > 0)
-                {
-                    var firstSource = sources[0];
-                    if (firstSource.TryGetProperty("url", out var urlProp))
-                    {
-                        imageUrl = urlProp.GetString();
-                    }
-                }
-            }
-
-            // Parse snapshot/revision ID
-            string? snapshotId = null;
-            if (playlistV2.TryGetProperty("revisionId", out var revisionIdProp))
-            {
-                snapshotId = revisionIdProp.GetString();
-            }
-
-            var createdAt = TryGetSpotifyPlaylistCreatedAt(playlistV2);
-
-            // Parse collaborative and public flags (may not always be present)
-            bool collaborative = false;
-            if (playlistV2.TryGetProperty("collaborative", out var collaborativeProp))
-            {
-                collaborative = collaborativeProp.GetBoolean();
-            }
-
-            bool isPublic = false;
-            if (playlistV2.TryGetProperty("public", out var publicProp))
-            {
-                isPublic = publicProp.GetBoolean();
-            }
-
-            return new SpotifyPlaylist
-            {
-                SpotifyId = playlistId,
-                Name = name ?? "Unknown Playlist",
-                Description = description,
-                OwnerName = ownerName,
-                OwnerId = ownerId,
-                ImageUrl = imageUrl,
-                SnapshotId = snapshotId,
-                Collaborative = collaborative,
-                Public = isPublic,
-                CreatedAt = createdAt,
-                FetchedAt = DateTime.UtcNow,
-                Tracks = new List<SpotifyPlaylistTrack>()
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse GraphQL playlist metadata");
-            return null;
-        }
-    }
-
-    private SpotifyPlaylistTrack? ParseGraphQLTrack(JsonElement item, int position)
-    {
-        try
-        {
-            if (!item.TryGetProperty("itemV2", out var itemV2) ||
-                !itemV2.TryGetProperty("data", out var data))
-            {
-                return null;
-            }
-
-            var trackId = data.TryGetProperty("uri", out var uri) ? uri.GetString()?.Replace("spotify:track:", "") : null;
-            var name = data.TryGetProperty("name", out var n) ? n.GetString() : null;
-
-            if (string.IsNullOrEmpty(trackId) || string.IsNullOrEmpty(name))
-            {
-                return null;
-            }
-
-            // Parse artists with IDs
-            var artists = new List<string>();
-            var artistIds = new List<string>();
-            if (data.TryGetProperty("artists", out var artistsObj) &&
-                artistsObj.TryGetProperty("items", out var artistItems))
-            {
-                foreach (var artist in artistItems.EnumerateArray())
-                {
-                    if (artist.TryGetProperty("profile", out var profile) &&
-                        profile.TryGetProperty("name", out var artistName))
-                    {
-                        var artistNameStr = artistName.GetString();
-                        if (!string.IsNullOrEmpty(artistNameStr))
-                        {
-                            artists.Add(artistNameStr);
-                        }
-                    }
-
-                    // Extract artist ID
-                    if (artist.TryGetProperty("uri", out var artistUri))
-                    {
-                        var artistId = artistUri.GetString()?.Replace("spotify:artist:", "");
-                        if (!string.IsNullOrEmpty(artistId))
-                        {
-                            artistIds.Add(artistId);
-                        }
-                    }
-                }
-            }
-
-            // Parse album with ID
-            string? albumName = null;
-            string? albumId = null;
-            if (data.TryGetProperty("albumOfTrack", out var album))
-            {
-                if (album.TryGetProperty("name", out var albumNameProp))
-                {
-                    albumName = albumNameProp.GetString();
-                }
-
-                if (album.TryGetProperty("uri", out var albumUri))
-                {
-                    albumId = albumUri.GetString()?.Replace("spotify:album:", "");
-                }
-            }
-
-            // Parse duration
-            int durationMs = 0;
-            if (data.TryGetProperty("trackDuration", out var duration) &&
-                duration.TryGetProperty("totalMilliseconds", out var durationMsProp))
-            {
-                durationMs = durationMsProp.GetInt32();
-            }
-
-            // Parse album art
-            string? albumArtUrl = null;
-            if (data.TryGetProperty("albumOfTrack", out var albumOfTrack) &&
-                albumOfTrack.TryGetProperty("coverArt", out var coverArt) &&
-                coverArt.TryGetProperty("sources", out var sources) &&
-                sources.GetArrayLength() > 0)
-            {
-                // Get the largest image (usually the last one, but let's find the biggest)
-                string? largestUrl = null;
-                int maxSize = 0;
-                foreach (var source in sources.EnumerateArray())
-                {
-                    if (source.TryGetProperty("url", out var urlProp) &&
-                        source.TryGetProperty("width", out var widthProp))
-                    {
-                        var url = urlProp.GetString();
-                        var width = widthProp.GetInt32();
-                        if (width > maxSize && !string.IsNullOrEmpty(url))
-                        {
-                            maxSize = width;
-                            largestUrl = url;
-                        }
-                    }
-                }
-                albumArtUrl = largestUrl;
-            }
-
-            // Parse explicit flag
-            bool isExplicit = false;
-            if (data.TryGetProperty("contentRating", out var contentRating) &&
-                contentRating.TryGetProperty("label", out var label))
-            {
-                isExplicit = label.GetString() == "EXPLICIT";
-            }
-
-            // Parse track and disc numbers
-            int trackNumber = 1;
-            if (data.TryGetProperty("trackNumber", out var trackNumProp))
-            {
-                trackNumber = trackNumProp.GetInt32();
-            }
-
-            int discNumber = 1;
-            if (data.TryGetProperty("discNumber", out var discNumProp))
-            {
-                discNumber = discNumProp.GetInt32();
-            }
-
-            // Parse playcount as popularity (convert to 0-100 scale)
-            int popularity = 0;
-            if (data.TryGetProperty("playcount", out var playcountProp))
-            {
-                var playcountStr = playcountProp.GetString();
-                if (!string.IsNullOrEmpty(playcountStr) && int.TryParse(playcountStr, out var playcount))
-                {
-                    // Convert playcount to popularity score (0-100)
-                    // Using logarithmic scale: popularity = min(100, log10(playcount) * 12)
-                    popularity = Math.Min(100, (int)(Math.Log10(Math.Max(1, playcount)) * 12));
-                }
-            }
-
-            // Parse addedAt timestamp
-            DateTime? addedAt = null;
-            if (item.TryGetProperty("addedAt", out var addedAtObj) &&
-                addedAtObj.TryGetProperty("isoString", out var isoString))
-            {
-                addedAt = ParseSpotifyDateElement(isoString);
-            }
-
-            return new SpotifyPlaylistTrack
-            {
-                SpotifyId = trackId,
-                Title = name,
-                Artists = artists,
-                ArtistIds = artistIds,
-                Album = albumName ?? string.Empty,
-                AlbumId = albumId ?? string.Empty,
-                DurationMs = durationMs,
-                Position = position,
-                AlbumArtUrl = albumArtUrl,
-                Explicit = isExplicit,
-                TrackNumber = trackNumber,
-                DiscNumber = discNumber,
-                Popularity = popularity,
-                AddedAt = addedAt,
-                Isrc = null // GraphQL doesn't return ISRC, we'll fetch it separately if needed
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse GraphQL track");
-            return null;
-        }
-    }
-
-    private async Task<SpotifyPlaylist?> FetchPlaylistMetadataAsync(
-        string playlistId,
-        string token,
-        CancellationToken cancellationToken)
-    {
-        var url = $"{OfficialApiBase}/playlists/{playlistId}?fields=id,name,description,owner(display_name,id),images,collaborative,public,snapshot_id,tracks.total";
-
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var response = await _httpClient.SendAsync(request, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError("Failed to fetch playlist metadata: {StatusCode}", response.StatusCode);
-            return null;
-        }
-
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        var playlist = new SpotifyPlaylist
-        {
-            SpotifyId = root.GetProperty("id").GetString() ?? playlistId,
-            Name = root.GetProperty("name").GetString() ?? "Unknown Playlist",
-            Description = root.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-            SnapshotId = root.TryGetProperty("snapshot_id", out var snap) ? snap.GetString() : null,
-            Collaborative = root.TryGetProperty("collaborative", out var collab) && collab.GetBoolean(),
-            Public = root.TryGetProperty("public", out var pub) && pub.ValueKind != JsonValueKind.Null && pub.GetBoolean(),
-            CreatedAt = TryGetSpotifyPlaylistCreatedAt(root),
-            FetchedAt = DateTime.UtcNow
-        };
-
-        if (root.TryGetProperty("owner", out var owner))
-        {
-            playlist.OwnerName = owner.TryGetProperty("display_name", out var dn) ? dn.GetString() : null;
-            playlist.OwnerId = owner.TryGetProperty("id", out var oid) ? oid.GetString() : null;
-        }
-
-        if (root.TryGetProperty("images", out var images) && images.GetArrayLength() > 0)
-        {
-            playlist.ImageUrl = images[0].GetProperty("url").GetString();
-        }
-
-        if (root.TryGetProperty("tracks", out var tracks) && tracks.TryGetProperty("total", out var total))
-        {
-            playlist.TotalTracks = total.GetInt32();
-        }
-
-        return playlist;
-    }
-
-    private async Task<List<SpotifyPlaylistTrack>> FetchAllPlaylistTracksAsync(
-        string playlistId,
-        string token,
-        CancellationToken cancellationToken)
-    {
-        var allTracks = new List<SpotifyPlaylistTrack>();
-        var offset = 0;
-        const int limit = 100; // Spotify's max
-
-        while (true)
-        {
-            var tracks = await FetchPlaylistTracksPageAsync(playlistId, token, offset, limit, cancellationToken);
-            if (tracks == null || tracks.Count == 0) break;
-
-            allTracks.AddRange(tracks);
-
-            if (tracks.Count < limit) break;
-
-            offset += limit;
-
-            // Rate limiting
-            if (_settings.RateLimitDelayMs > 0)
-            {
-                await Task.Delay(_settings.RateLimitDelayMs, cancellationToken);
-            }
-        }
-
-        return allTracks;
-    }
-
-    private async Task<List<SpotifyPlaylistTrack>?> FetchPlaylistTracksPageAsync(
-        string playlistId,
-        string token,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        // Request fields needed for matching and ordering
-        var fields = "items(added_at,track(id,name,album(id,name,images,release_date),artists(id,name),duration_ms,explicit,popularity,preview_url,disc_number,track_number,external_ids))";
-        var url = $"{OfficialApiBase}/playlists/{playlistId}/tracks?offset={offset}&limit={limit}&fields={fields}";
-
-        var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var response = await _httpClient.SendAsync(request, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogError("Failed to fetch playlist tracks: {StatusCode}", response.StatusCode);
-            return null;
-        }
-
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        if (!root.TryGetProperty("items", out var items))
-        {
-            return new List<SpotifyPlaylistTrack>();
-        }
-
-        var tracks = new List<SpotifyPlaylistTrack>();
-        var position = offset;
-
-        foreach (var item in items.EnumerateArray())
-        {
-            // Skip null tracks (can happen with deleted/unavailable tracks)
-            if (!item.TryGetProperty("track", out var trackElement) ||
-                trackElement.ValueKind == JsonValueKind.Null)
-            {
-                position++;
-                continue;
-            }
-
-            var track = ParseTrack(trackElement, position);
-
-            // Parse added_at timestamp
-            if (item.TryGetProperty("added_at", out var addedAt) &&
-                addedAt.ValueKind != JsonValueKind.Null)
-            {
-                track.AddedAt = ParseSpotifyDateElement(addedAt);
-            }
-
-            tracks.Add(track);
-            position++;
-        }
-
-        return tracks;
-    }
-
-    private SpotifyPlaylistTrack ParseTrack(JsonElement track, int position)
-    {
-        var result = new SpotifyPlaylistTrack
-        {
-            Position = position,
-            SpotifyId = track.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
-            Title = track.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
-            DurationMs = track.TryGetProperty("duration_ms", out var dur) ? dur.GetInt32() : 0,
-            Explicit = track.TryGetProperty("explicit", out var exp) && exp.GetBoolean(),
-            Popularity = track.TryGetProperty("popularity", out var pop) ? pop.GetInt32() : 0,
-            PreviewUrl = track.TryGetProperty("preview_url", out var prev) && prev.ValueKind != JsonValueKind.Null
-                ? prev.GetString() : null,
-            DiscNumber = track.TryGetProperty("disc_number", out var disc) ? disc.GetInt32() : 1,
-            TrackNumber = track.TryGetProperty("track_number", out var tn) ? tn.GetInt32() : 1
-        };
-
-        // Parse album
-        if (track.TryGetProperty("album", out var album))
-        {
-            result.Album = album.TryGetProperty("name", out var albumName)
-                ? albumName.GetString() ?? "" : "";
-            result.AlbumId = album.TryGetProperty("id", out var albumId)
-                ? albumId.GetString() ?? "" : "";
-            result.ReleaseDate = album.TryGetProperty("release_date", out var rd)
-                ? rd.GetString() : null;
-
-            if (album.TryGetProperty("images", out var images) && images.GetArrayLength() > 0)
-            {
-                result.AlbumArtUrl = images[0].GetProperty("url").GetString();
-            }
-        }
-
-        // Parse artists
-        if (track.TryGetProperty("artists", out var artists))
-        {
-            foreach (var artist in artists.EnumerateArray())
-            {
-                if (artist.TryGetProperty("name", out var artistName))
-                {
-                    result.Artists.Add(artistName.GetString() ?? "");
-                }
-                if (artist.TryGetProperty("id", out var artistId))
-                {
-                    result.ArtistIds.Add(artistId.GetString() ?? "");
-                }
-            }
-        }
-
-        // Parse ISRC from external_ids
-        if (track.TryGetProperty("external_ids", out var externalIds) &&
-            externalIds.TryGetProperty("isrc", out var isrc))
-        {
-            result.Isrc = isrc.GetString();
-        }
-
-        return result;
-    }
-
-    /// <summary>
-    /// Searches for a user's playlists by name.
-    /// Useful for finding playlists like "Release Radar" or "Discover Weekly" by their names.
+    /// Searches the selected account's playlists through the shared Pathfinder transport.
     /// </summary>
     public async Task<List<SpotifyPlaylist>> SearchUserPlaylistsAsync(
         string searchName,
@@ -909,198 +435,59 @@ public class SpotifyApiClient : IDisposable
         var token = await GetWebAccessTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {
-            return new List<SpotifyPlaylist>();
+            return [];
         }
 
-        try
+        var pathfinder = new SpotifyPathfinderPlaylistClient(_webApiClient, _cache);
+        var playlists = new List<SpotifyPlaylist>();
+        var seenPlaylistIds = new HashSet<string>(StringComparer.Ordinal);
+        var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+        string? cursor = null;
+
+        do
         {
-            // Use GraphQL endpoint instead of REST API to avoid rate limiting
-            // GraphQL is less aggressive with rate limits
-            var playlists = new List<SpotifyPlaylist>();
-            var offset = 0;
-            const int limit = 50;
-
-            while (true)
+            var outcome = await pathfinder.GetUserPlaylistsAsync(
+                token,
+                new ProviderPageRequest(100, cursor),
+                searchName,
+                cancellationToken);
+            if (!outcome.IsSuccess)
             {
-                // GraphQL query to fetch user playlists - using libraryV3 operation
-                var queryParams = new Dictionary<string, string>
-                {
-                    { "operationName", "libraryV3" },
-                    { "variables", $"{{\"filters\":[\"Playlists\",\"By Spotify\"],\"order\":null,\"textFilter\":\"\",\"features\":[\"LIKED_SONGS\",\"YOUR_EPISODES\"],\"offset\":{offset},\"limit\":{limit}}}" },
-                    { "extensions", "{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"50650f72ea32a99b5b46240bee22fea83024eec302478a9a75cfd05a0814ba99\"}}" }
-                };
-
-                var queryString = string.Join("&", queryParams.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-                var url = $"{WebApiBase}/query?{queryString}";
-
-                var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-                var response = await _webApiClient.SendAsync(request, cancellationToken);
-
-                // Handle 429 rate limiting with exponential backoff
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                {
-                    var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(5);
-                    _logger.LogWarning("Spotify rate limit hit (429) when fetching library playlists. Waiting {Seconds}s before retry...", retryAfter.TotalSeconds);
-                    await Task.Delay(retryAfter, cancellationToken);
-
-                    // Retry the request
-                    response = await _httpClient.SendAsync(request, cancellationToken);
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    _logger.LogError("GraphQL user playlists request failed: {StatusCode}", response.StatusCode);
-                    break;
-                }
-
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                if (!root.TryGetProperty("data", out var data) ||
-                    !data.TryGetProperty("me", out var me) ||
-                    !me.TryGetProperty("libraryV3", out var library) ||
-                    !library.TryGetProperty("items", out var items))
-                {
-                    break;
-                }
-
-                // Get total count
-                if (library.TryGetProperty("totalCount", out var totalCount))
-                {
-                    var total = totalCount.GetInt32();
-                    if (total == 0) break;
-                }
-
-                var itemCount = 0;
-                foreach (var item in items.EnumerateArray())
-                {
-                    itemCount++;
-
-                    if (!item.TryGetProperty("item", out var playlistItem) ||
-                        !playlistItem.TryGetProperty("data", out var playlist))
-                    {
-                        continue;
-                    }
-
-                    // Check __typename to filter out folders and only include playlists
-                    if (playlistItem.TryGetProperty("__typename", out var typename))
-                    {
-                        var typeStr = typename.GetString();
-                        // Skip folders - only process Playlist types
-                        if (typeStr != null && typeStr.Contains("Folder", StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-                    }
-
-                    // Get playlist URI/ID
-                    string? uri = null;
-                    if (playlistItem.TryGetProperty("uri", out var uriProp))
-                    {
-                        uri = uriProp.GetString();
-                    }
-                    else if (playlistItem.TryGetProperty("_uri", out var uriProp2))
-                    {
-                        uri = uriProp2.GetString();
-                    }
-
-                    if (string.IsNullOrEmpty(uri)) continue;
-
-                    // Skip if not a playlist URI (e.g., folders have different URI format)
-                    if (!uri.StartsWith("spotify:playlist:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    var spotifyId = uri.Replace("spotify:playlist:", "", StringComparison.OrdinalIgnoreCase);
-
-                    var itemName = playlist.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-
-                    // Check if name matches (case-insensitive) - if searchName is provided
-                    if (!string.IsNullOrEmpty(searchName) &&
-                        !itemName.Contains(searchName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    var trackCount = TryGetSpotifyPlaylistItemCount(playlist);
-
-                    // Log if we couldn't find track count for debugging
-                    if (trackCount == 0)
-                    {
-                        _logger.LogDebug("Could not find track count for playlist {Name} (ID: {Id}). Response structure: {Json}",
-                            itemName, spotifyId, playlist.GetRawText());
-                    }
-
-                    // Get owner name
-                    string? ownerName = null;
-                    if (playlist.TryGetProperty("ownerV2", out var ownerV2) &&
-                        ownerV2.ValueKind == JsonValueKind.Object &&
-                        ownerV2.TryGetProperty("data", out var ownerData) &&
-                        ownerData.ValueKind == JsonValueKind.Object &&
-                        ownerData.TryGetProperty("username", out var ownerNameProp))
-                    {
-                        ownerName = ownerNameProp.GetString();
-                    }
-
-                    // Get image URL
-                    string? imageUrl = null;
-                    if (playlist.TryGetProperty("images", out var images) &&
-                        images.ValueKind == JsonValueKind.Object &&
-                        images.TryGetProperty("items", out var imageItems) &&
-                        imageItems.ValueKind == JsonValueKind.Array &&
-                        imageItems.GetArrayLength() > 0)
-                    {
-                        var firstImage = imageItems[0];
-                        if (firstImage.TryGetProperty("sources", out var sources) &&
-                            sources.ValueKind == JsonValueKind.Array &&
-                            sources.GetArrayLength() > 0)
-                        {
-                            var firstSource = sources[0];
-                            if (firstSource.TryGetProperty("url", out var urlProp))
-                            {
-                                imageUrl = urlProp.GetString();
-                            }
-                        }
-                    }
-
-                    playlists.Add(new SpotifyPlaylist
-                    {
-                        SpotifyId = spotifyId,
-                        Name = itemName,
-                        Description = playlist.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-                        TotalTracks = trackCount,
-                        OwnerName = ownerName,
-                        ImageUrl = imageUrl,
-                        SnapshotId = null,
-                        CreatedAt = TryGetSpotifyPlaylistCreatedAt(playlist)
-                    });
-                }
-
-                if (itemCount < limit) break;
-                offset += limit;
-
-                // Add delay between pages to avoid rate limiting
-                // Library fetching can be aggressive, so use a longer delay
-                var delayMs = Math.Max(_settings.RateLimitDelayMs, 500); // Minimum 500ms between pages
-                _logger.LogDebug("Waiting {DelayMs}ms before fetching next page of library playlists...", delayMs);
-                await Task.Delay(delayMs, cancellationToken);
+                _logger.LogWarning(
+                    "Spotify Pathfinder playlist discovery stopped with {ErrorCode} after {Count} playlists",
+                    outcome.Error?.Code ?? "unknown",
+                    playlists.Count);
+                break;
             }
 
-            _logger.LogDebug("Found {Count} playlists{Filter} via GraphQL",
-                playlists.Count,
-                string.IsNullOrEmpty(searchName) ? "" : $" matching '{searchName}'");
-            return playlists;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching user playlists{Filter} via GraphQL",
-                string.IsNullOrEmpty(searchName) ? "" : $" matching '{searchName}'");
-            return new List<SpotifyPlaylist>();
-        }
+            var page = outcome.RequireValue();
+            foreach (var item in page.Items)
+            {
+                if (!seenPlaylistIds.Add(item.Id.Value))
+                {
+                    continue;
+                }
+
+                playlists.Add(new SpotifyPlaylist
+                {
+                    SpotifyId = item.Id.Value,
+                    Name = item.Name,
+                    Description = item.Description,
+                    TotalTracks = item.TrackCount ?? 0,
+                    OwnerName = item.Owner.DisplayName ?? item.Owner.ProviderUserId,
+                    ImageUrl = item.Artwork?.PublicUri?.ToString(),
+                    SnapshotId = item.SourceRevision
+                });
+            }
+
+            cursor = page.IsPartial ? page.NextCursor : null;
+        } while (!string.IsNullOrWhiteSpace(cursor) && seenCursors.Add(cursor));
+
+        _logger.LogDebug(
+            "Found {Count} playlists{Filter} through the shared Spotify Pathfinder transport",
+            playlists.Count,
+            string.IsNullOrWhiteSpace(searchName) ? string.Empty : $" matching '{searchName}'");
+        return playlists;
     }
 
     private static DateTime? TryGetSpotifyPlaylistCreatedAt(JsonElement playlistElement)

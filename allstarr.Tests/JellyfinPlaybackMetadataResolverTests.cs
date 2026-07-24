@@ -36,7 +36,8 @@ public sealed class JellyfinPlaybackMetadataResolverTests
         Assert.Equal("Fixture artist", first.Artist);
         Assert.Equal("Fixture album", first.Album);
         Assert.Equal("/api/admin/downloads/artwork/item-1", first.CoverArtUrl);
-        Assert.Same(first, second);
+        Assert.NotNull(second);
+        Assert.Equal(first.Title, second.Title);
         Assert.Equal(1, requestCount);
     }
 
@@ -92,6 +93,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
                 ApiKey = "server-api-key",
                 UserId = "user-1"
             }),
+            new TestMemoryApplicationCache(),
             NullLogger<JellyfinPlaybackMetadataResolver>.Instance);
     }
 

@@ -14,7 +14,7 @@ Jellyfin or Subsonic client
                   |            |              |
           external services  Postgres      managed roots
                   |            |              |
-                  +------ Valkey cache     audio files
+                  +------ bounded cache    audio files
            |
            v
  Jellyfin or Subsonic-compatible backend (for example Navidrome)
@@ -34,7 +34,7 @@ Postgres stores control-plane state only. This includes identities, provider acc
 
 It does not store song bytes or media blobs. Downloaded, cached, kept, and placed tracks remain filesystem files under configured, operator-accessible roots. Database rows may point to those files and record checksums and ownership.
 
-Valkey is an accelerator for rebuildable cache data. Losing Valkey may make requests slower while caches rebuild, but it must not erase durable jobs, identities, mappings, or playlist state.
+Disposable metadata uses a bounded PostgreSQL cache table with a small process-local hot tier. Artwork and media payloads use bounded disk storage. Losing either cache may make requests slower while entries rebuild, but it cannot erase durable jobs, identities, mappings, or playlist state.
 
 Standard Compose selects Postgres explicitly. A custom local deployment may select SQLite explicitly. Allstarr never falls back from an unavailable selected database to a new database of another type. Readiness and state-changing work stop until the selected database and expected schema return.
 

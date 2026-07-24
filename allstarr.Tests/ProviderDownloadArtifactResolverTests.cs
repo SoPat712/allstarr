@@ -29,6 +29,13 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         Assert.Equal(request.ProviderId, result.ProviderId);
         Assert.Equal(request.ProviderAccountId, result.ProviderAccountId);
         Assert.Equal(ProviderDownloadArtifactState.Verified, result.State);
+        Assert.Equal("audio/flac", result.MimeType);
+        Assert.Equal("flac", result.Container);
+        Assert.Equal("flac", result.Codec);
+        Assert.Equal(1_411_000, result.Bitrate);
+        Assert.Equal(44_100, result.SampleRate);
+        Assert.Equal(16, result.BitDepth);
+        Assert.Equal(2, result.Channels);
         Assert.DoesNotContain(result.SourcePath, JsonSerializer.Serialize(result), StringComparison.Ordinal);
     }
 
@@ -131,7 +138,7 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
     { var path = Path.Combine(root, workspace.WorkspaceId, relative); Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, content); return path; }
     private static ProviderDownloadedArtifact Output(string id, byte[] bytes) => new(id,
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.Length,
-        new ProviderMediaFormat("audio/flac", "flac", "flac"), true);
+        new ProviderMediaFormat("audio/flac", "flac", "flac", 1_411_000, 44_100, 16, 2), true);
 
     public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
 

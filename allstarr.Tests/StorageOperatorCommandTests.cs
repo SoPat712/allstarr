@@ -221,20 +221,18 @@ public sealed class StorageOperatorCommandTests : IDisposable
 
     private static ServiceCollection Services(string databasePath, string backupDirectory)
     {
-        var bootstrapConfirmation = CreateBootstrapConfirmation(databasePath);
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Storage:Provider"] = "Sqlite",
                 ["Storage:ConnectionString"] = $"Data Source={databasePath}",
-                ["Storage:SqliteBootstrapConfirmationFile"] = bootstrapConfirmation,
                 ["Storage:BackupDirectory"] = backupDirectory,
                 ["Storage:ConnectionRetryCount"] = "0"
             })
             .Build();
         var services = new ServiceCollection();
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.None));
-        services.AddDurableStorage(configuration, new TestEnvironment());
+        services.AddDurableStorage(configuration, new TestEnvironment(), allowOfflineSqlite: true);
         return services;
     }
 
@@ -242,13 +240,11 @@ public sealed class StorageOperatorCommandTests : IDisposable
         string databasePath,
         string keyRingPath)
     {
-        var bootstrapConfirmation = CreateBootstrapConfirmation(databasePath);
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Storage:Provider"] = "Sqlite",
                 ["Storage:ConnectionString"] = $"Data Source={databasePath}",
-                ["Storage:SqliteBootstrapConfirmationFile"] = bootstrapConfirmation,
                 ["Storage:BackupDirectory"] = Path.Combine(Path.GetDirectoryName(databasePath)!, "backups"),
                 ["Storage:ConnectionRetryCount"] = "0",
                 ["Secrets:KeyRingPath"] = keyRingPath
@@ -256,17 +252,9 @@ public sealed class StorageOperatorCommandTests : IDisposable
             .Build();
         var services = new ServiceCollection();
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.None));
-        services.AddDurableStorage(configuration, new TestEnvironment());
+        services.AddDurableStorage(configuration, new TestEnvironment(), allowOfflineSqlite: true);
         services.AddEncryptedSecretStore(configuration);
         return services;
-    }
-
-    private static string CreateBootstrapConfirmation(string databasePath)
-    {
-        var path = databasePath + ".create-confirmation";
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, DurableStorageOptions.SqliteBootstrapConfirmation);
-        return path;
     }
 
     private static async Task WriteKeyRing(

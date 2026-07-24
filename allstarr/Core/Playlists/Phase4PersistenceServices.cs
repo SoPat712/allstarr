@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -19,198 +20,6 @@ public sealed record MatchDecisionInput(
 public sealed record ManualOverrideInput(
     Guid ExternalSnapshotId, string LibraryScopeId, ManualOverrideDecision Decision,
     Guid? LibraryTrackId, string Reason);
-
-public interface ITrackMatchPersistenceService
-{
-    Task<ExternalMetadataSnapshotRecord> CaptureSnapshotAsync(ProtocolExecutionContext context, ExternalSnapshotInput input, CancellationToken cancellationToken = default);
-    Task<TrackMatchRecord> RecordDecisionAsync(ProtocolExecutionContext context, MatchDecisionInput input, CancellationToken cancellationToken = default);
-    Task<ManualTrackOverrideRecord> SetOverrideAsync(ProtocolExecutionContext context, ManualOverrideInput input, CancellationToken cancellationToken = default);
-    Task RevokeOverrideAsync(ProtocolExecutionContext context, Guid overrideId, long expectedRevision, CancellationToken cancellationToken = default);
-    Task<ManualTrackOverrideRecord?> GetActiveOverrideAsync(ProtocolExecutionContext context, Guid externalSnapshotId, CancellationToken cancellationToken = default);
-}
-
-public sealed class TrackMatchPersistenceService : ITrackMatchPersistenceService
-{
-    private readonly IDbContextFactory<AllstarrDbContext> _factory;
-    private readonly ProviderAccountResolver _accounts;
-    private readonly IPlatformClock _clock;
-
-    public TrackMatchPersistenceService(IDbContextFactory<AllstarrDbContext> factory, ProviderAccountResolver accounts, IPlatformClock clock)
-        => (_factory, _accounts, _clock) = (factory, accounts, clock);
-
-    public async Task<ExternalMetadataSnapshotRecord> CaptureSnapshotAsync(ProtocolExecutionContext context, ExternalSnapshotInput input, CancellationToken cancellationToken = default)
-    {
-        var (principal, actor) = PersistenceGuard.Require(context, input.LibraryScopeId);
-        ValidateHash(input.ExternalIdHash, nameof(input.ExternalIdHash));
-        ValidateHash(input.PayloadSha256, nameof(input.PayloadSha256));
-        if (input.SnapshotVersion <= 0 || string.IsNullOrWhiteSpace(input.ProviderRevision) || string.IsNullOrWhiteSpace(input.ResourceKind))
-            throw new ArgumentException("Snapshot version, provider revision, and resource kind are required.", nameof(input));
-        PersistenceGuard.ValidateSafeJson(input.PayloadJson, nameof(input.PayloadJson));
-        var account = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(
-            principal, input.ProviderId, "metadata", input.ProviderAccountId, input.LibraryScopeId), cancellationToken)
-            ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var existing = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == actor.TenantId && item.ProviderAccountId == account.Account.Id &&
-            item.ResourceKind == input.ResourceKind && item.ExternalIdHash == input.ExternalIdHash &&
-            item.SnapshotVersion == input.SnapshotVersion, cancellationToken);
-        if (existing != null)
-        {
-            if (!existing.PayloadSha256.Equals(input.PayloadSha256, StringComparison.Ordinal) ||
-                existing.OwnerUserId != actor.EffectiveUserId || existing.LibraryScopeId != input.LibraryScopeId)
-                throw new InvalidOperationException("The snapshot version already exists with different immutable content or scope.");
-            return existing;
-        }
-
-        var record = new ExternalMetadataSnapshotRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
-            OwnerUserId = actor.EffectiveUserId!.Value,
-            ProviderAccountId = account.Account.Id,
-            ProviderTrackIdentityId = input.ProviderTrackIdentityId,
-            SourceJobId = input.SourceJobId,
-            LibraryScopeId = input.LibraryScopeId,
-            BackendInstanceId = context.BackendInstanceId,
-            BackendPrincipalId = context.VerifiedBackendPrincipalId,
-            Protocol = context.Protocol.ToString().ToLowerInvariant(),
-            ProviderId = account.Account.ProviderId,
-            ResourceKind = input.ResourceKind.Trim().ToLowerInvariant(),
-            ExternalIdHash = input.ExternalIdHash,
-            SnapshotVersion = input.SnapshotVersion,
-            ProviderRevision = input.ProviderRevision.Trim(),
-            PayloadJson = input.PayloadJson,
-            PayloadSha256 = input.PayloadSha256,
-            CorrelationId = context.CorrelationId,
-            RetrievedAt = _clock.UtcNow
-        };
-        db.ExternalMetadataSnapshots.Add(record);
-        await db.SaveChangesAsync(cancellationToken);
-        return record;
-    }
-
-    public async Task<TrackMatchRecord> RecordDecisionAsync(ProtocolExecutionContext context, MatchDecisionInput input, CancellationToken cancellationToken = default)
-    {
-        var actor = context.RequireActor();
-        if (input.DecisionVersion <= 0 || input.Confidence is < 0 or > 1 || input.Threshold is < 0 or > 1 || string.IsNullOrWhiteSpace(input.PolicyVersion))
-            throw new ArgumentException("The match decision is incomplete.", nameof(input));
-        PersistenceGuard.ValidateSafeJson(input.CandidateResultsJson, nameof(input.CandidateResultsJson));
-        PersistenceGuard.ValidateSafeJson(input.ReasonsJson, nameof(input.ReasonsJson));
-        PersistenceGuard.ValidateSafeJson(input.WarningsJson, nameof(input.WarningsJson));
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var snapshot = await OwnedSnapshot(db, actor, input.ExternalSnapshotId, cancellationToken);
-        PersistenceGuard.RequireLibrary(context, snapshot.LibraryScopeId);
-        if (input.State is TrackMatchState.Accepted or TrackMatchState.Pinned && !input.LibraryTrackId.HasValue ||
-            input.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or TrackMatchState.Rejected or TrackMatchState.Ambiguous && input.LibraryTrackId.HasValue)
-            throw new ArgumentException("The selected library track does not match the decision state.", nameof(input));
-        if (input.State == TrackMatchState.Accepted && input.Confidence < input.Threshold)
-            throw new ArgumentException("A match below its acceptance threshold cannot be accepted for automatic action.", nameof(input));
-        if (input.LibraryTrackId.HasValue && !await db.LibraryTracks.AnyAsync(item => item.Id == input.LibraryTrackId && item.TenantId == actor.TenantId && item.OwnerUserId == snapshot.OwnerUserId && item.LibraryScopeId == snapshot.LibraryScopeId, cancellationToken))
-            throw new UnauthorizedAccessException("The selected library track is outside the snapshot scope.");
-        var existing = await db.TrackMatches.AsNoTracking().SingleOrDefaultAsync(item => item.TenantId == actor.TenantId && item.OwnerUserId == snapshot.OwnerUserId && item.LibraryScopeId == snapshot.LibraryScopeId && item.ExternalSnapshotId == snapshot.Id && item.DecisionVersion == input.DecisionVersion, cancellationToken);
-        if (existing != null)
-        {
-            if (existing.State != input.State || existing.LibraryTrackId != input.LibraryTrackId ||
-                existing.CanonicalRecordingId != input.CanonicalRecordingId || existing.PolicyVersion != input.PolicyVersion.Trim() ||
-                existing.Confidence != input.Confidence || existing.Threshold != input.Threshold)
-                throw new InvalidOperationException("The match decision version already exists with different content.");
-            return existing;
-        }
-        var record = new TrackMatchRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
-            OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id,
-            LibraryTrackId = input.LibraryTrackId,
-            CanonicalRecordingId = input.CanonicalRecordingId,
-            LibraryScopeId = snapshot.LibraryScopeId,
-            State = input.State,
-            Confidence = input.Confidence,
-            Threshold = input.Threshold,
-            DecisionVersion = input.DecisionVersion,
-            PolicyVersion = input.PolicyVersion.Trim(),
-            CandidateResultsJson = input.CandidateResultsJson,
-            ReasonsJson = input.ReasonsJson,
-            WarningsJson = input.WarningsJson,
-            CorrelationId = context.CorrelationId,
-            DecidedAt = _clock.UtcNow
-        };
-        db.TrackMatches.Add(record);
-        await db.SaveChangesAsync(cancellationToken);
-        return record;
-    }
-
-    public async Task<ManualTrackOverrideRecord> SetOverrideAsync(ProtocolExecutionContext context, ManualOverrideInput input, CancellationToken cancellationToken = default)
-    {
-        var actor = context.RequireActor();
-        PersistenceGuard.RequireLibrary(context, input.LibraryScopeId);
-        if (string.IsNullOrWhiteSpace(input.Reason) || input.Decision == ManualOverrideDecision.Pin != input.LibraryTrackId.HasValue)
-            throw new ArgumentException("Pin requires a local track; Reject must not select one.", nameof(input));
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var snapshot = await OwnedSnapshot(db, actor, input.ExternalSnapshotId, cancellationToken);
-        if (snapshot.LibraryScopeId != input.LibraryScopeId) throw new UnauthorizedAccessException("The override library scope does not match the snapshot.");
-        if (input.LibraryTrackId.HasValue && !await db.LibraryTracks.AnyAsync(item => item.Id == input.LibraryTrackId && item.TenantId == actor.TenantId && item.OwnerUserId == snapshot.OwnerUserId && item.LibraryScopeId == input.LibraryScopeId, cancellationToken))
-            throw new UnauthorizedAccessException("The pinned library track is outside the override scope.");
-        var active = await db.ManualTrackOverrides.SingleOrDefaultAsync(item => item.TenantId == actor.TenantId && item.OwnerUserId == snapshot.OwnerUserId && item.LibraryScopeId == input.LibraryScopeId && item.ExternalSnapshotId == snapshot.Id && item.RevokedAt == null, cancellationToken);
-        var version = await db.ManualTrackOverrides.Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == snapshot.OwnerUserId && item.ExternalSnapshotId == snapshot.Id).Select(item => (int?)item.DecisionVersion).MaxAsync(cancellationToken) ?? 0;
-        if (active != null)
-        {
-            if (active.Decision == input.Decision && active.LibraryTrackId == input.LibraryTrackId && active.Reason == input.Reason.Trim()) return active;
-            active.RevokedAt = _clock.UtcNow;
-            active.Revision++;
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        var record = new ManualTrackOverrideRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
-            OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id,
-            LibraryTrackId = input.LibraryTrackId,
-            LibraryScopeId = input.LibraryScopeId,
-            Decision = input.Decision,
-            Reason = input.Reason.Trim(),
-            DecisionVersion = version + 1,
-            CreatedAt = _clock.UtcNow
-        };
-        db.ManualTrackOverrides.Add(record);
-        await db.SaveChangesAsync(cancellationToken);
-        return record;
-    }
-
-    public async Task RevokeOverrideAsync(ProtocolExecutionContext context, Guid overrideId, long expectedRevision, CancellationToken cancellationToken = default)
-    {
-        var actor = context.RequireActor();
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var record = await db.ManualTrackOverrides.SingleOrDefaultAsync(item => item.Id == overrideId && item.TenantId == actor.TenantId, cancellationToken) ?? throw new KeyNotFoundException("Override not found.");
-        PersistenceGuard.RequireOwner(actor, record.OwnerUserId);
-        PersistenceGuard.RequireLibrary(context, record.LibraryScopeId);
-        if (record.Revision != expectedRevision) throw new DbUpdateConcurrencyException("The override changed before revocation.");
-        if (record.RevokedAt == null) { record.RevokedAt = _clock.UtcNow; record.Revision++; await db.SaveChangesAsync(cancellationToken); }
-    }
-
-    public async Task<ManualTrackOverrideRecord?> GetActiveOverrideAsync(ProtocolExecutionContext context, Guid externalSnapshotId, CancellationToken cancellationToken = default)
-    {
-        var actor = context.RequireActor();
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var snapshot = await OwnedSnapshot(db, actor, externalSnapshotId, cancellationToken);
-        PersistenceGuard.RequireLibrary(context, snapshot.LibraryScopeId);
-        return await db.ManualTrackOverrides.AsNoTracking().SingleOrDefaultAsync(item => item.TenantId == actor.TenantId && item.OwnerUserId == snapshot.OwnerUserId && item.LibraryScopeId == snapshot.LibraryScopeId && item.ExternalSnapshotId == snapshot.Id && item.RevokedAt == null, cancellationToken);
-    }
-
-    private static async Task<ExternalMetadataSnapshotRecord> OwnedSnapshot(AllstarrDbContext db, ProviderActorContext actor, Guid id, CancellationToken cancellationToken)
-    {
-        var record = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.TenantId == actor.TenantId, cancellationToken) ?? throw new KeyNotFoundException("Snapshot not found.");
-        PersistenceGuard.RequireOwner(actor, record.OwnerUserId);
-        return record;
-    }
-
-    private static void ValidateHash(string value, string name)
-    {
-        if (value.Length != 64 || value.Any(character => !Uri.IsHexDigit(character)) || value != value.ToLowerInvariant()) throw new ArgumentException("A normalized SHA-256 value is required.", name);
-    }
-}
 
 public sealed record PlaylistLinkInput(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId, string SourcePlaylistIdHash, string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null, bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true, bool SyncDescription = true, bool SyncArtwork = true);
 public sealed record PlaylistLinkUpdate(long ExpectedRevision, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId, string? TargetPlaylistId, bool MirrorStaleEntries, bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork, Guid? TargetCredentialReferenceId = null);
@@ -238,7 +47,14 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
     private readonly ProviderAccountResolver _accounts;
     private readonly IPlatformClock _clock;
-    public PlaylistPersistenceService(IDbContextFactory<AllstarrDbContext> factory, ProviderAccountResolver accounts, IPlatformClock clock) => (_factory, _accounts, _clock) = (factory, accounts, clock);
+    private readonly ITrackMatchRepository _trackMatches;
+    public PlaylistPersistenceService(
+        IDbContextFactory<AllstarrDbContext> factory,
+        ProviderAccountResolver accounts,
+        IPlatformClock clock,
+        ITrackMatchRepository trackMatches) =>
+        (_factory, _accounts, _clock, _trackMatches) =
+        (factory, accounts, clock, trackMatches);
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -392,23 +208,19 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             .OrderBy(item => item.SourcePosition)
             .ToListAsync(cancellationToken);
         var externalSnapshotIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
-        var manualOverrides = (await db.ManualTrackOverrides.AsNoTracking()
-                .Where(item => item.TenantId == actor.TenantId &&
-                    item.OwnerUserId == link.OwnerUserId &&
-                    item.LibraryScopeId == link.LibraryScopeId &&
-                    externalSnapshotIds.Contains(item.ExternalSnapshotId) &&
-                    item.RevokedAt == null)
-                .ToListAsync(cancellationToken))
+        var resolution = await _trackMatches.GetResolutionDataAsync(
+            new TrackMatchActor(
+                actor.TenantId,
+                actor.EffectiveUserId ?? link.OwnerUserId,
+                actor.Kind == ProviderActorKind.Administrator),
+            link.OwnerUserId,
+            link.LibraryScopeId,
+            externalSnapshotIds,
+            cancellationToken);
+        var manualOverrides = resolution.ActiveOverrides
             .ToDictionary(item => item.ExternalSnapshotId);
-        var latestMatches = (await db.TrackMatches.AsNoTracking()
-                .Where(item => item.TenantId == actor.TenantId &&
-                    item.OwnerUserId == link.OwnerUserId &&
-                    item.LibraryScopeId == link.LibraryScopeId &&
-                    externalSnapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecisionVersion)
-                .ToListAsync(cancellationToken))
-            .GroupBy(item => item.ExternalSnapshotId)
-            .ToDictionary(group => group.Key, group => group.First());
+        var latestMatches = resolution.LatestDecisions
+            .ToDictionary(item => item.ExternalSnapshotId);
         var result = new List<PersistedPlaylistPreviewEntry>(entries.Count);
         foreach (var entry in entries)
         {

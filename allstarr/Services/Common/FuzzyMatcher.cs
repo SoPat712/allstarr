@@ -14,10 +14,10 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*from\s+[""']?[^""']+[""']?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*(remaster|radio edit|single version|album version|extended|original mix)[^\-]*", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*(remix|remaster|radio edit|single version|album version|extended|original mix|bonus track|bonus|deluxe edition)[^\-]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex VersionDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(](remix|remaster|live|acoustic|radio edit|explicit|clean|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(](remix|remaster|live|acoustic|radio edit|single version|album version|extended(?: mix)?|original mix|bonus(?: track)?|deluxe(?: edition)?|explicit|clean|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[^\w\s]")]
@@ -28,7 +28,8 @@ public static partial class FuzzyMatcher
 
     /// <summary>
     /// STEP 1: Strips common decorators from track titles to improve matching.
-    /// Removes: (feat. X), (with Y), (ft. Z), - From "Album", [Remix], etc.
+    /// Removes: (feat. X), (with Y), (ft. Z), - From "Album", [Remix],
+    /// and trailing version labels such as - Bonus or - Deluxe Edition.
     /// This MUST be done first to avoid systematic noise in matching.
     /// </summary>
     public static string StripDecorators(string title)

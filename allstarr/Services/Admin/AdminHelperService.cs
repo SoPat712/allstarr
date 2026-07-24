@@ -355,23 +355,6 @@ public class AdminHelperService
         return $"{len:0.##} {sizes[order]}";
     }
 
-    public void InvalidatePlaylistSummaryCache()
-    {
-        try
-        {
-            var cacheFile = "/app/cache/admin_playlists_summary.json";
-            if (File.Exists(cacheFile))
-            {
-                File.Delete(cacheFile);
-                _logger.LogDebug("🗑️ Invalidated playlist summary cache");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to invalidate playlist summary cache");
-        }
-    }
-
     public static bool HasValue(object? obj)
     {
         if (obj == null) return false;
@@ -491,88 +474,6 @@ public class AdminHelperService
             {
                 StatusCode = 500
             };
-        }
-    }
-
-    public async Task SaveManualMappingToFileAsync(
-        string playlistName,
-        string spotifyId,
-        string? jellyfinId,
-        string? externalProvider,
-        string? externalId)
-    {
-        try
-        {
-            var mappingsDir = "/app/cache/mappings";
-            Directory.CreateDirectory(mappingsDir);
-
-            var safeName = SanitizeFileName(playlistName);
-            var filePath = Path.Combine(mappingsDir, $"{safeName}_mappings.json");
-
-            // Load existing mappings
-            var mappings = new Dictionary<string, Models.Admin.ManualMappingEntry>();
-            if (File.Exists(filePath))
-            {
-                var json = await File.ReadAllTextAsync(filePath);
-                mappings = JsonSerializer.Deserialize<Dictionary<string, Models.Admin.ManualMappingEntry>>(json)
-                    ?? new Dictionary<string, Models.Admin.ManualMappingEntry>();
-            }
-
-            // Add or update mapping
-            mappings[spotifyId] = new Models.Admin.ManualMappingEntry
-            {
-                SpotifyId = spotifyId,
-                JellyfinId = jellyfinId,
-                ExternalProvider = externalProvider,
-                ExternalId = externalId,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            // Save back to file
-            var updatedJson = JsonSerializer.Serialize(mappings, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(filePath, updatedJson);
-
-            _logger.LogDebug("💾 Saved manual mapping to file: {Playlist} - {SpotifyId}", playlistName, spotifyId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save manual mapping to file for {Playlist}", playlistName);
-        }
-    }
-
-    public async Task SaveLyricsMappingToFileAsync(
-        string artist,
-        string title,
-        string album,
-        int durationSeconds,
-        int lyricsId)
-    {
-        try
-        {
-            var mappingsDir = "/app/cache/lyrics_mappings";
-            Directory.CreateDirectory(mappingsDir);
-
-            var safeName = SanitizeFileName($"{artist}_{title}");
-            var filePath = Path.Combine(mappingsDir, $"{safeName}.json");
-
-            var mapping = new
-            {
-                artist,
-                title,
-                album,
-                durationSeconds,
-                lyricsId,
-                createdAt = DateTime.UtcNow
-            };
-
-            var json = JsonSerializer.Serialize(mapping, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(filePath, json);
-
-            _logger.LogDebug("💾 Saved lyrics mapping to file: {Artist} - {Title} → {LyricsId}", artist, title, lyricsId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save lyrics mapping to file for {Artist} - {Title}", artist, title);
         }
     }
 

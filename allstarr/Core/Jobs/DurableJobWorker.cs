@@ -6,7 +6,11 @@ namespace allstarr.Core.Jobs;
 
 public sealed record DurableJobExecutionContext(
     DurableJobClaim Claim,
-    IServiceProvider Services);
+    IServiceProvider Services)
+{
+    public Func<DurableJobProgressUpdate, CancellationToken, Task<bool>> ReportProgressAsync { get; init; } =
+        static (_, _) => Task.FromResult(false);
+}
 
 public interface IDurableJobHandler
 {
@@ -135,7 +139,11 @@ public sealed class DurableJobWorker : BackgroundService
             else
             {
                 completion = await handler.ExecuteAsync(
-                    new DurableJobExecutionContext(claim, _services),
+                    new DurableJobExecutionContext(claim, _services)
+                    {
+                        ReportProgressAsync = (update, cancellationToken) =>
+                            _queue.ReportProgressAsync(claim, update, cancellationToken)
+                    },
                     leaseCancellation.Token);
             }
         }

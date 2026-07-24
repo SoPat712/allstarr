@@ -37,8 +37,15 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             .UseSqlite($"Data Source={Path.Combine(_root, "orchestration.db")}").Options);
         _source = new FakeSource();
         _target = new FakeTarget();
+        var clock = new Clock(_now);
+        var accountResolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions());
+        var trackMatches = new TrackMatchCommandService(
+            _factory,
+            new TrackMatchDecisionEngine(),
+            accountResolver,
+            clock);
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
-            new TrackMatchDecisionEngine(), new Clock(_now));
+            new TrackMatchDecisionEngine(), trackMatches, clock);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.EnsureCreatedAsync();
         _identity = Guid.CreateVersion7(); _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();

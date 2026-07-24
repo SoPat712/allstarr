@@ -38,7 +38,7 @@ public partial class JellyfinController
                     if (!string.IsNullOrEmpty(track.ExternalId))
                     {
                         var trackId = $"ext-{provider}-{track.ExternalId}";
-                        _playlistSyncService.AddTrackToPlaylistCache(trackId, playlistId);
+                        await _playlistSyncService.AddTrackToPlaylistCacheAsync(trackId, playlistId);
                     }
                 }
 
@@ -153,7 +153,7 @@ public partial class JellyfinController
         try
         {
             // Check cache first (1 hour TTL for playlist images since they can change)
-            var cacheKey = $"playlist:image:{playlistId}";
+            var cacheKey = CacheKeyBuilder.BuildPlaylistImageKey(playlistId);
             var cachedImage = await _cache.GetAsync<byte[]>(cacheKey);
 
             if (cachedImage != null)

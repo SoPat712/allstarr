@@ -20,6 +20,10 @@ namespace allstarr.Services.Common;
 /// </summary>
 public abstract class BaseDownloadService : IConcreteDownloadService
 {
+    private const int MaximumTrackedDownloads = 256;
+    private static readonly TimeSpan CompletedDownloadRetention = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan FailedDownloadRetention = TimeSpan.FromMinutes(2);
+
     protected readonly IConfiguration Configuration;
     protected readonly ILocalLibraryService LocalLibraryService;
     protected readonly IMusicMetadataService MetadataService;
@@ -310,13 +314,51 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
     public DownloadInfo? GetDownloadStatus(string songId)
     {
+        PruneDownloadHistory();
         ActiveDownloads.TryGetValue(songId, out var info);
         return info;
     }
 
     public IReadOnlyList<DownloadInfo> GetActiveDownloads()
     {
+        PruneDownloadHistory();
         return ActiveDownloads.Values.ToList().AsReadOnly();
+    }
+
+    private void PruneDownloadHistory()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var entry in ActiveDownloads)
+        {
+            var download = entry.Value;
+            if (download.Status == DownloadStatus.InProgress)
+            {
+                continue;
+            }
+
+            var terminalAt = download.CompletedAt ?? download.StartedAt;
+            var retention = download.Status == DownloadStatus.Completed
+                ? CompletedDownloadRetention
+                : FailedDownloadRetention;
+            if (now - terminalAt >= retention)
+            {
+                ActiveDownloads.TryRemove(entry.Key, out _);
+            }
+        }
+
+        var excess = ActiveDownloads.Count - MaximumTrackedDownloads;
+        if (excess <= 0)
+        {
+            return;
+        }
+
+        foreach (var entry in ActiveDownloads
+                     .Where(item => item.Value.Status != DownloadStatus.InProgress)
+                     .OrderBy(item => item.Value.CompletedAt ?? item.Value.StartedAt)
+                     .Take(excess))
+        {
+            ActiveDownloads.TryRemove(entry.Key, out _);
+        }
     }
 
     public async Task<string?> GetLocalPathIfExistsAsync(string externalProvider, string externalId)
@@ -447,6 +489,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
         var isCache = CurrentStorageMode == StorageMode.Cache;
 
         bool isInitiator = false;
+        PruneDownloadHistory();
 
         // 1. Synchronous state check to prevent race conditions on checking existence or ActiveDownloads
         await _stateSemaphore.WaitAsync(cancellationToken);
@@ -587,14 +630,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             }
 
             song.LocalPath = localPath;
-
-            // Clean up completed download from tracking after a short delay
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(TimeSpan.FromMinutes(5)); // Keep for 5 minutes for status checks
-                ActiveDownloads.TryRemove(songId, out _);
-                Logger.LogDebug("Cleaned up completed download tracking for {SongId}", songId);
-            });
+            PruneDownloadHistory();
 
             // Register BEFORE releasing lock to prevent race conditions (both cache and download modes)
             await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
@@ -604,7 +640,7 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             {
                 try
                 {
-                    var playlistId = PlaylistSyncService.GetPlaylistIdForTrack(songId);
+                    var playlistId = await PlaylistSyncService.GetPlaylistIdForTrackAsync(songId);
                     if (playlistId != null)
                     {
                         Logger.LogInformation("Track {SongId} belongs to playlist {PlaylistId}, adding to M3U", songId, playlistId);
@@ -658,15 +694,9 @@ public abstract class BaseDownloadService : IConcreteDownloadService
             {
                 downloadInfo.Status = DownloadStatus.Failed;
                 downloadInfo.ErrorMessage = ex.Message;
-
-                // Clean up failed download from tracking after a short delay
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(TimeSpan.FromMinutes(2)); // Keep for 2 minutes for error reporting
-                    ActiveDownloads.TryRemove(songId, out _);
-                    Logger.LogDebug("Cleaned up failed download tracking for {SongId}", songId);
-                });
+                downloadInfo.CompletedAt = DateTime.UtcNow;
             }
+            PruneDownloadHistory();
 
             if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
             {

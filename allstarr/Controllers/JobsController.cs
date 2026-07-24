@@ -74,6 +74,7 @@ public sealed class JobsController : ControllerBase
             .Select(item => new
             {
                 item.Id,
+                item.CorrelationId,
                 item.TenantId,
                 item.OwnerUserId,
                 item.Type,
@@ -94,7 +95,38 @@ public sealed class JobsController : ControllerBase
                 item.UpdatedAt
             })
             .ToListAsync(cancellationToken);
-        return Ok(new { jobs });
+        var correlationIds = jobs.Select(item => item.CorrelationId).Distinct().ToArray();
+        var jobByCorrelation = jobs
+            .GroupBy(item => item.CorrelationId)
+            .ToDictionary(group => group.Key, group => group.First().Id);
+        var progress = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "job-progress" &&
+                           correlationIds.Contains(item.CorrelationId))
+            .OrderByDescending(item => item.CreatedAt)
+            .Take(Math.Min(2500, limit * 25))
+            .Select(item => new
+            {
+                item.Id,
+                item.CorrelationId,
+                item.Action,
+                item.Outcome,
+                item.DetailsJson,
+                item.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+        return Ok(new
+        {
+            jobs,
+            progress = progress.Select(item => new
+            {
+                item.Id,
+                jobId = jobByCorrelation.GetValueOrDefault(item.CorrelationId),
+                item.Action,
+                item.Outcome,
+                item.DetailsJson,
+                item.CreatedAt
+            })
+        });
     }
 
     [HttpGet("{jobId:guid}")]
@@ -136,6 +168,20 @@ public sealed class JobsController : ControllerBase
                 item.ErrorMessage
             })
             .ToListAsync(cancellationToken);
+        var progress = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "job-progress" &&
+                           item.CorrelationId == job.CorrelationId)
+            .OrderByDescending(item => item.CreatedAt)
+            .Take(100)
+            .Select(item => new
+            {
+                item.Id,
+                item.Action,
+                item.Outcome,
+                item.DetailsJson,
+                item.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
         return Ok(new
         {
             job = new
@@ -159,7 +205,8 @@ public sealed class JobsController : ControllerBase
                 job.CreatedAt,
                 job.UpdatedAt
             },
-            attempts
+            attempts,
+            progress
         });
     }
 

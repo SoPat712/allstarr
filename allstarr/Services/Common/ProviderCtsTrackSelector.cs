@@ -1,17 +1,23 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace allstarr.Services.Common;
 
 public sealed record ProviderCtsTrackSelection(string TrackId, string Label, int CorpusSize);
 
-public sealed class ProviderCtsTrackSelector(IDbContextFactory<AllstarrDbContext> contextFactory)
+public sealed class ProviderCtsTrackSelector(
+    IDbContextFactory<AllstarrDbContext> contextFactory) : IDisposable
 {
     public const int CorpusLimit = 100;
-    private readonly ConcurrentDictionary<string, int> _nextIndexes = new(StringComparer.Ordinal);
+    private static readonly TimeSpan RotationLifetime = TimeSpan.FromHours(24);
+    private readonly MemoryCache _nextIndexes = new(new MemoryCacheOptions
+    {
+        SizeLimit = 256
+    });
+    private readonly object _rotationLock = new();
 
     public async Task<ProviderCtsTrackSelection?> SelectAsync(
         string providerId,
@@ -40,13 +46,26 @@ public sealed class ProviderCtsTrackSelector(IDbContextFactory<AllstarrDbContext
         if (corpus.Length == 0) return null;
 
         var key = $"{providerId}:{providerAccountId:N}";
-        var index = _nextIndexes.AddOrUpdate(
-            key,
-            _ => Random.Shared.Next(corpus.Length),
-            (_, current) => (current + 1) % corpus.Length);
+        int index;
+        lock (_rotationLock)
+        {
+            index = _nextIndexes.TryGetValue<int>(key, out var current)
+                ? (current + 1) % corpus.Length
+                : Random.Shared.Next(corpus.Length);
+            _nextIndexes.Set(
+                key,
+                index,
+                new MemoryCacheEntryOptions
+                {
+                    Size = 1,
+                    SlidingExpiration = RotationLifetime
+                });
+        }
         var selected = corpus[index % corpus.Length];
         return new ProviderCtsTrackSelection(selected.ExternalId, TrackLabel(selected.PayloadJson) ?? "Known provider track", corpus.Length);
     }
+
+    public void Dispose() => _nextIndexes.Dispose();
 
     private static string? TrackLabel(string? payload)
     {

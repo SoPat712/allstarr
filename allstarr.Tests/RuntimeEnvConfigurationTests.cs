@@ -22,17 +22,6 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     }
 
     [Fact]
-    public void MapEnvVarToConfiguration_MapsSqliteBootstrapConfirmationPath()
-    {
-        var mapping = Assert.Single(RuntimeEnvConfiguration.MapEnvVarToConfiguration(
-            "ALLSTARR_STORAGE_SQLITE_BOOTSTRAP_CONFIRMATION_FILE",
-            "/state/.create-database"));
-
-        Assert.Equal("Storage:SqliteBootstrapConfirmationFile", mapping.Key);
-        Assert.Equal("/state/.create-database", mapping.Value);
-    }
-
-    [Fact]
     public void MapEnvVarToConfiguration_MapsSharedBackendKeysToBothSections()
     {
         var mappings = RuntimeEnvConfiguration

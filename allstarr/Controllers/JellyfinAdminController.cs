@@ -18,7 +18,7 @@ public class JellyfinAdminController : ControllerBase
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly HttpClient _jellyfinHttpClient;
     private readonly AdminHelperService _helperService;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly IConfiguration _configuration;
     private readonly SpotifyImportSettings _spotifyImportSettings;
 
@@ -27,7 +27,7 @@ public class JellyfinAdminController : ControllerBase
         IOptions<JellyfinSettings> jellyfinSettings,
         IHttpClientFactory httpClientFactory,
         AdminHelperService helperService,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IConfiguration configuration,
         IOptions<SpotifyImportSettings> spotifyImportSettings)
     {

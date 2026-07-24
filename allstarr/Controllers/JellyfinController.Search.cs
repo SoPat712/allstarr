@@ -337,7 +337,6 @@ public partial class JellyfinController
             externalSearchLimits.AlbumLimit,
             externalSearchLimits.ArtistLimit);
 
-        // Use parallel metadata service if available (races providers), otherwise use primary
         var externalTask = favoritesOnlyRequest
             ? Task.FromResult(new SearchResult())
             : _providerGateway != null
@@ -347,19 +346,12 @@ public partial class JellyfinController
                     externalSearchLimits.SongLimit,
                     externalSearchLimits.AlbumLimit,
                     externalSearchLimits.ArtistLimit)
-                : _parallelMetadataService != null
-                    ? _parallelMetadataService.SearchAllAsync(
-                        cleanQuery,
-                        externalSearchLimits.SongLimit,
-                        externalSearchLimits.AlbumLimit,
-                        externalSearchLimits.ArtistLimit,
-                        HttpContext.RequestAborted)
-                    : _metadataService.SearchAllAsync(
-                        cleanQuery,
-                        externalSearchLimits.SongLimit,
-                        externalSearchLimits.AlbumLimit,
-                        externalSearchLimits.ArtistLimit,
-                        HttpContext.RequestAborted);
+                : _metadataService.SearchAllAsync(
+                    cleanQuery,
+                    externalSearchLimits.SongLimit,
+                    externalSearchLimits.AlbumLimit,
+                    externalSearchLimits.ArtistLimit,
+                    HttpContext.RequestAborted);
 
         var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
             ? Task.FromResult(new List<ExternalPlaylist>())
@@ -536,7 +528,7 @@ public partial class JellyfinController
         {
             var json = shapedResponse.Body;
 
-            // Cache search results in Redis using the configured search TTL.
+            // Cache search results through the shared cache using the configured TTL.
             if (!string.IsNullOrWhiteSpace(searchTerm) &&
                 string.IsNullOrWhiteSpace(effectiveArtistIds) &&
                 !string.IsNullOrWhiteSpace(searchCacheKey))
@@ -686,7 +678,6 @@ public partial class JellyfinController
             externalSearchLimits.AlbumLimit,
             externalSearchLimits.ArtistLimit);
 
-        // Use parallel metadata service if available (races providers), otherwise use primary
         var externalTask = _providerGateway != null
             ? _providerGateway.SearchAsync(
                 HttpContext.RequireProtocolExecutionContext(),
@@ -694,19 +685,12 @@ public partial class JellyfinController
                 externalSearchLimits.SongLimit,
                 externalSearchLimits.AlbumLimit,
                 externalSearchLimits.ArtistLimit)
-            : _parallelMetadataService != null
-                ? _parallelMetadataService.SearchAllAsync(
-                    cleanQuery,
-                    externalSearchLimits.SongLimit,
-                    externalSearchLimits.AlbumLimit,
-                    externalSearchLimits.ArtistLimit,
-                    HttpContext.RequestAborted)
-                : _metadataService.SearchAllAsync(
-                    cleanQuery,
-                    externalSearchLimits.SongLimit,
-                    externalSearchLimits.AlbumLimit,
-                    externalSearchLimits.ArtistLimit,
-                    HttpContext.RequestAborted);
+            : _metadataService.SearchAllAsync(
+                cleanQuery,
+                externalSearchLimits.SongLimit,
+                externalSearchLimits.AlbumLimit,
+                externalSearchLimits.ArtistLimit,
+                HttpContext.RequestAborted);
 
         // Run searches in parallel (local Jellyfin hints + external providers)
         var jellyfinTask = GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId);

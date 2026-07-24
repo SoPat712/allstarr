@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Domain;
@@ -19,26 +18,20 @@ public class PlaylistSyncService
     private readonly IEnumerable<IConcreteDownloadService> _downloadServices;
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
+    private readonly IApplicationCache _cache;
     private readonly ILogger<PlaylistSyncService> _logger;
 
-    // In-memory cache to track which playlist a track belongs to
-    // Key: trackId (format: ext-{provider}-{externalId}), Value: playlistId
-    // TTL: 5 minutes (tracks expire automatically)
-    private readonly ConcurrentDictionary<string, (string PlaylistId, DateTime ExpiresAt)> _trackPlaylistCache = new();
     private static readonly TimeSpan CacheTTL = TimeSpan.FromMinutes(5);
 
     private readonly string _musicDirectory;
     private readonly string _playlistDirectory;
-
-    // Cancellation token for background cleanup task
-    private readonly CancellationTokenSource _cleanupCancellationTokenSource = new();
-    private readonly Task _cleanupTask;
 
     public PlaylistSyncService(
         IEnumerable<IConcreteMetadataService> metadataServices,
         IEnumerable<IConcreteDownloadService> downloadServices,
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,
+        IApplicationCache cache,
         ILogger<PlaylistSyncService> logger)
     {
         // Get Deezer and Qobuz metadata services
@@ -50,6 +43,7 @@ public class PlaylistSyncService
         _downloadServices = downloadServices;
         _configuration = configuration;
         _subsonicSettings = subsonicSettings.Value;
+        _cache = cache;
         _logger = logger;
 
         _musicDirectory = configuration["Library:DownloadPath"] ?? "./downloads";
@@ -60,9 +54,6 @@ public class PlaylistSyncService
         {
             Directory.CreateDirectory(_playlistDirectory);
         }
-
-        // Start background cleanup task for expired cache entries
-        _cleanupTask = Task.Run(() => CleanupExpiredCacheEntriesAsync(_cleanupCancellationTokenSource.Token));
     }
 
     /// <summary>
@@ -82,31 +73,25 @@ public class PlaylistSyncService
     /// Adds a track to the playlist context cache.
     /// This allows the download service to know which playlist a track belongs to.
     /// </summary>
-    public void AddTrackToPlaylistCache(string trackId, string playlistId)
+    public async Task AddTrackToPlaylistCacheAsync(string trackId, string playlistId)
     {
-        var expiresAt = DateTime.UtcNow.Add(CacheTTL);
-        _trackPlaylistCache[trackId] = (playlistId, expiresAt);
-        _logger.LogInformation("Added track {TrackId} to playlist cache with playlistId {PlaylistId}", trackId, playlistId);
+        await _cache.SetAsync(
+            CacheKeyBuilder.BuildPlaylistTrackContextKey(trackId),
+            playlistId,
+            CacheTTL);
+        _logger.LogDebug(
+            "Added track {TrackId} to playlist context cache with playlistId {PlaylistId}",
+            trackId,
+            playlistId);
     }
 
     /// <summary>
     /// Gets the playlist ID for a given track ID from cache.
     /// Returns null if not found or expired.
     /// </summary>
-    public string? GetPlaylistIdForTrack(string trackId)
+    public Task<string?> GetPlaylistIdForTrackAsync(string trackId)
     {
-        if (_trackPlaylistCache.TryGetValue(trackId, out var entry))
-        {
-            if (entry.ExpiresAt > DateTime.UtcNow)
-            {
-                return entry.PlaylistId;
-            }
-
-            // Expired, remove it
-            _trackPlaylistCache.TryRemove(trackId, out _);
-        }
-
-        return null;
+        return _cache.GetAsync<string>(CacheKeyBuilder.BuildPlaylistTrackContextKey(trackId));
     }
 
     /// <summary>
@@ -177,7 +162,7 @@ public class PlaylistSyncService
                     // Add track to playlist cache BEFORE downloading
                     // This marks it as part of a full playlist download, so AddTrackToM3UAsync will skip real-time updates
                     var trackId = $"ext-{provider}-{track.ExternalId}";
-                    AddTrackToPlaylistCache(trackId, playlistId);
+                    await AddTrackToPlaylistCacheAsync(trackId, playlistId);
 
                     _logger.LogInformation("Downloading track '{Artist} - {Title}'", track.Artist, track.Title);
                     var localPath = await downloadService.DownloadSongAsync(provider, track.ExternalId, cancellationToken);
@@ -358,54 +343,4 @@ public class PlaylistSyncService
         }
     }
 
-    /// <summary>
-    /// Background task to clean up expired cache entries every minute
-    /// </summary>
-    private async Task CleanupExpiredCacheEntriesAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
-
-                var now = DateTime.UtcNow;
-                var expiredKeys = _trackPlaylistCache
-                    .Where(kvp => kvp.Value.ExpiresAt <= now)
-                    .Select(kvp => kvp.Key)
-                    .ToList();
-
-                foreach (var key in expiredKeys)
-                {
-                    _trackPlaylistCache.TryRemove(key, out _);
-                }
-
-                if (expiredKeys.Count > 0)
-                {
-                    _logger.LogWarning("Cleaned up {Count} expired playlist cache entries", expiredKeys.Count);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected when cancellation is requested
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during playlist cache cleanup");
-            }
-        }
-
-        _logger.LogInformation("Playlist cache cleanup task stopped");
-    }
-
-    /// <summary>
-    /// Stops the background cleanup task
-    /// </summary>
-    public async Task StopCleanupAsync()
-    {
-        _cleanupCancellationTokenSource.Cancel();
-        await _cleanupTask;
-        _cleanupCancellationTokenSource.Dispose();
-    }
 }

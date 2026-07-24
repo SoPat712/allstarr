@@ -134,6 +134,13 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             RelativePath = relative,
             ContentSha256 = hash,
             Length = info.Length,
+            MimeType = output.Media.MimeType,
+            Container = output.Media.Container,
+            Codec = output.Media.Codec,
+            Bitrate = output.Media.Bitrate,
+            SampleRate = output.Media.SampleRate,
+            BitDepth = output.Media.BitDepth,
+            Channels = output.Media.Channels,
             State = ProviderDownloadArtifactState.Verified,
             CreatedAt = DateTimeOffset.UtcNow,
             VerifiedAt = DateTimeOffset.UtcNow,
@@ -243,5 +250,14 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     private static VerifiedProviderDownloadArtifact Result(ProviderDownloadArtifactEntity item, string path) => new(
         item.Id, item.WorkspaceRecordId, path, item.ContentSha256, item.Length, item.TenantId, item.OwnerUserId,
         item.DurableJobId, item.ProviderId, item.ProviderAccountId, item.State, item.ManagedFileId)
-    { LibraryScopeId = item.LibraryScopeId };
+    {
+        LibraryScopeId = item.LibraryScopeId,
+        MimeType = item.MimeType,
+        Container = item.Container,
+        Codec = item.Codec,
+        Bitrate = item.Bitrate,
+        SampleRate = item.SampleRate,
+        BitDepth = item.BitDepth,
+        Channels = item.Channels
+    };
 }

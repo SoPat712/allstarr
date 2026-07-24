@@ -110,6 +110,10 @@ public static class RuntimeSettingCatalog
         Int("Cache:LyricsDays", 1, 3650); Int("Cache:GenreDays", 1, 3650); Int("Cache:MetadataDays", 1, 3650);
         Int("Cache:OdesliLookupDays", 1, 3650); Int("Cache:ProxyImagesDays", 1, 3650);
         Int("Cache:TranscodeCacheMinutes", 1, 10080);
+        items.Add(new("Cache:MediaDirectory", RuntimeSettingValueType.String, "Cache:MediaDirectory", AllowEmpty: true));
+        Int("Cache:MediaMaximumMegabytes", 1, 1048576);
+        Int("Cache:MediaMaximumEntryMegabytes", 1, 1024);
+        Int("Cache:MediaCleanupFileLimit", 100, 1000000);
         Text("SquidWTF:Quality", ["LOW", "HIGH", "LOSSLESS", "FLAC", "HI_RES", "HI_RES_LOSSLESS"], allowEmpty: true);
         Int("SquidWTF:MinRequestIntervalMs", 0, 60000);
         Text("Deezer:Quality", ["FLAC", "MP3_320", "MP3_128"], allowEmpty: true); Int("Deezer:MinRequestIntervalMs", 0, 60000);

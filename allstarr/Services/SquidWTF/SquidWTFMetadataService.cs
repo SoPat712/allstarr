@@ -47,7 +47,7 @@ namespace allstarr.Services.SquidWTF;
 /// - Round-robin load balancing across multiple mirror endpoints
 /// - Automatic failover to backup endpoints on failure
 /// - Racing endpoints for fastest response on latency-sensitive operations
-/// - Redis caching for albums and artists (24-hour TTL)
+/// - Shared caching for albums and artists (24-hour TTL)
 /// - Explicit content filtering support
 /// - Parallel Spotify ID conversion via Odesli for lyrics matching
 /// </summary>
@@ -63,7 +63,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
     private readonly HttpClient _httpClient;
     private readonly SubsonicSettings _settings;
     private readonly ILogger<SquidWTFMetadataService> _logger;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly RoundRobinFallbackHelper _fallbackHelper;
     private readonly GenreEnrichmentService? _genreEnrichment;
 
@@ -72,7 +72,7 @@ public class SquidWTFMetadataService : TrackParserBase, IConcreteMetadataService
         IOptions<SubsonicSettings> settings,
         IOptions<SquidWTFSettings> squidwtfSettings,
         ILogger<SquidWTFMetadataService> logger,
-        RedisCacheService cache,
+        IApplicationCache cache,
         List<string> apiUrls,
         GenreEnrichmentService? genreEnrichment = null)
     {

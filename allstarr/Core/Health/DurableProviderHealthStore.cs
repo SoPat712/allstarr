@@ -140,13 +140,20 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
 
         foreach (var circuit in await context.ProviderCircuits.AsNoTracking().ToListAsync(cancellationToken))
         {
-            _circuits[new CircuitKey(circuit.ProviderAccountId, circuit.Capability)] = new(
+            var snapshot = new DurableProviderCircuitSnapshot(
                 circuit.ProviderAccountId,
                 circuit.Capability,
                 circuit.State,
                 circuit.ConsecutiveFailures,
                 circuit.RetryAfter);
+            if (snapshot.State == ProviderCircuitState.Open &&
+                snapshot.RetryAfter > _clock.UtcNow)
+            {
+                _circuits[new CircuitKey(circuit.ProviderAccountId, circuit.Capability)] = snapshot;
+            }
         }
+
+        PruneExpiredMemoryState();
     }
 
     public async Task<DurableProviderHealthSnapshot?> RecordAsync(
@@ -163,6 +170,7 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
             return null;
         }
 
+        PruneExpiredMemoryState();
         providerId = Normalize(providerId);
         accountKey = Normalize(accountKey);
         capability = Normalize(capability);
@@ -241,7 +249,17 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
             sample.LatencyMilliseconds,
             sample.FailureCode);
         _latest[new HealthKey(providerId, accountKey, capability)] = snapshot;
-        _circuits[new CircuitKey(account.Id, capability)] = ToSnapshot(circuit);
+        var circuitKey = new CircuitKey(account.Id, capability);
+        var circuitSnapshot = ToSnapshot(circuit);
+        if (circuitSnapshot.State == ProviderCircuitState.Open &&
+            circuitSnapshot.RetryAfter > now)
+        {
+            _circuits[circuitKey] = circuitSnapshot;
+        }
+        else
+        {
+            _circuits.TryRemove(circuitKey, out _);
+        }
         PlatformDiagnostics.ProviderHealthSamples.Add(
             1,
             new("provider.id", providerId),
@@ -281,6 +299,15 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
             new HealthKey(Normalize(providerId), Normalize(accountKey), Normalize(capability)),
             out snapshot!) || snapshot.ExpiresAt <= _clock.UtcNow)
         {
+            if (snapshot != null)
+            {
+                _latest.TryRemove(
+                    new HealthKey(
+                        Normalize(providerId),
+                        Normalize(accountKey),
+                        Normalize(capability)),
+                    out _);
+            }
             snapshot = null!;
             return false;
         }
@@ -294,6 +321,7 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         string capability,
         out DurableProviderHealthSnapshot snapshot)
     {
+        PruneExpiredMemoryState();
         var normalizedProvider = Normalize(providerId);
         var normalizedCapability = Normalize(capability);
         snapshot = _latest.Values.FirstOrDefault(item =>
@@ -307,14 +335,42 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
     public bool IsCircuitOpen(string providerId, string accountKey, string capability)
     {
         var accountId = ResolveAccountId(Normalize(providerId), Normalize(accountKey));
+        var key = new CircuitKey(accountId, Normalize(capability));
         if (!_circuits.TryGetValue(
-                new CircuitKey(accountId, Normalize(capability)),
+                key,
                 out var circuit))
         {
             return false;
         }
 
-        return circuit.State == ProviderCircuitState.Open && circuit.RetryAfter > _clock.UtcNow;
+        if (circuit.State == ProviderCircuitState.Open && circuit.RetryAfter > _clock.UtcNow)
+        {
+            return true;
+        }
+
+        _circuits.TryRemove(key, out _);
+        return false;
+    }
+
+    private void PruneExpiredMemoryState()
+    {
+        var now = _clock.UtcNow;
+        foreach (var item in _latest)
+        {
+            if (item.Value.ExpiresAt <= now)
+            {
+                _latest.TryRemove(item.Key, out _);
+            }
+        }
+
+        foreach (var item in _circuits)
+        {
+            if (item.Value.State != ProviderCircuitState.Open ||
+                item.Value.RetryAfter <= now)
+            {
+                _circuits.TryRemove(item.Key, out _);
+            }
+        }
     }
 
     private void ApplyCircuitObservation(

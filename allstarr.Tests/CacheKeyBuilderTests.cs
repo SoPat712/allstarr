@@ -68,11 +68,12 @@ public class CacheKeyBuilderTests
         Assert.Equal("spotify:playlist:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistKey("Road Trip"));
         Assert.Equal("spotify:playlist:items:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistItemsKey("Road Trip"));
         Assert.Equal("spotify:playlist:ordered:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistOrderedKey("Road Trip"));
+        Assert.Equal(
+            "spotify:playlist:jellyfin-signature:Road Trip",
+            CacheKeyBuilder.BuildSpotifyPlaylistJellyfinSignatureKey("Road Trip"));
         Assert.Equal("spotify:matched:ordered:Road Trip", CacheKeyBuilder.BuildSpotifyMatchedTracksKey("Road Trip"));
         Assert.Equal("spotify:matched:Road Trip", CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey("Road Trip"));
         Assert.Equal("spotify:playlist:stats:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistStatsKey("Road Trip"));
-        Assert.Equal("spotify:manual-map:Road Trip:abc123", CacheKeyBuilder.BuildSpotifyManualMappingKey("Road Trip", "abc123"));
-        Assert.Equal("spotify:external-map:Road Trip:abc123", CacheKeyBuilder.BuildSpotifyExternalMappingKey("Road Trip", "abc123"));
         Assert.Equal("spotify:global-map:abc123", CacheKeyBuilder.BuildSpotifyGlobalMappingKey("abc123"));
         Assert.Equal("spotify:global-map:all-ids", CacheKeyBuilder.BuildSpotifyGlobalMappingsIndexKey());
     }
@@ -82,7 +83,6 @@ public class CacheKeyBuilderTests
     {
         Assert.Equal("lyrics:Artist:Title:Album:240", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));
         Assert.Equal("lyricsplus:Artist:Title:Album:240", CacheKeyBuilder.BuildLyricsPlusKey("Artist", "Title", "Album", 240));
-        Assert.Equal("lyrics:manual-map:Artist:Title", CacheKeyBuilder.BuildLyricsManualMappingKey("Artist", "Title"));
         Assert.Equal("lyrics:id:42", CacheKeyBuilder.BuildLyricsByIdKey(42));
 
         Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track", "Artist"));
@@ -98,6 +98,17 @@ public class CacheKeyBuilderTests
         Assert.Equal("musicbrainz:mbid:abc-def", CacheKeyBuilder.BuildMusicBrainzMbidKey("abc-def"));
 
         Assert.Equal("odesli:tidal-to-spotify:123", CacheKeyBuilder.BuildOdesliTidalToSpotifyKey("123"));
-        Assert.Equal("odesli:url-to-spotify:https://example.com/track", CacheKeyBuilder.BuildOdesliUrlToSpotifyKey("https://example.com/track"));
+        var urlKey = CacheKeyBuilder.BuildOdesliUrlToSpotifyKey("https://example.com/track?token=secret");
+        Assert.StartsWith("odesli:url-to-spotify:v2:", urlKey, StringComparison.Ordinal);
+        Assert.DoesNotContain("example.com", urlKey, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", urlKey, StringComparison.Ordinal);
+
+        var translationKey = CacheKeyBuilder.BuildOdesliTranslationKey(
+            "https://example.com/track?token=secret",
+            "Deezer");
+        Assert.StartsWith("odesli:translate:v2:", translationKey, StringComparison.Ordinal);
+        Assert.EndsWith(":deezer", translationKey, StringComparison.Ordinal);
+        Assert.DoesNotContain("example.com", translationKey, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", translationKey, StringComparison.Ordinal);
     }
 }

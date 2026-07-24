@@ -19,9 +19,11 @@ public sealed class ExternalPlaybackMetadataResolverTests
                 Artist = "Post Malone, Swae Lee",
                 Duration = 158,
                 CoverArtUrlLarge = "https://artwork.example/sunflower.jpg"
-            });
+        });
         var resolver = new ExternalPlaybackMetadataResolver(
-            service.Object, NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+            service.Object,
+            new TestMemoryApplicationCache(),
+            NullLogger<ExternalPlaybackMetadataResolver>.Instance);
 
         var result = await resolver.ResolveAsync("ext-apple-download-song-1573475841", CancellationToken.None);
 

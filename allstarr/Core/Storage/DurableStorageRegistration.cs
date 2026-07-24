@@ -8,14 +8,20 @@ public static class DurableStorageRegistration
     public static IServiceCollection AddDurableStorage(
         this IServiceCollection services,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        bool allowOfflineSqlite = false)
     {
         var options = configuration
             .GetSection(DurableStorageOptions.SectionName)
             .Get<DurableStorageOptions>() ?? new DurableStorageOptions();
         var provider = options.ParseProvider();
+        if (provider != DurableStorageProvider.Postgres && !allowOfflineSqlite)
+        {
+            throw new InvalidOperationException(
+                "Allstarr application runtime requires PostgreSQL. " +
+                "SQLite is supported only by the offline storage migration commands.");
+        }
         options.ApplyPasswordFile(provider);
-        options.RequireExistingSqliteFile(provider);
         if (environment.IsEnvironment("Testing"))
         {
             options.EnforceMutationGuard = false;
@@ -43,7 +49,9 @@ public static class DurableStorageRegistration
             else
             {
                 builder.UseSqlite(options.ConnectionString, sqlite =>
-                    sqlite.CommandTimeout(options.CommandTimeoutSeconds));
+                {
+                    sqlite.CommandTimeout(options.CommandTimeoutSeconds);
+                });
             }
         });
         services.AddSingleton<DurableStorageInitializer>();

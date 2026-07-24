@@ -1,4 +1,5 @@
 using allstarr.Services.Common;
+using System.Text.RegularExpressions;
 
 namespace allstarr.Core.Matching;
 
@@ -66,7 +67,8 @@ public sealed record TrackMatchCandidateScore(
     string BackendItemId,
     double Confidence,
     IReadOnlyList<string> Reasons,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    IReadOnlyDictionary<string, double>? Components = null);
 
 public sealed record TrackMatchDecision(
     TrackMatchReviewState State,
@@ -77,7 +79,11 @@ public sealed record TrackMatchDecision(
     IReadOnlyList<string> Reasons,
     IReadOnlyList<string> Warnings,
     int PolicyVersion,
-    long SourceSnapshotVersion);
+    long SourceSnapshotVersion,
+    double AcceptThreshold = 0.88,
+    double SuggestThreshold = 0.72,
+    double AmbiguityDelta = 0.03,
+    bool RequiresReview = false);
 
 public sealed class TrackMatchPolicy
 {
@@ -216,22 +222,25 @@ public sealed class TrackMatchDecisionEngine
         var warnings = new List<string>();
         if (EqualsNormalized(source.MusicBrainzRecordingId, candidate.MusicBrainzRecordingId))
         {
-            return Score(candidate, 1, ["musicbrainz_recording_id_exact"], warnings);
+            return Score(candidate, 1, ["musicbrainz_recording_id_exact"], warnings,
+                new Dictionary<string, double> { ["musicbrainzRecordingId"] = 1 });
         }
 
         if (EqualsNormalized(source.Isrc, candidate.Isrc))
         {
-            return Score(candidate, 0.99, ["isrc_exact"], warnings);
+            return Score(candidate, 0.99, ["isrc_exact"], warnings,
+                new Dictionary<string, double> { ["isrc"] = 1 });
         }
 
         if (candidate.ProviderTrackIds?.TryGetValue(source.ProviderId, out var providerId) == true &&
             providerId.Equals(source.ExternalId, StringComparison.Ordinal))
         {
-            return Score(candidate, 1, ["provider_track_id_exact"], warnings);
+            return Score(candidate, 1, ["provider_track_id_exact"], warnings,
+                new Dictionary<string, double> { ["providerTrackId"] = 1 });
         }
 
         var title = Similarity(source.Title, candidate.Title);
-        var artist = Similarity(source.Artist, candidate.Artist);
+        var artist = ArtistSimilarity(source.Artist, candidate.Artist);
         var album = Similarity(source.Album, candidate.Album);
         var albumArtist = Similarity(source.AlbumArtist, candidate.AlbumArtist);
         var duration = DurationScore(source.DurationSeconds, candidate.DurationSeconds);
@@ -256,7 +265,15 @@ public sealed class TrackMatchDecisionEngine
             warnings.Add("explicit_flag_mismatch");
         }
 
-        return Score(candidate, Math.Round(confidence, 4), reasons, warnings);
+        return Score(candidate, Math.Round(confidence, 4), reasons, warnings,
+            new Dictionary<string, double>
+            {
+                ["title"] = Math.Round(title, 4),
+                ["artist"] = Math.Round(artist, 4),
+                ["album"] = Math.Round(album, 4),
+                ["albumArtist"] = Math.Round(albumArtist, 4),
+                ["duration"] = Math.Round(duration, 4)
+            });
     }
 
     private double DurationScore(int? source, int? candidate)
@@ -280,6 +297,33 @@ public sealed class TrackMatchDecisionEngine
         string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
             ? 0
             : FuzzyMatcher.CalculateSimilarityAggressive(left, right) / 100d;
+
+    private static double ArtistSimilarity(string? left, string? right)
+    {
+        var sourceArtists = SplitArtists(left);
+        var candidateArtists = SplitArtists(right);
+        if (sourceArtists.Count == 0 || candidateArtists.Count == 0)
+        {
+            return 0;
+        }
+
+        return FuzzyMatcher.CalculateArtistMatchScore(
+            sourceArtists,
+            candidateArtists[0],
+            candidateArtists.Skip(1).ToList()) / 100d;
+    }
+
+    private static List<string> SplitArtists(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? []
+            : Regex.Split(
+                    value,
+                    @"\s*(?:,|&|;|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bwith\b)\s*",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+                .Select(artist => artist.Trim())
+                .Where(artist => artist.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
     private static bool EqualsNormalized(string? left, string? right) =>
         !string.IsNullOrWhiteSpace(left) &&
@@ -357,14 +401,16 @@ public sealed class TrackMatchDecisionEngine
         LocalTrackMatchCandidate candidate,
         double confidence,
         IReadOnlyList<string> reasons,
-        IReadOnlyList<string> warnings) => new(
+        IReadOnlyList<string> warnings,
+        IReadOnlyDictionary<string, double>? components = null) => new(
         candidate.LibraryTrackId,
         candidate.BackendItemId,
         confidence,
         reasons,
-        warnings);
+        warnings,
+        components);
 
-    private static TrackMatchDecision Result(
+    private TrackMatchDecision Result(
         TrackMatchReviewState state,
         LocalTrackMatchCandidate? selected,
         double confidence,
@@ -380,5 +426,10 @@ public sealed class TrackMatchDecisionEngine
         reasons,
         warnings,
         scope.PolicyVersion,
-        scope.SourceSnapshotVersion);
+        scope.SourceSnapshotVersion,
+        _policy.AcceptThreshold,
+        _policy.SuggestThreshold,
+        _policy.AmbiguityDelta,
+        state is TrackMatchReviewState.Suggested or TrackMatchReviewState.Ambiguous or
+            TrackMatchReviewState.Unresolved or TrackMatchReviewState.Rejected);
 }

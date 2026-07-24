@@ -202,7 +202,6 @@ public sealed class ProtocolRouteFixtureTests
                 : Json(StatusCodes.Status200OK, fixture.RootElement.GetProperty("upstream").GetProperty("body").GetRawText()),
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
                 services.RemoveAll<IMusicMetadataService>();
                 services.AddSingleton(metadata.Object);
             });
@@ -262,7 +261,6 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
                 services.RemoveAll<IMusicMetadataService>();
                 services.AddSingleton(metadata.Object);
             });
@@ -385,7 +383,6 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
                 services.RemoveAll<IMusicMetadataService>();
                 services.AddSingleton(metadata.Object);
             });
@@ -426,7 +423,6 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
                 services.RemoveAll<IMusicMetadataService>();
                 services.RemoveAll<IProtocolProviderGateway>();
                 services.AddSingleton(metadata.Object);
@@ -546,7 +542,6 @@ public sealed class ProtocolRouteFixtureTests
                 },
                 services =>
                 {
-                    services.RemoveAll<ParallelMetadataService>();
                     services.RemoveAll<IMusicMetadataService>();
                     services.AddSingleton(metadata.Object);
                 });
@@ -605,7 +600,6 @@ public sealed class ProtocolRouteFixtureTests
             },
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
                 services.RemoveAll<IMusicMetadataService>();
                 services.AddSingleton(metadata.Object);
                 services.RemoveAll<IJellyfinInteractionProtocolAdapter>();
@@ -716,7 +710,6 @@ public sealed class ProtocolRouteFixtureTests
                 : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
             services =>
             {
-                services.RemoveAll<ParallelMetadataService>();
                 services.RemoveAll<IMusicMetadataService>();
                 services.AddSingleton(metadata.Object);
             });
@@ -1617,7 +1610,6 @@ public sealed class ProtocolRouteFixtureTests
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Backend:Type"] = _backend,
-                    ["Redis:Enabled"] = "false",
                     ["SpotifyApi:Enabled"] = "false",
                     ["SpotifyImport:Enabled"] = "false",
                     ["Storage:EnforceMutationGuard"] = "false",

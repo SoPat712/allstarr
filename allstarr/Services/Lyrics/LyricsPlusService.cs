@@ -12,13 +12,13 @@ namespace allstarr.Services.Lyrics;
 public class LyricsPlusService
 {
     private readonly HttpClient _httpClient;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly ILogger<LyricsPlusService> _logger;
     private const string BaseUrl = "https://lyricsplus.prjktla.workers.dev/v2/lyrics/get";
 
     public LyricsPlusService(
         IHttpClientFactory httpClientFactory,
-        RedisCacheService cache,
+        IApplicationCache cache,
         ILogger<LyricsPlusService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();

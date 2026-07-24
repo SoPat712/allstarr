@@ -21,6 +21,7 @@ public class ProviderStatusManager
 {
     private readonly record struct ProbeOutcome(bool Success, string? ReasonCode = null);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ObservationLifetime = TimeSpan.FromMinutes(5);
     private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
     private static readonly (string Provider, string Capability)[] KnownCapabilities =
     [
@@ -244,6 +245,7 @@ public class ProviderStatusManager
         ProviderRuntimeStatusKey key,
         ProviderRuntimeStatus baseline)
     {
+        PruneExpiredObservations();
         if (!_observations.TryGetValue(key, out var observation))
         {
             if (_durableHealth != null &&
@@ -318,6 +320,7 @@ public class ProviderStatusManager
         IReadOnlyDictionary<string, string>? accountSecrets,
         CancellationToken cancellationToken)
     {
+        PruneExpiredObservations();
         var key = ProviderRuntimeStatusKey.Create(provider, capability, accountKey);
         var baseline = BuildBaselineStatus(key);
         if (accountSecrets != null)
@@ -435,6 +438,19 @@ public class ProviderStatusManager
             Health = ProviderHealthState.Degraded,
             ReasonCode = "circuit_open"
         };
+    }
+
+    private void PruneExpiredObservations()
+    {
+        var cutoff = DateTimeOffset.UtcNow - ObservationLifetime;
+        foreach (var item in _observations)
+        {
+            if (item.Value.TestedAt.HasValue &&
+                item.Value.TestedAt.Value <= cutoff)
+            {
+                _observations.TryRemove(item.Key, out _);
+            }
+        }
     }
 
     private async Task PersistObservationAsync(

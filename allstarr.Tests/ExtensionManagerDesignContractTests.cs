@@ -26,6 +26,22 @@ public sealed class ExtensionManagerDesignContractTests
         Assert.Contains(".extension-manager-activity details[open]", styles, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void InstalledPackages_FallBackToRegistryPresentationMetadata()
+    {
+        var script = Read("allstarr/wwwroot/js/webui.js");
+
+        Assert.Contains("const registryItem = latestStoreByExtension.get(extensionId)", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "description: item.description || item.Description || registryItem.description || registryItem.Description",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "iconUrl: item.iconUrl || item.IconUrl || registryItem.iconUrl || registryItem.IconUrl",
+            script,
+            StringComparison.Ordinal);
+    }
+
     private static string Read(string relativePath)
     {
         var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", relativePath));

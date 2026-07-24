@@ -55,6 +55,21 @@ public sealed record ProviderError
 
     public TimeSpan? RetryAfter { get; }
 
+    public static ProviderError CompatibilityContractChanged() => new(
+        ProviderErrorKind.CapabilityUnavailable,
+        "provider-contract-changed",
+        "The provider API compatibility contract changed. Update Allstarr before retrying this source.");
+
+    private ProviderError(
+        ProviderErrorKind kind,
+        string code,
+        string safeMessage)
+    {
+        Kind = kind;
+        Code = code;
+        SafeMessage = safeMessage;
+    }
+
     private static string CodeFor(ProviderErrorKind kind) => kind switch
     {
         ProviderErrorKind.NotFound => "not-found",

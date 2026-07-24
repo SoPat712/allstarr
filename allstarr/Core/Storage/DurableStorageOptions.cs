@@ -11,13 +11,12 @@ public enum DurableStorageProvider
 
 public sealed class DurableStorageOptions
 {
-    public const string SqliteBootstrapConfirmation = "create-new-allstarr-database";
-
     public const string SectionName = "Storage";
 
-    public string Provider { get; set; } = nameof(DurableStorageProvider.Sqlite);
+    public string Provider { get; set; } = nameof(DurableStorageProvider.Postgres);
 
-    public string ConnectionString { get; set; } = "Data Source=/app/state/allstarr.db";
+    public string ConnectionString { get; set; } =
+        "Host=localhost;Port=5432;Database=allstarr;Username=allstarr";
 
     public string? PasswordFile { get; set; }
 
@@ -32,8 +31,6 @@ public sealed class DurableStorageOptions
     public int RuntimeProbeIntervalSeconds { get; set; } = 5;
 
     public int RuntimeProbeTimeoutSeconds { get; set; } = 5;
-
-    public string? SqliteBootstrapConfirmationFile { get; set; }
 
     public bool EnforceMutationGuard { get; set; } = true;
 
@@ -81,18 +78,6 @@ public sealed class DurableStorageOptions
                 "Storage:RuntimeProbeTimeoutSeconds must be between 1 and 60.");
         }
 
-        if (parsed == DurableStorageProvider.Sqlite &&
-            !string.IsNullOrWhiteSpace(SqliteBootstrapConfirmationFile))
-        {
-            var confirmationPath = Path.GetFullPath(SqliteBootstrapConfirmationFile);
-            var databasePath = GetSqlitePath(new SqliteConnectionStringBuilder(ConnectionString));
-            if (string.Equals(confirmationPath, databasePath, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    "Storage:SqliteBootstrapConfirmationFile must not be the SQLite database path.");
-            }
-        }
-
         return parsed;
     }
 
@@ -135,28 +120,6 @@ public sealed class DurableStorageOptions
         }
 
         return GetSqlitePath(new SqliteConnectionStringBuilder(ConnectionString));
-    }
-
-    public string? GetSqliteBootstrapConfirmationPath() =>
-        string.IsNullOrWhiteSpace(SqliteBootstrapConfirmationFile)
-            ? null
-            : Path.GetFullPath(SqliteBootstrapConfirmationFile);
-
-    public void RequireExistingSqliteFile(DurableStorageProvider provider)
-    {
-        if (provider != DurableStorageProvider.Sqlite)
-        {
-            return;
-        }
-
-        var builder = new SqliteConnectionStringBuilder(ConnectionString);
-        if (GetSqlitePath(builder) == null)
-        {
-            return;
-        }
-
-        builder.Mode = SqliteOpenMode.ReadWrite;
-        ConnectionString = builder.ConnectionString;
     }
 
     private static string? GetSqlitePath(SqliteConnectionStringBuilder builder)

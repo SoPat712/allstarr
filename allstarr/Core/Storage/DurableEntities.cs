@@ -99,6 +99,7 @@ public sealed class ProviderAccountRecord
     public Guid Id { get; set; }
     public Guid? TenantId { get; set; }
     public Guid? OwnerUserId { get; set; }
+    public Guid? CreatedByUserId { get; set; }
     public string ProviderId { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public ProviderAccountScope Scope { get; set; }

@@ -32,27 +32,33 @@ public interface IPlaybackDeliveryActivitySource
     bool WasDelivered(string itemId, string deviceId);
 }
 
-public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySource
+public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySource, IDisposable
 {
     private static readonly TimeSpan Retention = TimeSpan.FromHours(1);
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _delivered =
-        new(StringComparer.Ordinal);
+    private readonly Microsoft.Extensions.Caching.Memory.MemoryCache _delivered = new(
+        new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions
+        {
+            SizeLimit = 4_096
+        });
 
     public void MarkDelivered(string itemId, string? deviceId)
     {
         if (!string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
         {
-            _delivered[$"{deviceId}\n{itemId}"] = DateTimeOffset.UtcNow;
+            Microsoft.Extensions.Caching.Memory.CacheExtensions.Set(
+                _delivered,
+                $"{deviceId}\n{itemId}",
+                true,
+                new Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = Retention,
+                    Size = 1
+                });
         }
     }
 
-    public bool WasDelivered(string itemId, string deviceId)
-    {
-        var cutoff = DateTimeOffset.UtcNow - Retention;
-        foreach (var stale in _delivered.Where(item => item.Value < cutoff))
-        {
-            _delivered.TryRemove(stale.Key, out _);
-        }
-        return _delivered.ContainsKey($"{deviceId}\n{itemId}");
-    }
+    public bool WasDelivered(string itemId, string deviceId) =>
+        _delivered.TryGetValue($"{deviceId}\n{itemId}", out _);
+
+    public void Dispose() => _delivered.Dispose();
 }

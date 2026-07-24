@@ -1,9 +1,9 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Globalization;
 using allstarr.Models.Scrobbling;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -12,8 +12,6 @@ public partial class JellyfinController
 {
     private static readonly TimeSpan InferredStopDedupeWindow = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan PlaybackSignalDedupeWindow = TimeSpan.FromSeconds(8);
-    private static readonly TimeSpan PlaybackSignalRetentionWindow = TimeSpan.FromMinutes(5);
-    private static readonly ConcurrentDictionary<string, DateTime> RecentPlaybackSignals = new();
 
     #region Playback Session Reporting
 
@@ -172,7 +170,7 @@ public partial class JellyfinController
                         }
                     }
 
-                    if (ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
+                    if (await ShouldSuppressPlaybackSignalAsync("start", deviceId, itemId))
                     {
                         _logger.LogDebug(
                             "Skipping duplicate external playback start signal for {ItemId} on {DeviceId} (PlaySessionId: {PlaySessionId})",
@@ -262,7 +260,7 @@ public partial class JellyfinController
             }
 
             if (!string.IsNullOrEmpty(itemId) &&
-                ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
+                await ShouldSuppressPlaybackSignalAsync("start", deviceId, itemId))
             {
                 _logger.LogDebug(
                     "Skipping duplicate local playback start signal for {ItemId} on {DeviceId} (PlaySessionId: {PlaySessionId})",
@@ -499,7 +497,7 @@ public partial class JellyfinController
                         }
 
                         if (inferredStart &&
-                            !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
+                            !await ShouldSuppressPlaybackSignalAsync("start", deviceId, itemId))
                         {
                             var song = await GetProviderSongAsync(provider!, externalId!);
                             var externalTrackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
@@ -637,7 +635,7 @@ public partial class JellyfinController
                     }
 
                     if (inferredStart &&
-                        !ShouldSuppressPlaybackSignal("start", deviceId, itemId, playSessionId))
+                        !await ShouldSuppressPlaybackSignalAsync("start", deviceId, itemId))
                     {
                         var trackName = await TryGetLocalTrackNameAsync(itemId);
                         _logger.LogInformation("🎵 Local track playback started (inferred from progress): {Name} (ID: {ItemId})",
@@ -760,7 +758,7 @@ public partial class JellyfinController
             return;
         }
 
-        if (ShouldSuppressPlaybackSignal("stop", deviceId, previousItemId, playSessionId: null))
+        if (await ShouldSuppressPlaybackSignalAsync("stop", deviceId, previousItemId))
         {
             _logger.LogDebug(
                 "Skipping duplicate inferred playback stop signal for {ItemId} on {DeviceId}",
@@ -1068,7 +1066,7 @@ public partial class JellyfinController
 
                 if (isExternal)
                 {
-                    if (ShouldSuppressPlaybackSignal("stop", deviceId, itemId, playSessionId))
+                    if (await ShouldSuppressPlaybackSignalAsync("stop", deviceId, itemId))
                     {
                         _logger.LogDebug(
                             "Skipping duplicate external playback stop signal for {ItemId} on {DeviceId} (PlaySessionId: {PlaySessionId})",
@@ -1175,7 +1173,7 @@ public partial class JellyfinController
                 _logger.LogInformation("🎵 Local track playback stopped: {Name} (ID: {ItemId})",
                     trackName ?? "Unknown", itemId);
 
-                if (ShouldSuppressPlaybackSignal("stop", deviceId, itemId, playSessionId))
+                if (await ShouldSuppressPlaybackSignalAsync("stop", deviceId, itemId))
                 {
                     _logger.LogDebug(
                         "Skipping duplicate local playback stop signal for {ItemId} on {DeviceId} (PlaySessionId: {PlaySessionId})",
@@ -1454,11 +1452,10 @@ public partial class JellyfinController
         return null;
     }
 
-    private static bool ShouldSuppressPlaybackSignal(
+    private async Task<bool> ShouldSuppressPlaybackSignalAsync(
         string signalType,
         string? deviceId,
-        string itemId,
-        string? playSessionId)
+        string itemId)
     {
         if (string.IsNullOrWhiteSpace(itemId))
         {
@@ -1466,43 +1463,16 @@ public partial class JellyfinController
         }
 
         var normalizedDevice = string.IsNullOrWhiteSpace(deviceId) ? "unknown-device" : deviceId;
-        var baseKey = $"{signalType}:{normalizedDevice}:{itemId}";
-        var sessionKey = string.IsNullOrWhiteSpace(playSessionId)
-            ? null
-            : $"{baseKey}:{playSessionId}";
-
-        var now = DateTime.UtcNow;
-        if (RecentPlaybackSignals.TryGetValue(baseKey, out var lastSeenAtUtc) &&
-            (now - lastSeenAtUtc) <= PlaybackSignalDedupeWindow)
+        var cacheKey = CacheKeyBuilder.BuildPlaybackSignalDedupeKey(
+            signalType,
+            normalizedDevice,
+            itemId);
+        if (await _cache.ExistsAsync(cacheKey))
         {
             return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(sessionKey) &&
-            RecentPlaybackSignals.TryGetValue(sessionKey, out var lastSeenForSessionAtUtc) &&
-            (now - lastSeenForSessionAtUtc) <= PlaybackSignalDedupeWindow)
-        {
-            return true;
-        }
-
-        RecentPlaybackSignals[baseKey] = now;
-        if (!string.IsNullOrWhiteSpace(sessionKey))
-        {
-            RecentPlaybackSignals[sessionKey] = now;
-        }
-
-        if (RecentPlaybackSignals.Count > 4096)
-        {
-            var cutoff = now - PlaybackSignalRetentionWindow;
-            foreach (var pair in RecentPlaybackSignals)
-            {
-                if (pair.Value < cutoff)
-                {
-                    RecentPlaybackSignals.TryRemove(pair.Key, out _);
-                }
-            }
-        }
-
+        await _cache.SetStringAsync(cacheKey, "1", PlaybackSignalDedupeWindow);
         return false;
     }
 

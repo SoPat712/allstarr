@@ -16,7 +16,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
     private readonly IOptions<SpotifyApiSettings> _spotifyApiSettings;
     private readonly IOptions<JellyfinSettings> _jellyfinSettings;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly ILogger<SpotifyMissingTracksFetcher> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
@@ -30,7 +30,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
         IOptions<SpotifyApiSettings> spotifyApiSettings,
         IOptions<JellyfinSettings> jellyfinSettings,
         IHttpClientFactory httpClientFactory,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IServiceProvider serviceProvider,
         SpotifySessionCookieService spotifySessionCookieService,
         IConfiguration configuration,
@@ -200,7 +200,7 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(filePath);
                 _logger.LogDebug("  {Playlist}: Found file cache (age: {Age:F1}h)", playlistName, fileAge.TotalHours);
 
-                // Load into Redis if not already there
+                // Load into the shared application cache if not already there.
                 if (!await _cache.ExistsAsync(cacheKey))
                 {
                     await LoadFromFileCache(playlistName);
@@ -208,10 +208,10 @@ public class SpotifyMissingTracksFetcher : BackgroundService
                 continue;
             }
 
-            // Check Redis cache
+            // Check the shared application cache.
             if (await _cache.ExistsAsync(cacheKey))
             {
-                _logger.LogDebug("  {Playlist}: Found in Redis cache", playlistName);
+                _logger.LogDebug("  {Playlist}: Found in shared cache", playlistName);
                 continue;
             }
 

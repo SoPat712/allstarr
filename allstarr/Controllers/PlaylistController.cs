@@ -12,6 +12,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using allstarr.Core.Settings;
 using allstarr.Core.Jobs;
+using allstarr.Core.Matching;
 using Cronos;
 
 namespace allstarr.Controllers;
@@ -25,9 +26,9 @@ public class PlaylistController : ControllerBase
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly SpotifyPlaylistFetcher _playlistFetcher;
-    private readonly SpotifyTrackMatchingService? _matchingService;
-    private readonly SpotifyMappingService _mappingService;
-    private readonly RedisCacheService _cache;
+    private readonly IPlaylistMatchingCoordinator? _matchingService;
+    private readonly ITrackMatchRepository _trackMatchCommands;
+    private readonly IApplicationCache _cache;
     private readonly HttpClient _jellyfinHttpClient;
     private readonly AdminHelperService _helperService;
     private readonly IServiceProvider _serviceProvider;
@@ -40,20 +41,20 @@ public class PlaylistController : ControllerBase
         IOptions<JellyfinSettings> jellyfinSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         SpotifyPlaylistFetcher playlistFetcher,
-        SpotifyMappingService mappingService,
-        RedisCacheService cache,
+        ITrackMatchRepository trackMatchCommands,
+        IApplicationCache cache,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         AdminHelperService helperService,
         IServiceProvider serviceProvider,
-        SpotifyTrackMatchingService? matchingService = null)
+        IPlaylistMatchingCoordinator? matchingService = null)
     {
         _logger = logger;
         _jellyfinSettings = jellyfinSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _playlistFetcher = playlistFetcher;
         _matchingService = matchingService;
-        _mappingService = mappingService;
+        _trackMatchCommands = trackMatchCommands;
         _cache = cache;
         _jellyfinHttpClient = httpClientFactory.CreateClient();
         _configuration = configuration;
@@ -64,22 +65,19 @@ public class PlaylistController : ControllerBase
     [HttpGet("playlists")]
     public async Task<IActionResult> GetPlaylists([FromQuery] bool refresh = false)
     {
-        var playlistCacheFile = "/app/cache/admin_playlists_summary.json";
+        var playlistSummaryKey = CacheKeyBuilder.BuildAdminPlaylistSummaryKey();
         // Version 3 owns playlist configuration in the tenant's durable settings.
         // Reading the store directly also avoids waiting for the in-memory projector.
         var configuredPlaylists = await GetConfiguredPlaylistsAsync();
 
-        // Check file cache first (5 minute TTL) unless refresh is requested
-        if (!refresh && System.IO.File.Exists(playlistCacheFile))
+        // Check the shared cache first unless refresh is requested.
+        if (!refresh)
         {
             try
             {
-                var fileInfo = new FileInfo(playlistCacheFile);
-                var age = DateTime.UtcNow - fileInfo.LastWriteTimeUtc;
-
-                if (age.TotalMinutes < 5)
+                var cachedJson = await _cache.GetStringAsync(playlistSummaryKey);
+                if (!string.IsNullOrWhiteSpace(cachedJson))
                 {
-                    var cachedJson = await System.IO.File.ReadAllTextAsync(playlistCacheFile);
                     using var cachedDocument = JsonDocument.Parse(cachedJson);
                     var cachedNames = cachedDocument.RootElement.TryGetProperty("playlists", out var cachedPlaylists) &&
                                       cachedPlaylists.ValueKind == JsonValueKind.Array
@@ -104,14 +102,10 @@ public class PlaylistController : ControllerBase
                         configuredPlaylists.All(item => cachedNames.Contains(item.Name)))
                     {
                         var cachedData = JsonSerializer.Deserialize<Dictionary<string, object>>(cachedJson);
-                        _logger.LogDebug("📦 Returning cached playlist summary (age: {Age:F1}m)", age.TotalMinutes);
+                        _logger.LogDebug("Returning cached playlist summary");
                         return Ok(cachedData);
                     }
                     _logger.LogDebug("Playlist configuration changed after the summary was cached; rebuilding it");
-                }
-                else
-                {
-                    _logger.LogWarning("🔄 Cache expired (age: {Age:F1}m), refreshing...", age.TotalMinutes);
                 }
             }
             catch (Exception ex)
@@ -121,7 +115,8 @@ public class PlaylistController : ControllerBase
         }
         else if (refresh)
         {
-            _logger.LogDebug("🔄 Force refresh requested for playlist summary");
+            await _cache.DeleteAsync(playlistSummaryKey);
+            _logger.LogDebug("Force refresh requested for playlist summary");
         }
 
         var playlists = new List<object>();
@@ -285,18 +280,14 @@ public class PlaylistController : ControllerBase
 
                         foreach (var track in spotifyTracks)
                         {
-                            var mapping = await _mappingService.GetMappingAsync(track.SpotifyId);
-
-                            if (mapping != null)
+                            var projection = await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
+                            if (!string.IsNullOrWhiteSpace(projection.LocalBackendItemId))
                             {
-                                if (mapping.TargetType == "local")
-                                {
-                                    localCount++;
-                                }
-                                else if (mapping.TargetType == "external")
-                                {
-                                    externalCount++;
-                                }
+                                localCount++;
+                            }
+                            else if (projection.ProviderRoutes.Count > 0)
+                            {
+                                externalCount++;
                             }
                             else
                             {
@@ -385,14 +376,12 @@ public class PlaylistController : ControllerBase
 
                     foreach (var track in canonicalTracks)
                     {
-                        var mapping = await _mappingService.GetMappingAsync(track.SpotifyId);
-                        if (mapping?.TargetType == "local")
+                        var projection = await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
+                        if (!string.IsNullOrWhiteSpace(projection.LocalBackendItemId))
                         {
                             canonicalLocal++;
                         }
-                        else if (mapping?.TargetType == "external" &&
-                                 mapping.TryGetExternalTarget(preferredProvider: null, out var provider, out var externalId) &&
-                                 ExternalTrackPlaybackPolicy.CanUseForPlayback(provider, externalId))
+                        else if (projection.ProviderRoutes.Count > 0)
                         {
                             canonicalExternal++;
                         }
@@ -498,10 +487,10 @@ public class PlaylistController : ControllerBase
 
                         _logger.LogDebug("Fetching Jellyfin playlist items for {Name} from {Url}", config.Name, url);
 
-                        var response = await _jellyfinHttpClient.SendAsync(request);
-                        if (response.IsSuccessStatusCode)
+                        var itemsResponse = await _jellyfinHttpClient.SendAsync(request);
+                        if (itemsResponse.IsSuccessStatusCode)
                         {
-                            var jellyfinJson = await response.Content.ReadAsStringAsync();
+                            var jellyfinJson = await itemsResponse.Content.ReadAsStringAsync();
                             using var jellyfinDoc = JsonDocument.Parse(jellyfinJson);
 
                             if (jellyfinDoc.RootElement.TryGetProperty("Items", out var items))
@@ -631,30 +620,23 @@ public class PlaylistController : ControllerBase
                                     {
                                         var isLocal = false;
                                         var hasExternalMapping = false;
+                                        var durableProjection =
+                                            await _trackMatchCommands.GetSpotifyProjectionAsync(
+                                                track.SpotifyId);
 
-                                        // FIRST: Check for manual Jellyfin mapping
-                                        var manualMappingKey = $"spotify:manual-map:{config.Name}:{track.SpotifyId}";
-                                        var manualJellyfinId = await _cache.GetAsync<string>(manualMappingKey);
-
-                                        if (!string.IsNullOrEmpty(manualJellyfinId))
+                                        if (!string.IsNullOrWhiteSpace(
+                                                durableProjection.LocalBackendItemId))
                                         {
-                                            // Manual Jellyfin mapping exists - this track is definitely local
                                             isLocal = true;
+                                        }
+                                        else if (durableProjection.ProviderRoutes.Count > 0)
+                                        {
+                                            hasExternalMapping = true;
                                         }
                                         else
                                         {
-                                            // Check for external manual mapping
-                                            var externalMappingKey = $"spotify:external-map:{config.Name}:{track.SpotifyId}";
-                                            var externalMappingJson = await _cache.GetStringAsync(externalMappingKey);
-
-                                            if (!string.IsNullOrEmpty(externalMappingJson))
+                                            if (localTracks.Count > 0)
                                             {
-                                                // External manual mapping exists
-                                                hasExternalMapping = true;
-                                            }
-                                            else if (localTracks.Count > 0)
-                                            {
-                                                // SECOND: No manual mapping, try fuzzy matching with local tracks
                                                 var bestMatch = localTracks
                                                     .Select(local => new
                                                     {
@@ -718,7 +700,7 @@ public class PlaylistController : ControllerBase
                         else
                         {
                             _logger.LogError("Failed to get Jellyfin playlist {Name}: {StatusCode}",
-                                config.Name, response.StatusCode);
+                                config.Name, itemsResponse.StatusCode);
                         }
                     }
                 }
@@ -812,25 +794,21 @@ public class PlaylistController : ControllerBase
 
         var inventory = await GetPlaylistInventoryAsync(configuredPlaylists);
 
-        // Save to file cache
+        var response = new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory };
+
+        // Cache the reconstructable summary for five minutes.
         try
         {
-            var cacheDir = "/app/cache";
-            Directory.CreateDirectory(cacheDir);
-            var cacheFile = Path.Combine(cacheDir, "admin_playlists_summary.json");
-
-            var response = new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory };
             var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = false });
-            await System.IO.File.WriteAllTextAsync(cacheFile, json);
-
-            _logger.LogDebug("💾 Saved playlist summary to cache");
+            await _cache.SetStringAsync(playlistSummaryKey, json, TimeSpan.FromMinutes(5));
+            _logger.LogDebug("Saved playlist summary to shared cache");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to save playlist summary cache");
         }
 
-        return Ok(new { schemaVersion = PlaylistSummarySchemaVersion, playlists, inventory });
+        return Ok(response);
     }
 
     private sealed record PlaylistCoverage(
@@ -904,7 +882,7 @@ public class PlaylistController : ControllerBase
                 }
             }
 
-            var mapping = await _mappingService.GetMappingAsync(track.SpotifyId);
+            var projection = await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
             if (isLocal == false && string.IsNullOrWhiteSpace(externalProvider))
             {
                 if (PlaylistTrackStatusResolver.TryResolveFromMatchedTrack(
@@ -916,21 +894,21 @@ public class PlaylistController : ControllerBase
                 {
                     externalProvider = resolvedExternalProvider;
                 }
-                else if (mapping?.TargetType == "external")
+                else if (projection.ProviderRoutes.FirstOrDefault() is { } route)
                 {
-                    externalProvider = ResolvePreferredExternalProvider(mapping);
+                    externalProvider = route.ProviderId;
                 }
             }
-            else if (isLocal == null && mapping?.Source == "manual")
+            else if (isLocal == null && projection.IsManual)
             {
-                if (mapping.TargetType == "local")
+                if (projection.LocalIsManual)
                 {
                     isLocal = true;
                 }
-                else if (mapping.TargetType == "external")
+                else if (projection.ProviderRoutes.FirstOrDefault(route => route.IsManual) is { } route)
                 {
                     isLocal = false;
-                    externalProvider = ResolvePreferredExternalProvider(mapping);
+                    externalProvider = route.ProviderId;
                 }
             }
             else if (isLocal == null &&
@@ -1503,12 +1481,12 @@ public class PlaylistController : ControllerBase
                                 externalProvider = NormalizeExternalProviderForDisplay(resolvedExternalProvider);
                             }
 
-                            // Fallback 2: derive provider from global mapping
-                            var globalMappingExt = await _mappingService.GetMappingAsync(track.SpotifyId);
+                            // Fallback 2: derive provider from the durable PostgreSQL projection.
+                            var cachedDurableProjection = await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
                             if (string.IsNullOrWhiteSpace(externalProvider) &&
-                                globalMappingExt?.TargetType == "external")
+                                cachedDurableProjection.ProviderRoutes.FirstOrDefault() is { } route)
                             {
-                                externalProvider = ResolvePreferredExternalProvider(globalMappingExt);
+                                externalProvider = route.ProviderId;
                             }
 
                             // Fallback 3: derive provider from external item ID prefix (ext-{provider}-...)
@@ -1529,11 +1507,12 @@ public class PlaylistController : ControllerBase
                                 track.Title, externalProvider ?? "unknown");
 
                             // Check if this is a manual mapping
-                            if (globalMappingExt != null && globalMappingExt.Source == "manual")
+                            if (cachedDurableProjection.ProviderRoutes.Any(route => route.IsManual))
                             {
                                 isManualMapping = true;
                                 manualMappingType = "external";
-                                manualMappingId = globalMappingExt.ExternalId;
+                                manualMappingId = cachedDurableProjection.ProviderRoutes
+                                    .First(route => route.IsManual).ExternalId;
                             }
 
                             // Skip the rest of the ProviderIds logic
@@ -1569,38 +1548,39 @@ public class PlaylistController : ControllerBase
                     }
 
                     // Check if this is a manual mapping (for display purposes)
-                    var globalMapping = await _mappingService.GetMappingAsync(track.SpotifyId);
-                    if (globalMapping != null && globalMapping.Source == "manual")
+                    var durableProjection = await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
+                    if (durableProjection.IsManual)
                     {
                         isManualMapping = true;
-                        manualMappingType = globalMapping.TargetType == "local" ? "jellyfin" : "external";
-                        manualMappingId = globalMapping.TargetType == "local" ? globalMapping.LocalId : globalMapping.ExternalId;
+                        manualMappingType = durableProjection.LocalIsManual ? "jellyfin" : "external";
+                        manualMappingId = durableProjection.LocalIsManual
+                            ? durableProjection.LocalBackendItemId
+                            : durableProjection.ProviderRoutes.FirstOrDefault(route => route.IsManual)?.ExternalId;
                     }
                 }
                 else
                 {
-                    // Track NOT in playlist cache - check if there's a MANUAL global mapping
-                    var globalMapping = await _mappingService.GetMappingAsync(track.SpotifyId);
+                    // Track NOT in playlist cache - check the durable manual decision.
+                    var durableProjection = await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
 
-                    if (globalMapping != null && globalMapping.Source == "manual")
+                    if (durableProjection.IsManual)
                     {
-                        // Manual mapping exists - trust it even if not in cache yet
-                        _logger.LogDebug("✓ Track {Title} has MANUAL global mapping: {Type}", track.Title, globalMapping.TargetType);
+                        _logger.LogDebug("✓ Track {Title} has a durable manual mapping", track.Title);
 
-                        if (globalMapping.TargetType == "local")
+                        if (durableProjection.LocalIsManual)
                         {
                             isLocal = true;
                             isManualMapping = true;
                             manualMappingType = "jellyfin";
-                            manualMappingId = globalMapping.LocalId;
+                            manualMappingId = durableProjection.LocalBackendItemId;
                         }
-                        else if (globalMapping.TargetType == "external")
+                        else if (durableProjection.ProviderRoutes.FirstOrDefault(route => route.IsManual) is { } route)
                         {
                             isLocal = false;
-                            externalProvider = ResolvePreferredExternalProvider(globalMapping);
+                            externalProvider = route.ProviderId;
                             isManualMapping = true;
                             manualMappingType = "external";
-                            manualMappingId = globalMapping.ExternalId;
+                            manualMappingId = route.ExternalId;
                         }
                     }
                     else
@@ -1648,7 +1628,11 @@ public class PlaylistController : ControllerBase
                 }
 
                 // Check lyrics status
-                var cacheKey = $"lyrics:{track.PrimaryArtist}:{track.Title}:{track.Album}:{track.DurationMs / 1000}";
+                var cacheKey = CacheKeyBuilder.BuildLyricsKey(
+                    track.PrimaryArtist,
+                    track.Title,
+                    track.Album,
+                    track.DurationMs / 1000);
                 var existingLyrics = await _cache.GetStringAsync(cacheKey);
                 var hasLyrics = !string.IsNullOrEmpty(existingLyrics);
                 if (isLocal.HasValue)
@@ -1736,52 +1720,27 @@ public class PlaylistController : ControllerBase
                 backendItemId = ReadCachedString(materializedItem, "Id");
             }
 
-            // Check for manual Jellyfin mapping
-            var manualMappingKey = $"spotify:manual-map:{decodedName}:{track.SpotifyId}";
-            var manualJellyfinId = await _cache.GetAsync<string>(manualMappingKey);
+            var durableProjection =
+                await _trackMatchCommands.GetSpotifyProjectionAsync(track.SpotifyId);
 
             if (isLocal == true)
             {
                 // The materialized backend playlist is authoritative for currently playable
                 // local entries even when an upgraded cache no longer carries Spotify IDs.
             }
-            else if (!string.IsNullOrEmpty(manualJellyfinId))
+            else if (!string.IsNullOrWhiteSpace(durableProjection.LocalBackendItemId))
             {
                 isLocal = true;
-                backendItemId = manualJellyfinId;
+                backendItemId = durableProjection.LocalBackendItemId;
+            }
+            else if (durableProjection.ProviderRoutes.FirstOrDefault() is { } durableRoute)
+            {
+                isLocal = false;
+                externalProvider = NormalizeExternalProviderForDisplay(durableRoute.ProviderId);
             }
             else
             {
-                // Check for external manual mapping
-                var externalMappingKey = $"spotify:external-map:{decodedName}:{track.SpotifyId}";
-                var externalMappingJson = await _cache.GetStringAsync(externalMappingKey);
-
-                if (!string.IsNullOrEmpty(externalMappingJson))
-                {
-                    try
-                    {
-                        using var extDoc = JsonDocument.Parse(externalMappingJson);
-                        var extRoot = extDoc.RootElement;
-
-                        string? provider = null;
-
-                        if (extRoot.TryGetProperty("provider", out var providerEl))
-                        {
-                            provider = providerEl.GetString();
-                        }
-
-                        if (!string.IsNullOrEmpty(provider))
-                        {
-                            isLocal = false;
-                            externalProvider = NormalizeExternalProviderForDisplay(provider);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to process external manual mapping for {Title}", track.Title);
-                    }
-                }
-                else if (PlaylistTrackStatusResolver.TryResolveFromMatchedTrack(
+                if (PlaylistTrackStatusResolver.TryResolveFromMatchedTrack(
                              matchedTracksBySpotifyId,
                              track.SpotifyId,
                              out var resolvedIsLocal,
@@ -1918,17 +1877,7 @@ public class PlaylistController : ControllerBase
             return completedAt.UtcDateTime;
         }
 
-        var safeName = AdminHelperService.SanitizeFileName(playlistName);
-        var candidates = new[]
-        {
-            Path.Combine(CacheDirectory, $"{safeName}_matched.json"),
-            Path.Combine(CacheDirectory, $"{safeName}_items.json")
-        };
-        return candidates
-            .Where(System.IO.File.Exists)
-            .Select(System.IO.File.GetLastWriteTimeUtc)
-            .Cast<DateTime?>()
-            .Max();
+        return null;
     }
 
     /// <summary>
@@ -1941,13 +1890,13 @@ public class PlaylistController : ControllerBase
         await _playlistFetcher.TriggerFetchAsync();
 
         // Invalidate playlist summary cache
-        _helperService.InvalidatePlaylistSummaryCache();
+        await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
 
         // Clear ALL playlist stats caches
         var configuredPlaylists = await GetConfiguredPlaylistsAsync();
         foreach (var playlist in configuredPlaylists)
         {
-            var statsCacheKey = $"spotify:playlist:stats:{playlist.Name}";
+            var statsCacheKey = CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(playlist.Name);
             await _cache.DeleteAsync(statsCacheKey);
         }
         _logger.LogInformation("Cleared stats cache for all {Count} playlists", configuredPlaylists.Count);
@@ -1974,11 +1923,11 @@ public class PlaylistController : ControllerBase
             await _playlistFetcher.RefreshPlaylistAsync(decodedName);
 
             // Clear playlist stats cache first (so it gets recalculated with fresh data)
-            var statsCacheKey = $"spotify:playlist:stats:{decodedName}";
+            var statsCacheKey = CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(decodedName);
             await _cache.DeleteAsync(statsCacheKey);
 
             // Then invalidate playlist summary cache (will rebuild with fresh stats)
-            _helperService.InvalidatePlaylistSummaryCache();
+            await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
 
             return Ok(new
             {
@@ -2011,7 +1960,8 @@ public class PlaylistController : ControllerBase
         try
         {
             // Clear the Jellyfin playlist signature cache to force re-checking if local tracks changed
-            var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{decodedName}";
+            var jellyfinSignatureCacheKey =
+                CacheKeyBuilder.BuildSpotifyPlaylistJellyfinSignatureKey(decodedName);
             await _cache.DeleteAsync(jellyfinSignatureCacheKey);
             _logger.LogDebug("Cleared Jellyfin signature cache to force change detection");
 
@@ -2029,10 +1979,10 @@ public class PlaylistController : ControllerBase
             await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
 
             // Invalidate playlist summary cache
-            _helperService.InvalidatePlaylistSummaryCache();
+            await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
 
             // Clear playlist stats cache to force recalculation from new mappings
-            var statsCacheKey = $"spotify:playlist:stats:{decodedName}";
+            var statsCacheKey = CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(decodedName);
             await _cache.DeleteAsync(statsCacheKey);
             _logger.LogDebug("Cleared stats cache for {Name}", decodedName);
 
@@ -2070,7 +2020,7 @@ public class PlaylistController : ControllerBase
             await _matchingService.TriggerRebuildForPlaylistAsync(decodedName);
 
             // Invalidate playlist summary cache
-            _helperService.InvalidatePlaylistSummaryCache();
+            await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
 
             return Ok(new
             {
@@ -2493,22 +2443,8 @@ public class PlaylistController : ControllerBase
             string? normalizedProvider = null;
             string? normalizedExternalId = null;
 
-            if (hasJellyfinMapping)
+            if (!hasJellyfinMapping)
             {
-                // Store Jellyfin mapping in cache (NO EXPIRATION - manual mappings are permanent)
-                var mappingKey = $"spotify:manual-map:{decodedName}:{request.SpotifyId}";
-                await _cache.SetAsync(mappingKey, request.JellyfinId!);
-
-                // Also save to file for persistence across restarts
-                await _helperService.SaveManualMappingToFileAsync(decodedName, request.SpotifyId, request.JellyfinId!, null, null);
-
-                _logger.LogInformation("Manual Jellyfin mapping saved: {Playlist} - Spotify {SpotifyId} → Jellyfin {JellyfinId}",
-                    decodedName, request.SpotifyId, request.JellyfinId);
-            }
-            else
-            {
-                // Store external mapping in cache (NO EXPIRATION - manual mappings are permanent)
-                var externalMappingKey = $"spotify:external-map:{decodedName}:{request.SpotifyId}";
                 normalizedProvider = request.ExternalProvider!.ToLowerInvariant(); // Normalize to lowercase
                 if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(normalizedProvider))
                 {
@@ -2519,84 +2455,57 @@ public class PlaylistController : ControllerBase
                 }
 
                 normalizedExternalId = NormalizeExternalTrackId(normalizedProvider, request.ExternalId!);
-                var externalMapping = new { provider = normalizedProvider, id = normalizedExternalId };
-                await _cache.SetAsync(externalMappingKey, externalMapping);
-
-                // Also save to file for persistence across restarts
-                await _helperService.SaveManualMappingToFileAsync(decodedName, request.SpotifyId, null, normalizedProvider, normalizedExternalId);
-
-                _logger.LogInformation("Manual external mapping saved: {Playlist} - Spotify {SpotifyId} → {Provider} {ExternalId}",
-                    decodedName, request.SpotifyId, normalizedProvider, normalizedExternalId);
             }
 
-            // Keep global Spotify mappings in sync so the dedicated mappings page reflects manual map actions.
-            var existingGlobalMapping = await _mappingService.GetMappingAsync(request.SpotifyId);
-            var globalMetadata = existingGlobalMapping?.Metadata;
-
-            var globalMappingSaved = hasJellyfinMapping
-                ? await _mappingService.SaveManualMappingAsync(
-                    request.SpotifyId,
-                    "local",
-                    localId: request.JellyfinId!,
-                    metadata: globalMetadata)
-                : await _mappingService.SaveManualMappingAsync(
-                    request.SpotifyId,
-                    "external",
-                    externalProvider: normalizedProvider!,
-                    externalId: normalizedExternalId!,
-                    metadata: globalMetadata);
-
-            if (globalMappingSaved)
+            if (!TrySession(out var session, out var sessionError)) return sessionError!;
+            var resolution = await _trackMatchCommands.ResolveSpotifyAsync(
+                new TrackMatchActor(
+                    session!.TenantId!.Value,
+                    session.AllstarrUserId!.Value,
+                    session.IsAdministrator),
+                request.SpotifyId,
+                hasJellyfinMapping
+                    ? new ResolveTrackMatchCommand(
+                        "local",
+                        BackendItemId: request.JellyfinId,
+                        Reason: $"Selected from playlist {decodedName}")
+                    : new ResolveTrackMatchCommand(
+                        "provider",
+                        ExternalProvider: normalizedProvider,
+                        ExternalId: normalizedExternalId,
+                        Reason: $"Selected from playlist {decodedName}"),
+                HttpContext.TraceIdentifier,
+                HttpContext.RequestAborted);
+            if (!resolution.Succeeded)
             {
-                _logger.LogInformation("Global mapping synchronized for Spotify {SpotifyId}", request.SpotifyId);
+                return resolution.Failure switch
+                {
+                    TrackMatchCommandFailure.Invalid => BadRequest(new { error = resolution.Error }),
+                    TrackMatchCommandFailure.NotFound => NotFound(new { error = resolution.Error }),
+                    TrackMatchCommandFailure.Forbidden => StatusCode(403, new { error = resolution.Error }),
+                    TrackMatchCommandFailure.Conflict => Conflict(new { error = resolution.Error }),
+                    _ => StatusCode(500, new { error = resolution.Error ?? "Manual mapping could not be saved" })
+                };
             }
-            else
-            {
-                _logger.LogWarning("Global mapping synchronization skipped for Spotify {SpotifyId}", request.SpotifyId);
-            }
+
+            _logger.LogInformation(
+                "Manual mapping saved: {Playlist} - Spotify {SpotifyId} → {TargetType} {TargetId}",
+                decodedName,
+                request.SpotifyId,
+                hasJellyfinMapping ? "Jellyfin" : normalizedProvider,
+                hasJellyfinMapping ? request.JellyfinId : normalizedExternalId);
 
             // Clear all related caches to force rebuild
-            var matchedCacheKey = $"spotify:matched:{decodedName}";
+            var matchedCacheKey =
+                CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(decodedName);
             var orderedCacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(decodedName);
             var playlistItemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(decodedName);
-            var statsCacheKey = $"spotify:playlist:stats:{decodedName}";
+            var statsCacheKey = CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(decodedName);
 
             await _cache.DeleteAsync(matchedCacheKey);
             await _cache.DeleteAsync(orderedCacheKey);
             await _cache.DeleteAsync(playlistItemsKey);
             await _cache.DeleteAsync(statsCacheKey);
-
-            // Also delete file caches to force rebuild
-            try
-            {
-                var cacheDir = "/app/cache/spotify";
-                var safeName = AdminHelperService.SanitizeFileName(decodedName);
-                var matchedFile = Path.Combine(cacheDir, $"{safeName}_matched.json");
-                var itemsFile = Path.Combine(cacheDir, $"{safeName}_items.json");
-                var statsFile = Path.Combine(cacheDir, $"{safeName}_stats.json");
-
-                if (System.IO.File.Exists(matchedFile))
-                {
-                    System.IO.File.Delete(matchedFile);
-                    _logger.LogInformation("Deleted matched tracks file cache for {Playlist}", decodedName);
-                }
-
-                if (System.IO.File.Exists(itemsFile))
-                {
-                    System.IO.File.Delete(itemsFile);
-                    _logger.LogDebug("Deleted playlist items file cache for {Playlist}", decodedName);
-                }
-
-                if (System.IO.File.Exists(statsFile))
-                {
-                    System.IO.File.Delete(statsFile);
-                    _logger.LogDebug("Deleted stats file cache for {Playlist}", decodedName);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to delete file caches for {Playlist}", decodedName);
-            }
 
             _logger.LogInformation("Cleared playlist caches for {Playlist} to force rebuild", decodedName);
 
@@ -2713,7 +2622,7 @@ public class PlaylistController : ControllerBase
 
         if (!TrySession(out var session, out var error)) return error!;
         var generation = DateTimeOffset.UtcNow.UtcTicks;
-        var receipt = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LegacyPlaylistMatchAllJobPayload>(
+        var receipt = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMatchAllJobPayload>(
             "playlist.match-all",
             $"playlist-match-all:{session!.TenantId:N}:{generation / TimeSpan.TicksPerMinute}",
             new(generation),
@@ -3041,7 +2950,7 @@ public class PlaylistController : ControllerBase
             HttpContext.RequestAborted);
 
         _spotifyImportSettings.Playlists = playlists.ToList();
-        _helperService.InvalidatePlaylistSummaryCache();
+        await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
         return Ok(new { message = "Playlist configuration updated.", changeVersion = result.ChangeVersion });
     }
 

@@ -1,10 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Models.Admin;
 using allstarr.Services.Common;
-using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
 using allstarr.Filters;
-using System.Text.Json;
+using allstarr.Core.Storage;
 
 namespace allstarr.Controllers;
 
@@ -14,21 +13,21 @@ namespace allstarr.Controllers;
 public class LyricsController : ControllerBase
 {
     private readonly ILogger<LyricsController> _logger;
-    private readonly RedisCacheService _cache;
-    private readonly AdminHelperService _adminHelper;
+    private readonly IApplicationCache _cache;
+    private readonly IManualLyricsMappingStore _mappingStore;
     private readonly SpotifyPlaylistFetcher _playlistFetcher;
     private readonly IServiceProvider _serviceProvider;
 
     public LyricsController(
         ILogger<LyricsController> logger,
-        RedisCacheService cache,
-        AdminHelperService adminHelper,
+        IApplicationCache cache,
+        IManualLyricsMappingStore mappingStore,
         SpotifyPlaylistFetcher playlistFetcher,
         IServiceProvider serviceProvider)
     {
         _logger = logger;
         _cache = cache;
-        _adminHelper = adminHelper;
+        _mappingStore = mappingStore;
         _playlistFetcher = playlistFetcher;
         _serviceProvider = serviceProvider;
     }
@@ -52,12 +51,13 @@ public class LyricsController : ControllerBase
 
         try
         {
-            // Store lyrics mapping in cache (NO EXPIRATION - manual mappings are permanent)
-            var mappingKey = $"lyrics:manual-map:{request.Artist}:{request.Title}";
-            await _cache.SetStringAsync(mappingKey, request.LyricsId.ToString());
-
-            // Also save to file for persistence across restarts
-            await _adminHelper.SaveLyricsMappingToFileAsync(request.Artist, request.Title, request.Album ?? "", request.DurationSeconds, request.LyricsId);
+            await _mappingStore.UpsertAsync(
+                request.Artist,
+                request.Title,
+                request.Album,
+                request.DurationSeconds,
+                request.LyricsId,
+                HttpContext.RequestAborted);
 
             _logger.LogInformation("Manual lyrics mapping saved: {Artist} - {Title} → Lyrics ID {LyricsId}",
                 request.Artist, request.Title, request.LyricsId);
@@ -72,8 +72,15 @@ public class LyricsController : ControllerBase
                     if (lyricsInfo != null && !string.IsNullOrEmpty(lyricsInfo.PlainLyrics))
                     {
                         // Cache the lyrics using the standard cache key
-                        var lyricsCacheKey = $"lyrics:{request.Artist}:{request.Title}:{request.Album ?? ""}:{request.DurationSeconds}";
-                        await _cache.SetAsync(lyricsCacheKey, lyricsInfo.PlainLyrics);
+                        var lyricsCacheKey = CacheKeyBuilder.BuildLyricsKey(
+                            request.Artist,
+                            request.Title,
+                            request.Album ?? string.Empty,
+                            request.DurationSeconds);
+                        await _cache.SetAsync(
+                            lyricsCacheKey,
+                            lyricsInfo.PlainLyrics,
+                            CacheExtensions.LyricsTTL);
                         _logger.LogDebug("✓ Fetched and cached lyrics for {Artist} - {Title}", request.Artist, request.Title);
 
                         return Ok(new
@@ -121,15 +128,16 @@ public class LyricsController : ControllerBase
     {
         try
         {
-            var mappingsFile = "/app/cache/lyrics_mappings.json";
-
-            if (!System.IO.File.Exists(mappingsFile))
+            var records = await _mappingStore.ListAsync(HttpContext.RequestAborted);
+            var mappings = records.Select(record => new LyricsMappingEntry
             {
-                return Ok(new { mappings = new List<object>() });
-            }
-
-            var json = await System.IO.File.ReadAllTextAsync(mappingsFile);
-            var mappings = JsonSerializer.Deserialize<List<LyricsMappingEntry>>(json) ?? new List<LyricsMappingEntry>();
+                Artist = record.Artist,
+                Title = record.Title,
+                Album = record.Album,
+                DurationSeconds = record.DurationSeconds,
+                LyricsId = record.LyricsId,
+                CreatedAt = record.CreatedAt.UtcDateTime,
+            });
 
             return Ok(new { mappings });
         }

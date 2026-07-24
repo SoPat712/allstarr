@@ -36,6 +36,13 @@ public sealed class ProviderDownloadArtifactEntity
     public string RelativePath { get; set; } = string.Empty;
     public string ContentSha256 { get; set; } = string.Empty;
     public long Length { get; set; }
+    public string? MimeType { get; set; }
+    public string? Container { get; set; }
+    public string? Codec { get; set; }
+    public int? Bitrate { get; set; }
+    public int? SampleRate { get; set; }
+    public int? BitDepth { get; set; }
+    public int? Channels { get; set; }
     public ProviderDownloadArtifactState State { get; set; }
     public Guid? ManagedFileId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -74,6 +81,13 @@ public sealed record VerifiedProviderDownloadArtifact(Guid Id, Guid WorkspaceRec
     string ProviderId, Guid? ProviderAccountId, ProviderDownloadArtifactState State, Guid? ManagedFileId)
 {
     public string? LibraryScopeId { get; init; }
+    public string? MimeType { get; init; }
+    public string? Container { get; init; }
+    public string? Codec { get; init; }
+    public int? Bitrate { get; init; }
+    public int? SampleRate { get; init; }
+    public int? BitDepth { get; init; }
+    public int? Channels { get; init; }
 }
 
 public sealed class ProviderDownloadWorkspaceOptions

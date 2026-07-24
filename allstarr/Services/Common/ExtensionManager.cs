@@ -19,7 +19,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace allstarr.Services.Common;
 
-public class ExtensionManager
+public class ExtensionManager : IDisposable
 {
     private const string DisabledMarkerFile = ".disabled";
     private const int MaximumExtensionIdLength = 128;
@@ -36,7 +36,11 @@ public class ExtensionManager
     private readonly ExtensionControlPlaneService? _controlPlane;
 
     private readonly ConcurrentDictionary<string, ExtensionSandbox> _activeExtensions = new();
-    private readonly ConcurrentDictionary<string, string> _packageChecksumCache = new(StringComparer.Ordinal);
+    private readonly Microsoft.Extensions.Caching.Memory.MemoryCache _packageChecksumCache = new(
+        new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions
+        {
+            SizeLimit = 256
+        });
 
     public ExtensionManager(
         IHttpClientFactory httpClientFactory,
@@ -266,7 +270,11 @@ public class ExtensionManager
         string downloadUrl,
         CancellationToken cancellationToken)
     {
-        if (_packageChecksumCache.TryGetValue(downloadUrl, out var cached)) return cached;
+        if (_packageChecksumCache.TryGetValue(downloadUrl, out var cachedValue) &&
+            cachedValue is string cached)
+        {
+            return cached;
+        }
         using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > ExtensionSdkV1.MaximumArchiveBytes)
@@ -285,9 +293,19 @@ public class ExtensionManager
         }
         if (total == 0) throw new InvalidDataException("SpotiFLAC extension package is empty.");
         var checksum = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
-        _packageChecksumCache[downloadUrl] = checksum;
+        Microsoft.Extensions.Caching.Memory.CacheExtensions.Set(
+            _packageChecksumCache,
+            downloadUrl,
+            checksum,
+            new Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30),
+                Size = 1
+            });
         return checksum;
     }
+
+    public void Dispose() => _packageChecksumCache.Dispose();
 
     private static async Task<string> ReadRegistryJsonAsync(
         HttpContent content,

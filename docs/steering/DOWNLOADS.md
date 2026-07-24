@@ -96,13 +96,13 @@ Do not let client parameters silently raise provider quality above the configure
 `LocalLibraryService` owns:
 
 - parsing external item IDs
-- `.mappings.json` file state
-- external-provider ID to local file-path lookups
+- external-provider ID to local file-path lookups through `IDownloadedSongMappingStore`
 - Subsonic scan triggers and status checks
 
 If a feature changes file placement or external ID rules, update `LocalLibraryService` together with the provider download service.
 
-During the overhaul, do not let `.mappings.json` or a cache entry become the only proof that a file is safe to reuse or remove. Final placement state needs a durable managed-file record; a mapping can point to it but cannot authorize deletion by itself.
+Downloaded-song lookups are durable PostgreSQL records. They permit reuse of an existing file but do not
+authorize deletion. Final placement and deletion authority remain in the managed-file ownership model.
 
 ## Download Activity
 

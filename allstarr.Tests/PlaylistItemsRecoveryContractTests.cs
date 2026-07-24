@@ -6,7 +6,7 @@ public sealed class PlaylistItemsRecoveryContractTests
     public void RetainedMatches_RebuildMissingPlayerItemsBeforeSkipping()
     {
         var source = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
+            "allstarr", "Services", "Spotify", "SpotifyPlaylistMatchingAdapter.cs"));
 
         Assert.Contains("EnsurePlaylistItemsCacheAsync", source, StringComparison.Ordinal);
         Assert.Contains("Rebuilding missing player playlist cache", source, StringComparison.Ordinal);

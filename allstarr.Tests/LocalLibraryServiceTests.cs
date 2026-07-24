@@ -1,4 +1,5 @@
 using allstarr.Services.Local;
+using allstarr.Core.Downloads;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Download;
@@ -49,7 +50,12 @@ public class LocalLibraryServiceTests : IDisposable
         var subsonicSettings = Options.Create(new SubsonicSettings { Url = "http://localhost:4533" });
         var mockLogger = new Mock<ILogger<LocalLibraryService>>();
 
-        _service = new LocalLibraryService(configuration, _mockHttpClientFactory.Object, subsonicSettings, mockLogger.Object);
+        _service = new LocalLibraryService(
+            configuration,
+            _mockHttpClientFactory.Object,
+            subsonicSettings,
+            new TestMemoryDownloadedSongMappingStore(),
+            mockLogger.Object);
     }
 
     public void Dispose()
@@ -246,5 +252,34 @@ public class LocalLibraryServiceTests : IDisposable
         Assert.Equal(expectedProvider, provider);
         Assert.Equal(expectedType, type);
         Assert.Equal(expectedExternalId, externalId);
+    }
+
+    private sealed class TestMemoryDownloadedSongMappingStore : IDownloadedSongMappingStore
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DownloadedSongMappingEntity> _items = new();
+
+        public Task<DownloadedSongMappingEntity?> FindAsync(string providerId, string externalId, CancellationToken cancellationToken = default)
+        {
+            var key = $"{providerId}:{externalId}";
+            _items.TryGetValue(key, out var mapping);
+            return Task.FromResult(mapping);
+        }
+
+        public Task UpsertAsync(DownloadedSongMappingEntity mapping, CancellationToken cancellationToken = default)
+        {
+            var key = $"{mapping.ProviderId}:{mapping.ExternalId}";
+            _items[key] = mapping;
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAsync(Guid id, long revision, CancellationToken cancellationToken = default)
+        {
+            var target = _items.FirstOrDefault(kvp => kvp.Value.Id == id);
+            if (target.Key != null)
+            {
+                _items.TryRemove(target.Key, out _);
+            }
+            return Task.CompletedTask;
+        }
     }
 }

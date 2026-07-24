@@ -58,12 +58,16 @@ public sealed partial class ProviderAccountsController : ControllerBase
         var secrets = await context.SecretReferences.AsNoTracking()
             .Where(item => secretIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var ownerIds = accounts.Where(item => item.OwnerUserId.HasValue)
-            .Select(item => item.OwnerUserId!.Value).Distinct().ToArray();
-        var owners = ownerIds.Length == 0
+        var userIds = accounts
+            .SelectMany(item => new[] { item.OwnerUserId, item.CreatedByUserId })
+            .Where(item => item.HasValue)
+            .Select(item => item!.Value)
+            .Distinct()
+            .ToArray();
+        var users = userIds.Length == 0
             ? new Dictionary<Guid, string>()
             : await context.Users.AsNoTracking()
-                .Where(item => ownerIds.Contains(item.Id))
+                .Where(item => userIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
         return Ok(new
         {
@@ -74,7 +78,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 secrets.TryGetValue(account.SecretReferenceId.Value, out var secret)
                     ? secret
                     : null,
-                account.OwnerUserId.HasValue ? owners.GetValueOrDefault(account.OwnerUserId.Value) : null))
+                account.OwnerUserId.HasValue ? users.GetValueOrDefault(account.OwnerUserId.Value) : null,
+                account.CreatedByUserId.HasValue ? users.GetValueOrDefault(account.CreatedByUserId.Value) : null))
         });
     }
 
@@ -115,6 +120,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             Id = Guid.CreateVersion7(),
             TenantId = normalized.TenantId,
             OwnerUserId = normalized.OwnerUserId,
+            CreatedByUserId = session.AllstarrUserId,
             ProviderId = normalized.ProviderId,
             DisplayName = normalized.DisplayName,
             Scope = normalized.Scope,
@@ -172,7 +178,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
                             ActiveVersion = storedSecret.ActiveVersion,
                             UpdatedAt = storedSecret.UpdatedAt,
                             RevokedAt = storedSecret.Revoked ? storedSecret.UpdatedAt : null
-                        }));
+                        },
+                    normalized.OwnerUserId == session.AllstarrUserId ? session.UserName : null,
+                    session.UserName));
         }
         catch
         {
@@ -593,15 +601,19 @@ public sealed partial class ProviderAccountsController : ControllerBase
     private static object AccountResponse(
         ProviderAccountRecord account,
         SecretReferenceRecord? secret,
-        string? ownerDisplayName = null) => new
+        string? ownerDisplayName = null,
+        string? creatorDisplayName = null) => new
         {
             account.Id,
             account.ProviderId,
             displayName = FriendlyDisplayName(account),
+            sourceDisplayName = SourceDisplayName(account, creatorDisplayName),
             scope = account.Scope.ToString(),
             account.TenantId,
             account.OwnerUserId,
             ownerDisplayName,
+            account.CreatedByUserId,
+            creatorDisplayName,
             account.LibraryScopeId,
             account.Enabled,
             account.Revision,
@@ -615,6 +627,14 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.CreatedAt,
             account.UpdatedAt
         };
+
+    private static string SourceDisplayName(ProviderAccountRecord account, string? creatorDisplayName)
+    {
+        var name = FriendlyDisplayName(account);
+        return string.IsNullOrWhiteSpace(creatorDisplayName)
+            ? name
+            : $"{name} · {creatorDisplayName}";
+    }
 
     private static string FriendlyDisplayName(ProviderAccountRecord account)
     {

@@ -4,29 +4,22 @@
 
 ## Overview
 
-Caching in Allstarr is a layered runtime contract:
+Caching in Allstarr is a fail-open layered runtime contract:
 
-- Valkey is the primary runtime cache in the standard deployment. The existing services use its Redis-compatible
-  protocol and retain `Redis` in several type and configuration names.
-- `/app/cache` holds cold-start recovery files, legacy compatibility mapping files, and a few admin artifacts.
+- `BoundedHotApplicationCache` keeps at most 16 MiB of recent small writes in process.
+- `DatabaseApplicationCache` stores bounded disposable string/JSON entries in PostgreSQL.
+- `FileMediaApplicationCache` stores bounded artwork and media payloads under `/app/cache/media`.
 - `CacheKeyBuilder` and `CacheExtensions` centralize cache naming and TTL policy.
 
-The code is intentionally fail-open when Valkey is unavailable. Features should degrade, not crash. Valkey and
-`/app/cache` are not the durable owner of identities, provider accounts, jobs, outbox work, health rollups, or
-backup records.
+No cache tier owns identities, accounts, mappings, playlist order, jobs, events, or user decisions.
 
 ## Core Components
 
-### `RedisCacheService`
+### `IApplicationCache`
 
-`RedisCacheService` is the entry point for cache reads and writes.
-
-- Connects once at startup if Redis is enabled.
-- Retries one `SET` after reconnect on timeout or connection failure.
-- Returns `null` or `false` when Redis is disabled or unavailable.
-- Serializes complex values as JSON.
-
-Do not hardcode direct `StackExchange.Redis` usage in feature code unless there is a very strong reason.
+Feature code depends only on `IApplicationCache`. The production facade routes eligible metadata through the
+bounded RAM and PostgreSQL tiers and routes binary media families to bounded disk. Cache failures return a miss
+rather than changing durable application behavior.
 
 ### `CacheKeyBuilder`
 
@@ -71,14 +64,23 @@ Important locations:
 - `/app/cache/spotify`: playlist item snapshots and matched-track snapshots
 - `/app/cache/mappings`: manual playlist mapping files
 - `/app/cache/lyrics_mappings.json`: manual lyrics ID mappings
-- `/app/cache/lyrics`: cached lyrics payloads
-- `/app/cache/genres`: genre enrichment cache files
-- `/app/cache/admin_playlists_summary.json`: short-lived admin summary cache
+- `/app/cache/media`: bounded binary artwork and media payloads
 
 ### Warmers and Persistence
 
-- `CacheWarmingService` loads file-backed artifacts into Redis on startup.
-- `RedisPersistenceService` currently relies mostly on Redis native persistence and only maintains a snapshot folder placeholder.
+- `CacheWarmingService` imports only explicitly retained compatibility playlist and manual-mapping files.
+- Reconstructable genre and fetched-lyrics entries use `IApplicationCache` directly and are not warmed from files.
+- The admin playlist summary is a five-minute `IApplicationCache` entry, not a private file.
+- Jellyfin and external playback metadata use shared short-lived metadata keys; Jellyfin
+  playback artwork routes through the bounded media tier rather than process dictionaries.
+- Jellyfin endpoint-policy item classification uses a five-minute shared entry; cache loss
+  re-queries Jellyfin and never bypasses the music-only policy.
+- Playback callback deduplication uses hashed eight-second shared-cache keys. Durable
+  playback recording remains the correctness boundary; cache loss may duplicate intake
+  work but cannot lose an accepted event.
+- Spotify Pathfinder playlist artwork descriptors are shared for 30 minutes by stable
+  playlist identity and source revision, so Add playlist discovery does not repeat
+  account-bound GraphQL artwork resolution.
 
 The fresh overhaul baseline does not backfill cache, favorite, environment, mapping, or version-state files into
 durable storage on startup. Compatibility services may still read these formats for explicitly retained legacy
@@ -108,5 +110,5 @@ are never the durable authority for those features.
 
 - Use `CacheKeyBuilder`; do not invent ad hoc keys inline.
 - Use `CacheExtensions` or existing feature TTL flows instead of embedding raw `TimeSpan` values everywhere.
-- Keep Valkey-disabled behavior safe. Cache misses must not break core playback or proxy flows.
+- Keep cache-loss behavior safe. Cache misses must not break core playback or proxy flows.
 - If a feature writes persistent runtime files under `/app/cache`, document the format and make sure `CacheWarmingService` either understands it or intentionally ignores it.

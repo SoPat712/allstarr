@@ -16,14 +16,14 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly LyricsOrchestrator _lyricsOrchestrator;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly SpotifyImportSettings _spotifySettings;
     private readonly OdesliService _odesliService;
     private readonly ILogger<KeptLyricsSidecarService> _logger;
 
     public KeptLyricsSidecarService(
         LyricsOrchestrator lyricsOrchestrator,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IOptions<SpotifyImportSettings> spotifySettings,
         OdesliService odesliService,
         ILogger<KeptLyricsSidecarService> logger)

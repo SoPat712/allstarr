@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using allstarr.Models.Settings;
@@ -16,18 +15,17 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private readonly HttpClient _httpClient;
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinPlaybackMetadataResolver> _logger;
-    private readonly ConcurrentDictionary<string, MetadataCacheEntry> _metadataCache =
-        new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, ArtworkCacheEntry> _artworkCache =
-        new(StringComparer.Ordinal);
+    private readonly IApplicationCache _cache;
 
     public JellyfinPlaybackMetadataResolver(
         IHttpClientFactory httpClientFactory,
         IOptions<JellyfinSettings> settings,
+        IApplicationCache cache,
         ILogger<JellyfinPlaybackMetadataResolver> logger)
     {
         _httpClient = httpClientFactory.CreateClient(JellyfinProxyService.HttpClientName);
         _settings = settings.Value;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -42,10 +40,9 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             return null;
         }
 
-        if (_metadataCache.TryGetValue(itemId, out var cached) && cached.ExpiresAtUtc > DateTime.UtcNow)
-        {
-            return cached.Metadata;
-        }
+        var cacheKey = CacheKeyBuilder.BuildPlaybackMetadataKey("jellyfin", itemId);
+        var cached = await _cache.GetAsync<MetadataCacheEntry>(cacheKey);
+        if (cached != null) return cached.Metadata;
 
         PlaybackTrackMetadata? metadata = null;
         try
@@ -75,9 +72,10 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             _logger.LogDebug(ex, "Unable to resolve Jellyfin playback metadata for item {ItemId}", itemId);
         }
 
-        _metadataCache[itemId] = new MetadataCacheEntry(
-            metadata,
-            DateTime.UtcNow + (metadata == null ? FailureCacheDuration : MetadataCacheDuration));
+        await _cache.SetAsync(
+            cacheKey,
+            new MetadataCacheEntry(metadata),
+            metadata == null ? FailureCacheDuration : MetadataCacheDuration);
         return metadata;
     }
 
@@ -90,10 +88,9 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             return null;
         }
 
-        if (_artworkCache.TryGetValue(itemId, out var cached) && cached.ExpiresAtUtc > DateTime.UtcNow)
-        {
-            return cached.Artwork;
-        }
+        var cacheKey = CacheKeyBuilder.BuildPlaybackArtworkKey("jellyfin", itemId);
+        var cached = await _cache.GetAsync<ArtworkCacheEntry>(cacheKey);
+        if (cached != null) return cached.Artwork;
 
         PlaybackArtwork? artwork = null;
         try
@@ -123,9 +120,10 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             _logger.LogDebug(ex, "Unable to resolve Jellyfin playback artwork for item {ItemId}", itemId);
         }
 
-        _artworkCache[itemId] = new ArtworkCacheEntry(
-            artwork,
-            DateTime.UtcNow + (artwork == null ? FailureCacheDuration : MetadataCacheDuration));
+        await _cache.SetAsync(
+            cacheKey,
+            new ArtworkCacheEntry(artwork),
+            artwork == null ? FailureCacheDuration : MetadataCacheDuration);
         return artwork;
     }
 
@@ -209,7 +207,7 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
-    private sealed record MetadataCacheEntry(PlaybackTrackMetadata? Metadata, DateTime ExpiresAtUtc);
+    private sealed record MetadataCacheEntry(PlaybackTrackMetadata? Metadata);
 
-    private sealed record ArtworkCacheEntry(PlaybackArtwork? Artwork, DateTime ExpiresAtUtc);
+    private sealed record ArtworkCacheEntry(PlaybackArtwork? Artwork);
 }

@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace allstarr.Services.Common;
 
 /// <summary>
@@ -6,6 +9,33 @@ namespace allstarr.Services.Common;
 /// </summary>
 public static class CacheKeyBuilder
 {
+    public static string BuildAdminPlaylistSummaryKey() => "admin:playlists:summary:v6";
+
+    public static string BuildPlaybackMetadataKey(string provider, string itemId) =>
+        $"playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
+
+    public static string BuildPlaybackArtworkKey(string provider, string itemId) =>
+        $"artwork:playback:{Normalize(provider)}:{Normalize(itemId)}";
+
+    public static string BuildJellyfinItemTypeKey(string itemId) =>
+        $"jellyfin:item-type:{Normalize(itemId)}";
+
+    public static string BuildPlaybackSignalDedupeKey(
+        string signalType,
+        string deviceId,
+        string itemId)
+    {
+        var identity = $"{Normalize(signalType)}\u001f{Normalize(deviceId)}\u001f{Normalize(itemId)}";
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
+        return $"playback:signal:dedupe:{Convert.ToHexStringLower(digest)}";
+    }
+
+    public static string BuildProviderPlaylistArtworkDescriptorKey(
+        string provider,
+        string playlistId,
+        string? revision) =>
+        $"playlist:artwork-descriptor:{Normalize(provider)}:{Normalize(playlistId)}:{Normalize(revision)}";
+
     #region Search Keys
 
     public static string BuildSearchKey(string? searchTerm, string? itemTypes, int? limit, int? startIndex)
@@ -36,6 +66,8 @@ public static class CacheKeyBuilder
 
         return $"search:{normalizedTerm}:{normalizedItemTypes}:{limit}:{startIndex}:{normalizedParentId}:{normalizedSortBy}:{normalizedSortOrder}:{normalizedRecursive}:{normalizedUserId}:{normalizedIsFavorite}";
     }
+
+    public static string BuildSearchPattern() => "search:*";
 
     private static string Normalize(string? value)
     {
@@ -112,16 +144,6 @@ public static class CacheKeyBuilder
         return $"spotify:missing:{playlistName}";
     }
 
-    public static string BuildSpotifyManualMappingKey(string playlist, string spotifyId)
-    {
-        return $"spotify:manual-map:{playlist}:{spotifyId}";
-    }
-
-    public static string BuildSpotifyExternalMappingKey(string playlist, string spotifyId)
-    {
-        return $"spotify:external-map:{playlist}:{spotifyId}";
-    }
-
     public static string BuildSpotifyGlobalMappingKey(string spotifyId)
     {
         return $"spotify:global-map:{spotifyId}";
@@ -146,11 +168,6 @@ public static class CacheKeyBuilder
         return $"lyricsplus:{artist}:{title}:{album}:{durationSeconds}";
     }
 
-    public static string BuildLyricsManualMappingKey(string artist, string title)
-    {
-        return $"lyrics:manual-map:{artist}:{title}";
-    }
-
     public static string BuildLyricsByIdKey(int id)
     {
         return $"lyrics:id:{id}";
@@ -165,9 +182,31 @@ public static class CacheKeyBuilder
         return $"playlist:image:{playlistId}";
     }
 
+    public static string BuildPlaylistTrackContextKey(string trackId)
+    {
+        return $"playlist:track-context:{trackId}";
+    }
+
+    public static string BuildJellyfinImageKey(
+        string itemId,
+        string imageType,
+        int? maxWidth,
+        int? maxHeight,
+        string? imageTag)
+    {
+        return $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}:{imageTag}";
+    }
+
+    public static string BuildJellyfinImagePattern(string itemId)
+    {
+        return $"image:{itemId}:*";
+    }
+
+    public static string BuildImagePattern() => "image:*";
+
     /// <summary>
     /// Builds a cache key for external album/song/artist cover art images.
-    /// Images are cached as byte[] in Redis with ProxyImagesTTL (default 14 days).
+    /// Images are cached in the bounded disk-backed media tier.
     /// </summary>
     public static string BuildExternalImageKey(string provider, string type, string externalId)
     {
@@ -223,8 +262,23 @@ public static class CacheKeyBuilder
 
     public static string BuildOdesliUrlToSpotifyKey(string musicUrl)
     {
-        return $"odesli:url-to-spotify:{musicUrl}";
+        return $"odesli:url-to-spotify:v2:{HashOdesliUrl(musicUrl)}";
     }
+
+    public static string BuildOdesliTranslationKey(string sourceUrl, string targetPlatform)
+    {
+        return $"odesli:translate:v2:{HashOdesliUrl(sourceUrl)}:{targetPlatform.ToLowerInvariant()}";
+    }
+
+    public static string BuildSpotifyPlaylistJellyfinSignatureKey(string playlistName)
+    {
+        return $"spotify:playlist:jellyfin-signature:{playlistName}";
+    }
+
+    private static string HashOdesliUrl(string value) =>
+        Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(value)));
 
     #endregion
 }

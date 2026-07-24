@@ -10,24 +10,23 @@ namespace allstarr.Services.Lyrics;
 
 /// <summary>
 /// Background service that prefetches lyrics for all tracks in injected Spotify playlists.
-/// Lyrics are cached in Redis and persisted to disk for fast loading on startup.
+/// Lyrics are cached through the shared bounded application cache.
 /// </summary>
 public class LyricsPrefetchService : BackgroundService
 {
     private readonly SpotifyImportSettings _spotifySettings;
     private readonly LrclibService _lrclibService;
     private readonly SpotifyPlaylistFetcher _playlistFetcher;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<LyricsPrefetchService> _logger;
-    private readonly string _lyricsCacheDir = "/app/cache/lyrics";
     private const int DelayBetweenRequestsMs = 500; // 500ms = 2 requests/second to be respectful
 
     public LyricsPrefetchService(
         IOptions<SpotifyImportSettings> spotifySettings,
         LrclibService lrclibService,
         SpotifyPlaylistFetcher playlistFetcher,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IServiceProvider serviceProvider,
         ILogger<LyricsPrefetchService> logger)
     {
@@ -48,9 +47,6 @@ public class LyricsPrefetchService : BackgroundService
             _logger.LogInformation("Spotify playlist injection is DISABLED, lyrics prefetch will not run");
             return;
         }
-
-        // Ensure cache directory exists
-        Directory.CreateDirectory(_lyricsCacheDir);
 
         // Wait for playlist fetcher to initialize
         await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken);
@@ -228,9 +224,6 @@ public class LyricsPrefetchService : BackgroundService
                     _logger.LogInformation("✓ Fetched lyrics for {Artist} - {Track} (synced: {HasSynced})",
                         track.PrimaryArtist, track.Title, !string.IsNullOrEmpty(lyrics.SyncedLyrics));
 
-                    // Save to file cache
-                    var artistNameForSave = string.Join(", ", track.Artists);
-                    await SaveLyricsToFileAsync(artistNameForSave, track.Title, track.Album, track.DurationMs / 1000, lyrics);
                 }
                 else
                 {
@@ -254,108 +247,16 @@ public class LyricsPrefetchService : BackgroundService
         return (fetched, cached, missing);
     }
 
-    private async Task SaveLyricsToFileAsync(string artist, string title, string album, int duration, LyricsInfo lyrics)
-    {
-        try
-        {
-            var fileName = $"{SanitizeFileName(artist)}_{SanitizeFileName(title)}_{duration}.json";
-            var filePath = Path.Combine(_lyricsCacheDir, fileName);
-
-            var json = JsonSerializer.Serialize(lyrics, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(filePath, json);
-
-            _logger.LogDebug("💾 Saved lyrics to file: {FileName}", fileName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save lyrics to file for {Artist} - {Track}", artist, title);
-        }
-    }
-
     /// <summary>
-    /// Loads lyrics from file cache into Redis on startup
-    /// </summary>
-    public async Task WarmCacheFromFilesAsync()
-    {
-        try
-        {
-            if (!Directory.Exists(_lyricsCacheDir))
-            {
-                _logger.LogWarning("Lyrics cache directory does not exist, skipping cache warming");
-                return;
-            }
-
-            var files = Directory.GetFiles(_lyricsCacheDir, "*.json");
-            if (files.Length == 0)
-            {
-                _logger.LogInformation("No lyrics cache files found");
-                return;
-            }
-
-            _logger.LogDebug("🔥 Warming lyrics cache from {Count} files...", files.Length);
-
-            var loaded = 0;
-            foreach (var file in files)
-            {
-                try
-                {
-                    var json = await File.ReadAllTextAsync(file);
-                    var lyrics = JsonSerializer.Deserialize<LyricsInfo>(json);
-
-                    if (lyrics != null)
-                    {
-                        var cacheKey = CacheKeyBuilder.BuildLyricsKey(
-                            lyrics.ArtistName,
-                            lyrics.TrackName,
-                            lyrics.AlbumName,
-                            lyrics.Duration);
-                        await _cache.SetStringAsync(cacheKey, json, CacheExtensions.LyricsTTL);
-                        loaded++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to load lyrics from file {File}", Path.GetFileName(file));
-                }
-            }
-
-            _logger.LogDebug("✅ Warmed {Count} lyrics from file cache", loaded);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error warming lyrics cache from files");
-        }
-    }
-
-    private static string SanitizeFileName(string fileName)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        return string.Join("_", fileName.Split(invalid, StringSplitOptions.RemoveEmptyEntries))
-            .Replace(" ", "_")
-            .ToLowerInvariant();
-    }
-
-    /// <summary>
-    /// Removes cached LRCLib lyrics from both Redis and file cache.
+    /// Removes cached LRCLib lyrics from the shared application cache.
     /// Used when a track has local Jellyfin lyrics, making the LRCLib cache obsolete.
     /// </summary>
     private async Task RemoveCachedLyricsAsync(string artist, string title, string album, int duration)
     {
         try
         {
-            // Remove from Redis cache
             var cacheKey = CacheKeyBuilder.BuildLyricsKey(artist, title, album, duration);
             await _cache.DeleteAsync(cacheKey);
-
-            // Remove from file cache
-            var fileName = $"{SanitizeFileName(artist)}_{SanitizeFileName(title)}_{duration}.json";
-            var filePath = Path.Combine(_lyricsCacheDir, fileName);
-
-            if (File.Exists(filePath))
-            {
-                File.Delete(filePath);
-                _logger.LogDebug("🗑️  Removed cached LRCLib lyrics file: {FileName}", fileName);
-            }
         }
         catch (Exception ex)
         {

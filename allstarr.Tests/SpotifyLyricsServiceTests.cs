@@ -31,9 +31,7 @@ public sealed class SpotifyLyricsServiceTests
             SessionCookie = string.Empty,
             LyricsApiUrl = "http://lyrics-sidecar:8080"
         });
-        var cache = new RedisCacheService(
-            Options.Create(new RedisSettings { Enabled = false }),
-            NullLogger<RedisCacheService>.Instance);
+        var cache = new DisabledApplicationCache();
         var service = new SpotifyLyricsService(
             NullLogger<SpotifyLyricsService>.Instance,
             settings,

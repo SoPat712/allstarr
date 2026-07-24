@@ -17,7 +17,7 @@ public class MusicBrainzService
     private readonly HttpClient _httpClient;
     private readonly MusicBrainzSettings _settings;
     private readonly CacheSettings _cacheSettings;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly ILogger<MusicBrainzService> _logger;
     private DateTime _lastRequestTime = DateTime.MinValue;
     private readonly SemaphoreSlim _rateLimitSemaphore = new(1, 1);
@@ -26,7 +26,7 @@ public class MusicBrainzService
         IHttpClientFactory httpClientFactory,
         IOptions<MusicBrainzSettings> settings,
         IOptions<CacheSettings> cacheSettings,
-        RedisCacheService cache,
+        IApplicationCache cache,
         ILogger<MusicBrainzService> logger)
     {
         _httpClient = httpClientFactory.CreateClient();

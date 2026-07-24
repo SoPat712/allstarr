@@ -10,6 +10,7 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -509,6 +510,7 @@ public sealed class PostgresStorageIntegrationTests
         Assert.True(await RelationExists(context, "canonical_recordings"));
         Assert.True(await RelationExists(context, "provider_track_identities"));
         Assert.True(await RelationExists(context, "tenant_runtime_settings"));
+        Assert.True(await ColumnExists(context, "application_cache_entries", "Category"));
         Assert.False(context.Database.HasPendingModelChanges());
     }
 
@@ -637,6 +639,102 @@ public sealed class PostgresStorageIntegrationTests
 
     [Fact]
     [Trait("Category", "Postgres")]
+    public async Task NativePostgresCacheLoss_PreservesDurableWorkAndProgressAcrossCacheRestart()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return;
+        }
+
+        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
+            .UseNpgsql(connectionString)
+            .Options;
+        var factory = new TestDbContextFactory(dbOptions);
+        await using (var reset = await factory.CreateDbContextAsync())
+        {
+            await reset.Database.ExecuteSqlRawAsync(
+                "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
+            await reset.Database.MigrateAsync();
+        }
+
+        var now = new DateTimeOffset(2026, 7, 24, 17, 0, 0, TimeSpan.Zero);
+        var clock = new FixedClock(now);
+        var tenantId = Guid.CreateVersion7();
+        var userId = Guid.CreateVersion7();
+        await using (var seed = await factory.CreateDbContextAsync())
+        {
+            seed.Tenants.Add(new TenantRecord
+            {
+                Id = tenantId,
+                Slug = "cache-loss",
+                Name = "Cache loss",
+                CreatedAt = now
+            });
+            seed.Users.Add(new PlatformUserRecord
+            {
+                Id = userId,
+                TenantId = tenantId,
+                DisplayName = "Cache owner",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var jobOptions = new DurableJobOptions();
+        var queue = new DurableJobQueue(
+            factory,
+            jobOptions,
+            new JobPayloadPolicy(jobOptions),
+            clock);
+        var enqueued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
+            "playlist.match-all",
+            "postgres-cache-loss",
+            new { generation = 1 },
+            tenantId,
+            userId));
+        var claim = await queue.ClaimNextAsync("postgres-cache-worker");
+        Assert.NotNull(claim);
+        Assert.True(await queue.ReportProgressAsync(
+            claim!,
+            new DurableJobProgressUpdate(
+                "provider-started",
+                "Matching Spotify playlists.",
+                0,
+                1,
+                "spotify")));
+
+        var firstCache = new DatabaseApplicationCache(
+            factory,
+            clock,
+            NullLogger<DatabaseApplicationCache>.Instance);
+        Assert.True(await firstCache.SetStringAsync(
+            "search:cache-loss",
+            "disposable",
+            TimeSpan.FromHours(1)));
+        Assert.Equal("disposable", await firstCache.GetStringAsync("search:cache-loss"));
+
+        await using (var purge = await factory.CreateDbContextAsync())
+        {
+            await purge.ApplicationCacheEntries.ExecuteDeleteAsync();
+        }
+
+        var restartedCache = new DatabaseApplicationCache(
+            factory,
+            clock,
+            NullLogger<DatabaseApplicationCache>.Instance);
+        Assert.Null(await restartedCache.GetStringAsync("search:cache-loss"));
+        await using var verification = await factory.CreateDbContextAsync();
+        Assert.True(await verification.Jobs.AnyAsync(item => item.Id == enqueued.JobId));
+        Assert.True(await verification.AuditEvents.AnyAsync(item =>
+            item.Category == "job-progress" &&
+            item.CorrelationId == claim!.CorrelationId));
+    }
+
+    [Fact]
+    [Trait("Category", "Postgres")]
     public async Task NativePostgresBackup_VerifiesAndRestoresIntoIsolatedDatabase()
     {
         var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
@@ -750,6 +848,11 @@ public sealed class PostgresStorageIntegrationTests
 
         return (string)(await command.ExecuteScalarAsync()
                         ?? throw new InvalidOperationException("Column type was not found."));
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; } = now;
     }
 
     private static async Task<bool> RelationExists(

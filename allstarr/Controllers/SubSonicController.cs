@@ -41,7 +41,7 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicScrobbleProtocolAdapter _scrobbleProtocolAdapter;
     private readonly SubsonicVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly PlaylistSyncService? _playlistSyncService;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
@@ -62,7 +62,7 @@ public class SubsonicController : ControllerBase
         SubsonicSearchProtocolAdapter searchProtocolAdapter,
         SubsonicScrobbleProtocolAdapter scrobbleProtocolAdapter,
         SubsonicVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
-        RedisCacheService cache,
+        IApplicationCache cache,
         ILogger<SubsonicController> logger,
         PlaylistSyncService? playlistSyncService = null,
         IFavoriteActionPipeline? favoriteActions = null,
@@ -560,7 +560,7 @@ public class SubsonicController : ControllerBase
                         if (!string.IsNullOrEmpty(track.ExternalId))
                         {
                             var trackId = $"ext-{provider}-{track.ExternalId}";
-                            _playlistSyncService.AddTrackToPlaylistCache(trackId, id);
+                            await _playlistSyncService.AddTrackToPlaylistCacheAsync(trackId, id);
                         }
                     }
 
@@ -760,7 +760,7 @@ public class SubsonicController : ControllerBase
             try
             {
                 // Check cache first (1 hour TTL for playlist images since they can change)
-                var cacheKey = $"playlist:image:{id}";
+                var cacheKey = CacheKeyBuilder.BuildPlaylistImageKey(id);
                 var cachedImage = await _cache.GetAsync<byte[]>(cacheKey);
 
                 if (cachedImage != null)

@@ -1,5 +1,6 @@
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Spotify;
 
@@ -10,13 +11,16 @@ public class SpotifyApiClientFactory
 {
     private readonly ILoggerFactory _loggerFactory;
     private readonly SpotifyApiSettings _baseSettings;
+    private readonly IApplicationCache _cache;
 
     public SpotifyApiClientFactory(
         ILoggerFactory loggerFactory,
-        IOptions<SpotifyApiSettings> settings)
+        IOptions<SpotifyApiSettings> settings,
+        IApplicationCache cache)
     {
         _loggerFactory = loggerFactory;
         _baseSettings = settings.Value;
+        _cache = cache;
     }
 
     public SpotifyApiClient Create(string sessionCookie)
@@ -34,6 +38,7 @@ public class SpotifyApiClientFactory
 
         return new SpotifyApiClient(
             _loggerFactory.CreateLogger<SpotifyApiClient>(),
-            Options.Create(scopedSettings));
+            Options.Create(scopedSettings),
+            _cache);
     }
 }

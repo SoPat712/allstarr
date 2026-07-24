@@ -9,8 +9,9 @@ namespace allstarr.Services.Scrobbling;
 /// Orchestrates scrobbling across multiple services (Last.fm, ListenBrainz, etc.).
 /// Manages playback sessions and determines when to scrobble based on listening rules.
 /// </summary>
-public class ScrobblingOrchestrator
+public class ScrobblingOrchestrator : IDisposable
 {
+    private const int MaximumSessionCount = 1_024;
     private readonly IEnumerable<IScrobblingService> _scrobblingServices;
     private readonly ScrobblingSettings _settings;
     private readonly ILogger<ScrobblingOrchestrator> _logger;
@@ -74,7 +75,7 @@ public class ScrobblingOrchestrator
             LastActivity = DateTime.UtcNow
         };
 
-        _sessions[sessionId] = session;
+        StoreSession(session);
 
         _logger.LogDebug("🎵 Playback started: {Artist} - {Track} (session: {SessionId})",
             track.Artist, track.Title, sessionId);
@@ -112,7 +113,7 @@ public class ScrobblingOrchestrator
                 LastActivity = DateTime.UtcNow
             };
 
-            _sessions[sessionId] = session;
+            StoreSession(session);
 
             _logger.LogInformation(
                 "Recovered missing scrobble session from progress: {Artist} - {Track} (position: {Position}s)",
@@ -338,6 +339,24 @@ public class ScrobblingOrchestrator
             .FirstOrDefault();
     }
 
+    private void StoreSession(PlaybackSession session)
+    {
+        _sessions[session.SessionId] = session;
+        var overflow = _sessions.Count - MaximumSessionCount;
+        if (overflow <= 0)
+        {
+            return;
+        }
+
+        foreach (var stale in _sessions
+                     .OrderBy(item => item.Value.LastActivity)
+                     .Take(overflow)
+                     .ToArray())
+        {
+            _sessions.TryRemove(stale.Key, out _);
+        }
+    }
+
     /// <summary>
     /// Cleans up stale sessions (inactive for more than 10 minutes).
     /// </summary>
@@ -389,4 +408,6 @@ public class ScrobblingOrchestrator
             Sessions = sessions.OrderByDescending(s => s.StartTime)
         };
     }
+
+    public void Dispose() => _cleanupTimer.Dispose();
 }

@@ -1,9 +1,9 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Sources;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.Spotify;
 
@@ -12,17 +12,36 @@ namespace allstarr.Core.Providers.Spotify;
 /// Pathfinder queries. Authentication is deliberately supplied by the caller so this
 /// transport can be shared by provider-core and compatibility callers.
 /// </summary>
-public sealed class SpotifyPathfinderPlaylistClient(
-    HttpClient http,
-    ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
+public sealed class SpotifyPathfinderPlaylistClient
 {
     internal const string LibraryOperation = "libraryV3";
     internal const string LibraryQueryHash = "50650f72ea32a99b5b46240bee22fea83024eec302478a9a75cfd05a0814ba99";
     internal const string PlaylistOperation = "fetchPlaylist";
     internal const string PlaylistQueryHash = "19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d";
+    internal static readonly PathfinderOperationDefinition LibraryQuery =
+        new(LibraryOperation, LibraryQueryHash, 1);
+    internal static readonly PathfinderOperationDefinition PlaylistQuery =
+        new(PlaylistOperation, PlaylistQueryHash, 1);
     private const string ProviderId = SpotifyPlaylistCapabilityAdapter.StableProviderId;
     private static readonly Uri Endpoint = new("https://api-partner.spotify.com/pathfinder/v1/query");
-    private readonly ConcurrentDictionary<string, ArtworkCacheEntry> _artwork = new(StringComparer.Ordinal);
+    private readonly HttpClient http;
+    private readonly IApplicationCache? cache;
+    private readonly ILogger<SpotifyPathfinderPlaylistClient>? logger;
+
+    public SpotifyPathfinderPlaylistClient(
+        HttpClient http,
+        ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
+        : this(http, null, logger) { }
+
+    public SpotifyPathfinderPlaylistClient(
+        HttpClient http,
+        IApplicationCache? cache,
+        ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
+    {
+        this.http = http;
+        this.cache = cache;
+        this.logger = logger;
+    }
 
     public async Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         string token,
@@ -39,11 +58,16 @@ public sealed class SpotifyPathfinderPlaylistClient(
             filters = new[] { "Playlists" },
             order = (string?)null,
             textFilter = query?.Trim() ?? "",
-            features = new[] { "LIKED_SONGS", "YOUR_EPISODES" },
+            features = new[] { "LIKED_SONGS", "YOUR_EPISODES_V2", "PRERELEASES", "EVENTS" },
             offset,
-            limit = page.Limit
+            limit = page.Limit,
+            flatten = true,
+            expandedFolders = System.Array.Empty<string>(),
+            folderUri = (string?)null,
+            includeFoldersWhenFlattening = false,
+            withCuration = true
         };
-        var response = await QueryAsync(token, LibraryOperation, LibraryQueryHash, variables, cancellationToken);
+        var response = await QueryAsync(token, LibraryQuery, variables, cancellationToken);
         if (!response.Outcome.IsSuccess)
             return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(response.Outcome.Error!);
 
@@ -63,20 +87,29 @@ public sealed class SpotifyPathfinderPlaylistClient(
                         ? PropertyNames(data)
                         : "none");
                 return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
-                    new ProviderError(ProviderErrorKind.CapabilityUnavailable));
+                    ProviderError.CompatibilityContractChanged());
             }
 
             var rawItems = Array(library, "items");
-            var summaries = new List<ProviderPlaylistSummary>(rawItems.Count);
-            for (var index = 0; index < rawItems.Count; index++)
+            var playlistEntries = new List<(JsonElement Playlist, string Id)>(rawItems.Count);
+            foreach (var rawItem in rawItems)
+                CollectPlaylistEntries(rawItem, playlistEntries);
+
+            var summaries = new List<ProviderPlaylistSummary>(playlistEntries.Count);
+            var seenIds = new HashSet<string>(StringComparer.Ordinal);
+            for (var index = 0; index < playlistEntries.Count; index++)
             {
-                var entry = rawItems[index];
-                if (!TryPlaylistEntry(entry, out var wrapper, out var playlist, out var playlistId))
+                var (playlist, playlistId) = playlistEntries[index];
+                if (!seenIds.Add(playlistId))
                     continue;
                 try
                 {
                     if (MapSummary(playlist, playlistId) is { } summary)
+                    {
                         summaries.Add(summary);
+                        if (ArtworkUri(playlist) is { } artwork)
+                            await CacheArtworkAsync(playlistId, summary.SourceRevision, artwork);
+                    }
                 }
                 catch (Exception exception) when (exception is ArgumentException or
                                                  InvalidOperationException or
@@ -86,7 +119,7 @@ public sealed class SpotifyPathfinderPlaylistClient(
                         exception,
                         "Spotify Pathfinder operation {Operation} skipped incompatible playlist item {ItemIndex}",
                         LibraryOperation,
-                        offset + index);
+                        index);
                 }
             }
 
@@ -141,8 +174,7 @@ public sealed class SpotifyPathfinderPlaylistClient(
         };
         var response = await QueryAsync(
             token,
-            PlaylistOperation,
-            PlaylistQueryHash,
+            PlaylistQuery,
             variables,
             cancellationToken);
         if (!response.Outcome.IsSuccess)
@@ -165,6 +197,8 @@ public sealed class SpotifyPathfinderPlaylistClient(
                 !request.ExpectedRevision.Equals(summary.SourceRevision, StringComparison.Ordinal))
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(
                     new ProviderError(ProviderErrorKind.PermanentFailure));
+            if (ArtworkUri(playlist) is { } artwork)
+                await CacheArtworkAsync(request.PlaylistId.Value, summary.SourceRevision, artwork);
 
             var content = TryPath(playlist, out var contentValue, "content")
                 ? contentValue
@@ -207,14 +241,13 @@ public sealed class SpotifyPathfinderPlaylistClient(
         var playlistId = artwork.ResourceId;
         if (playlistId == null)
             return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
-        if (TryCachedArtwork(playlistId.Value, artwork.Revision, out var cached))
+        if (await TryCachedArtworkAsync(playlistId.Value, artwork.Revision) is { } cached)
             return ProviderOutcome<Uri>.Success(cached);
 
         var variables = new { uri = $"spotify:playlist:{playlistId.Value}", offset = 0, limit = 1 };
         var response = await QueryAsync(
             token,
-            PlaylistOperation,
-            PlaylistQueryHash,
+            PlaylistQuery,
             variables,
             cancellationToken);
         if (!response.Outcome.IsSuccess)
@@ -227,7 +260,7 @@ public sealed class SpotifyPathfinderPlaylistClient(
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2") ||
                 ArtworkUri(playlist) is not { } resolvedArtwork)
                 return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
-            CacheArtwork(playlistId.Value, artwork.Revision, resolvedArtwork);
+            await CacheArtworkAsync(playlistId.Value, artwork.Revision, resolvedArtwork);
             return ProviderOutcome<Uri>.Success(resolvedArtwork);
         }
         catch (JsonException)
@@ -238,18 +271,17 @@ public sealed class SpotifyPathfinderPlaylistClient(
 
     private async Task<PathfinderResponse> QueryAsync(
         string token,
-        string operation,
-        string hash,
+        PathfinderOperationDefinition operation,
         object variables,
         CancellationToken cancellationToken)
     {
         var extensions = JsonSerializer.Serialize(new
         {
-            persistedQuery = new { version = 1, sha256Hash = hash }
+            persistedQuery = new { version = operation.Version, sha256Hash = operation.Sha256Hash }
         });
         var parameters = new Dictionary<string, string>
         {
-            ["operationName"] = operation,
+            ["operationName"] = operation.OperationName,
             ["variables"] = JsonSerializer.Serialize(variables),
             ["extensions"] = extensions
         };
@@ -308,9 +340,9 @@ public sealed class SpotifyPathfinderPlaylistClient(
             String(error, "message")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true ||
             (TryPath(error, out var extensions, "extensions") &&
              String(extensions, "code")?.Contains("persisted", StringComparison.OrdinalIgnoreCase) == true));
-        return new ProviderError(staleHash
-            ? ProviderErrorKind.CapabilityUnavailable
-            : ProviderErrorKind.PermanentFailure);
+        return staleHash
+            ? ProviderError.CompatibilityContractChanged()
+            : new ProviderError(ProviderErrorKind.PermanentFailure);
     }
 
     private ProviderPlaylistSummary? MapSummary(JsonElement value, string id)
@@ -341,32 +373,29 @@ public sealed class SpotifyPathfinderPlaylistClient(
             ContractText(Text(value, "description"), 4000),
             new ProviderArtworkReference(resource, revision: revision),
             trackCount);
-        if (ArtworkUri(value) is { } artwork)
-            CacheArtwork(id, revision, artwork);
         return summary;
     }
 
-    private bool TryCachedArtwork(string playlistId, string? revision, out Uri artwork)
+    private async Task<Uri?> TryCachedArtworkAsync(string playlistId, string? revision)
     {
-        var key = ArtworkKey(playlistId, revision);
-        if (_artwork.TryGetValue(key, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow)
-        {
-            artwork = entry.Uri;
-            return true;
-        }
-        _artwork.TryRemove(key, out _);
-        artwork = null!;
-        return false;
+        if (cache == null) return null;
+        var entry = await cache.GetAsync<ArtworkCacheEntry>(
+            CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey(ProviderId, playlistId, revision));
+        return entry != null &&
+               Uri.TryCreate(entry.Uri, UriKind.Absolute, out var artwork) &&
+               artwork.Scheme == Uri.UriSchemeHttps
+            ? artwork
+            : null;
     }
 
-    private void CacheArtwork(string playlistId, string? revision, Uri artwork)
+    private async Task CacheArtworkAsync(string playlistId, string? revision, Uri artwork)
     {
-        _artwork[ArtworkKey(playlistId, revision)] =
-            new ArtworkCacheEntry(artwork, DateTimeOffset.UtcNow.AddMinutes(30));
+        if (cache == null) return;
+        await cache.SetAsync(
+            CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey(ProviderId, playlistId, revision),
+            new ArtworkCacheEntry(artwork.AbsoluteUri),
+            TimeSpan.FromMinutes(30));
     }
-
-    private static string ArtworkKey(string playlistId, string? revision) =>
-        $"{playlistId}\n{revision ?? ""}";
 
     private static string PropertyNames(JsonElement value) =>
         value.ValueKind == JsonValueKind.Object
@@ -448,6 +477,48 @@ public sealed class SpotifyPathfinderPlaylistClient(
         return TryPlaylistId(entry, wrapper, playlist, out id);
     }
 
+    private static void CollectPlaylistEntries(
+        JsonElement value,
+        List<(JsonElement Playlist, string Id)> entries,
+        int depth = 0)
+    {
+        const int maximumDepth = 16;
+        if (depth > maximumDepth)
+            return;
+
+        if (TryPlaylistEntry(value, out _, out var playlist, out var playlistId))
+        {
+            entries.Add((playlist, playlistId));
+            return;
+        }
+
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+                CollectPlaylistEntries(item, entries, depth + 1);
+            return;
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+            return;
+
+        foreach (var childName in LibraryContainerProperties)
+        {
+            if (value.TryGetProperty(childName, out var child))
+                CollectPlaylistEntries(child, entries, depth + 1);
+        }
+    }
+
+    private static readonly string[] LibraryContainerProperties =
+    [
+        "item",
+        "data",
+        "items",
+        "children",
+        "entries",
+        "content"
+    ];
+
     private static bool TryPlaylistId(
         JsonElement entry,
         JsonElement wrapper,
@@ -475,6 +546,8 @@ public sealed class SpotifyPathfinderPlaylistClient(
             return LargestArtwork(sources);
         }
         if (TryPath(value, out sources, "coverArt", "sources"))
+            return LargestArtwork(sources);
+        if (TryPath(value, out sources, "visuals", "avatarImage", "sources"))
             return LargestArtwork(sources);
         return null;
     }
@@ -581,7 +654,9 @@ public sealed class SpotifyPathfinderPlaylistClient(
         if (value.ValueKind == JsonValueKind.String)
             return value.GetString();
         return value.ValueKind == JsonValueKind.Object
-            ? String(value, "text")
+            ? String(value, "text") ??
+              String(value, "transformedLabel") ??
+              String(value, "label")
             : null;
     }
 
@@ -615,5 +690,9 @@ public sealed class SpotifyPathfinderPlaylistClient(
     }
 
     private sealed record PathfinderResponse(ProviderOutcome<byte[]> Outcome, byte[]? Body);
-    private sealed record ArtworkCacheEntry(Uri Uri, DateTimeOffset ExpiresAt);
+    private sealed record ArtworkCacheEntry(string Uri);
+    internal sealed record PathfinderOperationDefinition(
+        string OperationName,
+        string Sha256Hash,
+        int Version);
 }

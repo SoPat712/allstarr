@@ -82,6 +82,7 @@ public sealed class LegacyEnvMigrationException(string code, string message) : E
 public sealed class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
+    private const int MaximumPreviewCount = 64;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -250,7 +251,7 @@ public sealed class LegacyEnvMigrationService
             canApply,
             previewItems,
             accountPreviews);
-        _previews[tokenHash] = state;
+        StorePreview(tokenHash, state);
 
         return new(
             rawToken,
@@ -281,6 +282,7 @@ public sealed class LegacyEnvMigrationService
         CancellationToken cancellationToken = default)
     {
         ValidateActor(actor);
+        PurgeExpired();
         if (!confirmed)
         {
             throw new LegacyEnvMigrationException("confirmation_required", "Set confirmed=true after reviewing the preview.");
@@ -791,6 +793,27 @@ public sealed class LegacyEnvMigrationService
         {
             item.Value.ClearPlaintext();
             _previews.TryRemove(item.Key, out _);
+        }
+    }
+
+    private void StorePreview(string tokenHash, PreviewState state)
+    {
+        _previews[tokenHash] = state;
+        var overflow = _previews.Count - MaximumPreviewCount;
+        if (overflow <= 0)
+        {
+            return;
+        }
+
+        foreach (var item in _previews
+                     .OrderBy(item => item.Value.ExpiresAt)
+                     .Take(overflow)
+                     .ToArray())
+        {
+            if (_previews.TryRemove(item.Key, out var removed))
+            {
+                removed.ClearPlaintext();
+            }
         }
     }
 

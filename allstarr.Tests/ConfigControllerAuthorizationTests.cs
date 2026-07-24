@@ -435,14 +435,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
             Options.Create(new JellyfinSettings()),
             webHostEnvironment.Object);
 
-        var redisLogger = new Mock<ILogger<RedisCacheService>>();
-        var redisCache = new RedisCacheService(
-            Options.Create(new RedisSettings
-            {
-                Enabled = false,
-                ConnectionString = "localhost:6379"
-            }),
-            redisLogger.Object);
+        var redisCache = new DisabledApplicationCache();
         var spotifyCookieLogger = new Mock<ILogger<SpotifySessionCookieService>>();
         var spotifySessionCookieService = new SpotifySessionCookieService(
             Options.Create(new SpotifyApiSettings()),

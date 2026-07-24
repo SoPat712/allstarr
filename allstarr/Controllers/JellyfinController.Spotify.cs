@@ -60,14 +60,15 @@ public partial class JellyfinController
     {
         var directSpotifyMode = _spotifyApiSettings.Enabled && _spotifyPlaylistFetcher != null;
         // Check if Jellyfin playlist has changed (cheap API call)
-        var jellyfinSignatureCacheKey = $"spotify:playlist:jellyfin-signature:{spotifyPlaylistName}";
+        var jellyfinSignatureCacheKey =
+            CacheKeyBuilder.BuildSpotifyPlaylistJellyfinSignatureKey(spotifyPlaylistName);
         var currentJellyfinSignature = await GetJellyfinPlaylistSignatureAsync(playlistId);
         var cachedJellyfinSignature = await _cache.GetAsync<string>(jellyfinSignatureCacheKey);
 
         var jellyfinPlaylistChanged = cachedJellyfinSignature != currentJellyfinSignature;
         var requestNeedsGenreMetadata = RequestIncludesField("Genres");
 
-        // Check Redis cache first for fast serving (only if Jellyfin playlist hasn't changed)
+        // Check the shared cache first when the Jellyfin playlist has not changed.
         var cacheKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(spotifyPlaylistName);
         var cachedItems = await _cache.GetAsync<List<Dictionary<string, object?>>>(cacheKey);
         NormalizeSyntheticPlaylistItems(cachedItems);
@@ -76,7 +77,7 @@ public partial class JellyfinController
             InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(cachedItems))
         {
             _logger.LogWarning(
-                "Ignoring Redis playlist cache for {Playlist}: found synthesized local items that should have remained raw Jellyfin objects",
+                "Ignoring shared playlist cache for {Playlist}: found synthesized local items that should have remained raw Jellyfin objects",
                 spotifyPlaylistName);
             await _cache.DeleteAsync(cacheKey);
             cachedItems = null;
@@ -86,7 +87,7 @@ public partial class JellyfinController
             InjectedPlaylistItemHelper.ContainsLegacyExternalSourceLabels(cachedItems))
         {
             _logger.LogInformation(
-                "Ignoring Redis playlist cache for {Playlist}: external items still use legacy source labels",
+                "Ignoring shared playlist cache for {Playlist}: external items still use legacy source labels",
                 spotifyPlaylistName);
             await _cache.DeleteAsync(cacheKey);
             cachedItems = null;
@@ -96,7 +97,7 @@ public partial class JellyfinController
             InjectedPlaylistItemHelper.ContainsUnavailableExternalItems(cachedItems))
         {
             _logger.LogWarning(
-                "Ignoring Redis playlist cache for {Playlist}: it contains unavailable external tracks",
+                "Ignoring shared playlist cache for {Playlist}: it contains unavailable external tracks",
                 spotifyPlaylistName);
             await _cache.DeleteAsync(cacheKey);
             cachedItems = null;
@@ -107,7 +108,7 @@ public partial class JellyfinController
             InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(cachedItems))
         {
             _logger.LogWarning(
-                "Ignoring Redis playlist cache for {Playlist}: local items are missing genre metadata required by this request",
+                "Ignoring shared playlist cache for {Playlist}: local items are missing genre metadata required by this request",
                 spotifyPlaylistName);
             await _cache.DeleteAsync(cacheKey);
             cachedItems = null;
@@ -116,7 +117,7 @@ public partial class JellyfinController
         if (cachedItems != null && cachedItems.Count > 0 &&
             (!jellyfinPlaylistChanged || !directSpotifyMode))
         {
-            _logger.LogDebug("✅ Loaded {Count} playlist items from Redis cache for {Playlist} (Jellyfin unchanged)",
+            _logger.LogDebug("✅ Loaded {Count} playlist items from shared cache for {Playlist} (Jellyfin unchanged)",
                 cachedItems.Count, spotifyPlaylistName);
 
             return new JsonResult(new
@@ -133,63 +134,6 @@ public partial class JellyfinController
                 spotifyPlaylistName);
         }
 
-        // Check file cache as fallback
-        var fileItems = await LoadPlaylistItemsFromFile(spotifyPlaylistName);
-        NormalizeSyntheticPlaylistItems(fileItems);
-        if (fileItems != null && fileItems.Count > 0 &&
-            InjectedPlaylistItemHelper.ContainsSyntheticLocalItems(fileItems))
-        {
-            _logger.LogWarning(
-                "Ignoring file playlist cache for {Playlist}: found synthesized local items that should have remained raw Jellyfin objects",
-                spotifyPlaylistName);
-            fileItems = null;
-        }
-
-        if (fileItems != null && fileItems.Count > 0 &&
-            InjectedPlaylistItemHelper.ContainsLegacyExternalSourceLabels(fileItems))
-        {
-            _logger.LogInformation(
-                "Ignoring file playlist cache for {Playlist}: external items still use legacy source labels",
-                spotifyPlaylistName);
-            fileItems = null;
-        }
-
-        if (fileItems != null && fileItems.Count > 0 &&
-            InjectedPlaylistItemHelper.ContainsUnavailableExternalItems(fileItems))
-        {
-            _logger.LogWarning(
-                "Ignoring file playlist cache for {Playlist}: it contains unavailable external tracks",
-                spotifyPlaylistName);
-            fileItems = null;
-        }
-
-        if (fileItems != null && fileItems.Count > 0 &&
-            requestNeedsGenreMetadata &&
-            InjectedPlaylistItemHelper.ContainsLocalItemsMissingGenreMetadata(fileItems))
-        {
-            _logger.LogWarning(
-                "Ignoring file playlist cache for {Playlist}: local items are missing genre metadata required by this request",
-                spotifyPlaylistName);
-            fileItems = null;
-        }
-
-        if (fileItems != null && fileItems.Count > 0 &&
-            (!jellyfinPlaylistChanged || !directSpotifyMode))
-        {
-            _logger.LogDebug("✅ Loaded {Count} playlist items from file cache for {Playlist}",
-                fileItems.Count, spotifyPlaylistName);
-
-            // Restore to Redis cache
-            await _cache.SetAsync(cacheKey, fileItems, CacheExtensions.SpotifyPlaylistItemsTTL);
-
-            return new JsonResult(new
-            {
-                Items = fileItems,
-                TotalRecordCount = fileItems.Count,
-                StartIndex = 0
-            });
-        }
-
         // Without direct Spotify metadata, the legacy matcher is the cache producer. If its
         // pre-built items are not ready yet, retain the local Jellyfin playlist for this request.
         if (!directSpotifyMode)
@@ -197,7 +141,7 @@ public partial class JellyfinController
             return null;
         }
 
-        // Check for ordered matched tracks from SpotifyTrackMatchingService
+        // Check for ordered tracks retained by the playlist matching coordinator.
         var orderedCacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(spotifyPlaylistName);
         var orderedTracks = await _cache.GetAsync<List<MatchedTrack>>(orderedCacheKey);
 
@@ -480,10 +424,7 @@ public partial class JellyfinController
             return null;
         }
 
-        // Save to file cache for persistence across restarts
-        await SavePlaylistItemsToFile(spotifyPlaylistName, finalItems);
-
-        // Also cache in Redis for fast serving (reuse the same cache key from top of method)
+        // Also cache for fast serving using the same key from the top of the method.
         await _cache.SetAsync(cacheKey, finalItems, CacheExtensions.SpotifyPlaylistItemsTTL);
 
         // Cache the Jellyfin playlist signature to detect future changes
@@ -605,86 +546,6 @@ public partial class JellyfinController
 
         // Return empty string if failed (will trigger re-match)
         return string.Empty;
-    }
-
-    /// <summary>
-    /// Saves playlist items (raw Jellyfin JSON) to file cache for persistence across restarts.
-    /// </summary>
-    private async Task SavePlaylistItemsToFile(string playlistName, List<Dictionary<string, object?>> items)
-    {
-        try
-        {
-            var cacheDir = "/app/cache/spotify";
-            Directory.CreateDirectory(cacheDir);
-
-            var safeName = string.Join("_", playlistName.Split(Path.GetInvalidFileNameChars()));
-            var filePath = Path.Combine(cacheDir, $"{safeName}_items.json");
-
-            var json = JsonSerializer.Serialize(items, new JsonSerializerOptions { WriteIndented = true });
-            await System.IO.File.WriteAllTextAsync(filePath, json);
-
-            _logger.LogDebug("💾 Saved {Count} playlist items to file cache for {Playlist}",
-                items.Count, playlistName);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to save playlist items to file for {Playlist}", playlistName);
-        }
-    }
-
-    /// <summary>
-    /// Loads playlist items (raw Jellyfin JSON) from file cache.
-    /// </summary>
-    private async Task<List<Dictionary<string, object?>>?> LoadPlaylistItemsFromFile(string playlistName)
-    {
-        try
-        {
-            var safeName = string.Join("_", playlistName.Split(Path.GetInvalidFileNameChars()));
-            var filePath = Path.Combine("/app/cache/spotify", $"{safeName}_items.json");
-
-            if (!System.IO.File.Exists(filePath))
-            {
-                _logger.LogDebug("No playlist items file cache found for {Playlist} at {Path}", playlistName, filePath);
-                return null;
-            }
-
-            var fileAge = DateTime.UtcNow - System.IO.File.GetLastWriteTimeUtc(filePath);
-
-            // Check if cache is too old (more than 24 hours)
-            if (fileAge.TotalHours > 24)
-            {
-                _logger.LogDebug("Playlist items file cache for {Playlist} is too old ({Age:F1}h), will rebuild",
-                    playlistName, fileAge.TotalHours);
-                return null;
-            }
-
-            _logger.LogDebug("Playlist items file cache for {Playlist} age: {Age:F1}h", playlistName,
-                fileAge.TotalHours);
-
-            var json = await System.IO.File.ReadAllTextAsync(filePath);
-
-            // Parse as JsonDocument first to preserve nested structures
-            using var doc = JsonDocument.Parse(json);
-            var items = new List<Dictionary<string, object?>>();
-
-            if (doc.RootElement.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in doc.RootElement.EnumerateArray())
-                {
-                    items.Add(JsonElementToDictionary(item));
-                }
-            }
-
-            _logger.LogDebug("💿 Loaded {Count} playlist items from file cache for {Playlist} (age: {Age:F1}h)",
-                items.Count, playlistName, fileAge.TotalHours);
-
-            return items;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to load playlist items from file for {Playlist}", playlistName);
-            return null;
-        }
     }
 
     #endregion

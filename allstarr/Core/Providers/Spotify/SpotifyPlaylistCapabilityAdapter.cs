@@ -5,6 +5,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Secrets;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.Spotify;
 
@@ -49,18 +50,20 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     public SpotifyPlaylistCapabilityAdapter(
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
+        IApplicationCache cache,
         ILogger<SpotifyPathfinderPlaylistClient> logger)
-        : this(clients.CreateClient(HttpClientName), secrets, logger) { }
+        : this(clients.CreateClient(HttpClientName), secrets, logger, cache) { }
 
     public SpotifyPlaylistCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
-        ILogger<SpotifyPathfinderPlaylistClient>? logger = null)
+        ILogger<SpotifyPathfinderPlaylistClient>? logger = null,
+        IApplicationCache? cache = null)
     {
         _http = http;
         _secrets = secrets;
         _logger = logger;
-        _pathfinder = new SpotifyPathfinderPlaylistClient(http, logger);
+        _pathfinder = new SpotifyPathfinderPlaylistClient(http, cache, logger);
     }
 
     public string ProviderId => StableProviderId;

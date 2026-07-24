@@ -48,7 +48,7 @@ chmod 600 secrets/postgres-password.txt secrets/allstarr-keyring.json
 
 The key ring is not stored in Postgres and is not included in database backups. Losing it makes encrypted provider secrets unreadable. Keep a protected backup.
 
-Postgres stores application state, not audio. Set `DOWNLOAD_PATH` and `KEPT_PATH` to persistent, accessible host folders. Other managed-library roots are selected by their scoped policies. Valkey is included for cache and acceleration; there is no legacy Redis conversion step.
+Postgres stores application state and bounded disposable metadata cache entries, not audio. Set `DOWNLOAD_PATH` and `KEPT_PATH` to persistent, accessible host folders. Other managed-library roots are selected by their scoped policies. Artwork and media caches use the bounded `/app/cache` volume.
 
 Standard Compose intentionally omits optional provider services. The AIO override adds the verified offline
 first-party package bundle, not the external Apple gateway or another optional provider service:
@@ -62,7 +62,7 @@ Mounting that bundle does not bypass package state or permission review. Entries
 Apple downloads are not part of Standard or AIO. The optional `docker-compose.apple.yml` profile builds Allstarr's
 gateway with GAMDL 3.8.2 and the source-locked official wrapper-v2 0.0.2 checkout. It does not contain or download
 Apple code. Prepare it with `./allstarr.sh prepare-apple FILE [ARCH]`, using a legally obtained compatible APK/APKM.
-Adding or removing the profile does not replace the database, Valkey, application state, media volumes, or the
+Adding or removing the profile does not replace the database, application state, media volumes, or the
 wrapper session volume. Follow [the Apple download provider procedure](docs/operations/apple-download-provider.md).
 
 The optional Spotify lyrics service is likewise absent from Standard and AIO. Add the pinned
@@ -70,7 +70,11 @@ The optional Spotify lyrics service is likewise absent from Standard and AIO. Ad
 [docs/operations/spotify-lyrics-sidecar.md](docs/operations/spotify-lyrics-sidecar.md). Its cookie stays in the host
 `.env`; the dashboard migration imports endpoint configuration but never manages Docker or exports provider secrets.
 
-Custom manual deployments may select SQLite explicitly. SQLite bootstrap has an intentional one-shot confirmation requirement, and no automatic Postgres-to-SQLite fallback exists. Follow [docs/operations/storage.md](docs/operations/storage.md) instead of guessing these settings.
+PostgreSQL is the runtime and EF design-time default. Custom manual deployments may
+still select the temporary SQLite compatibility mode explicitly. SQLite bootstrap has an
+intentional one-shot confirmation requirement, and no automatic Postgres-to-SQLite
+fallback exists. Follow [docs/operations/storage.md](docs/operations/storage.md) instead
+of guessing these settings.
 
 ### Identity and provider-account ownership
 
@@ -148,7 +152,7 @@ Intelligence is also opt-in at an exact user/backend/library scope. Configure re
 
 The `CACHE_*` variables tune rebuildable data such as search results, playlist images, playlist items, lyrics, genres, metadata, Odesli lookups, proxy images, and transcoded files. Longer TTLs reduce provider traffic but may show stale results. These values do not control durable jobs or Postgres retention.
 
-Valkey is not a backup. It is safe for cache data to rebuild after loss.
+Cache data is not a backup. It is safe for PostgreSQL cache rows and `/app/cache` media to rebuild after loss.
 
 ## Backup, Restore, And Upgrades
 

@@ -99,7 +99,7 @@ public sealed class HostCompositionTests
         Assert.Equal(System.Net.HttpStatusCode.OK, live.StatusCode);
         Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, ready.StatusCode);
         Assert.Contains(
-            "sqlite_database_missing",
+            "database_unavailable",
             await ready.Content.ReadAsStringAsync(),
             StringComparison.OrdinalIgnoreCase);
     }
@@ -247,7 +247,6 @@ public sealed class HostCompositionTests
                 {
                     ["Backend:Type"] = _backend,
                     ["ProviderAccounts:ManagementMode"] = _providerAccountManagementMode,
-                    ["Redis:Enabled"] = "false",
                     ["SpotifyApi:Enabled"] = "false",
                     ["SpotifyImport:Enabled"] = "false",
                     ["Storage:EnforceMutationGuard"] = "false",

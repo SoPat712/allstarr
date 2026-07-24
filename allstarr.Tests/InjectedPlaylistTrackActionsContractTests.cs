@@ -9,16 +9,17 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("aria-haspopup=\"menu\"", script, StringComparison.Ordinal);
-        Assert.Contains("Search local library", script, StringComparison.Ordinal);
-        Assert.Contains("Search music providers", script, StringComparison.Ordinal);
-        Assert.Contains("Rematch automatically", script, StringComparison.Ordinal);
+        Assert.Contains(">Match</button>", script, StringComparison.Ordinal);
+        Assert.Contains("Local library", script, StringComparison.Ordinal);
+        Assert.Contains("Music providers", script, StringComparison.Ordinal);
+        Assert.Contains(">Search</button>", script, StringComparison.Ordinal);
         Assert.Contains("Clear match", script, StringComparison.Ordinal);
         Assert.Contains(".track-action-popover", styles, StringComparison.Ordinal);
         Assert.Contains(".track-match-editor", styles, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void InjectedTrackActions_UseTheLegacyPlaylistMappingBoundary()
+    public void InjectedTrackActions_UseTheProviderNeutralMappingBoundary()
     {
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
@@ -31,12 +32,10 @@ public sealed class InjectedPlaylistTrackActionsContractTests
     }
 
     [Fact]
-    public void ClearingLegacyMapping_RemovesTheRealKeysAndDerivedPlaylistCaches()
+    public void ClearingDurableMapping_InvalidatesDerivedPlaylistCaches()
     {
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "MappingController.cs"));
 
-        Assert.Contains("BuildSpotifyManualMappingKey(playlist, spotifyId)", controller, StringComparison.Ordinal);
-        Assert.Contains("BuildSpotifyExternalMappingKey(playlist, spotifyId)", controller, StringComparison.Ordinal);
         Assert.Contains("BuildSpotifyMatchedTracksKey(playlist)", controller, StringComparison.Ordinal);
         Assert.Contains("BuildSpotifyLegacyMatchedTracksKey(playlist)", controller, StringComparison.Ordinal);
         Assert.Contains("BuildSpotifyPlaylistItemsKey(playlist)", controller, StringComparison.Ordinal);
@@ -60,7 +59,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("ReadCachedString(item, \"ServerId\")", controller, StringComparison.Ordinal);
         Assert.Contains("playlistItemStatsApplied = true", controller, StringComparison.Ordinal);
         Assert.Contains("await _playlistFetcher.GetPlaylistTracksAsync(config.Name)", controller, StringComparison.Ordinal);
-        Assert.Contains("var mapping = await _mappingService.GetMappingAsync(track.SpotifyId)", controller, StringComparison.Ordinal);
+        Assert.Contains("GetSpotifyProjectionAsync(track.SpotifyId)", controller, StringComparison.Ordinal);
         Assert.Contains("matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
         Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
@@ -166,8 +165,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("\"playlist.match-all\"", controller, StringComparison.Ordinal);
         Assert.Contains("return Accepted", controller, StringComparison.Ordinal);
 
-        var matcher = File.ReadAllText(FindRepositoryFile("allstarr", "Services", "Spotify", "SpotifyTrackMatchingService.cs"));
-        Assert.Contains("LegacyPlaylistMatchAllJobHandler", matcher, StringComparison.Ordinal);
+        var matcher = File.ReadAllText(FindRepositoryFile("allstarr", "Core", "Matching", "PlaylistMatchingCoordinator.cs"));
+        Assert.Contains("PlaylistMatchAllJobHandler", matcher, StringComparison.Ordinal);
         Assert.Contains("IDurableJobHandler", matcher, StringComparison.Ordinal);
     }
 
@@ -179,11 +178,11 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var styles = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "workspaces.css"));
 
         Assert.Contains("[HttpGet(\"spotify/{spotifyId}\")]", controller, StringComparison.Ordinal);
-        Assert.Contains("ProviderTrackIdentities", controller, StringComparison.Ordinal);
-        Assert.Contains("ExternalMetadataSnapshots", controller, StringComparison.Ordinal);
-        Assert.Contains("ProviderDownloadArtifacts", controller, StringComparison.Ordinal);
-        Assert.Contains("spotifyMappings.GetMappingAsync(spotifyId)", controller, StringComparison.Ordinal);
-        Assert.Contains("policyVersion = \"compatibility-v2\"", controller, StringComparison.Ordinal);
+        Assert.Contains("ITrackMatchRepository trackMatchCommands", controller, StringComparison.Ordinal);
+        Assert.Contains("trackMatchCommands.GetDetailAsync(", controller, StringComparison.Ordinal);
+        Assert.Contains("detail.ProviderIdentities", controller, StringComparison.Ordinal);
+        Assert.Contains("detail.Snapshots", controller, StringComparison.Ordinal);
+        Assert.Contains("detail.Artifacts", controller, StringComparison.Ordinal);
         Assert.Contains("source = \"materialized Jellyfin playlist\"", controller, StringComparison.Ordinal);
         Assert.Contains("trackMappingDetails:", script, StringComparison.Ordinal);
         Assert.Contains("backendItemId", script, StringComparison.Ordinal);

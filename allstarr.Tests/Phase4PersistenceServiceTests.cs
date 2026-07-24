@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Identity;
+using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
@@ -13,7 +14,7 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"), "persistence.db");
     private TestDbContextFactory _factory = null!;
-    private TrackMatchPersistenceService _matches = null!;
+    private TrackMatchCommandService _matches = null!;
     private PlaylistPersistenceService _playlists = null!;
     private Guid _tenant;
     private Guid _userA;
@@ -35,7 +36,8 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         db.LibraryTracks.Add(new LibraryTrackRecord { Id = _localTrack, TenantId = _tenant, OwnerUserId = _userA, BackendIdentityId = identityA.Id, LibraryScopeId = "music", Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = "local-1", FilePath = "/media/Music/local.flac", Title = "Local", Artist = "Artist", DurationMilliseconds = 1000, ProviderIdsJson = "{}", IndexedAt = _now, SourceModifiedAt = _now, UpdatedAt = _now });
         await db.SaveChangesAsync();
         var resolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions()); var clock = new PersistenceClock(_now);
-        _matches = new TrackMatchPersistenceService(_factory, resolver, clock); _playlists = new PlaylistPersistenceService(_factory, resolver, clock);
+        _matches = new TrackMatchCommandService(_factory, new TrackMatchDecisionEngine(), resolver, clock);
+        _playlists = new PlaylistPersistenceService(_factory, resolver, clock, _matches);
     }
 
     [Fact]
@@ -46,7 +48,20 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         var duplicate = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-1"));
         var second = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-2"));
         Assert.Equal(first.Id, duplicate.Id);
-        var decision = await _matches.RecordDecisionAsync(context, new MatchDecisionInput(first.Id, _localTrack, null, TrackMatchState.Accepted, .95, .8, 1, "policy-v1", "[]", "[\"exact\"]", "[]"));
+        var decisionInput = new MatchDecisionInput(first.Id, _localTrack, null, TrackMatchState.Accepted, .95, .8, 1, "policy-v1", "[]", "[\"exact\"]", "[]");
+        var decision = await _matches.RecordDecisionAsync(context, decisionInput);
+        var restartedMatches = new TrackMatchCommandService(
+            _factory,
+            new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(_factory, new ProviderPolicyOptions()),
+            new PersistenceClock(_now));
+        Assert.Equal(
+            decision.Id,
+            (await restartedMatches.RecordDecisionAsync(context, decisionInput)).Id);
+        var concurrentReads = await Task.WhenAll(
+            Enumerable.Range(0, 4)
+                .Select(_ => restartedMatches.RecordDecisionAsync(context, decisionInput)));
+        Assert.All(concurrentReads, item => Assert.Equal(decision.Id, item.Id));
         var rejected = await _matches.SetOverrideAsync(context, new ManualOverrideInput(first.Id, "music", ManualOverrideDecision.Reject, null, "wrong edition"));
         Assert.Equal(1, rejected.DecisionVersion);
 

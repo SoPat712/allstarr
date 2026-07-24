@@ -6,13 +6,13 @@
 
 Allstarr is a self-hosted music gateway for Jellyfin and Subsonic-compatible clients. Put it in front of Jellyfin or a server such as Navidrome, connect the providers you actually use, and keep one familiar client while Allstarr handles search, matching, streaming, downloads, playlists, lyrics, scrobbling, favorites, and recommendations.
 
-Allstarr does not put songs inside Postgres. Audio stays as normal files in the mounted `downloads`, `kept`, cache, and managed-library folders. Postgres holds control-plane state such as identities, provider accounts, encrypted-secret references, jobs, matches, playlist links, health history, and audits. Valkey accelerates rebuildable cache work and is not the source of truth.
+Allstarr does not put songs inside Postgres. Audio stays as normal files in the mounted `downloads`, `kept`, cache, and managed-library folders. Postgres holds control-plane state and bounded disposable metadata cache entries; artwork and other media cache payloads stay on bounded disk.
 
 ## Before You Install
 
 The `v3.1.0-beta.1` overhaul release is a breaking fresh-install baseline. Do not reuse the old Redis-to-Valkey conversion overlay or expect legacy Redis, mapping, extension, or job state to import automatically. Keep the old stack stopped for rollback, attach the existing backend library read-only when practical, and give the separate version 3 deployment its own writable download, kept, cache, and managed-library roots. Never let both versions write the same media roots. Then use the administrator WebUI to preview and import the safe parts of the old `.env`. Deployment values remain a checklist, personal accounts are reconnected by their owners, and the original file is never replaced. Follow the [legacy environment upgrade procedure](docs/operations/legacy-env-import.md#upgrade-procedure) before cutting clients over.
 
-Standard Compose runs Allstarr, Postgres, and Valkey. It exposes one client protocol per deployment because the Jellyfin and Subsonic surfaces both own catch-all routes. Choose `Jellyfin` or `Subsonic`; a Subsonic deployment can use Navidrome as its backend.
+Standard Compose runs Allstarr and Postgres. It exposes one client protocol per deployment because the Jellyfin and Subsonic surfaces both own catch-all routes. Choose `Jellyfin` or `Subsonic`; a Subsonic deployment can use Navidrome as its backend.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ curl --fail http://127.0.0.1:5274/health/ready
 `allstarr.sh` remembers optional profiles, validates the merged Compose model, creates secrets with private file
 permissions, and never deletes volumes. For a normal upgrade, run `./allstarr.sh upgrade`; it briefly stops the
 stack, creates a private portable export under `allstarr-backups/`, then updates and restarts the saved profile.
-The export includes configuration, the encryption keyring, provider profiles, Postgres, Valkey, mappings, playlist
+The export includes configuration, the encryption keyring, provider profiles, Postgres, mappings, playlist
 caches, and durable application state. Downloaded and kept music stay in their existing host-mounted folders.
 To move or recover an installation, initialize the destination and run
 `./allstarr.sh restore /path/to/allstarr-upgrade-….tar.gz --confirm-replace`. Restore validates the archive,
@@ -49,9 +49,6 @@ first-party package bundle, but it does not force optional provider sidecars on 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
 ```
-
-Valkey is an optional cache. The default deployment runs without it. To enable it, set
-`REDIS_ENABLED=true` and add `--profile cache` to the Compose command.
 
 The bundle lock is still authoritative. A bundled package marked blocked is not staged or activated merely because
 the AIO files are mounted.
@@ -92,7 +89,7 @@ Provider availability depends on the configured accounts, optional sidecars, per
 | Location | Purpose | Authoritative? |
 | --- | --- | --- |
 | Postgres | Users, accounts, secret references, jobs, matches, playlists, intelligence, health, audits | Yes, for application state |
-| Valkey | Search, metadata, lyrics, image, and other acceleration caches | No |
+| PostgreSQL cache table and bounded `/app/cache` media tier | Rebuildable metadata, search, lyrics, and artwork acceleration | No |
 | `downloads` / `kept` / managed roots | Playable audio and related files | Yes, for media |
 | `/app/state/backups` | Verified database backup artifacts and manifests | Copy these off the host |
 | key-ring file | Keys used to open encrypted application secrets | Yes, back it up separately |

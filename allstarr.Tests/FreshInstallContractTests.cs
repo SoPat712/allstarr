@@ -61,13 +61,14 @@ public sealed class FreshInstallContractTests
     }
 
     [Fact]
-    public void ExampleEnvironment_DescribesTheFreshPostgresValkeyDeployment()
+    public void ExampleEnvironment_DescribesTheFreshPostgresDeployment()
     {
         var example = File.ReadAllText(Path.Combine(_repositoryRoot, ".env.example"));
 
         Assert.Contains("POSTGRES_PASSWORD_FILE=./secrets/postgres-password.txt", example, StringComparison.Ordinal);
         Assert.Contains("ALLSTARR_KEYRING_FILE=./secrets/allstarr-keyring.json", example, StringComparison.Ordinal);
-        Assert.Contains("VALKEY_MAX_MEMORY=512mb", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("VALKEY_MAX_MEMORY", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("REDIS_ENABLED", example, StringComparison.Ordinal);
         Assert.Contains("SUBSONIC_URL=http://host.docker.internal:4533", example, StringComparison.Ordinal);
         Assert.Contains("JELLYFIN_URL=http://host.docker.internal:8096", example, StringComparison.Ordinal);
         Assert.Contains("KEPT_PATH=./kept", example, StringComparison.Ordinal);

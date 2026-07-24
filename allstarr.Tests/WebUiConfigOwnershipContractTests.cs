@@ -27,7 +27,7 @@ public sealed class WebUiConfigOwnershipContractTests
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "AdminUiController.cs"));
         foreach (var key in new[]
                  {
-                     "BACKEND_TYPE", "REDIS_ENABLED", "LIBRARY_DOWNLOAD_PATH", "LIBRARY_KEPT_PATH",
+                     "BACKEND_TYPE", "LIBRARY_DOWNLOAD_PATH", "LIBRARY_KEPT_PATH",
                      "ADMIN_BIND_ANY_IP", "ADMIN_TRUSTED_SUBNETS", "DEBUG_LOG_ALL_REQUESTS"
                  })
         {
@@ -48,7 +48,7 @@ public sealed class WebUiConfigOwnershipContractTests
 
         foreach (var key in new[]
                  {
-                     "BACKEND_TYPE", "REDIS_ENABLED", "LIBRARY_DOWNLOAD_PATH", "LIBRARY_KEPT_PATH",
+                     "BACKEND_TYPE", "LIBRARY_DOWNLOAD_PATH", "LIBRARY_KEPT_PATH",
                      "ADMIN_BIND_ANY_IP", "ADMIN_TRUSTED_SUBNETS", "DEBUG_LOG_ALL_REQUESTS"
                  })
         {

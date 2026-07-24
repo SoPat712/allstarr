@@ -36,7 +36,7 @@ public class ConfigController : ControllerBase
     private readonly ScrobblingSettings _scrobblingSettings;
     private readonly AdminHelperService _helperService;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private const string CacheDirectory = "/app/cache/spotify";
 
     public ConfigController(
@@ -54,7 +54,7 @@ public class ConfigController : ControllerBase
         IOptions<ScrobblingSettings> scrobblingSettings,
         AdminHelperService helperService,
         SpotifySessionCookieService spotifySessionCookieService,
-        RedisCacheService cache)
+        IApplicationCache cache)
     {
         _logger = logger;
         _configuration = configuration;
@@ -160,7 +160,6 @@ public class ConfigController : ControllerBase
             explicitFilter = RuntimeString("Library:ExplicitFilter", fallbackExplicitFilter),
             enableExternalPlaylists = RuntimeBool("Library:EnableExternalPlaylists", fallbackEnableExternalPlaylists),
             playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),
-            redisEnabled = GetEnvBool(envVars, "REDIS_ENABLED", _configuration.GetValue<bool>("Redis:Enabled", false)),
             providers = new
             {
                 metadataOrder = RuntimeString("Providers:MetadataOrder", "apple-download,deezer,qobuz"),
@@ -272,6 +271,10 @@ public class ConfigController : ControllerBase
                 metadataDays = RuntimeInt("Cache:MetadataDays", _configuration.GetValue<int>("Cache:MetadataDays", 7)),
                 odesliLookupDays = RuntimeInt("Cache:OdesliLookupDays", _configuration.GetValue<int>("Cache:OdesliLookupDays", 60)),
                 proxyImagesDays = RuntimeInt("Cache:ProxyImagesDays", _configuration.GetValue<int>("Cache:ProxyImagesDays", 14)),
+                mediaDirectory = _configuration["Cache:MediaDirectory"] ?? "/app/cache/media",
+                mediaMaximumMegabytes = _configuration.GetValue<int>("Cache:MediaMaximumMegabytes", 512),
+                mediaMaximumEntryMegabytes = _configuration.GetValue<int>("Cache:MediaMaximumEntryMegabytes", 16),
+                mediaCleanupFileLimit = _configuration.GetValue<int>("Cache:MediaCleanupFileLimit", 10_000),
                 transcodeCacheMinutes = RuntimeInt("Cache:TranscodeCacheMinutes", _configuration.GetValue<int>("Cache:TranscodeCacheMinutes", 60))
             },
             extensions = new
@@ -496,7 +499,7 @@ public class ConfigController : ControllerBase
         _logger.LogDebug("Cache clear requested from admin UI");
 
         var clearedFiles = 0;
-        var clearedRedisKeys = 0;
+        var clearedCacheEntries = 0;
 
         // Clear file cache
         if (Directory.Exists(CacheDirectory))
@@ -515,7 +518,7 @@ public class ConfigController : ControllerBase
             }
         }
 
-        // Clear ALL Redis cache keys for Spotify playlists
+        // Clear all shared cache entries for Spotify playlists.
         // This includes matched tracks, ordered tracks, missing tracks, playlist items, etc.
         foreach (var playlist in _spotifyImportSettings.Playlists)
         {
@@ -523,7 +526,7 @@ public class ConfigController : ControllerBase
             {
                 CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name),
                 CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlist.Name),
-                $"spotify:matched:{playlist.Name}", // Legacy key
+                CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlist.Name),
                 CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name),
                 CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name)
             };
@@ -532,28 +535,30 @@ public class ConfigController : ControllerBase
             {
                 if (await _cache.DeleteAsync(key))
                 {
-                    clearedRedisKeys++;
-                    _logger.LogInformation("Cleared Redis cache key: {Key}", key);
+                    clearedCacheEntries++;
+                    _logger.LogInformation("Cleared application cache key: {Key}", key);
                 }
             }
         }
 
         // Clear all search cache keys (pattern-based deletion)
-        var searchKeysDeleted = await _cache.DeleteByPatternAsync("search:*");
-        clearedRedisKeys += searchKeysDeleted;
+        var searchKeysDeleted =
+            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildSearchPattern());
+        clearedCacheEntries += searchKeysDeleted;
 
         // Clear all image cache keys (pattern-based deletion)
-        var imageKeysDeleted = await _cache.DeleteByPatternAsync("image:*");
-        clearedRedisKeys += imageKeysDeleted;
+        var imageKeysDeleted =
+            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildImagePattern());
+        clearedCacheEntries += imageKeysDeleted;
 
-        _logger.LogInformation("Cache cleared: {Files} files, {RedisKeys} Redis keys (including {SearchKeys} search keys, {ImageKeys} image keys)",
-            clearedFiles, clearedRedisKeys, searchKeysDeleted, imageKeysDeleted);
+        _logger.LogInformation("Cache cleared: {Files} files, {Entries} shared entries (including {SearchKeys} search keys, {ImageKeys} image keys)",
+            clearedFiles, clearedCacheEntries, searchKeysDeleted, imageKeysDeleted);
 
         return Ok(new
         {
             message = "Cache cleared successfully",
             filesDeleted = clearedFiles,
-            redisKeysDeleted = clearedRedisKeys
+            cacheEntriesDeleted = clearedCacheEntries
         });
     }
 

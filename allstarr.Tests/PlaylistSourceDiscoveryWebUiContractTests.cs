@@ -26,6 +26,19 @@ public sealed class PlaylistSourceDiscoveryWebUiContractTests
         Assert.Contains("Math.min(900, requestedDelay)", _script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AddPlaylist_UsesOneProviderAwareModalWizard()
+    {
+        Assert.Contains("if (!this.playlistWizardOpen) return nothing;", _script, StringComparison.Ordinal);
+        Assert.Contains("class=\"modal-backdrop playlist-wizard-backdrop\"", _script, StringComparison.Ordinal);
+        Assert.Contains("role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"playlist-wizard-title\"", _script,
+            StringComparison.Ordinal);
+        Assert.Contains("playlistWizardHasInput()", _script, StringComparison.Ordinal);
+        Assert.Contains("Discard this playlist setup?", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("renderInjectedAddModal", _script, StringComparison.Ordinal);
+        Assert.DoesNotContain("<label>Spotify ID</label>", _script, StringComparison.Ordinal);
+    }
+
     private static string ReadRepositoryFile(params string[] segments)
     {
         var relativePath = Path.Combine(segments);

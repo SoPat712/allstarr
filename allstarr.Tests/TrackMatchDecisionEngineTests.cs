@@ -167,6 +167,107 @@ public sealed class TrackMatchDecisionEngineTests
         Assert.Contains("provider_track_id_exact", decision.Reasons);
     }
 
+    [Theory]
+    [InlineData(
+        "Heebiejeebies - Bonus",
+        "Aminé, Kehlani",
+        "Heebiejeebies",
+        "Aminé, Kehlani")]
+    [InlineData(
+        "Homemade Dynamite (Feat. Khalid, Post Malone & SZA) - REMIX",
+        "Lorde, Khalid, Post Malone & SZA",
+        "Homemade Dynamite (REMIX)",
+        "Lorde, Khalid, Post Malone, SZA")]
+    public void ReportedDecoratorFailures_AcceptAndExposeComponentScores(
+        string sourceTitle,
+        string sourceArtist,
+        string candidateTitle,
+        string candidateArtist)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = sourceTitle,
+            Artist = sourceArtist,
+            Album = "Reported fixture",
+            AlbumArtist = sourceArtist
+        };
+        var candidate = Candidate(scope) with
+        {
+            Title = candidateTitle,
+            Artist = candidateArtist,
+            Album = "Reported fixture",
+            AlbumArtist = candidateArtist
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [candidate]);
+        var score = Assert.Single(decision.Candidates);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.False(decision.RequiresReview);
+        Assert.True(score.Confidence >= decision.AcceptThreshold);
+        Assert.NotNull(score.Components);
+        Assert.Equal(1, score.Components["title"]);
+        Assert.True(score.Components["artist"] >= 0.85);
+        Assert.Contains("title_exact", score.Reasons);
+    }
+
+    [Theory]
+    [InlineData("Lorde feat. Khalid & SZA", "SZA, Lorde, Khalid")]
+    [InlineData("Lorde featuring Khalid, SZA", "Lorde & Khalid & SZA")]
+    [InlineData("Lorde ft Khalid with SZA", "Khalid, SZA, Lorde")]
+    public void EquivalentArtistCreditSyntax_IsRankedAsTheSameArtistSet(
+        string sourceArtist,
+        string candidateArtist)
+    {
+        var scope = Scope();
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with { Artist = sourceArtist, AlbumArtist = sourceArtist },
+            [Candidate(scope) with { Artist = candidateArtist, AlbumArtist = candidateArtist }]);
+
+        var score = Assert.Single(decision.Candidates);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(1, score.Components!["artist"]);
+    }
+
+    [Fact]
+    public void ConflictingFeaturedArtist_IsNotAutomaticallyAccepted()
+    {
+        var scope = Scope();
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with
+            {
+                Artist = "Lorde feat. SZA",
+                AlbumArtist = "Lorde"
+            },
+            [Candidate(scope) with
+            {
+                Artist = "Lorde feat. Khalid",
+                AlbumArtist = "Lorde"
+            }]);
+
+        Assert.NotEqual(TrackMatchReviewState.Accepted, decision.State);
+        Assert.True(Assert.Single(decision.Candidates).Components!["artist"] < 0.7);
+    }
+
+    [Fact]
+    public void WeakCandidate_ExposesThresholdAndReviewReason()
+    {
+        var scope = Scope();
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source(),
+            [Candidate(scope) with { Title = "Wrong", Artist = "Unknown", Album = "Elsewhere", DurationSeconds = 12 }]);
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.True(decision.RequiresReview);
+        Assert.Equal(0.88, decision.AcceptThreshold);
+        Assert.Equal(0.72, decision.SuggestThreshold);
+        Assert.Contains("below_suggestion_threshold", decision.Warnings);
+    }
+
     private static TrackMatchScope Scope() => new(
         Guid.CreateVersion7(),
         Guid.CreateVersion7(),

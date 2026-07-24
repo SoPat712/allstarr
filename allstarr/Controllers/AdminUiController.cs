@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Filters;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Models.Admin;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -29,6 +30,7 @@ public class AdminUiController : ControllerBase
     private readonly ProviderStatusManager _providerStatusManager;
     private readonly ProviderAccountManagementMode _providerAccountManagementMode;
     private readonly IProviderRegistry? _providerRegistry;
+    private readonly ITrackMatchRepository _trackMatches;
 
     public AdminUiController(
         IConfiguration configuration,
@@ -41,6 +43,7 @@ public class AdminUiController : ControllerBase
         ExtensionManager extensionManager,
         ProviderStatusManager providerStatusManager,
         ProviderAccountManagementOptions providerAccountManagementOptions,
+        ITrackMatchRepository trackMatches,
         IProviderRegistry? providerRegistry = null)
     {
         _configuration = configuration;
@@ -53,6 +56,7 @@ public class AdminUiController : ControllerBase
         _extensionManager = extensionManager;
         _providerStatusManager = providerStatusManager;
         _providerAccountManagementMode = providerAccountManagementOptions.ParseManagementMode();
+        _trackMatches = trackMatches;
         _providerRegistry = providerRegistry;
     }
 
@@ -72,7 +76,12 @@ public class AdminUiController : ControllerBase
                     Name = item.Name,
                     Icon = item.Icon,
                     LogoUrl = item.LogoUrl,
-                    AccountSettings = item.AccountSettings
+                    AccountSettings = item.AccountSettings,
+                    ConnectionKind = item.ConnectionKind,
+                    Audience = item.Audience,
+                    ImplementationOrigin = item.ImplementationOrigin,
+                    RouteId = item.RouteId,
+                    CapabilityRoutes = item.CapabilityRoutes
                 }).ToList(),
                 Routes =
                 [
@@ -242,41 +251,32 @@ public class AdminUiController : ControllerBase
                     .ThenByDescending(item => item.RetrievedAt).First())
                 .ToListAsync(cancellationToken))
                 .ToDictionary(item => item.PlaylistLinkId, item => item.Name);
-        var matches = await context.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.DecidedAt < before.Value ||
-                (item.DecidedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
-            .OrderByDescending(item => item.DecidedAt).ThenByDescending(item => item.Id)
-            .Take(scanLimit)
-            .ToListAsync(cancellationToken);
-        var externalSnapshotIds = matches.Select(item => item.ExternalSnapshotId).Distinct().ToArray();
-        var externalSnapshots = externalSnapshotIds.Length == 0
-            ? new Dictionary<Guid, ExternalMetadataSnapshotRecord>()
-            : await context.ExternalMetadataSnapshots.AsNoTracking()
-                .Where(item => externalSnapshotIds.Contains(item.Id))
-                .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var providerIdentityIds = externalSnapshots.Values
-            .Where(item => item.ProviderTrackIdentityId.HasValue)
-            .Select(item => item.ProviderTrackIdentityId!.Value)
-            .Distinct()
-            .ToArray();
-        var providerIdentities = providerIdentityIds.Length == 0
-            ? new Dictionary<Guid, ProviderTrackIdentityRecord>()
-            : await context.ProviderTrackIdentities.AsNoTracking()
-                .Where(item => providerIdentityIds.Contains(item.Id))
-                .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var libraryTrackIds = matches.Where(item => item.LibraryTrackId.HasValue)
-            .Select(item => item.LibraryTrackId!.Value)
-            .Distinct()
-            .ToArray();
-        var libraryTracks = libraryTrackIds.Length == 0
-            ? new Dictionary<Guid, LibraryTrackRecord>()
-            : await context.LibraryTracks.AsNoTracking()
-                .Where(item => libraryTrackIds.Contains(item.Id))
-                .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var matchActivity = await _trackMatches.GetActivityDataAsync(
+            new TrackMatchActor(tenantId, Guid.Empty, true),
+            before,
+            beforeId,
+            scanLimit,
+            cancellationToken);
+        var matches = matchActivity.Decisions;
+        var externalSnapshots = matchActivity.Snapshots.ToDictionary(item => item.Id);
+        var providerIdentities = matchActivity.ProviderIdentities.ToDictionary(item => item.Id);
+        var libraryTracks = matchActivity.LibraryTracks.ToDictionary(item => item.Id);
         var audits = await context.AuditEvents.AsNoTracking()
             .Where(item => item.TenantId == tenantId && (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
+            .ToListAsync(cancellationToken);
+        var extensionLogs = await context.ExtensionLogs.AsNoTracking()
+            .Where(item => !before.HasValue || item.CreatedAt < before.Value ||
+                (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0))
+            .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+            .Take(scanLimit)
+            .ToListAsync(cancellationToken);
+        var downloadArtifacts = await context.ProviderDownloadArtifacts.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && (!before.HasValue || item.VerifiedAt < before.Value ||
+                (item.VerifiedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
+            .OrderByDescending(item => item.VerifiedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
 
@@ -368,6 +368,56 @@ public class AdminUiController : ControllerBase
                 });
         }));
         activity.AddRange(audits.Select(AuditActivity));
+        activity.AddRange(extensionLogs.Select(item => new AdminUiActivityItem(
+            item.Id.ToString("N"),
+            "extension",
+            item.ExtensionId,
+            HumanizeAuditCategory(item.EventCode),
+            item.Level,
+            item.Message,
+            item.CreatedAt,
+            item.CorrelationId,
+            SeverityForState(item.Level),
+            ProviderId: item.ExtensionId,
+            Action: item.EventCode,
+            TechnicalDetails: new Dictionary<string, string>
+            {
+                ["extensionPackageId"] = item.ExtensionPackageId.ToString("N"),
+                ["eventCode"] = item.EventCode
+            })));
+        activity.AddRange(downloadArtifacts.Select(item => new AdminUiActivityItem(
+            item.Id.ToString("N"),
+            "caching",
+            item.ProviderId,
+            item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
+                ? "Download placed"
+                : "Track cached",
+            item.State.ToString().ToLowerInvariant(),
+            $"{FormatBytes(item.Length)} verified from {item.ProviderId}",
+            item.PlacedAt ?? item.VerifiedAt,
+            item.DurableJobId.ToString("N"),
+            SeverityForState(item.State.ToString()),
+            ProviderId: item.ProviderId,
+            SourceProviderTrackId: item.ProviderArtifactId,
+            BackendItemId: item.ManagedFileId?.ToString("N"),
+            Action: item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
+                ? "download-artifact.placed"
+                : "download-artifact.verified",
+            TechnicalDetails: new Dictionary<string, string>
+            {
+                ["artifactId"] = item.Id.ToString("N"),
+                ["providerArtifactId"] = item.ProviderArtifactId,
+                ["durableJobId"] = item.DurableJobId.ToString("N"),
+                ["sizeBytes"] = item.Length.ToString(),
+                ["sha256"] = item.ContentSha256,
+                ["mimeType"] = item.MimeType ?? "unknown",
+                ["container"] = item.Container ?? "unknown",
+                ["codec"] = item.Codec ?? "unknown",
+                ["bitrate"] = item.Bitrate?.ToString() ?? "unknown",
+                ["sampleRate"] = item.SampleRate?.ToString() ?? "unknown",
+                ["bitDepth"] = item.BitDepth?.ToString() ?? "unknown",
+                ["channels"] = item.Channels?.ToString() ?? "unknown"
+            })));
 
         var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
         var items = ordered.Take(limit).ToArray();
@@ -375,10 +425,19 @@ public class AdminUiController : ControllerBase
         {
             items,
             hasMore = ordered.Length > limit || jobs.Count == scanLimit || health.Count == scanLimit ||
-                      playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit,
+                      playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit ||
+                      extensionLogs.Count == scanLimit || downloadArtifacts.Count == scanLimit,
             nextCursor = items.LastOrDefault()?.OccurredAt,
             nextCursorId = items.LastOrDefault()?.Id
         });
+    }
+
+    private static string FormatBytes(long length)
+    {
+        if (length >= 1024L * 1024L * 1024L) return $"{length / (1024d * 1024d * 1024d):0.##} GiB";
+        if (length >= 1024L * 1024L) return $"{length / (1024d * 1024d):0.##} MiB";
+        if (length >= 1024L) return $"{length / 1024d:0.##} KiB";
+        return $"{length} B";
     }
 
     private static AdminUiActivityItem AuditActivity(AuditEventRecord item)
@@ -631,11 +690,15 @@ public class AdminUiController : ControllerBase
             Name = "Apple download",
             Icon = "applemusic",
             Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown"),
-            Categories = ["metadata", "download", "streaming"],
+            Categories = ["metadata", "streaming", "download", "lyrics"],
+            ConnectionKind = "operator_managed",
+            Audience = "everyone",
+            ImplementationOrigin = "built_in",
+            RouteId = "builtin:apple-download",
             ConfigSchema =
             [
                 Field("APPLE_DOWNLOAD_URL", "External provider URL", "url", "appleDownload.baseUrl"),
-                Field("APPLE_DOWNLOAD_QUALITY", "Quality", "select", "appleDownload.quality", ["alac-16-44", "alac-24-48", "alac-24-96", "alac-24-192"])
+                Field("APPLE_DOWNLOAD_QUALITY", "Quality", "select", "appleDownload.quality", ["alac-24-192", "alac-24-96", "alac-24-48", "alac-16-44"])
             ]
         },
         new()
@@ -742,41 +805,89 @@ public class AdminUiController : ControllerBase
         }
         ];
 
+        foreach (var provider in providers)
+        {
+            provider.ImplementationOrigin ??= "built_in";
+            provider.RouteId ??= $"builtin:{provider.Id}";
+            provider.CapabilityRoutes.Add(new AdminUiProviderCapabilityRoute
+            {
+                RouteId = provider.RouteId,
+                Name = provider.Name,
+                Origin = provider.ImplementationOrigin,
+                Capabilities = provider.Categories.ToList()
+            });
+        }
+
         var runtimeStatuses = _providerStatusManager.GetAllStatuses();
         if (_providerRegistry != null)
         {
-            providers.AddRange(_providerRegistry.Providers
-                .Where(item => item.Origin == ProviderOrigin.Extension)
-                .Select(item => new AdminUiProvider
+            foreach (var item in _providerRegistry.Providers
+                         .Where(item => item.Origin == ProviderOrigin.Extension))
+            {
+                var categories = item.Capabilities
+                    .Where(capability => capability.HasUsableImplementation)
+                    .Select(capability => capability.Capability.ToString().ToLowerInvariant())
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var accountSettings = item.Settings.Select(setting => new AdminUiConfigField
+                {
+                    Key = setting.Key,
+                    Label = setting.Label,
+                    Type = setting.ValueKind switch
+                    {
+                        ProviderSettingValueKind.Secret => "password",
+                        ProviderSettingValueKind.Boolean => "toggle",
+                        ProviderSettingValueKind.Integer => "number",
+                        ProviderSettingValueKind.Choice => "select",
+                        _ => "text"
+                    },
+                    Sensitive = setting.ValueKind == ProviderSettingValueKind.Secret,
+                    Required = setting.Required,
+                    Options = setting.Choices.ToList(),
+                    HelpText = setting.HelpText,
+                    DefaultValueJson = setting.DefaultJson,
+                    Ownership = "provider-account"
+                }).ToList();
+                var route = new AdminUiProviderCapabilityRoute
+                {
+                    RouteId = $"extension:{item.Id}",
+                    Name = $"{item.DisplayName} · Extension SDK {item.SdkVersion}",
+                    Origin = "extension",
+                    Capabilities = categories
+                };
+                var existing = providers.SingleOrDefault(provider =>
+                    provider.Id.Equals(item.Id, StringComparison.Ordinal));
+                if (existing != null)
+                {
+                    existing.Categories = existing.Categories
+                        .Concat(categories)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+                    existing.AccountSettings = existing.AccountSettings
+                        .Concat(accountSettings)
+                        .GroupBy(setting => setting.Key, StringComparer.Ordinal)
+                        .Select(group => group.First())
+                        .ToList();
+                    existing.CapabilityRoutes.Add(route);
+                    continue;
+                }
+
+                providers.Add(new AdminUiProvider
                 {
                     Id = item.Id,
                     Name = item.DisplayName,
                     Icon = "extension",
                     LogoUrl = item.Branding == null ? null : $"/api/admin/extensions/providers/{Uri.EscapeDataString(item.Id)}/icon",
                     Status = "unknown",
-                    Categories = item.Capabilities.Where(capability => capability.HasUsableImplementation)
-                        .Select(capability => capability.Capability.ToString().ToLowerInvariant()).ToList(),
+                    Categories = categories,
                     Notes = [$"Extension SDK {item.SdkVersion}"],
-                    AccountSettings = item.Settings.Select(setting => new AdminUiConfigField
-                    {
-                        Key = setting.Key,
-                        Label = setting.Label,
-                        Type = setting.ValueKind switch
-                        {
-                            ProviderSettingValueKind.Secret => "password",
-                            ProviderSettingValueKind.Boolean => "toggle",
-                            ProviderSettingValueKind.Integer => "number",
-                            ProviderSettingValueKind.Choice => "select",
-                            _ => "text"
-                        },
-                        Sensitive = setting.ValueKind == ProviderSettingValueKind.Secret,
-                        Required = setting.Required,
-                        Options = setting.Choices.ToList(),
-                        HelpText = setting.HelpText,
-                        DefaultValueJson = setting.DefaultJson,
-                        Ownership = "provider-account"
-                    }).ToList()
-                }));
+                    ConnectionKind = "extension",
+                    ImplementationOrigin = "extension",
+                    RouteId = route.RouteId,
+                    AccountSettings = accountSettings,
+                    CapabilityRoutes = [route]
+                });
+            }
         }
         foreach (var provider in providers)
         {
@@ -874,7 +985,7 @@ public class AdminUiController : ControllerBase
             Priority(
                 "download",
                 "Download priority",
-                "Download routes after the local library. Drag to change which provider fills a missing track.",
+                "Download routes after the local library. Drag to change which source fills a missing track.",
                 "MULTI_PROVIDER_DOWNLOAD_ORDER",
                 null,
                 "apple-download,deezer,qobuz",
@@ -882,7 +993,7 @@ public class AdminUiController : ControllerBase
             Priority(
                 "streaming",
                 "Streaming priority",
-                "Stream routes after the local library. Drag to change which provider plays a missing track.",
+                "Stream routes after the local library. Drag to change which source plays a missing track.",
                 "MULTI_PROVIDER_STREAMING_ORDER",
                 null,
                 "apple-download,deezer,qobuz",
@@ -890,7 +1001,7 @@ public class AdminUiController : ControllerBase
             Priority(
                 "playlist",
                 "Playlist discovery priority",
-                "Order used when fetching playlists and playlist tracks from each source provider.",
+                "Order used when fetching playlists and playlist tracks from each source.",
                 "MULTI_PROVIDER_PLAYLIST_ORDER",
                 "MULTI_PROVIDER_ENABLED_PLAYLIST",
                 "spotify,deezer,qobuz",
@@ -902,7 +1013,7 @@ public class AdminUiController : ControllerBase
                 "MULTI_PROVIDER_LYRICS_ORDER",
                 null,
                 "spotify,apple-download,lyricsplus,lrclib",
-                pinnedProvider: null)
+                pinnedProvider: pinnedLocalProvider)
         ];
     }
 
@@ -977,8 +1088,7 @@ public class AdminUiController : ControllerBase
             DeploymentField("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
             Field("STORAGE_MODE", "Storage mode", "select", "library.storageMode", ["Permanent", "Cache"]),
             Field("DOWNLOAD_MODE", "Download mode", "select", "library.downloadMode", ["Track", "Album"]),
-            Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
-            DeploymentField("REDIS_ENABLED", "Valkey cache", "toggle", "redisEnabled")
+            Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"])
         ]),
         Section("paths", "Library paths",
         [
@@ -995,7 +1105,11 @@ public class AdminUiController : ControllerBase
             Field("CACHE_LYRICS_DAYS", "Lyrics days", "number", "cache.lyricsDays", min: 1),
             Field("CACHE_METADATA_DAYS", "Metadata days", "number", "cache.metadataDays", min: 1),
             Field("CACHE_PROXY_IMAGES_DAYS", "Proxy images days", "number", "cache.proxyImagesDays", min: 1),
-            Field("CACHE_TRANSCODE_MINUTES", "Transcode cache minutes", "number", "cache.transcodeCacheMinutes", min: 1)
+            Field("CACHE_TRANSCODE_MINUTES", "Transcode cache minutes", "number", "cache.transcodeCacheMinutes", min: 1),
+            DeploymentField("CACHE_MEDIA_DIRECTORY", "Media cache directory", "text", "cache.mediaDirectory"),
+            DeploymentField("CACHE_MEDIA_MAXIMUM_MEGABYTES", "Media cache total MiB", "number", "cache.mediaMaximumMegabytes"),
+            DeploymentField("CACHE_MEDIA_MAXIMUM_ENTRY_MEGABYTES", "Media cache entry MiB", "number", "cache.mediaMaximumEntryMegabytes"),
+            DeploymentField("CACHE_MEDIA_CLEANUP_FILE_LIMIT", "Cleanup scan file limit", "number", "cache.mediaCleanupFileLimit")
         ]),
         Section("network", "Network and security",
         [

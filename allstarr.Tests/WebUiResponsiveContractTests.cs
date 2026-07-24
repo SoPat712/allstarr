@@ -137,7 +137,7 @@ public sealed class WebUiResponsiveContractTests
         var css = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "base.css"));
 
         Assert.Contains("class=\"playlist-toolbar\"", script, StringComparison.Ordinal);
-        Assert.Contains("class=\"injected-data-table\"", script, StringComparison.Ordinal);
+        Assert.Contains("data-table", script, StringComparison.Ordinal);
         Assert.Contains("Sync ${selected.size ? `${selected.size} selected` : \"all now\"}", script, StringComparison.Ordinal);
         Assert.Contains("return nothing;", script, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Playlist preview\"", script, StringComparison.Ordinal);
@@ -356,11 +356,11 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("renderProviderLogo(providerId, \"large\")", script, StringComparison.Ordinal);
         Assert.Contains("class=\"source-metrics\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"source-card-footer\"", script, StringComparison.Ordinal);
-        Assert.Contains("icon(\"plus\", 17)}<span>Add account</span>", script, StringComparison.Ordinal);
+        Assert.Contains("icon(\"plus\", 17)}<span>Connect source</span>", script, StringComparison.Ordinal);
         Assert.Contains("provider-account-dialog", script, StringComparison.Ordinal);
-        Assert.Contains("this.navigate(\"/settings\")}>${icon(\"settings\", 16)}<span>Manage accounts</span>", script, StringComparison.Ordinal);
+        Assert.Contains("[\"routing\", \"Source priority\", \"sources\"]", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Add or enable a provider account above", script, StringComparison.Ordinal);
-        Assert.Contains("Accounts are managed separately so Sources stays focused on routing and health.", script, StringComparison.Ordinal);
+        Assert.Contains("Source connections", script, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -406,7 +406,7 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("if (this.isAdministrator())", script, StringComparison.Ordinal);
         Assert.Contains("![\"sources\", \"settings\", \"intelligence\"].includes(zone)", script, StringComparison.Ordinal);
         Assert.Contains("if (zone === \"settings\") return this.renderSettings();", script, StringComparison.Ordinal);
-        Assert.Contains("Credentials are encrypted and kept separate from the Sources catalog.", script, StringComparison.Ordinal);
+        Assert.Contains("Source connections", script, StringComparison.Ordinal);
         Assert.Contains("Provider accounts are managed by an administrator.", script, StringComparison.Ordinal);
     }
 

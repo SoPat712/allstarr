@@ -19,7 +19,7 @@ Allstarr is an ASP.NET Core `net10.0` music proxy. It sits between clients and a
 - Client compatibility comes first. The proxy must behave like the backend the client expects.
 - The admin surface is intentionally separate from the proxy surface.
 - External content is represented with stable typed IDs and then mapped back into backend-specific response shapes.
-- Postgres or SQLite owns durable control-plane state. Valkey, `/app/cache`, and `.env` remain important runtime
+- PostgreSQL owns durable control-plane state. Valkey, `/app/cache`, and `.env` remain important runtime
   and compatibility inputs, but they are not the authoritative account, job, outbox, health, or backup store.
 - The codebase already has a large regression suite. New behavior should land with tests.
 

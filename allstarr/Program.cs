@@ -46,17 +46,21 @@ using System.IO;
 
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment);
-if (StorageOperatorCommand.IsStorageCommand(args))
+var isStorageOperatorCommand = StorageOperatorCommand.IsStorageCommand(args);
+if (isStorageOperatorCommand)
 {
     builder.Configuration["Logging:LogLevel:Default"] = "Warning";
 }
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new RedactingConsoleLoggerProvider(builder.Configuration));
-builder.Services.AddDurableStorage(builder.Configuration, builder.Environment);
+builder.Services.AddDurableStorage(
+    builder.Configuration,
+    builder.Environment,
+    allowOfflineSqlite: isStorageOperatorCommand);
 builder.Services.AddDurableRuntimeSettings();
 builder.Services.AddEncryptedSecretStore(builder.Configuration);
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
-if (StorageOperatorCommand.IsStorageCommand(args))
+if (isStorageOperatorCommand)
 {
     Environment.ExitCode = await StorageOperatorCommand.RunAsync(
         builder.Services,
@@ -333,8 +337,6 @@ builder.Services.Configure<SquidWTFSettings>(
     builder.Configuration.GetSection("SquidWTF"));
 builder.Services.Configure<AppleDownloadSettings>(
     builder.Configuration.GetSection("AppleDownload"));
-builder.Services.Configure<RedisSettings>(
-    builder.Configuration.GetSection("Redis"));
 builder.Services.Configure<CacheSettings>(
     builder.Configuration.GetSection("Cache"));
 builder.Services.Configure<SpotifyImportSettings>(options =>
@@ -356,10 +358,18 @@ var squidWtfStreamingUrls = squidWtfEndpointCatalog.StreamingUrls;
 
 // Business services - shared across backends
 builder.Services.AddSingleton(squidWtfEndpointCatalog);
-builder.Services.AddSingleton<RedisCacheService>();
+builder.Services.AddSingleton<DatabaseApplicationCache>();
+builder.Services.AddSingleton<BoundedHotApplicationCache>();
+builder.Services.AddSingleton<FileMediaApplicationCache>();
+builder.Services.AddSingleton<HybridApplicationCache>();
+builder.Services.AddSingleton<IApplicationCache>(sp =>
+    sp.GetRequiredService<HybridApplicationCache>());
+builder.Services.AddHostedService<DatabaseApplicationCacheCleanupService>();
+builder.Services.AddHostedService<FileMediaApplicationCacheCleanupService>();
 builder.Services.AddSingleton<PlaylistPlayableSearchService>();
-builder.Services.AddSingleton<IRedisConnectionFactory, RedisConnectionFactory>();
 builder.Services.AddSingleton<OdesliService>();
+builder.Services.AddSingleton<IDownloadedSongMappingStore, EfDownloadedSongMappingStore>();
+builder.Services.AddSingleton<IManualLyricsMappingStore, EfManualLyricsMappingStore>();
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
 builder.Services.AddSingleton<ProtocolStreamingResponseAdapter>();
@@ -417,7 +427,7 @@ builder.Services.AddSingleton<IConcreteMetadataService>(sp =>
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SubsonicSettings>>(),
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SquidWTFSettings>>(),
         sp.GetRequiredService<ILogger<SquidWTFMetadataService>>(),
-        sp.GetRequiredService<RedisCacheService>(),
+        sp.GetRequiredService<IApplicationCache>(),
         squidWtfApiUrls,
         sp.GetService<GenreEnrichmentService>()));
 builder.Services.AddDeezerMetadataCapability();
@@ -453,9 +463,6 @@ builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>
 
 // 4. Playlist Sync Service
 builder.Services.AddSingleton<PlaylistSyncService>();
-
-// 5. ParallelMetadataService Wrapper (delegates to MultiProviderMetadataService)
-builder.Services.AddSingleton<ParallelMetadataService>();
 
 // Startup validation - register validators based on backend
 if (backendType == BackendType.Jellyfin)
@@ -505,12 +512,6 @@ if (!builder.Environment.IsEnvironment("Testing"))
 
 // Register cache cleanup service (only runs when StorageMode is Cache)
 builder.Services.AddHostedService<CacheCleanupService>();
-
-// Register cache warming service (loads file caches into Redis on startup)
-builder.Services.AddHostedService<CacheWarmingService>();
-
-// Register Redis persistence service (snapshots Redis to files periodically)
-builder.Services.AddHostedService<RedisPersistenceService>();
 
 // Register Spotify API client, lyrics service, and settings for direct API access
 // Configure from environment variables with SPOTIFY_API_ prefix
@@ -564,14 +565,6 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPlusService>();
 builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService, allstarr.Services.Lyrics.KeptLyricsSidecarService>();
 
-// Register Spotify mapping service (global Spotify ID → Local/External mappings)
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingService>();
-builder.Services.AddSingleton<allstarr.Services.Spotify.LegacySpotifyMappingProjector>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.LegacySpotifyMappingProjector>());
-
-// Register Spotify mapping validation service (validates and upgrades mappings)
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMappingValidationService>();
-
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
@@ -581,9 +574,15 @@ builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyMissingTracksFetc
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>());
 
 // Register Spotify track matching service (pre-matches tracks with rate limiting)
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyTrackMatchingService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyTrackMatchingService>());
-builder.Services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, allstarr.Services.Spotify.LegacyPlaylistMatchAllJobHandler>();
+builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistMatchingAdapter>();
+builder.Services.AddSingleton<allstarr.Core.Matching.IPlaylistMatchingAdapter>(sp =>
+    sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistMatchingAdapter>());
+builder.Services.AddSingleton<allstarr.Core.Matching.PlaylistMatchingCoordinator>();
+builder.Services.AddSingleton<allstarr.Core.Matching.IPlaylistMatchingCoordinator>(sp =>
+    sp.GetRequiredService<allstarr.Core.Matching.PlaylistMatchingCoordinator>());
+builder.Services.AddHostedService(sp =>
+    sp.GetRequiredService<allstarr.Core.Matching.PlaylistMatchingCoordinator>());
+builder.Services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, allstarr.Core.Matching.PlaylistMatchAllJobHandler>();
 
 // Register lyrics prefetch service (prefetches lyrics for all playlist tracks)
 // DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast

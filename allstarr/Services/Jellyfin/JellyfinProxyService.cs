@@ -25,7 +25,7 @@ public class JellyfinProxyService
     private readonly JellyfinSettings _settings;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<JellyfinProxyService> _logger;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly IConfiguration _configuration;
     private string? _cachedMusicLibraryId;
     private bool _libraryIdDetected = false;
@@ -38,7 +38,7 @@ public class JellyfinProxyService
         IOptions<JellyfinSettings> settings,
         IHttpContextAccessor httpContextAccessor,
         ILogger<JellyfinProxyService> logger,
-        RedisCacheService cache,
+        IApplicationCache cache,
         IConfiguration configuration)
     {
         _httpClient = httpClientFactory.CreateClient(HttpClientName);
@@ -983,8 +983,12 @@ public class JellyfinProxyService
         string? imageTag = null,
         IHeaderDictionary? clientHeaders = null)
     {
-        // Build cache key
-        var cacheKey = $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}:{imageTag}";
+        var cacheKey = CacheKeyBuilder.BuildJellyfinImageKey(
+            itemId,
+            imageType,
+            maxWidth,
+            maxHeight,
+            imageTag);
 
         // Try cache first
         var cached = await _cache.GetStringAsync(cacheKey);

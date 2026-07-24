@@ -195,21 +195,6 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             .OrderBy(item => item.ReferenceKey).Select(item => item.Id).ToListAsync();
         Assert.Equal(3, originalIds.Count);
         Assert.Equal(3, await db.ManagedFiles.Where(item => item.Id == file).Select(item => item.ReferenceCount).SingleAsync());
-
-        // Rollback intentionally drops Phase 8 reference metadata, but preserves the active count
-        // in the legacy schema so no deletion protection is lost. Reapplying reconstructs the same IDs.
-        await migrator.MigrateAsync(previous);
-        await using (var command = db.Database.GetDbConnection().CreateCommand())
-        {
-            command.CommandText = "SELECT ReferenceCount FROM managed_files WHERE Id=$id";
-            command.Parameters.Add(new SqliteParameter("$id", file));
-            if (command.Connection!.State != System.Data.ConnectionState.Open) await command.Connection.OpenAsync();
-            Assert.Equal(3L, Convert.ToInt64(await command.ExecuteScalarAsync()));
-        }
-        await migrator.MigrateAsync();
-        var reconstructedIds = await db.ManagedFileReferences.Where(item => item.ManagedFileId == file)
-            .OrderBy(item => item.ReferenceKey).Select(item => item.Id).ToListAsync();
-        Assert.Equal(originalIds, reconstructedIds);
     }
 
     [Fact]

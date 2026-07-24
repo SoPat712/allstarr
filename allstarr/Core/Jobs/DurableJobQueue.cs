@@ -67,6 +67,16 @@ public sealed record DurableJobCompletion(
     public static DurableJobCompletion Cancelled() => new(DurableJobCompletionKind.Cancelled);
 }
 
+public sealed record DurableJobProgressUpdate(
+    string Stage,
+    string Message,
+    int? Completed = null,
+    int? Total = null,
+    string? Provider = null,
+    string? Playlist = null,
+    string? Track = null,
+    string? DeferralReason = null);
+
 public sealed class DurableJobQueue
 {
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
@@ -430,6 +440,65 @@ public sealed class DurableJobQueue
         DurableJobClaim claim,
         CancellationToken cancellationToken = default) =>
         _contextAuthorizer.ReauthorizeAsync(claim, cancellationToken);
+
+    public async Task<bool> ReportProgressAsync(
+        DurableJobClaim claim,
+        DurableJobProgressUpdate update,
+        CancellationToken cancellationToken = default)
+    {
+        var stage = SafeOperationalText.Sanitize(update.Stage, 100) ?? "progress";
+        var message = SafeOperationalText.Sanitize(update.Message, 500) ?? "Work is continuing.";
+        var provider = SafeOperationalText.Sanitize(update.Provider, 100);
+        var playlist = SafeOperationalText.Sanitize(update.Playlist, 300);
+        var track = SafeOperationalText.Sanitize(update.Track, 500);
+        var deferralReason = SafeOperationalText.Sanitize(update.DeferralReason, 500);
+        int? total = update.Total.HasValue ? Math.Max(0, update.Total.Value) : null;
+        int? completed = update.Completed.HasValue ? Math.Max(0, update.Completed.Value) : null;
+        if (total is > 0 && completed > total)
+        {
+            completed = total;
+        }
+
+        var now = _clock.UtcNow;
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var job = await context.Jobs.SingleOrDefaultAsync(
+            item => item.Id == claim.JobId &&
+                    item.State == DurableJobState.Running &&
+                    item.LeaseOwner == claim.WorkerId &&
+                    item.AttemptCount == claim.AttemptNumber,
+            cancellationToken);
+        if (job == null)
+        {
+            return false;
+        }
+
+        context.AuditEvents.Add(new AuditEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = job.TenantId,
+            ActorUserId = job.OwnerUserId,
+            Category = "job-progress",
+            Action = stage,
+            Outcome = "running",
+            CorrelationId = job.CorrelationId,
+            DetailsJson = JsonSerializer.Serialize(new
+            {
+                jobId = job.Id,
+                attempt = job.AttemptCount,
+                stage,
+                message,
+                completed,
+                total,
+                provider,
+                playlist,
+                track,
+                deferralReason
+            }),
+            CreatedAt = now
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        return true;
+    }
 
     public async Task CompleteAsync(
         DurableJobClaim claim,

@@ -22,9 +22,7 @@ namespace allstarr.Controllers;
 [Route("api/admin/track-matches")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class TrackMatchesController(
-    IDbContextFactory<AllstarrDbContext> contextFactory,
-    SpotifyMappingService spotifyMappings,
-    TrackMatchDecisionEngine decisionEngine) : ControllerBase
+    ITrackMatchRepository trackMatchCommands) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -45,81 +43,35 @@ public sealed class TrackMatchesController(
         backendItemId = string.IsNullOrWhiteSpace(backendItemId) ? null : backendItemId.Trim();
         if (backendItemId?.Length > 256) return BadRequest(new { error = "Backend item id is invalid" });
 
-        var legacy = await spotifyMappings.GetMappingAsync(spotifyId);
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var tenantId = session!.TenantId!.Value;
         var userId = session.AllstarrUserId!.Value;
-
-        var spotifyIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && item.ProviderId == "spotify" && item.ExternalId == spotifyId)
-            .OrderBy(item => item.CreatedAt)
-            .ToListAsync(cancellationToken);
-        var canonicalIds = spotifyIdentities.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
-
-        var identities = canonicalIds.Length == 0
-            ? []
-            : await db.ProviderTrackIdentities.AsNoTracking()
-                .Where(item => item.TenantId == tenantId && canonicalIds.Contains(item.CanonicalRecordingId))
-                .OrderBy(item => item.ProviderId).ThenBy(item => item.CreatedAt)
-                .ToListAsync(cancellationToken);
-
-        var localQuery = db.LibraryTracks.AsNoTracking().Where(item => item.TenantId == tenantId);
-        if (!session.IsAdministrator) localQuery = localQuery.Where(item => item.OwnerUserId == userId);
-        var localTracks = await localQuery
-            .Where(item => (item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value)) ||
-                           (legacy != null && legacy.LocalId != null && item.BackendItemId == legacy.LocalId) ||
-                           (backendItemId != null && item.BackendItemId == backendItemId))
-            .OrderByDescending(item => item.UpdatedAt)
-            .ToListAsync(cancellationToken);
-
-        var identityIds = identities.Select(item => item.Id).Concat(spotifyIdentities.Select(item => item.Id)).Distinct().ToArray();
-        var snapshotQuery = db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && item.ProviderTrackIdentityId.HasValue &&
-                           identityIds.Contains(item.ProviderTrackIdentityId.Value));
-        if (!session.IsAdministrator) snapshotQuery = snapshotQuery.Where(item => item.OwnerUserId == userId);
-        var snapshots = await snapshotQuery.OrderByDescending(item => item.RetrievedAt).ToListAsync(cancellationToken);
-        var snapshotIds = snapshots.Select(item => item.Id).ToArray();
-        var decisions = snapshotIds.Length == 0
-            ? []
-            : await db.TrackMatches.AsNoTracking()
-                .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecidedAt).ToListAsync(cancellationToken);
-        var overrides = snapshotIds.Length == 0
-            ? []
-            : await db.ManualTrackOverrides.AsNoTracking()
-                .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.CreatedAt).ToListAsync(cancellationToken);
-
-        var externalIds = identities.Select(item => item.ExternalId)
-            .Concat(legacy?.ExternalMappings.Select(item => item.ExternalId) ?? [])
-            .Append(spotifyId).Where(item => !string.IsNullOrWhiteSpace(item)).Distinct().ToArray();
-        var artifactQuery = db.ProviderDownloadArtifacts.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && externalIds.Contains(item.ProviderArtifactId));
-        if (!session.IsAdministrator) artifactQuery = artifactQuery.Where(item => item.OwnerUserId == null || item.OwnerUserId == userId);
-        var artifacts = await artifactQuery.OrderByDescending(item => item.CreatedAt).Take(50).ToListAsync(cancellationToken);
+        var detail = await trackMatchCommands.GetDetailAsync(
+            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
+            "spotify",
+            spotifyId,
+            backendItemId,
+            cancellationToken);
+        var identities = detail.ProviderIdentities;
+        var localTracks = detail.LocalTracks;
+        var snapshots = detail.Snapshots;
+        var decisions = detail.Decisions;
+        var overrides = detail.Overrides;
+        var artifacts = detail.Artifacts;
 
         var firstMappedAt = new DateTimeOffset?[]
         {
-            legacy?.CreatedAt == default ? null : new DateTimeOffset(legacy!.CreatedAt),
             identities.Count == 0 ? null : identities.Min(item => item.CreatedAt),
             decisions.Count == 0 ? null : decisions.Min(item => item.DecidedAt),
             overrides.Count == 0 ? null : overrides.Min(item => item.CreatedAt)
         }.Where(item => item.HasValue).Min();
         var lastMappedAt = new DateTimeOffset?[]
         {
-            legacy?.UpdatedAt is null ? null : new DateTimeOffset(legacy.UpdatedAt.Value),
-            legacy?.LastValidatedAt is null ? null : new DateTimeOffset(legacy.LastValidatedAt.Value),
             identities.Count == 0 ? null : identities.Max(item => item.UpdatedAt),
             decisions.Count == 0 ? null : decisions.Max(item => item.DecidedAt),
             overrides.Count == 0 ? null : overrides.Max(item => item.CreatedAt)
         }.Where(item => item.HasValue).Max();
 
         var activity = new List<object>();
-        if (legacy != null)
-        {
-            activity.Add(new { at = legacy.CreatedAt, kind = "mapping", title = "Legacy mapping created", detail = $"{legacy.Source} · {legacy.TargetType}" });
-            if (legacy.LastValidatedAt.HasValue) activity.Add(new { at = legacy.LastValidatedAt.Value, kind = "validation", title = "Legacy mapping validated", detail = legacy.TargetType });
-        }
         activity.AddRange(identities.Select(item => (object)new { at = item.VerifiedAt, kind = "identity", title = $"{item.ProviderId} identity verified", detail = item.VerificationMethod }));
         activity.AddRange(snapshots.Select(item => (object)new { at = item.RetrievedAt, kind = "cache", title = $"{item.ProviderId} metadata cached", detail = $"Snapshot v{item.SnapshotVersion}" }));
         activity.AddRange(decisions.Select(item => (object)new { at = item.DecidedAt, kind = "match", title = $"Match {item.State.ToString().ToLowerInvariant()}", detail = $"{item.Confidence:P0} confidence · {item.PolicyVersion}" }));
@@ -140,31 +92,7 @@ public sealed class TrackMatchesController(
             item.CorrelationId,
             item.DecidedAt
         }).ToList();
-        if (legacy != null)
-        {
-            var route = legacy.TargetType.Equals("local", StringComparison.OrdinalIgnoreCase)
-                ? "Jellyfin library"
-                : legacy.TryGetExternalTarget(null, out var provider, out _)
-                    ? provider
-                    : "external provider";
-            matchHistory.Add(new
-            {
-                id = $"legacy-{spotifyId}",
-                state = legacy.LastValidatedAt.HasValue ? "accepted" : "candidate",
-                confidence = (double?)null,
-                threshold = (double?)null,
-                decisionVersion = (int?)null,
-                policyVersion = "compatibility-v2",
-                source = legacy.Source.Equals("manual", StringComparison.OrdinalIgnoreCase)
-                    ? "manual compatibility mapping"
-                    : "legacy matcher",
-                reasons = new[] { $"Compatibility matching selected {route}." },
-                warnings = legacy.LastValidatedAt.HasValue ? Array.Empty<string>() : new[] { "Awaiting validation." },
-                correlationId = (string?)null,
-                decidedAt = (DateTimeOffset?)(legacy.UpdatedAt ?? legacy.CreatedAt)
-            });
-        }
-        else if (backendItemId != null && localTracks.Count == 0)
+        if (backendItemId != null && localTracks.Count == 0)
         {
             matchHistory.Add(new
             {
@@ -186,31 +114,20 @@ public sealed class TrackMatchesController(
         return Ok(new
         {
             spotifyId,
-            found = legacy != null || identities.Count > 0 || decisions.Count > 0 || localTracks.Count > 0,
+            found = identities.Count > 0 || decisions.Count > 0 || localTracks.Count > 0,
             firstMappedAt,
             lastMappedAt,
-            durationMilliseconds = primaryLocal?.DurationMilliseconds ?? legacy?.Metadata?.DurationMs,
+            durationMilliseconds = primaryLocal?.DurationMilliseconds,
             metadata = new
             {
-                title = primaryLocal?.Title ?? legacy?.Metadata?.Title,
-                artist = primaryLocal?.Artist ?? legacy?.Metadata?.Artist,
-                album = primaryLocal?.Album ?? legacy?.Metadata?.Album,
-                artworkUrl = legacy?.Metadata?.ArtworkUrl,
+                title = primaryLocal?.Title,
+                artist = primaryLocal?.Artist,
+                album = primaryLocal?.Album,
+                artworkUrl = primaryLocal?.CoverArtReference,
                 isrc = primaryLocal?.Isrc,
                 musicBrainzRecordingId = primaryLocal?.MusicBrainzRecordingId
             },
-            legacyMapping = legacy == null ? null : new
-            {
-                origin = "legacy-cache",
-                legacy.TargetType,
-                legacy.LocalId,
-                legacy.Source,
-                legacy.CreatedAt,
-                legacy.UpdatedAt,
-                legacy.LastValidatedAt,
-                externalMappings = legacy.ExternalMappings.Select(item => new { item.Provider, item.ExternalId, item.Source, item.CreatedAt, item.UpdatedAt })
-            },
-            providerIdentities = identities.Concat(spotifyIdentities).DistinctBy(item => item.Id).Select(item => new
+            providerIdentities = identities.Select(item => new
             {
                 item.Id,
                 item.CanonicalRecordingId,
@@ -272,47 +189,18 @@ public sealed class TrackMatchesController(
             !Enum.TryParse<TrackMatchState>(state, true, out _))
             return BadRequest(new { error = "State is not a valid match state" });
 
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var tenantId = session!.TenantId!.Value;
         var userId = session.AllstarrUserId!.Value;
-        var snapshotsQuery = db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.TenantId == tenantId);
-        if (!session.IsAdministrator) snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == userId);
-        if (!string.IsNullOrWhiteSpace(libraryScopeId)) snapshotsQuery = snapshotsQuery.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var pattern = $"%{search.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
-            snapshotsQuery = snapshotsQuery.Where(item =>
-                EF.Functions.ILike(item.ProviderId, pattern, "\\") ||
-                EF.Functions.ILike(item.PayloadJson, pattern, "\\"));
-        }
-        var snapshots = await snapshotsQuery.OrderByDescending(item => item.RetrievedAt).Take(5000).ToListAsync(cancellationToken);
-        var snapshotIds = snapshots.Select(item => item.Id).ToArray();
-        var decisionQuery = db.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId));
-        var latestDecisionVersions = decisionQuery
-            .GroupBy(item => item.ExternalSnapshotId)
-            .Select(group => new
-            {
-                ExternalSnapshotId = group.Key,
-                DecisionVersion = group.Max(item => item.DecisionVersion)
-            });
-        var decisions = (await decisionQuery.Join(
-                latestDecisionVersions,
-                item => new { item.ExternalSnapshotId, item.DecisionVersion },
-                latest => new { latest.ExternalSnapshotId, latest.DecisionVersion },
-                (item, _) => item)
-            .ToListAsync(cancellationToken))
-            .ToDictionary(item => item.ExternalSnapshotId);
-        var overrides = (await db.ManualTrackOverrides.AsNoTracking().Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId) && item.RevokedAt == null)
-                .ToListAsync(cancellationToken)).ToDictionary(item => item.ExternalSnapshotId);
-        var libraryIds = decisions.Values.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)
-            .Concat(overrides.Values.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)).Distinct().ToArray();
-        var library = await db.LibraryTracks.AsNoTracking().Where(item => item.TenantId == tenantId && libraryIds.Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var canonicalIds = decisions.Values.Where(item => item.CanonicalRecordingId.HasValue).Select(item => item.CanonicalRecordingId!.Value)
-            .Concat(library.Values.Where(item => item.CanonicalRecordingId.HasValue).Select(item => item.CanonicalRecordingId!.Value)).Distinct().ToArray();
-        var identities = (await db.ProviderTrackIdentities.AsNoTracking().Where(item => item.TenantId == tenantId && canonicalIds.Contains(item.CanonicalRecordingId))
-                .OrderBy(item => item.ProviderId).ThenBy(item => item.ExternalId).ToListAsync(cancellationToken))
+        var review = await trackMatchCommands.GetReviewDataAsync(
+            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
+            libraryScopeId,
+            search,
+            cancellationToken: cancellationToken);
+        var snapshots = review.Snapshots;
+        var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
+        var overrides = review.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
+        var library = review.LibraryTracks.ToDictionary(item => item.Id);
+        var identities = review.ProviderIdentities
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
 
         var allRows = snapshots.Select(snapshot => Row(snapshot, decisions.GetValueOrDefault(snapshot.Id),
@@ -348,19 +236,15 @@ public sealed class TrackMatchesController(
         if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
         limit = Math.Clamp(limit, 1, 50);
 
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var tenantId = session!.TenantId!.Value;
         var userId = session.AllstarrUserId!.Value;
-        var pattern = $"%{query.Replace("%", "\\%").Replace("_", "\\_")}%";
-        var tracks = db.LibraryTracks.AsNoTracking().Where(item => item.TenantId == tenantId);
-        if (!session.IsAdministrator) tracks = tracks.Where(item => item.OwnerUserId == userId);
-        if (!string.IsNullOrWhiteSpace(libraryScopeId)) tracks = tracks.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
-        tracks = tracks.Where(item =>
-            EF.Functions.ILike(item.Title, pattern, "\\") ||
-            EF.Functions.ILike(item.Artist, pattern, "\\") ||
-            (item.Album != null && EF.Functions.ILike(item.Album, pattern, "\\")));
-        var values = await tracks.OrderBy(item => item.Artist).ThenBy(item => item.Title).Take(limit)
-            .Select(item => new
+        var tracks = await trackMatchCommands.SearchLocalTracksAsync(
+            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
+            query,
+            libraryScopeId,
+            limit,
+            cancellationToken);
+        var values = tracks.Select(item => new
             {
                 item.Id,
                 item.BackendItemId,
@@ -370,7 +254,7 @@ public sealed class TrackMatchesController(
                 item.DurationMilliseconds,
                 item.Isrc,
                 item.CoverArtReference
-            }).ToArrayAsync(cancellationToken);
+            }).ToArray();
         return Ok(new { tracks = values });
     }
 
@@ -381,263 +265,64 @@ public sealed class TrackMatchesController(
         CancellationToken cancellationToken = default)
     {
         if (!TrySession(out var session, out var error)) return error!;
-        var targetType = request.TargetType?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (targetType is not ("local" or "provider" or "reject"))
-            return BadRequest(new { error = "TargetType must be local, provider, or reject" });
-
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var tenantId = session!.TenantId!.Value;
-        var userId = session.AllstarrUserId!.Value;
-        var snapshot = await db.ExternalMetadataSnapshots.SingleOrDefaultAsync(
-            item => item.Id == externalSnapshotId && item.TenantId == tenantId, cancellationToken);
-        if (snapshot == null) return NotFound();
-        if (!session.IsAdministrator && snapshot.OwnerUserId != userId) return Forbid();
-
-        var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
-            ? await db.ProviderTrackIdentities.SingleOrDefaultAsync(
-                item => item.Id == snapshot.ProviderTrackIdentityId.Value && item.TenantId == tenantId,
-                cancellationToken)
-            : null;
-        var latestDecision = await db.TrackMatches.Where(item =>
-                item.TenantId == tenantId && item.ExternalSnapshotId == externalSnapshotId)
-            .OrderByDescending(item => item.DecisionVersion).FirstOrDefaultAsync(cancellationToken);
-        var decisionVersion = (latestDecision?.DecisionVersion ?? 0) + 1;
-        var now = DateTimeOffset.UtcNow;
-        var activeOverride = await db.ManualTrackOverrides.SingleOrDefaultAsync(item =>
-            item.TenantId == tenantId && item.ExternalSnapshotId == externalSnapshotId && item.RevokedAt == null,
+        var result = await trackMatchCommands.ResolveSnapshotAsync(
+            new TrackMatchActor(
+                session!.TenantId!.Value,
+                session.AllstarrUserId!.Value,
+                session.IsAdministrator),
+            externalSnapshotId,
+            new ResolveTrackMatchCommand(
+                request.TargetType,
+                request.LibraryTrackId,
+                ExternalProvider: request.ExternalProvider,
+                ExternalId: request.ExternalId,
+                Reason: request.Reason),
+            HttpContext.TraceIdentifier,
             cancellationToken);
-        if (activeOverride != null)
-        {
-            activeOverride.RevokedAt = now;
-            activeOverride.Revision++;
-        }
 
-        LibraryTrackRecord? localTrack = null;
-        string? providerId = null;
-        string? externalId = null;
-        if (targetType == "local")
+        if (result.Succeeded) return Ok(new { success = true });
+        return result.Failure switch
         {
-            if (!request.LibraryTrackId.HasValue) return BadRequest(new { error = "LibraryTrackId is required for a local match" });
-            localTrack = await db.LibraryTracks.SingleOrDefaultAsync(item =>
-                item.Id == request.LibraryTrackId.Value && item.TenantId == tenantId &&
-                item.LibraryScopeId == snapshot.LibraryScopeId, cancellationToken);
-            if (localTrack == null || (!session.IsAdministrator && localTrack.OwnerUserId != userId)) return NotFound();
-            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
-                OwnerUserId = snapshot.OwnerUserId,
-                ExternalSnapshotId = snapshot.Id,
-                LibraryTrackId = localTrack.Id,
-                LibraryScopeId = snapshot.LibraryScopeId,
-                Decision = ManualOverrideDecision.Pin,
-                Reason = CleanReason(request.Reason, "Selected from the indexed local library"),
-                DecisionVersion = decisionVersion,
-                CreatedAt = now
-            });
-        }
-        else if (targetType == "reject")
-        {
-            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
-                OwnerUserId = snapshot.OwnerUserId,
-                ExternalSnapshotId = snapshot.Id,
-                LibraryScopeId = snapshot.LibraryScopeId,
-                Decision = ManualOverrideDecision.Reject,
-                Reason = CleanReason(request.Reason, "Rejected during manual review"),
-                DecisionVersion = decisionVersion,
-                CreatedAt = now
-            });
-        }
-        else
-        {
-            providerId = request.ExternalProvider?.Trim().ToLowerInvariant();
-            externalId = request.ExternalId?.Trim();
-            if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(externalId))
-                return BadRequest(new { error = "ExternalProvider and ExternalId are required for a provider match" });
-            if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(providerId))
-                return BadRequest(new { error = "That provider cannot supply playback audio" });
-            var canonicalId = latestDecision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
-            if (!canonicalId.HasValue) return Conflict(new { error = "The source track has no canonical identity yet; rematch it first" });
-
-            var externalHash = Hash(externalId);
-            var identity = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>
-                item.TenantId == tenantId && item.ProviderId == providerId && item.ResourceKind == ProviderResourceKind.Track &&
-                item.CatalogNamespace == "default" && item.Scope == ProviderIdentityScope.Catalog &&
-                item.ExternalIdHash == externalHash, cancellationToken);
-            if (identity != null && identity.CanonicalRecordingId != canonicalId.Value)
-                return Conflict(new { error = "That provider track is already linked to a different recording" });
-            if (identity == null)
-            {
-                db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    TenantId = tenantId,
-                    CanonicalRecordingId = canonicalId.Value,
-                    ProviderId = providerId,
-                    ResourceKind = ProviderResourceKind.Track,
-                    CatalogNamespace = "default",
-                    Scope = ProviderIdentityScope.Catalog,
-                    ExternalId = externalId,
-                    ExternalIdHash = externalHash,
-                    Verification = ProviderIdentityVerification.Pinned,
-                    VerificationMethod = "manual-review",
-                    DecisionVersion = decisionVersion,
-                    VerifiedAt = now,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-            }
-            db.TrackMatches.Add(new TrackMatchRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
-                OwnerUserId = snapshot.OwnerUserId,
-                ExternalSnapshotId = snapshot.Id,
-                CanonicalRecordingId = canonicalId.Value,
-                LibraryScopeId = snapshot.LibraryScopeId,
-                State = TrackMatchState.Suggested,
-                Confidence = 1,
-                Threshold = 1,
-                DecisionVersion = decisionVersion,
-                PolicyVersion = "manual-provider-route-v1",
-                CandidateResultsJson = "[]",
-                ReasonsJson = JsonSerializer.Serialize(new[] { $"Manually selected {providerId} playback route" }),
-                WarningsJson = "[]",
-                CorrelationId = HttpContext.TraceIdentifier,
-                DecidedAt = now
-            });
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-        var metadata = Metadata(snapshot.PayloadJson);
-        var compatibilityUpdated = true;
-        if (sourceIdentity?.ProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            compatibilityUpdated = targetType switch
-            {
-                "local" => await spotifyMappings.SaveManualMappingAsync(sourceIdentity.ExternalId, "local",
-                    localTrack!.BackendItemId, metadata: ToTrackMetadata(metadata)),
-                "provider" => await spotifyMappings.SaveManualMappingAsync(sourceIdentity.ExternalId, "external",
-                    externalProvider: providerId, externalId: externalId, metadata: ToTrackMetadata(metadata)),
-                _ => await spotifyMappings.DeleteMappingAsync(sourceIdentity.ExternalId)
-            };
-        }
-        return Ok(new { success = true, compatibilityUpdated });
+            TrackMatchCommandFailure.Invalid => BadRequest(new { error = result.Error }),
+            TrackMatchCommandFailure.NotFound => NotFound(new { error = result.Error }),
+            TrackMatchCommandFailure.Forbidden => StatusCode(403, new { error = result.Error }),
+            TrackMatchCommandFailure.Conflict => Conflict(new { error = result.Error }),
+            _ => StatusCode(500, new { error = result.Error ?? "Failed to resolve track match" })
+        };
     }
 
     [HttpPost("{externalSnapshotId:guid}/rematch")]
     public async Task<IActionResult> Rematch(Guid externalSnapshotId, CancellationToken cancellationToken = default)
     {
         if (!TrySession(out var session, out var error)) return error!;
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var tenantId = session!.TenantId!.Value;
-        var userId = session.AllstarrUserId!.Value;
-        var snapshot = await db.ExternalMetadataSnapshots.SingleOrDefaultAsync(
-            item => item.Id == externalSnapshotId && item.TenantId == tenantId, cancellationToken);
-        if (snapshot == null) return NotFound();
-        if (!session.IsAdministrator && snapshot.OwnerUserId != userId) return Forbid();
-        var active = await db.ManualTrackOverrides.SingleOrDefaultAsync(item =>
-            item.TenantId == tenantId && item.ExternalSnapshotId == snapshot.Id && item.RevokedAt == null,
+        var result = await trackMatchCommands.RematchSnapshotAsync(
+            new TrackMatchActor(
+                session!.TenantId!.Value,
+                session.AllstarrUserId!.Value,
+                session.IsAdministrator),
+            externalSnapshotId,
+            HttpContext.TraceIdentifier,
             cancellationToken);
-        if (active != null)
-        {
-            active.RevokedAt = DateTimeOffset.UtcNow;
-            active.Revision++;
-        }
-        var source = snapshot.ProviderTrackIdentityId.HasValue
-            ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(
-                item => item.Id == snapshot.ProviderTrackIdentityId.Value && item.TenantId == tenantId,
-                cancellationToken)
-            : null;
 
-        var candidates = await db.LibraryTracks.AsNoTracking()
-            .Where(item =>
-                item.TenantId == tenantId &&
-                item.OwnerUserId == snapshot.OwnerUserId &&
-                item.LibraryScopeId == snapshot.LibraryScopeId)
-            .ToListAsync(cancellationToken);
-        var latestVersion = await db.TrackMatches
-            .Where(item => item.TenantId == tenantId && item.ExternalSnapshotId == snapshot.Id)
-            .Select(item => (int?)item.DecisionVersion)
-            .MaxAsync(cancellationToken) ?? 0;
-        var payload = Metadata(snapshot.PayloadJson);
-        var sourceTrack = new ExternalTrackMatchSnapshot(
-            snapshot.Id.ToString("N"),
-            source?.ProviderId ?? snapshot.ProviderId,
-            source?.ExternalId ?? snapshot.ExternalIdHash,
-            payload.Title ?? "Unknown",
-            payload.Artist ?? "Unknown",
-            payload.Album,
-            null,
-            DurationSeconds(snapshot.PayloadJson),
-            payload.Isrc,
-            null,
-            null);
-        var localCandidates = candidates.Select(item => new LocalTrackMatchCandidate(
-            item.Id,
-            item.TenantId,
-            item.OwnerUserId,
-            item.BackendInstanceId,
-            item.LibraryScopeId,
-            item.BackendItemId,
-            item.CanonicalRecordingId,
-            item.Title,
-            item.Artist,
-            item.Album,
-            item.AlbumArtist,
-            item.DurationMilliseconds > 0 ? (int?)Math.Round(item.DurationMilliseconds / 1000d) : null,
-            item.Isrc,
-            item.MusicBrainzRecordingId,
-            null)).ToArray();
-        var scope = new TrackMatchScope(
-            tenantId,
-            snapshot.OwnerUserId,
-            candidates.FirstOrDefault()?.BackendInstanceId ?? "unknown",
-            snapshot.LibraryScopeId,
-            snapshot.ProviderAccountId,
-            2,
-            snapshot.SnapshotVersion);
-        var decision = decisionEngine.Decide(scope, sourceTrack, localCandidates);
-        var selected = decision.SelectedLibraryTrackId.HasValue
-            ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
-            : null;
-        var state = Enum.Parse<TrackMatchState>(decision.State.ToString(), ignoreCase: true);
-        db.TrackMatches.Add(new TrackMatchRecord
+        if (!result.Succeeded)
         {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id,
-            CanonicalRecordingId = selected?.CanonicalRecordingId,
-            LibraryScopeId = snapshot.LibraryScopeId,
-            LibraryTrackId = decision.SelectedLibraryTrackId,
-            State = state,
-            Confidence = decision.Confidence,
-            Threshold = 0.88,
-            DecisionVersion = latestVersion + 1,
-            PolicyVersion = "manual-rematch-v2",
-            CandidateResultsJson = JsonSerializer.Serialize(decision.Candidates),
-            ReasonsJson = JsonSerializer.Serialize(decision.Reasons),
-            WarningsJson = JsonSerializer.Serialize(decision.Warnings),
-            CorrelationId = HttpContext.TraceIdentifier,
-            DecidedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync(cancellationToken);
-
-        if (source?.ProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            await spotifyMappings.DeleteMappingAsync(source.ExternalId);
+            return result.Failure switch
+            {
+                TrackMatchCommandFailure.NotFound => NotFound(new { error = result.Error }),
+                TrackMatchCommandFailure.Forbidden => StatusCode(403, new { error = result.Error }),
+                TrackMatchCommandFailure.Invalid => BadRequest(new { error = result.Error }),
+                TrackMatchCommandFailure.Conflict => Conflict(new { error = result.Error }),
+                _ => StatusCode(500, new { error = result.Error ?? "Failed to rematch track" })
+            };
         }
+
         return Ok(new
         {
             rematched = true,
-            state = decision.State.ToString().ToLowerInvariant(),
-            confidence = decision.Confidence,
-            candidateCount = decision.Candidates.Count,
-            decisionVersion = latestVersion + 1
+            state = result.State,
+            confidence = result.Confidence,
+            candidateCount = result.CandidateCount,
+            decisionVersion = result.DecisionVersion
         });
     }
 

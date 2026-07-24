@@ -76,7 +76,7 @@ public sealed class OperationalNoiseRegressionTests
     {
         var dockerfile = Read("Dockerfile");
         var requestLogging = Read("allstarr/Middleware/RequestLoggingMiddleware.cs");
-        var matching = Read("allstarr/Services/Spotify/SpotifyTrackMatchingService.cs");
+        var matching = Read("allstarr/Services/Spotify/PerProviderTrackMatcher.cs");
         var playlists = Read("allstarr/Controllers/PlaylistController.cs");
 
         Assert.Contains("ENV ASPNETCORE_HTTP_PORTS=", dockerfile, StringComparison.Ordinal);

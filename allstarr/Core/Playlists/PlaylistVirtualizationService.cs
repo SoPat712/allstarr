@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -42,7 +43,8 @@ public interface IPlaylistVirtualizationService
 /// This is deliberately read-only: virtual and hybrid reads never create or mutate a backend playlist.
 /// </summary>
 public sealed class PlaylistVirtualizationService(
-    IDbContextFactory<AllstarrDbContext> contextFactory) : IPlaylistVirtualizationService
+    IDbContextFactory<AllstarrDbContext> contextFactory,
+    ITrackMatchRepository trackMatches) : IPlaylistVirtualizationService
 {
     public const string IdPrefix = "allstarr-vpl-";
 
@@ -92,32 +94,19 @@ public sealed class PlaylistVirtualizationService(
             .OrderBy(item => item.SourcePosition)
             .ToListAsync(cancellationToken);
         var externalIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
-        var externalSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && externalIds.Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var providerIdentityIds = externalSnapshots.Values
-            .Where(item => item.ProviderTrackIdentityId.HasValue)
-            .Select(item => item.ProviderTrackIdentityId!.Value)
-            .Distinct()
-            .ToArray();
-        var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && providerIdentityIds.Contains(item.Id) &&
-                           (item.Verification == ProviderIdentityVerification.Verified ||
-                            item.Verification == ProviderIdentityVerification.Pinned))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var overrides = await db.ManualTrackOverrides.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId &&
-                           item.LibraryScopeId == link.LibraryScopeId && item.RevokedAt == null &&
-                           externalIds.Contains(item.ExternalSnapshotId))
-            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
-        var decisions = (await db.TrackMatches.AsNoTracking()
-                .Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == link.OwnerUserId &&
-                               item.LibraryScopeId == link.LibraryScopeId &&
-                               externalIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecisionVersion)
-                .ToListAsync(cancellationToken))
-            .GroupBy(item => item.ExternalSnapshotId)
-            .ToDictionary(group => group.Key, group => group.First());
+        var resolution = await trackMatches.GetResolutionDataAsync(
+            new TrackMatchActor(
+                actor.TenantId,
+                actor.EffectiveUserId ?? link.OwnerUserId,
+                actor.Kind == ProviderActorKind.Administrator),
+            link.OwnerUserId,
+            link.LibraryScopeId,
+            externalIds,
+            cancellationToken);
+        var externalSnapshots = resolution.Snapshots.ToDictionary(item => item.Id);
+        var providerIdentities = resolution.ProviderIdentities.ToDictionary(item => item.Id);
+        var overrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
+        var decisions = resolution.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
 
         var selected = entries.Select(entry =>
         {

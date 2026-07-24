@@ -2,6 +2,7 @@ using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services;
+using allstarr.Services.Common;
 using allstarr.Services.Spotify;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -136,11 +137,52 @@ public sealed class PerProviderTrackWalkerTests
             default);
 
         Assert.Null(result.MatchedSong);
-        Assert.Equal(2, result.Walked.Count);
+        Assert.Equal(4, result.Walked.Count);
         Assert.Contains(result.Walked, attempt => attempt.Provider == "deezer"
-            && attempt.Outcome == PerProviderTrackMatcher.OutcomeLowScore);
+            && attempt.Outcome == PerProviderTrackMatcher.OutcomeLowScore
+            && attempt.ReasonCode != null
+            && attempt.ReasonCode.Contains("title=", StringComparison.Ordinal)
+            && attempt.ReasonCode.Contains("album=", StringComparison.Ordinal)
+            && attempt.ReasonCode.Contains("duration=", StringComparison.Ordinal));
         Assert.Contains(result.Walked, attempt => attempt.Provider == "qobuz"
             && attempt.Outcome == PerProviderTrackMatcher.OutcomeEmpty);
+        Assert.Equal(2, result.Walked.Count(attempt =>
+            attempt.Query == FuzzyMatcher.StripDecorators(source.Title)));
+    }
+
+    [Fact]
+    public async Task AlbumAndDuration_DisambiguateOtherwiseEqualProviderCandidates()
+    {
+        var wrong = NewSong(
+            "ext-deezer-wrong",
+            "Ordinary",
+            "Alex Warren",
+            album: "Unrelated Compilation",
+            durationSeconds: 95);
+        var correct = NewSong(
+            "ext-deezer-correct",
+            "Ordinary",
+            "Alex Warren",
+            album: "You'll Be Alright, Kid",
+            durationSeconds: 187);
+        var walker = NewWalker(new DeezerFake(new[] { wrong, correct }));
+        var source = NewSource(
+            "Ordinary",
+            "Alex Warren",
+            album: "You'll Be Alright, Kid",
+            durationMs: 187000);
+
+        var result = await walker.WalkAsync(
+            source,
+            new[] { "deezer" },
+            localMatch: null,
+            localMatchScore: null,
+            default);
+
+        Assert.Equal(correct.Id, result.MatchedSong?.Id);
+        var attempt = Assert.Single(result.Walked);
+        Assert.Contains("album=100", attempt.ReasonCode, StringComparison.Ordinal);
+        Assert.Contains("duration=100.0", attempt.ReasonCode, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -223,21 +265,32 @@ public sealed class PerProviderTrackWalkerTests
     private static InjectedSourceTrack NewSource(
         string title,
         string primaryArtist,
-        string? isrc = null) =>
+        string? isrc = null,
+        string? album = null,
+        int? durationMs = 213000) =>
         new(
             SourceId: "src-1",
             SourceProvider: "spotify",
             Title: title,
             Artists: new List<string> { primaryArtist },
             Isrc: isrc,
-            DurationMs: 213000);
+            DurationMs: durationMs,
+            Album: album);
 
-    private static Song NewSong(string id, string title, string artist, bool isLocal = false) =>
+    private static Song NewSong(
+        string id,
+        string title,
+        string artist,
+        bool isLocal = false,
+        string? album = null,
+        int? durationSeconds = null) =>
         new()
         {
             Id = id,
             Title = title,
             Artist = artist,
+            Album = album ?? string.Empty,
+            Duration = durationSeconds,
             IsLocal = isLocal,
             ExternalProvider = isLocal ? null : "deezer",
             ExternalId = isLocal ? null : id

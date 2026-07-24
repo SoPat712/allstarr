@@ -19,7 +19,7 @@ public class JellyfinProxyServiceTests
     private readonly JellyfinProxyService _service;
     private readonly Mock<HttpMessageHandler> _mockHandler;
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
-    private readonly RedisCacheService _cache;
+    private readonly IApplicationCache _cache;
     private readonly JellyfinSettings _settings;
 
     public JellyfinProxyServiceTests()
@@ -29,10 +29,7 @@ public class JellyfinProxyServiceTests
 
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _mockHttpClientFactory.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(httpClient);
-
-        var redisSettings = new RedisSettings { Enabled = false };
-        var mockCacheLogger = new Mock<ILogger<RedisCacheService>>();
-        _cache = new RedisCacheService(Options.Create(redisSettings), mockCacheLogger.Object);
+        _cache = new DisabledApplicationCache();
 
         _settings = new JellyfinSettings
         {
@@ -688,9 +685,7 @@ public class JellyfinProxyServiceTests
         // Arrange
         var httpContextAccessor = new HttpContextAccessor { HttpContext = null };
         var mockLogger = new Mock<ILogger<JellyfinProxyService>>();
-        var redisSettings = new RedisSettings { Enabled = false };
-        var mockCacheLogger = new Mock<ILogger<RedisCacheService>>();
-        var cache = new RedisCacheService(Options.Create(redisSettings), mockCacheLogger.Object);
+        var cache = new DisabledApplicationCache();
 
         var service = new JellyfinProxyService(
             _mockHttpClientFactory.Object,

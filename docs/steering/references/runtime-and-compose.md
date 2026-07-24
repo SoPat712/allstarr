@@ -16,11 +16,11 @@ Use this file for Postgres, Valkey, Docker Compose, sidecar profiles, resource m
 
 Use:
 
-- Postgres for durable Docker state and as the default database for standard and AIO deployments.
-- SQLite only when an operator explicitly selects it for a supported manual/small deployment.
+- PostgreSQL for durable state in every supported runtime deployment.
+- SQLite only as an offline source for controlled migration into PostgreSQL.
 - Valkey or Redis for cache, queue acceleration, locks, probe state, and hot runtime data; it is never the only durable record of work.
 - Sidecars only for provider runtimes that need them.
-- Configured media roots or mounted folders for audio and other managed media. Postgres and SQLite store paths, identities, checksums, metadata, and workflow state, never encoded song payloads.
+- Configured media roots or mounted folders for audio and other managed media. PostgreSQL stores paths, identities, checksums, metadata, and workflow state, never encoded song payloads.
 
 For the fresh overhaul baseline, keep `.env` for deployment settings, initial secrets, and bootstrap values. Runtime settings and state created after setup belong in durable storage. The WebUI should mask secrets, avoid exposing raw API keys, and never return a stored secret after it has been saved.
 
@@ -36,17 +36,15 @@ owner-only staging permissions.
 This section preserves the Phase 1 exit evidence. It is historical, not the current release test inventory. The
 Phase 1 durable foundation and its runtime-image/Compose exit gate completed with the following behavior:
 
-- `Storage:Provider` accepts only `Postgres` or `Sqlite`. The selected provider is used for the full EF model,
-  migrations, readiness state, mutation guard, backups, and durable workers. A failed Postgres connection never
-  creates a SQLite database. Runtime probes refresh connectivity and schema state on a bounded cadence. SQLite
-  opens existing files only; its one-shot creation confirmation is deleted after a verified first migration.
+- The application runtime accepts only `Postgres`. It owns the full EF model, migrations, readiness state,
+  mutation guard, backups, and durable workers. A failed PostgreSQL connection never creates or opens SQLite.
+  Offline storage commands may open an existing SQLite file for verification and export.
 - Seven checked-in provider-neutral migrations create the foundation, durable health rollups, separate job
   failure/deferral policy, and the final operational fields. Startup serializes migration with a database-scoped
-  Postgres advisory lock or an exclusive SQLite file lock.
-- Native PostgreSQL 18 integration has exercised concurrent migrations, down-to-foundation/reapply, native
-  `uuid` and `bytea` storage, idempotent durable work, a verified custom-format `pg_dump`, and `pg_restore` into
-  an isolated database with matching libpq 18 tools. SQLite integration covers migration rollback/reapply and
-  verified standalone backup.
+  PostgreSQL advisory lock. Offline SQLite verification uses an exclusive file lock.
+- Native PostgreSQL 18 integration covers concurrent migrations, down-to-foundation/reapply, native `uuid` and
+  `bytea` storage, idempotent durable work, verified `pg_dump`, and isolated `pg_restore`. SQLite coverage is
+  limited to offline verification and one-way state transfer.
 - `storage backup`, `storage restore-sqlite`, `storage restore-postgres`, `storage export`, and `storage import`
   run without starting the HTTP host or background workers. Destructive or quiesced operations require explicit
   confirmation flags, checksums are verified, output is JSON, and Postgres passwords use environment variables
@@ -82,12 +80,12 @@ The deployment profile and durable database provider are operator choices made b
 
 | Concern | Standard/AIO deployment | Manual or small deployment | Rule |
 | --- | --- | --- | --- |
-| Durable database | Postgres on an explicit persistent volume or external managed Postgres | Explicitly selected SQLite file on persistent storage, or external Postgres | Select one provider; do not infer or switch it at runtime. |
+| Durable database | PostgreSQL on an explicit persistent volume or external managed PostgreSQL | External or local PostgreSQL | SQLite is not a runtime option. |
 | Cache and acceleration | Valkey is included | Valkey may be omitted when the selected profile permits it | Cache loss may reduce performance, but must not lose committed data or jobs. |
 | App state and media | Explicit app-state and media/library volumes or bind mounts | The same, sized for the installation | Do not rely on anonymous or container-layer storage for user data. |
 | Sidecars | Only selected sidecar services are included | None unless deliberately selected | A sidecar is capability-scoped, not a global dependency. |
 
-Changing from SQLite to Postgres, or the reverse, is a planned migration: take a compatible backup, run the migration/import procedure, validate it, and then deploy with the new explicit selection. It is not a failover mechanism.
+An existing SQLite deployment can move one way into PostgreSQL through the offline export/import procedure. It is not a failover mechanism.
 
 ## Fresh-Install Baseline
 
@@ -103,7 +101,8 @@ Setup documentation must say what users keep, what they recreate, and what is in
 
 ### No Implicit Database Failover
 
-If the configured Postgres database is unavailable, the app must not create or open a local SQLite database and continue with a different state store. It should remain unready, reject state-changing work, and surface an actionable database-health error until Postgres recovers or an operator completes a controlled migration to a different explicitly configured backend. The same rule applies to an unavailable selected SQLite volume: do not substitute an empty database.
+If PostgreSQL is unavailable, the app must not create or open SQLite. It remains unready, rejects state-changing
+work, and surfaces an actionable database-health error until the same PostgreSQL service recovers.
 
 This protects library state, account ownership, jobs, and audit history from split-brain deployments. A deliberate emergency change requires a backup/restore or import procedure and a recorded configuration change; it must never happen merely because a connection attempt failed.
 
@@ -216,7 +215,9 @@ Before a migration that can alter or remove durable data:
 
 Rollback is normally a restore to a compatible application version, not an untested automatic down migration. A failed migration must leave the application unready and produce an actionable operator error rather than silently starting against a partial schema.
 
-Backups must cover the selected durable database and the durable media/app-state volumes needed to reconstruct the library. Postgres deployments should use a supported logical backup or point-in-time recovery plan; SQLite backups must be taken with a consistent database backup mechanism or while writes are safely quiesced. Valkey and rebuildable caches do not need to be authoritative backups. Secrets require separate encrypted, access-controlled handling; do not casually bundle raw credentials into a general-purpose backup.
+Backups must cover PostgreSQL and the durable media/app-state volumes needed to reconstruct the library.
+Use a supported logical backup or point-in-time recovery plan. Valkey and rebuildable caches are not
+authoritative. Secrets require separate encrypted, access-controlled handling.
 
 Restore procedures must be exercised against an isolated environment and verify schema compatibility, library references, queued work recovery, and application readiness before a production cutover. Keep an operator runbook for backup, restore, storage-provider migration, and profile changes.
 
@@ -234,7 +235,7 @@ Use `.env` only for local/deployment bootstrap values with restrictive file perm
 Low RAM:
 
 - Core app only.
-- Explicitly selected SQLite on persistent storage or external Postgres; never an automatic fallback from an unavailable Postgres deployment.
+- PostgreSQL on persistent storage; never an automatic SQLite fallback.
 - Valkey may be omitted when durable jobs and locking remain correct without it.
 - Around 512 MB to 1 GB target.
 
@@ -313,11 +314,11 @@ Required test areas:
 
 - compose config validation
 - fresh-install validation that no legacy Redis-to-Valkey overlay or automatic legacy-state import remains
-- existing media-root reattachment and re-indexing without writing audio blobs to Postgres or SQLite
+- existing media-root reattachment and re-indexing without writing audio blobs to PostgreSQL
 - selected profile and storage-provider persistence across restarts
 - Postgres migration, migration lock, failed-migration readiness behavior, and backup/restore
-- explicitly selected SQLite operation and backup/restore; verify that no Postgres-to-SQLite automatic fallback occurs
-- controlled SQLite/Postgres migration and rollback/restore runbooks
+- offline SQLite verification/export; verify that runtime startup rejects SQLite
+- controlled SQLite-to-PostgreSQL migration and PostgreSQL rollback/restore runbooks
 - durable job and transactional-outbox recovery after process or Valkey restart
 - startup with missing optional sidecars
 - startup with disabled provider

@@ -68,8 +68,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         {
             try
             {
-                var registration = await BuildRegistrationAsync(package, cancellationToken);
-                RegisterVerified(registration, package);
+                var build = await BuildRegistrationAsync(package, cancellationToken);
+                RegisterVerified(build.Registration, package);
+                StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
             }
             catch (Exception exception)
             {
@@ -86,11 +87,11 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
     {
         var package = await GetPackageAsync(packageId, cancellationToken);
-        ProviderRegistration registration;
+        RuntimeBuild build;
         try
         {
-            registration = await BuildRegistrationAsync(package, cancellationToken);
-            RejectBuiltInCollision(registration.Descriptor.Id, package);
+            build = await BuildRegistrationAsync(package, cancellationToken);
+            RejectBuiltInCollision(build.Registration.Descriptor.Id, package);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -104,7 +105,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             throw;
         }
         var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
-        RegisterVerified(registration, package);
+        RegisterVerified(build.Registration, package);
+        StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
         return active;
     }
 
@@ -115,10 +117,11 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         if (!active.PreviousPackageId.HasValue)
             throw new InvalidOperationException("The active package has no rollback version.");
         var previous = await GetPackageAsync(active.PreviousPackageId.Value, cancellationToken);
-        var registration = await BuildRegistrationAsync(previous, cancellationToken);
-        RejectBuiltInCollision(registration.Descriptor.Id, previous);
+        var build = await BuildRegistrationAsync(previous, cancellationToken);
+        RejectBuiltInCollision(build.Registration.Descriptor.Id, previous);
         var restored = await _controlPlane.RollbackAsync(activePackageId, expectedRevision, cancellationToken);
-        RegisterVerified(registration, previous);
+        RegisterVerified(build.Registration, previous);
+        StoreSandbox(previous.Id, previous.ExtensionId, build.Sandbox);
         return restored;
     }
 
@@ -183,7 +186,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         return uninstalled;
     }
 
-    private async Task<ProviderRegistration> BuildRegistrationAsync(
+    private async Task<RuntimeBuild> BuildRegistrationAsync(
         ExtensionPackageRecord package, CancellationToken cancellationToken)
     {
         var manifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
@@ -231,7 +234,6 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector);
-        _sandboxes[package.Id] = sandbox;
         if (manifest.Capabilities.SelectMany(item => item.Hooks).Any(hook => !sandbox.HasCallableHook(hook)))
             throw new ExtensionSdkValidationException("The extension does not implement every declared SDK hook.");
         var implementations = manifest.Capabilities.Select(capability => (IProviderCapability)(capability.Kind switch
@@ -281,7 +283,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             branding,
             entryPoint: manifest.EntryPoint,
             healthProbe: manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Health && item.Hooks.Count > 0));
-        return new ProviderRegistration(descriptor, implementations);
+        return new RuntimeBuild(
+            new ProviderRegistration(descriptor, implementations),
+            sandbox);
     }
 
     private static readonly HashSet<string> SupportedRuntimeFeatures = new(StringComparer.OrdinalIgnoreCase)
@@ -345,4 +349,25 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         }
         _registry.RegisterOrReplaceExtension(registration);
     }
+
+    private void StoreSandbox(
+        Guid packageId,
+        string extensionId,
+        ExtensionSandbox sandbox)
+    {
+        foreach (var item in _sandboxes
+                     .Where(item =>
+                         item.Key != packageId &&
+                         item.Value.Id.Equals(extensionId, StringComparison.Ordinal))
+                     .ToArray())
+        {
+            _sandboxes.TryRemove(item.Key, out _);
+        }
+
+        _sandboxes[packageId] = sandbox;
+    }
+
+    private sealed record RuntimeBuild(
+        ProviderRegistration Registration,
+        ExtensionSandbox Sandbox);
 }

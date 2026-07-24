@@ -94,11 +94,18 @@ init() {
 }
 
 prepare_apple() {
-  local input="${1:-}" arch="${2:-x86_64}" runtime="linux/amd64"
+  local input="${1:-}" arch="${2:-}" runtime="linux/amd64"
   [[ -f "$ROOT/.env" ]] || die "run ./allstarr.sh init before enabling providers"
   if [[ "$input" == "x86_64" || "$input" == "arm64-v8a" ]]; then
     arch="$input"
     input=""
+  fi
+  if [[ -z "$arch" ]]; then
+    case "$(uname -m)" in
+      x86_64|amd64) arch="x86_64" ;;
+      arm64|aarch64) arch="arm64-v8a"; runtime="linux/arm64" ;;
+      *) die "could not detect Apple architecture; pass x86_64 or arm64-v8a explicitly" ;;
+    esac
   fi
   if [[ -z "$input" ]]; then
     local candidate
@@ -171,7 +178,8 @@ update() {
 }
 
 create_state_archive() {
-  local output_dir="$1" staging archive runtime_image host_uid host_gid
+  local output_dir="$1" staging archive runtime_image host_uid host_gid archive_paths
+  local -a optional_volume_mounts=()
   output_dir="$(mkdir -p "$output_dir" && cd "$output_dir" && pwd)"
   chmod 700 "$output_dir"
   staging="$(mktemp -d "$output_dir/.allstarr-export.XXXXXX")"
@@ -180,16 +188,28 @@ create_state_archive() {
   [[ -n "$runtime_image" ]] || die "the Postgres image must exist before state can be exported"
   host_uid="$(id -u)"
   host_gid="$(id -g)"
+  archive_paths="volume-state volume-cache volume-postgres"
+  while IFS='|' read -r volume_name archive_path; do
+    if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+      optional_volume_mounts+=(-v "$volume_name:/$archive_path:ro")
+      archive_paths+=" $archive_path"
+    fi
+  done <<'EOF'
+allstarr_apple-gateway-data|volume-apple-gateway
+allstarr_apple-wrapper-app-data|volume-apple-wrapper-app
+allstarr_apple-wrapper-session|volume-apple-wrapper-session
+EOF
 
   docker run --rm --read-only \
     -e HOST_UID="$host_uid" -e HOST_GID="$host_gid" \
+    -e ARCHIVE_PATHS="$archive_paths" \
     -v allstarr_allstarr-state:/volume-state:ro \
     -v allstarr_allstarr-cache:/volume-cache:ro \
     -v allstarr_postgres-data:/volume-postgres:ro \
-    -v allstarr_valkey-data:/volume-valkey:ro \
+    "${optional_volume_mounts[@]}" \
     -v "$staging:/export" \
     "$runtime_image" sh -c '
-      tar -czf /export/volume-data.tar.gz -C / volume-state volume-cache volume-postgres volume-valkey &&
+      tar -czf /export/volume-data.tar.gz -C / $ARCHIVE_PATHS &&
       chown "$HOST_UID:$HOST_GID" /export/volume-data.tar.gz &&
       chmod 600 /export/volume-data.tar.gz
     '
@@ -199,7 +219,7 @@ create_state_archive() {
   printf '%s\n' \
     'Allstarr portable upgrade export' \
     "Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    'Includes: configuration, encryption keyring, provider profiles, Postgres, Valkey, mappings, playlist caches, and durable application state.' \
+    'Includes: configuration, encryption keyring, provider profiles, Postgres, mappings, playlist caches, durable application state, and Apple provider/session volumes when present.' \
     'Does not include downloaded or kept music; those host folders remain where the user mounted them.' \
     > "$staging/README.txt"
   tar -czf "$archive" -C "$staging" README.txt deployment-files.tar volume-data.tar.gz
@@ -258,14 +278,15 @@ validate_restore_archive() {
   while IFS= read -r entry; do
     entry="${entry#./}"
     case "$entry" in
-      volume-state|volume-state/*|volume-cache|volume-cache/*|volume-postgres|volume-postgres/*|volume-valkey|volume-valkey/*) ;;
+      volume-state|volume-state/*|volume-cache|volume-cache/*|volume-postgres|volume-postgres/*|volume-apple-gateway|volume-apple-gateway/*|volume-apple-wrapper-app|volume-apple-wrapper-app/*|volume-apple-wrapper-session|volume-apple-wrapper-session/*) ;;
       *) die "backup contains an unsafe volume path: $entry" ;;
     esac
   done < <(tar -tzf "$staging/volume-data.tar.gz")
 }
 
 restore_state() {
-  local archive="${1:-}" confirmation="${2:-}" staging runtime_image was_running rollback_dir
+  local archive="${1:-}" confirmation="${2:-}" staging runtime_image was_running rollback_dir restore_paths
+  local -a optional_volume_mounts=()
   [[ -n "$archive" ]] || die "usage: ./allstarr.sh restore BACKUP.tar.gz --confirm-replace"
   [[ "$confirmation" == "--confirm-replace" ]] ||
     die "restore replaces this installation's config, secrets, database, mappings, and caches; rerun with --confirm-replace"
@@ -287,14 +308,26 @@ restore_state() {
   echo "Restoring configuration, encrypted accounts, databases, mappings, and caches..."
   tar -xf "$staging/deployment-files.tar" -C "$ROOT"
   chmod 600 "$ROOT/.env" "$ROOT/secrets/postgres-password.txt" "$ROOT/secrets/allstarr-keyring.json" 2>/dev/null || true
+  restore_paths="/volume-state /volume-cache /volume-postgres"
+  while IFS='|' read -r archive_path volume_name; do
+    if tar -tzf "$staging/volume-data.tar.gz" | grep -q "^$archive_path\\(/\\|$\\)"; then
+      optional_volume_mounts+=(-v "$volume_name:/$archive_path")
+      restore_paths+=" /$archive_path"
+    fi
+  done <<'EOF'
+volume-apple-gateway|allstarr_apple-gateway-data
+volume-apple-wrapper-app|allstarr_apple-wrapper-app-data
+volume-apple-wrapper-session|allstarr_apple-wrapper-session
+EOF
   docker run --rm --read-only \
+    -e RESTORE_PATHS="$restore_paths" \
     -v allstarr_allstarr-state:/volume-state \
     -v allstarr_allstarr-cache:/volume-cache \
     -v allstarr_postgres-data:/volume-postgres \
-    -v allstarr_valkey-data:/volume-valkey \
+    "${optional_volume_mounts[@]}" \
     -v "$staging:/restore:ro" \
     "$runtime_image" sh -c '
-      find /volume-state /volume-cache /volume-postgres /volume-valkey -mindepth 1 -delete &&
+      find $RESTORE_PATHS -mindepth 1 -delete &&
       tar -xzf /restore/volume-data.tar.gz -C /
     '
 

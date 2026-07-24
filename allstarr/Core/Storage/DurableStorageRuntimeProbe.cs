@@ -1,5 +1,4 @@
 using allstarr.Core.Operations;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Storage;
@@ -73,25 +72,6 @@ public sealed class DurableStorageRuntimeProbe : IDurableStorageRuntimeProbe, ID
 
     private async Task ProbeSelectedDatabaseAsync(CancellationToken cancellationToken)
     {
-        var currentState = _state.GetSnapshot();
-        var bootstrapConfirmation = _options.GetSqliteBootstrapConfirmationPath();
-        if (currentState.ErrorCode == "sqlite_bootstrap_confirmation_not_consumed" &&
-            bootstrapConfirmation != null &&
-            File.Exists(bootstrapConfirmation))
-        {
-            return;
-        }
-
-        var sqlitePath = _options.GetSqlitePath();
-        if (sqlitePath != null && !File.Exists(sqlitePath))
-        {
-            SqliteConnection.ClearAllPools();
-            _state.Set(
-                DurableStorageReadiness.Unavailable,
-                errorCode: "sqlite_database_missing");
-            return;
-        }
-
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(_options.RuntimeProbeTimeoutSeconds));
         try
@@ -135,11 +115,6 @@ public sealed class DurableStorageRuntimeProbe : IDurableStorageRuntimeProbe, ID
 
     private void SetUnavailable()
     {
-        if (_options.ParseProvider() == DurableStorageProvider.Sqlite)
-        {
-            SqliteConnection.ClearAllPools();
-        }
-
         _state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_unavailable");
     }
 
