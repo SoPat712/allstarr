@@ -129,6 +129,5 @@ jobs:
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.apple.yml config --quiet
