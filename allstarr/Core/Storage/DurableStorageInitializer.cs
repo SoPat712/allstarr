@@ -135,6 +135,14 @@ public sealed class DurableStorageInitializer : IHostedService
             var compatibility = await DurableSchemaCompatibility.InspectAsync(
                 context,
                 cancellationToken);
+            if (compatibility.Status != DurableSchemaCompatibilityStatus.Current)
+            {
+                _logger.LogWarning(
+                    "Durable storage schema compatibility check: Status={Status}, Unknown=[{Unknown}], Missing=[{Missing}]",
+                    compatibility.Status,
+                    string.Join(", ", compatibility.UnknownMigrations),
+                    string.Join(", ", compatibility.MissingMigrations));
+            }
             if (compatibility.Status == DurableSchemaCompatibilityStatus.UnsupportedVersion)
             {
                 SetSchemaIncompatible(compatibility);
