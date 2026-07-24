@@ -141,23 +141,39 @@ public sealed class PerProviderAcceptThresholds
 
 public static class PerProviderTrackScorer
 {
-    public static (double TotalScore, int TitleScore, double ArtistScore) Score(
+    public static (
+        double TotalScore,
+        int TitleScore,
+        double ArtistScore,
+        int AlbumScore,
+        double DurationScore) Score(
         Song candidate,
-        string title,
-        IReadOnlyList<string> artists)
+        InjectedSourceTrack source)
     {
-        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(title, candidate.Title);
-        var artistList = artists is List<string> list ? list : artists.ToList();
+        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(source.Title, candidate.Title);
+        var artistList = source.Artists is List<string> list ? list : source.Artists.ToList();
         var contributors = candidate.Contributors is List<string> contribs
             ? contribs
             : candidate.Contributors.ToList();
         var artistScore = FuzzyMatcher.CalculateArtistMatchScore(artistList, candidate.Artist, contributors);
-        var total = (titleScore * 0.7) + (artistScore * 0.3);
-        return (total, titleScore, artistScore);
+        var albumScore = string.IsNullOrWhiteSpace(source.Album) || string.IsNullOrWhiteSpace(candidate.Album)
+            ? 0
+            : FuzzyMatcher.CalculateSimilarityAggressive(source.Album, candidate.Album);
+        var durationScore = CalculateDurationScore(source.DurationMs, candidate.Duration);
+        var total = (titleScore * 0.42) +
+                    (artistScore * 0.30) +
+                    (albumScore * 0.12) +
+                    (durationScore * 0.16);
+        return (total, titleScore, artistScore, albumScore, durationScore);
     }
 
     public static bool IsAcceptable(
-        (double TotalScore, int TitleScore, double ArtistScore) score,
+        (
+            double TotalScore,
+            int TitleScore,
+            double ArtistScore,
+            int AlbumScore,
+            double DurationScore) score,
         PerProviderAcceptThresholds thresholds)
     {
         if (score.TotalScore >= thresholds.ProviderAcceptScore)
@@ -177,6 +193,33 @@ public static class PerProviderTrackScorer
         }
 
         return false;
+    }
+
+    public static string Explain(
+        (
+            double TotalScore,
+            int TitleScore,
+            double ArtistScore,
+            int AlbumScore,
+            double DurationScore) score) =>
+        $"title={score.TitleScore};artist={score.ArtistScore:F1};album={score.AlbumScore};" +
+        $"duration={score.DurationScore:F1};total={score.TotalScore:F1}";
+
+    private static double CalculateDurationScore(int? sourceDurationMs, int? candidateDurationSeconds)
+    {
+        if (!sourceDurationMs.HasValue || !candidateDurationSeconds.HasValue)
+        {
+            return 50;
+        }
+
+        var sourceSeconds = sourceDurationMs.Value / 1000d;
+        var delta = Math.Abs(sourceSeconds - candidateDurationSeconds.Value);
+        return delta switch
+        {
+            <= 2 => 100,
+            <= 8 => 100 - (50 * delta / 8),
+            _ => 0
+        };
     }
 }
 
@@ -352,48 +395,51 @@ public sealed class PerProviderTrackWalker
             }
         }
 
-        // 2. Title-only retry on the first N providers when no fuzzy search crossed the threshold.
-        var titleOnlyRetry = 0;
-        foreach (var providerId in playbackProviders)
+        // 2. Title-only retry on the first N providers only when no provider
+        // produced an accepted match. Once any provider accepted the track,
+        // alternate title-only searches add traffic without adding a fallback
+        // that the normal provider walk did not already collect.
+        if (acceptedMatches.Count == 0)
         {
-            if (titleOnlyRetry >= _thresholds.TitleOnlyProviderCount) break;
-            titleOnlyRetry++;
-
-            cancellationToken.ThrowIfCancellationRequested();
-            if (acceptedProviders.Contains(providerId)) continue;
-            var normalizedProvider = providerId.Trim().ToLowerInvariant();
-            if (normalizedProvider == "jellyfin-local" || normalizedProvider == "subsonic-local") continue;
-
-            var providerService = PerProviderServiceResolver.Resolve(_concreteServices, providerId);
-            if (providerService == null) continue;
-
-            var stepResult = await StepProviderAsync(
-                providerService,
-                providerId,
-                titleOnlyQuery,
-                source,
-                cancellationToken,
-                matchType: PerProviderTrackMatcher.MatchTypeTitleOnly);
-            // Record the title-only attempt but do not double-log steps that were
-            // already walked above — title-only adds an "extended" attempt for
-            // observability.
-            if (stepResult.AcceptedSong != null)
+            var titleOnlyRetry = 0;
+            foreach (var providerId in playbackProviders)
             {
-                walked.Add(stepResult.Attempt);
-                acceptedProviders.Add(providerId);
-                acceptedMatches.Add(new PerProviderAcceptedMatch(
-                    stepResult.AcceptedSong,
-                    PerProviderTrackMatcher.MatchTypeTitleOnly,
+                if (titleOnlyRetry >= _thresholds.TitleOnlyProviderCount) break;
+                titleOnlyRetry++;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var normalizedProvider = providerId.Trim().ToLowerInvariant();
+                if (normalizedProvider == "jellyfin-local" || normalizedProvider == "subsonic-local") continue;
+
+                var providerService = PerProviderServiceResolver.Resolve(_concreteServices, providerId);
+                if (providerService == null) continue;
+
+                var stepResult = await StepProviderAsync(
+                    providerService,
                     providerId,
-                    stepResult.Score));
-                if (!collectAllProviderMatches)
+                    titleOnlyQuery,
+                    source,
+                    cancellationToken,
+                    matchType: PerProviderTrackMatcher.MatchTypeTitleOnly);
+                // Title-only is a distinct conservative alternate query. Record both
+                // accepts and misses so operators can see why the walk fell through.
+                walked.Add(stepResult.Attempt);
+                if (stepResult.AcceptedSong != null)
                 {
-                    return PerProviderTrackMatcher.FromProvider(
+                    acceptedMatches.Add(new PerProviderAcceptedMatch(
                         stepResult.AcceptedSong,
                         PerProviderTrackMatcher.MatchTypeTitleOnly,
                         providerId,
-                        stepResult.Score,
-                        walked);
+                        stepResult.Score));
+                    if (!collectAllProviderMatches)
+                    {
+                        return PerProviderTrackMatcher.FromProvider(
+                            stepResult.AcceptedSong,
+                            PerProviderTrackMatcher.MatchTypeTitleOnly,
+                            providerId,
+                            stepResult.Score,
+                            walked);
+                    }
                 }
             }
         }
@@ -426,17 +472,18 @@ public sealed class PerProviderTrackWalker
                     AcceptedSong: null,
                     Score: 0,
                     MatchType: matchType,
-                    Attempt: new PerProviderAttempt(
-                        providerId, query, 0, null,
-                        PerProviderTrackMatcher.OutcomeEmpty, null));
+                        Attempt: new PerProviderAttempt(
+                            providerId, query, 0, null,
+                            PerProviderTrackMatcher.OutcomeEmpty, "no-playable-candidates"));
             }
 
             var scored = candidates
-                .Select(song => (Song: song, Score: PerProviderTrackScorer.Score(song, source.Title, source.Artists)))
+                .Select(song => (Song: song, Score: PerProviderTrackScorer.Score(song, source)))
                 .OrderByDescending(entry => entry.Score.TotalScore)
                 .ToList();
 
             var top = scored[0];
+            var explanation = PerProviderTrackScorer.Explain(top.Score);
             if (PerProviderTrackScorer.IsAcceptable(top.Score, _thresholds))
             {
                 return new PerProviderStepResult(
@@ -445,7 +492,8 @@ public sealed class PerProviderTrackWalker
                     MatchType: matchType,
                     Attempt: new PerProviderAttempt(
                         providerId, query, candidates.Count, top.Score.TotalScore,
-                        PerProviderTrackMatcher.OutcomeAccepted, null));
+                        PerProviderTrackMatcher.OutcomeAccepted,
+                        $"score-accepted:{explanation}"));
             }
 
             return new PerProviderStepResult(
@@ -455,7 +503,7 @@ public sealed class PerProviderTrackWalker
                 Attempt: new PerProviderAttempt(
                     providerId, query, candidates.Count, top.Score.TotalScore,
                     PerProviderTrackMatcher.OutcomeLowScore,
-                    $"top={top.Score.TotalScore:F1}"));
+                    $"score-rejected:{explanation}"));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -494,7 +542,7 @@ public sealed class PerProviderTrackWalker
                     MatchType: PerProviderTrackMatcher.MatchTypeIsrc,
                     Attempt: new PerProviderAttempt(
                         providerId, $"isrc:{isrc}", 1, 100,
-                        PerProviderTrackMatcher.OutcomeAccepted, null));
+                        PerProviderTrackMatcher.OutcomeAccepted, "isrc-exact"));
             }
 
             return new PerProviderStepResult(
@@ -503,7 +551,7 @@ public sealed class PerProviderTrackWalker
                 MatchType: PerProviderTrackMatcher.MatchTypeIsrc,
                 Attempt: new PerProviderAttempt(
                     providerId, $"isrc:{isrc}", 0, null,
-                    PerProviderTrackMatcher.OutcomeMissNotFound, null));
+                    PerProviderTrackMatcher.OutcomeMissNotFound, "isrc-not-found"));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
