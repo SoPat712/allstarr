@@ -69,6 +69,18 @@ public class CacheSettings
     /// </summary>
     public int TranscodeCacheMinutes { get; set; } = 60;
 
+    public string MediaDirectory { get; set; } = "/app/cache/media";
+    public int MediaMaximumMegabytes { get; set; } = 512;
+    public int MediaMaximumEntryMegabytes { get; set; } = 16;
+    public int MediaCleanupFileLimit { get; set; } = 10_000;
+    public int MediaCleanupMinutes { get; set; } = 15;
+    public Dictionary<string, int> CategoryMaximumEntries { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, int> CategoryMaximumMegabytes { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, bool> CategoryEnabled { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     // Helper methods to get TimeSpan values
     public TimeSpan SearchResultsTTL => TimeSpan.FromMinutes(SearchResultsMinutes);
     public TimeSpan PlaylistImagesTTL => TimeSpan.FromHours(PlaylistImagesHours);

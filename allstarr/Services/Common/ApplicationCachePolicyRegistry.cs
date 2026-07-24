@@ -1,0 +1,178 @@
+using allstarr.Models.Settings;
+
+namespace allstarr.Services.Common;
+
+public enum ApplicationCacheCategory
+{
+    SearchResults,
+    PlaylistDiscovery,
+    CanonicalMetadata,
+    ProviderResponse,
+    Artwork,
+    Lyrics,
+    TemporaryAudio,
+    NegativeResult,
+    Coordination,
+    LegacyCompatibility
+}
+
+public enum ApplicationCacheStorageTier
+{
+    Metadata,
+    Media
+}
+
+public enum ApplicationCacheWarmingRule
+{
+    None,
+    VisibleOrSelected,
+    OnDemand
+}
+
+public sealed record ApplicationCacheCategoryPolicy(
+    ApplicationCacheCategory Category,
+    string Owner,
+    ApplicationCacheStorageTier StorageTier,
+    TimeSpan FreshFor,
+    TimeSpan StaleFor,
+    long MaximumBytes,
+    int MaximumEntries,
+    ApplicationCacheWarmingRule WarmingRule,
+    string InvalidationTrigger);
+
+/// <summary>
+/// Canonical ownership and retention policy for every reconstructable cache entry.
+/// Durable mappings, event facts, credentials, and session state do not belong here.
+/// </summary>
+public static class ApplicationCachePolicyRegistry
+{
+    private const long Megabyte = 1024L * 1024L;
+
+    public static ApplicationCacheCategory Classify(string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
+        if (StartsWithAny(key, "image:", "playlist:image:", "artwork:", "cover:"))
+            return ApplicationCacheCategory.Artwork;
+        if (StartsWithAny(key, "lyrics:", "lyricsplus:"))
+            return ApplicationCacheCategory.Lyrics;
+        if (StartsWithAny(key, "transcode:", "temporary-audio:"))
+            return ApplicationCacheCategory.TemporaryAudio;
+        if (key.StartsWith("negative:", StringComparison.OrdinalIgnoreCase))
+            return ApplicationCacheCategory.NegativeResult;
+        if (StartsWithAny(key, "playback:signal:", "cts:rotation:"))
+            return ApplicationCacheCategory.Coordination;
+        if (StartsWithAny(
+                key,
+                "spotify:matched:",
+                "spotify:manual-map:",
+                "spotify:external-map:",
+                "spotify:global-map:"))
+            return ApplicationCacheCategory.LegacyCompatibility;
+        if (StartsWithAny(
+                key,
+                "playlist:",
+                "spotify:playlist:",
+                "spotify:missing:",
+                "admin:playlists:"))
+            return ApplicationCacheCategory.PlaylistDiscovery;
+        if (StartsWithAny(
+                key,
+                "musicbrainz:",
+                "genre:",
+                "playback:metadata:",
+                "playlist:track-context:"))
+            return ApplicationCacheCategory.CanonicalMetadata;
+        if (key.StartsWith("search:", StringComparison.OrdinalIgnoreCase))
+            return ApplicationCacheCategory.SearchResults;
+
+        return ApplicationCacheCategory.ProviderResponse;
+    }
+
+    public static ApplicationCacheCategoryPolicy Resolve(string key, CacheSettings? settings = null) =>
+        Resolve(Classify(key), settings);
+
+    public static IReadOnlyList<ApplicationCacheCategoryPolicy> All(CacheSettings? settings = null) =>
+        Enum.GetValues<ApplicationCacheCategory>()
+            .Select(category => Resolve(category, settings))
+            .ToArray();
+
+    public static bool IsEnabled(string key, CacheSettings? settings = null) =>
+        IsEnabled(Classify(key), settings);
+
+    public static bool IsEnabled(
+        ApplicationCacheCategory category,
+        CacheSettings? settings = null)
+    {
+        settings ??= new CacheSettings();
+        return !settings.CategoryEnabled.TryGetValue(category.ToString(), out var enabled) || enabled;
+    }
+
+    public static ApplicationCacheCategoryPolicy Resolve(
+        ApplicationCacheCategory category,
+        CacheSettings? settings = null)
+    {
+        settings ??= new CacheSettings();
+        ApplicationCacheCategoryPolicy policy = category switch
+        {
+            ApplicationCacheCategory.SearchResults => new(
+                category, "provider-search", ApplicationCacheStorageTier.Metadata,
+                settings.SearchResultsTTL, TimeSpan.Zero, 16 * Megabyte, 10_000,
+                ApplicationCacheWarmingRule.None, "query-or-account-revision"),
+            ApplicationCacheCategory.PlaylistDiscovery => new(
+                category, "playlist-source", ApplicationCacheStorageTier.Metadata,
+                settings.SpotifyPlaylistItemsTTL, TimeSpan.FromMinutes(15), 64 * Megabyte, 20_000,
+                ApplicationCacheWarmingRule.VisibleOrSelected, "playlist-or-account-revision"),
+            ApplicationCacheCategory.CanonicalMetadata => new(
+                category, "canonical-media", ApplicationCacheStorageTier.Metadata,
+                settings.MetadataTTL, TimeSpan.FromHours(12), 96 * Megabyte, 100_000,
+                ApplicationCacheWarmingRule.VisibleOrSelected, "provider-or-library-revision"),
+            ApplicationCacheCategory.ProviderResponse => new(
+                category, "provider-gateway", ApplicationCacheStorageTier.Metadata,
+                settings.MetadataTTL, TimeSpan.FromMinutes(30), 64 * Megabyte, 50_000,
+                ApplicationCacheWarmingRule.None, "provider-account-or-storefront-revision"),
+            ApplicationCacheCategory.Artwork => new(
+                category, "media-assets", ApplicationCacheStorageTier.Media,
+                settings.ProxyImagesTTL, TimeSpan.FromDays(1),
+                Math.Max(Megabyte, settings.MediaMaximumMegabytes * Megabyte),
+                Math.Max(1, settings.MediaCleanupFileLimit),
+                ApplicationCacheWarmingRule.VisibleOrSelected, "resource-or-artwork-revision"),
+            ApplicationCacheCategory.Lyrics => new(
+                category, "lyrics-routing", ApplicationCacheStorageTier.Metadata,
+                settings.LyricsTTL, TimeSpan.FromDays(1), 96 * Megabyte, 100_000,
+                ApplicationCacheWarmingRule.OnDemand, "provider-or-track-revision"),
+            ApplicationCacheCategory.TemporaryAudio => new(
+                category, "playback-delivery", ApplicationCacheStorageTier.Media,
+                settings.TranscodeCacheTTL, TimeSpan.Zero, 128 * Megabyte, 512,
+                ApplicationCacheWarmingRule.None, "playback-complete-or-expiry"),
+            ApplicationCacheCategory.NegativeResult => new(
+                category, "provider-gateway", ApplicationCacheStorageTier.Metadata,
+                TimeSpan.FromMinutes(2), TimeSpan.Zero, 8 * Megabyte, 10_000,
+                ApplicationCacheWarmingRule.None, "provider-account-or-query-change"),
+            ApplicationCacheCategory.Coordination => new(
+                category, "runtime-coordination", ApplicationCacheStorageTier.Metadata,
+                TimeSpan.FromMinutes(5), TimeSpan.Zero, 8 * Megabyte, 20_000,
+                ApplicationCacheWarmingRule.None, "operation-complete-or-expiry"),
+            ApplicationCacheCategory.LegacyCompatibility => new(
+                category, "legacy-playlist-compatibility", ApplicationCacheStorageTier.Metadata,
+                settings.SpotifyMatchedTracksTTL, TimeSpan.Zero, 32 * Megabyte, 20_000,
+                ApplicationCacheWarmingRule.None, "postgres-match-generation"),
+            _ => throw new ArgumentOutOfRangeException(nameof(category), category, null)
+        };
+        var categoryKey = category.ToString();
+        var maximumEntries = settings.CategoryMaximumEntries.TryGetValue(categoryKey, out var configuredEntries)
+            ? Math.Clamp(configuredEntries, 1, 1_000_000)
+            : policy.MaximumEntries;
+        var maximumBytes = settings.CategoryMaximumMegabytes.TryGetValue(categoryKey, out var configuredMegabytes)
+            ? Math.Clamp(configuredMegabytes, 1, 1024 * 1024) * Megabyte
+            : policy.MaximumBytes;
+        return policy with
+        {
+            MaximumEntries = maximumEntries,
+            MaximumBytes = maximumBytes
+        };
+    }
+
+    private static bool StartsWithAny(string key, params string[] prefixes) =>
+        prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+}

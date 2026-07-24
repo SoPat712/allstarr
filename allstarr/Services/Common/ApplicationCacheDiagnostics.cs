@@ -1,0 +1,61 @@
+namespace allstarr.Services.Common;
+
+public sealed record ApplicationCacheTierUsage(
+    string Tier,
+    long EntryCount,
+    long PayloadBytes,
+    long? MaximumBytes,
+    int? MaximumEntryBytes,
+    bool Enabled,
+    long Hits = 0,
+    long Misses = 0,
+    long Writes = 0,
+    long Evictions = 0)
+{
+    public double HitRatio => Hits + Misses == 0
+        ? 0
+        : (double)Hits / (Hits + Misses);
+}
+
+public sealed record ApplicationCacheDiagnosticsSnapshot(
+    ApplicationCacheTierUsage Database,
+    ApplicationCacheTierUsage Hot,
+    ApplicationCacheTierUsage Media,
+    IReadOnlyList<ApplicationCacheCategoryDiagnostics> Categories,
+    DateTimeOffset CapturedAt);
+
+public sealed record ApplicationCacheCategoryUsage(
+    long EntryCount,
+    long PayloadBytes);
+
+public sealed record ApplicationCacheCategoryDiagnostics(
+    string Category,
+    string Owner,
+    string StorageTier,
+    bool Enabled,
+    long EntryCount,
+    long PayloadBytes,
+    long FreshSeconds,
+    long StaleSeconds,
+    long MaximumBytes,
+    int MaximumEntries,
+    string WarmingRule,
+    string InvalidationTrigger)
+{
+    public static ApplicationCacheCategoryDiagnostics From(
+        ApplicationCacheCategoryPolicy policy,
+        bool enabled,
+        ApplicationCacheCategoryUsage? usage = null) => new(
+        policy.Category.ToString(),
+        policy.Owner,
+        policy.StorageTier.ToString(),
+        enabled,
+        usage?.EntryCount ?? 0,
+        usage?.PayloadBytes ?? 0,
+        Math.Max(0, (long)policy.FreshFor.TotalSeconds),
+        Math.Max(0, (long)policy.StaleFor.TotalSeconds),
+        policy.MaximumBytes,
+        policy.MaximumEntries,
+        policy.WarmingRule.ToString(),
+        policy.InvalidationTrigger);
+}
