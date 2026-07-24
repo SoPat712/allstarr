@@ -2686,6 +2686,208 @@ fieldset.form-row > label small {
     color: var(--warning);
 }
 
+.apple-setup-progress {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin: var(--space-4) 0;
+    padding: 0;
+    list-style: none;
+}
+
+.apple-setup-progress li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    background: var(--surface-elevated);
+}
+
+.apple-setup-progress li.active {
+    border-color: color-mix(in srgb, var(--accent), transparent 35%);
+}
+
+.apple-setup-progress li.complete {
+    border-color: color-mix(in srgb, var(--success), transparent 55%);
+}
+
+.apple-setup-progress li > span:last-child {
+    display: grid;
+    min-width: 0;
+}
+
+.apple-setup-progress small,
+.apple-gateway-setup small,
+.apple-package-selection small {
+    color: var(--text-muted);
+}
+
+.apple-setup-step {
+    display: grid;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--surface-card);
+    color: var(--text-secondary);
+    font-weight: 700;
+}
+
+.apple-setup-progress li.active .apple-setup-step {
+    background: color-mix(in srgb, var(--accent), transparent 82%);
+    color: var(--accent);
+}
+
+.apple-setup-progress li.complete .apple-setup-step {
+    background: color-mix(in srgb, var(--success), transparent 82%);
+    color: var(--success);
+}
+
+.apple-gateway-setup {
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid color-mix(in srgb, var(--accent), var(--border) 55%);
+    border-radius: var(--radius);
+    background: linear-gradient(120deg, color-mix(in srgb, var(--accent), transparent 93%), var(--surface-elevated));
+}
+
+.apple-gateway-setup p {
+    max-width: 72ch;
+    margin: var(--space-1) 0 0;
+    color: var(--text-secondary);
+}
+
+.apple-package-form {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.apple-package-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.apple-package-picker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 42px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control);
+    background: var(--surface-card);
+    color: var(--text-primary);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.apple-package-input:focus-visible + .apple-package-picker {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.apple-package-selection {
+    display: grid;
+    min-width: 0;
+}
+
+.apple-package-selection strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.apple-upload-progress {
+    position: relative;
+    grid-column: 1 / -1;
+    height: 24px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface-card);
+}
+
+.apple-upload-progress > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--success));
+    transition: width 160ms ease;
+}
+
+.apple-upload-progress > small {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
+.apple-host-action {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-3);
+    align-items: start;
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--success), transparent 55%);
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--success), transparent 94%);
+}
+
+.apple-host-action > span {
+    color: var(--success);
+}
+
+.apple-host-action > div {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.apple-host-action code {
+    width: fit-content;
+    max-width: 100%;
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-control);
+    background: var(--surface-card);
+    color: var(--text-primary);
+}
+
+.apple-host-command {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+    .apple-setup-progress,
+    .apple-package-form {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .apple-package-picker,
+    .apple-package-form .primary {
+        width: 100%;
+    }
+}
+
 .toast {
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -2898,6 +3100,11 @@ fieldset.form-row > label small {
     padding: var(--space-2);
 }
 
+.playlist-track-row:nth-last-child(-n + 3) .track-action-popover {
+    top: auto;
+    bottom: calc(100% + var(--space-1));
+}
+
 .track-action-popover button {
     justify-content: flex-start;
     min-height: 36px;
@@ -2916,16 +3123,63 @@ fieldset.form-row > label small {
 }
 
 .track-match-editor {
-    position: sticky;
-    top: 0;
-    z-index: 4;
     display: grid;
     gap: var(--space-4);
-    margin: 0 calc(-1 * var(--space-5)) var(--space-4);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-card);
+}
+
+.track-match-backdrop {
+    z-index: 80;
+    overscroll-behavior: contain;
+}
+
+.track-match-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(680px, calc(100vw - (2 * var(--space-4))));
+    max-height: min(720px, calc(100dvh - (2 * var(--space-4))));
+    overflow: hidden;
+    padding: 0;
+}
+
+.track-match-dialog .dialog-header {
     padding: var(--space-4) var(--space-5);
-    box-shadow: 0 12px 22px color-mix(in srgb, #050208, transparent 78%);
+    border-bottom: 1px solid var(--border);
+}
+
+.track-match-dialog .track-match-editor {
+    min-height: 0;
+    overflow: auto;
+    padding: var(--space-5);
+}
+
+.track-match-source {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-elevated);
+}
+
+.track-match-source img {
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-control);
+    object-fit: cover;
+}
+
+.track-match-source > span:nth-child(2) {
+    display: grid;
+    min-width: 0;
+}
+
+.track-match-source small {
+    overflow: hidden;
+    color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .track-match-editor h4,
@@ -3783,11 +4037,28 @@ button.setup-choice {
         width: calc(100vw - (2 * var(--space-3)));
     }
 
-    .track-match-editor {
-        margin-right: calc(-1 * var(--space-4));
-        margin-left: calc(-1 * var(--space-4));
-        padding-right: var(--space-4);
-        padding-left: var(--space-4);
+    .track-match-dialog {
+        width: calc(100vw - (2 * var(--space-3)));
+        max-height: calc(100dvh - (2 * var(--space-3)));
+    }
+
+    .track-match-dialog .dialog-header,
+    .track-match-dialog .track-match-editor {
+        padding: var(--space-4);
+    }
+
+    .track-match-source {
+        grid-template-columns: 48px minmax(0, 1fr);
+    }
+
+    .track-match-source img {
+        width: 48px;
+        height: 48px;
+    }
+
+    .track-match-source .status-chip {
+        grid-column: 2;
+        justify-self: start;
     }
 
     .track-match-search {
@@ -4794,7 +5065,25 @@ button.setup-choice {
     font-size: .82rem;
 }
 
-.playlist-track-search { width: min(360px, 100%); }
+.playlist-track-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(150px, auto) minmax(150px, auto) auto;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.playlist-track-search {
+    width: 100%;
+    min-width: 0;
+}
+
+.playlist-track-toolbar label {
+    min-width: 0;
+}
+
+.playlist-track-toolbar select {
+    width: 100%;
+}
 
 .playlist-track-table {
     display: grid;
@@ -4815,6 +5104,26 @@ button.setup-choice {
 
 .playlist-track-row + .playlist-track-row { border-top: 1px solid var(--border); }
 .playlist-track-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.playlist-track-row > .track-menu-cell {
+    display: grid;
+    place-items: center;
+    overflow: visible;
+}
+
+@media (max-width: 760px) {
+    .playlist-track-toolbar {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .playlist-track-search,
+    .playlist-track-toolbar .secondary {
+        grid-column: 1 / -1;
+    }
+
+    .playlist-track-toolbar .secondary {
+        width: 100%;
+    }
+}
 
 .track-primary-action {
     display: grid;
@@ -4828,6 +5137,56 @@ button.setup-choice {
     color: var(--text-primary);
     padding: 0;
     text-align: left;
+}
+
+.shared-track-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.shared-track-row-grid {
+    display: contents;
+}
+
+.shared-track-static {
+    cursor: default;
+}
+
+.shared-track-row-compact {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.shared-track-row-compact .track-primary-action {
+    grid-template-columns: 36px minmax(0, 1fr);
+}
+
+.shared-track-row-compact .track-primary-action img {
+    width: 36px;
+    height: 36px;
+}
+
+.mapping-shared-track {
+    flex: 1 1 24rem;
+}
+
+.event-shared-track {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: var(--space-2) 0;
+}
+
+@media (max-width: 620px) {
+    .shared-track-row:not(.shared-track-row-grid) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .shared-track-row:not(.shared-track-row-grid) > .track-provider-cell,
+    .shared-track-row:not(.shared-track-row-grid) > .track-duration-cell,
+    .shared-track-row:not(.shared-track-row-grid) > .track-menu-cell {
+        justify-self: start;
+    }
 }
 
 .track-primary-action:hover,

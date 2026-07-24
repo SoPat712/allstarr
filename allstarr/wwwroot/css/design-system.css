@@ -74,6 +74,107 @@
     color: var(--text-secondary);
 }
 
+.cache-diagnostics {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.cache-tier-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+.cache-tier-card {
+    display: grid;
+    align-content: start;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--surface-elevated);
+}
+
+.cache-tier-card > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+}
+
+.cache-tier-card > div:first-child strong,
+.cache-tier-card > b {
+    color: var(--text-primary);
+}
+
+.cache-usage-meter {
+    height: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-control);
+}
+
+.cache-usage-meter > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--success));
+}
+
+.cache-maintenance-preview {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background:
+        linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 55%),
+        var(--surface-elevated);
+}
+
+.cache-maintenance-preview > div:first-child {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.cache-maintenance-preview > div:first-child span,
+.cache-maintenance-preview > small {
+    color: var(--text-secondary);
+}
+
+.cache-maintenance-counts {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.cache-maintenance-counts > div {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border-inline-start: 1px solid var(--border-subtle);
+}
+
+.cache-maintenance-counts > div:first-child {
+    border-inline-start: 0;
+}
+
+.cache-maintenance-counts dt {
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+}
+
+.cache-maintenance-counts dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+}
+
 .settings-disclosure {
     padding: 0;
     overflow: clip;
@@ -112,7 +213,7 @@
 }
 
 .settings-routing .section-heading {
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--space-4);
 }
 
 .priority-group > header,
@@ -285,6 +386,18 @@ input:not(:is([type="checkbox"], [type="radio"], [type="range"], [type="color"])
         gap: var(--space-3);
     }
 
+    .cache-tier-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .cache-maintenance-counts {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .cache-maintenance-counts > div {
+        border-block-start: 1px solid var(--border-subtle);
+    }
+
     .settings-disclosure > summary {
         min-height: 56px;
         padding: 11px 14px;
@@ -346,4 +459,62 @@ input:not(:is([type="checkbox"], [type="radio"], [type="range"], [type="color"])
     .event-log-filters label:last-child {
         grid-column: auto;
     }
+}
+.job-progress-row > td {
+  padding: 0 1rem 1rem;
+  border-top: 0;
+}
+
+.job-live-console {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+}
+
+.job-live-heading,
+.job-live-heading > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.job-live-lines {
+  max-height: 12rem;
+  overflow: auto;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--background) 82%, black);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.job-live-lines > div {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(7rem, auto) minmax(12rem, 1fr) auto;
+  align-items: baseline;
+  gap: 0.65rem;
+}
+
+.job-live-lines time,
+.job-stage {
+  color: var(--text-muted);
+}
+
+@media (max-width: 700px) {
+  .job-progress-row > td {
+    padding: 0 0.65rem 0.75rem;
+  }
+
+  .job-live-lines > div {
+    grid-template-columns: 4.75rem 1fr;
+  }
+
+  .job-live-lines > div > :nth-child(n + 3) {
+    grid-column: 2;
+  }
 }

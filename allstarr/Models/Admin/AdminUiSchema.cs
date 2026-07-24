@@ -135,6 +135,36 @@ public sealed class AdminUiProvider
 
     [JsonPropertyName("runtimeCapabilities")]
     public List<AdminUiProviderRuntimeCapability> RuntimeCapabilities { get; set; } = [];
+
+    [JsonPropertyName("connectionKind")]
+    public string? ConnectionKind { get; set; }
+
+    [JsonPropertyName("audience")]
+    public string? Audience { get; set; }
+
+    [JsonPropertyName("implementationOrigin")]
+    public string? ImplementationOrigin { get; set; }
+
+    [JsonPropertyName("routeId")]
+    public string? RouteId { get; set; }
+
+    [JsonPropertyName("capabilityRoutes")]
+    public List<AdminUiProviderCapabilityRoute> CapabilityRoutes { get; set; } = [];
+}
+
+public sealed class AdminUiProviderCapabilityRoute
+{
+    [JsonPropertyName("routeId")]
+    public string RouteId { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("origin")]
+    public string Origin { get; set; } = string.Empty;
+
+    [JsonPropertyName("capabilities")]
+    public List<string> Capabilities { get; set; } = [];
 }
 
 public sealed class AdminUiProviderRuntimeCapability

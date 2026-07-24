@@ -17,15 +17,6 @@ public class LyricsMappingRequest
     public int LyricsId { get; set; }
 }
 
-public class ManualMappingEntry
-{
-    public string SpotifyId { get; set; } = "";
-    public string? JellyfinId { get; set; }
-    public string? ExternalProvider { get; set; }
-    public string? ExternalId { get; set; }
-    public DateTime CreatedAt { get; set; }
-}
-
 public class LyricsMappingEntry
 {
     public string Artist { get; set; } = "";
