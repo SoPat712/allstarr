@@ -35,8 +35,8 @@ public static class DurableSchemaCompatibility
         }
 
         var applied = (await context.Database.GetAppliedMigrationsAsync(cancellationToken)).ToArray();
-        var knownSet = known.ToHashSet(StringComparer.Ordinal);
-        var appliedSet = applied.ToHashSet(StringComparer.Ordinal);
+        var knownSet = known.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var appliedSet = applied.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var unknown = applied.Where(migration => !knownSet.Contains(migration)).ToArray();
         var missing = known.Where(migration => !appliedSet.Contains(migration)).ToArray();
         var status = unknown.Length > 0
