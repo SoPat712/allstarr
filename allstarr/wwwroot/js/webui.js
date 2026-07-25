@@ -3767,7 +3767,7 @@ class AllstarrApp extends LitElement {
     };
     return html`
       <div class="injected-page-heading">
-        <div><h3>Imported playlists</h3><p>Playlists retained from the earlier configuration format.</p></div>
+        <div><h3>Managed Playlists</h3><p>Active playlists synchronized with your configured providers.</p></div>
         <div class="actions injected-heading-actions"><button class="primary" @click=${async () => {
           const names = selected.size ? [...selected] : playlists.map((item) => item.name);
           if (selected.size) {
@@ -4126,7 +4126,21 @@ class AllstarrApp extends LitElement {
       track.backendItemId ? `${titleCase(targetBackend)} ${track.backendItemId}` : "",
     ].filter(Boolean).join(" · ");
     const openDetails = () => this.openTrackDetails(track);
-    return html`<article class="playlist-track-row playlist-track-inspectable">
+    const interactiveTarget = (event) => event.target.closest("button, input, details, summary, a, select, .track-menu-cell");
+    const rowClick = (event) => {
+      if (interactiveTarget(event)) return;
+      openDetails();
+    };
+    const rowKey = (event) => {
+      if (interactiveTarget(event)) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openDetails();
+      }
+    };
+    return html`<article class="playlist-track-row playlist-track-inspectable" tabindex="0" role="button"
+        aria-label=${`Open mapping details for ${display(track.title, "track")} by ${artists}`}
+        @click=${rowClick} @keydown=${rowKey}>
       <span class="track-position" title=${track.sourcePosition ? `Provider position ${track.sourcePosition}` : ""}>${display(track.position ?? index + 1)}</span>
       ${this.renderSharedTrackRow(track, {
         className: "shared-track-row-grid",
@@ -4140,7 +4154,6 @@ class AllstarrApp extends LitElement {
         providerState: track.matchState || "unmatched",
         routeDetail: track.isLocal === true ? "Local library" : track.isLocal === false ? "Provider playback" : "Needs review",
         identifiers,
-        onOpen: openDetails,
         ariaLabel: `Open mapping details for ${display(track.title, "track")} by ${artists}`,
         actions: this.renderInjectedTrackMenu(track, index),
       })}

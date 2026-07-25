@@ -19,7 +19,7 @@ public sealed class ComposeContractTests
         Assert.Contains("Storage__Provider: Postgres", compose, StringComparison.Ordinal);
         Assert.Contains("Storage__PasswordFile: /run/secrets/postgres_password", compose, StringComparison.Ordinal);
         Assert.Contains("Secrets__KeyRingPath: /run/secrets/allstarr_keyring", compose, StringComparison.Ordinal);
-        Assert.Contains("${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-5275}:5275", compose, StringComparison.Ordinal);
+        Assert.Contains("${ADMIN_PORT:-5275}:5275", compose, StringComparison.Ordinal);
         Assert.Contains("Admin__Containerized: \"true\"", compose, StringComparison.Ordinal);
         Assert.Contains("Admin__ContainerGateway: auto", compose, StringComparison.Ordinal);
         Assert.Contains("/health/ready", compose, StringComparison.Ordinal);

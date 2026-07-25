@@ -61,7 +61,8 @@ public sealed class PlaylistDetailStreamingContractTests
         Assert.Contains("id=\"moreVertical\"", _iconSprite, StringComparison.Ordinal);
         Assert.Contains("width: 40px", _baseStyles, StringComparison.Ordinal);
         Assert.Contains("place-items: center", _baseStyles, StringComparison.Ordinal);
-        Assert.Contains("<article class=\"playlist-track-row playlist-track-inspectable\">", _script, StringComparison.Ordinal);
+        Assert.Contains("<article class=\"playlist-track-row playlist-track-inspectable\"", _script, StringComparison.Ordinal);
+        Assert.Contains("playlist-track-inspectable\" tabindex=\"0\" role=\"button\"", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("playlist-track-inspectable\" role=\"button\"", _script, StringComparison.Ordinal);
     }
 
