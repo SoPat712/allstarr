@@ -5958,20 +5958,6 @@ button.setup-choice {
     margin-top: 3px;
     color: var(--text-secondary);
 }
-
-.workspace-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 46px;
-    height: 46px;
-    flex: 0 0 46px;
-    border: 1px solid color-mix(in srgb, var(--accent), transparent 55%);
-    border-radius: 13px;
-    background: color-mix(in srgb, var(--accent), transparent 82%);
-    color: var(--accent-strong);
-}
-
 .extensions-page-header > button,
 .extension-registry-bar button,
 .extension-search,
