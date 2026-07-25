@@ -196,7 +196,6 @@ create_state_archive() {
     fi
   done <<'EOF'
 allstarr_apple-gateway-data|volume-apple-gateway
-allstarr_apple-wrapper-app-data|volume-apple-wrapper-app
 allstarr_apple-wrapper-session|volume-apple-wrapper-session
 EOF
 
@@ -278,7 +277,7 @@ validate_restore_archive() {
   while IFS= read -r entry; do
     entry="${entry#./}"
     case "$entry" in
-      volume-state|volume-state/*|volume-cache|volume-cache/*|volume-postgres|volume-postgres/*|volume-apple-gateway|volume-apple-gateway/*|volume-apple-wrapper-app|volume-apple-wrapper-app/*|volume-apple-wrapper-session|volume-apple-wrapper-session/*) ;;
+      volume-state|volume-state/*|volume-cache|volume-cache/*|volume-postgres|volume-postgres/*|volume-apple-gateway|volume-apple-gateway/*|volume-apple-wrapper-session|volume-apple-wrapper-session/*) ;;
       *) die "backup contains an unsafe volume path: $entry" ;;
     esac
   done < <(tar -tzf "$staging/volume-data.tar.gz")
@@ -316,7 +315,6 @@ restore_state() {
     fi
   done <<'EOF'
 volume-apple-gateway|allstarr_apple-gateway-data
-volume-apple-wrapper-app|allstarr_apple-wrapper-app-data
 volume-apple-wrapper-session|allstarr_apple-wrapper-session
 EOF
   docker run --rm --read-only \

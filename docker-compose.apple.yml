@@ -53,7 +53,9 @@ services:
       WRAPPER_BASE_DIR: /data/data/com.apple.android.music/files
       WRAPPER_RESTORE_SESSION: "1"
     volumes:
-      - apple-wrapper-app-data:/app/rootfs/data/data/com.apple.android.music
+      # wrapper-v2 stores its restorable Apple session under this exact files
+      # directory. Keep one mount here so a parent volume cannot mask or split
+      # the session database during container recreation.
       - apple-wrapper-session:/app/rootfs/data/data/com.apple.android.music/files
     networks:
       - allstarr
@@ -65,5 +67,4 @@ services:
       - apparmor:unconfined
 volumes:
   apple-gateway-data:
-  apple-wrapper-app-data:
   apple-wrapper-session:
