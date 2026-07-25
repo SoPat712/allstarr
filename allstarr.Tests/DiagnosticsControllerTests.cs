@@ -308,11 +308,11 @@ public sealed class DiagnosticsControllerTests : IDisposable
             Options.Create(spotifySettings),
             adminHelper,
             NullLogger<SpotifySessionCookieService>.Instance);
-        var redis = new DisabledApplicationCache();
+        var applicationCache = new DisabledApplicationCache();
         var storageOptions = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = "Data Source=:memory:"
+            Provider = "Postgres",
+            ConnectionString = "Host=database;Database=allstarr;Username=allstarr;Password=not-used"
         };
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
@@ -332,7 +332,7 @@ public sealed class DiagnosticsControllerTests : IDisposable
             Options.Create(new SquidWTFSettings()),
             cookieService,
             new SquidWtfEndpointCatalog(squidWtfApiUrls, []),
-            redis,
+            applicationCache,
             storageState,
             safeProxyClient)
         {

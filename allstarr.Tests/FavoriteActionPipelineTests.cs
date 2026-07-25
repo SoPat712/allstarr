@@ -16,10 +16,10 @@ namespace allstarr.Tests;
 
 public sealed class FavoriteActionPipelineTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-favorite-tests", Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableJobQueue _jobs = null!;
@@ -27,12 +27,10 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "favorites.db")}").Options;
-        _factory = new TestFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestFactory(_database.Options);
         await using var database = await _factory.CreateDbContextAsync();
-        await database.Database.EnsureCreatedAsync();
+        await database.Database.MigrateAsync();
         var now = new DateTimeOffset(2026, 7, 12, 12, 0, 0, TimeSpan.Zero);
         database.Tenants.Add(new TenantRecord { Id = _tenantId, Slug = "favorite-tests", Name = "Favorite tests", CreatedAt = now });
         database.Users.AddRange(
@@ -83,7 +81,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
     {
         var receipt = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "restart-revision"));
 
-        // Recreate every process-local service while retaining only the SQLite database.
+        // Recreate every process-local service while retaining only the durable database.
         var restartedJobs = CreateQueue();
         var restartedPipeline = new FavoriteActionPipeline(_factory, restartedJobs, _clock);
         var handler = new FavoriteActionJobHandler(_factory, [], _clock);
@@ -399,11 +397,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         return new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
     }
 
-    public Task DisposeAsync()
-    {
-        try { Directory.Delete(_root, true); } catch { }
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class TestFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {

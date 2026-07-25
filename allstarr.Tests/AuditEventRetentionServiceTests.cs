@@ -9,25 +9,25 @@ namespace allstarr.Tests;
 
 public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
 {
-    private readonly string root = Path.Combine(Path.GetTempPath(), $"allstarr-event-retention-{Guid.NewGuid():N}");
+    private PostgresTestDatabase database = null!;
     private ServiceProvider provider = null!;
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(root);
+        database = await PostgresTestDatabase.CreateAsync();
         var services = new ServiceCollection();
         services.AddDbContext<AllstarrDbContext>(options =>
-            options.UseSqlite($"Data Source={Path.Combine(root, "events.db")}"));
+            options.UseNpgsql(database.ConnectionString));
         provider = services.BuildServiceProvider();
 
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AllstarrDbContext>().Database.EnsureCreatedAsync();
+        await scope.ServiceProvider.GetRequiredService<AllstarrDbContext>().Database.MigrateAsync();
     }
 
     public async Task DisposeAsync()
     {
         await provider.DisposeAsync();
-        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        if (database is not null) await database.DisposeAsync();
     }
 
     [Fact]

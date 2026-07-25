@@ -14,7 +14,7 @@ namespace allstarr.Core.Storage.Migrations
             migrationBuilder.AddColumn<Guid>(
                 name: "CreatedByUserId",
                 table: "provider_accounts",
-                type: "TEXT",
+                type: "uuid",
                 nullable: true);
 
             migrationBuilder.Sql(
@@ -30,27 +30,21 @@ namespace allstarr.Core.Storage.Migrations
                 table: "provider_accounts",
                 column: "CreatedByUserId");
 
-            if (!ActiveProvider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-            {
-                migrationBuilder.AddForeignKey(
-                    name: "FK_provider_account_creator",
-                    table: "provider_accounts",
-                    column: "CreatedByUserId",
-                    principalTable: "users",
-                    principalColumn: "Id",
-                    onDelete: ReferentialAction.SetNull);
-            }
+            migrationBuilder.AddForeignKey(
+                name: "FK_provider_account_creator",
+                table: "provider_accounts",
+                column: "CreatedByUserId",
+                principalTable: "users",
+                principalColumn: "Id",
+                onDelete: ReferentialAction.SetNull);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            if (!ActiveProvider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-            {
-                migrationBuilder.DropForeignKey(
-                    name: "FK_provider_account_creator",
-                    table: "provider_accounts");
-            }
+            migrationBuilder.DropForeignKey(
+                name: "FK_provider_account_creator",
+                table: "provider_accounts");
 
             migrationBuilder.DropIndex(
                 name: "IX_provider_accounts_CreatedByUserId",

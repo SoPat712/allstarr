@@ -12,8 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private Factory _factory = null!;
     private Guid _tenantId;
     private Guid _ownerId;
@@ -22,11 +21,8 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "playlist-mutation.db")}")
-            .Options;
-        _factory = new Factory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new Factory(_database.Options);
         _tenantId = Guid.CreateVersion7();
         _ownerId = Guid.CreateVersion7();
         _otherUserId = Guid.CreateVersion7();
@@ -34,7 +30,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow;
 
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.EnsureCreatedAsync();
+        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,
@@ -217,11 +213,7 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     private static string Hash(string value) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

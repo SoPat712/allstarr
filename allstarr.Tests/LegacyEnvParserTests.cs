@@ -139,10 +139,10 @@ public sealed class LegacyEnvParserTests
             UNKNOWN_SETTING=value
             """);
 
-        foreach (var key in new[] { "POSTGRES_DB", "ADMIN__ENABLE_ENV_EXPORT", "CORS__ALLOWED_ORIGINS", "VALKEY_MAX_MEMORY" })
+        foreach (var key in new[] { "POSTGRES_DB", "ADMIN__ENABLE_ENV_EXPORT", "CORS__ALLOWED_ORIGINS" })
             AssertEntry(document, key, LegacyEnvDisposition.DeploymentChecklist, "retain_in_deployment", false);
         AssertEntry(document, "SPOTIFY_API_SESSION_COOKIES", LegacyEnvDisposition.PerUserManual, "per_user_manual", true);
-        foreach (var key in new[] { "EXTENSION_REPOSITORIES", "SPOTIFY_IMPORT_PLAYLIST_IDS", "REDIS_DATA_PATH" })
+        foreach (var key in new[] { "EXTENSION_REPOSITORIES", "SPOTIFY_IMPORT_PLAYLIST_IDS", "VALKEY_MAX_MEMORY", "REDIS_DATA_PATH" })
             AssertEntry(document, key, LegacyEnvDisposition.IgnoredDeprecated, "deprecated_manual_review", false);
         AssertEntry(document, "UNKNOWN_SETTING", LegacyEnvDisposition.Unknown, "manual_review", false);
     }

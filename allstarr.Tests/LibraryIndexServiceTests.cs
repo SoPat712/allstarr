@@ -9,10 +9,7 @@ namespace allstarr.Tests;
 
 public sealed class LibraryIndexServiceTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private LibraryIndexService _service = null!;
     private Guid _tenantId;
@@ -23,20 +20,17 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
+        _database = await PostgresTestDatabase.CreateAsync();
         var options = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "library.db")}"
+            Provider = "Postgres",
+            ConnectionString = _database.ConnectionString
         };
-        _factory = new TestDbContextFactory(
-            new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(options.ConnectionString)
-                .Options);
+        _factory = new TestDbContextFactory(_database.Options);
         var now = new DateTimeOffset(2026, 7, 12, 2, 0, 0, TimeSpan.Zero);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            await db.Database.EnsureCreatedAsync();
+            await db.Database.MigrateAsync();
             _tenantId = Guid.CreateVersion7();
             _userA = Guid.CreateVersion7();
             _userB = Guid.CreateVersion7();
@@ -199,15 +193,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             LastSeenAt = now
         };
 
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock
     {

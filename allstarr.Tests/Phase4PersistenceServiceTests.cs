@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"), "persistence.db");
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private TrackMatchCommandService _matches = null!;
     private PlaylistPersistenceService _playlists = null!;
@@ -25,10 +25,10 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        _factory = new TestDbContextFactory(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={_path}").Options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
         _tenant = Guid.CreateVersion7(); _userA = Guid.CreateVersion7(); _userB = Guid.CreateVersion7(); _accountA = Guid.CreateVersion7(); _localTrack = Guid.CreateVersion7();
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
+        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "phase4", Name = "Phase 4", CreatedAt = _now });
         db.Users.AddRange(User(_userA, "A"), User(_userB, "B"));
         var identityA = Identity(_userA, "principal-a"); db.BackendIdentities.AddRange(identityA, Identity(_userB, "principal-b"));
@@ -110,8 +110,14 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         var stored = await db.ExternalMetadataSnapshots.SingleAsync(); stored.PayloadJson = "{\"changed\":true}";
         await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
-        Assert.DoesNotContain("raw-secret", await File.ReadAllTextAsync(_path), StringComparison.Ordinal);
-        Assert.DoesNotContain("data:audio", await File.ReadAllTextAsync(_path), StringComparison.Ordinal);
+        db.ChangeTracker.Clear();
+        var persistedPayloads = await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Select(item => item.PayloadJson)
+            .ToListAsync();
+        Assert.DoesNotContain(persistedPayloads,
+            payload => payload.Contains("raw-secret", StringComparison.Ordinal));
+        Assert.DoesNotContain(persistedPayloads,
+            payload => payload.Contains("data:audio", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -161,7 +167,13 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
     private PlatformUserRecord User(Guid id, string name) => new() { Id = id, TenantId = _tenant, DisplayName = name, Status = PlatformUserStatus.Active, CreatedAt = _now, UpdatedAt = _now };
     private BackendIdentityRecord Identity(Guid user, string principal) => new() { Id = Guid.CreateVersion7(), TenantId = _tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = principal, CreatedAt = _now, LastSeenAt = _now };
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-    public Task DisposeAsync() { if (Directory.Exists(Path.GetDirectoryName(_path)!)) Directory.Delete(Path.GetDirectoryName(_path)!, true); return Task.CompletedTask; }
+    public async Task DisposeAsync()
+    {
+        if (_database is not null)
+        {
+            await _database.DisposeAsync();
+        }
+    }
     private sealed class PersistenceClock(DateTimeOffset now) : IPlatformClock { public DateTimeOffset UtcNow { get; } = now; }
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {

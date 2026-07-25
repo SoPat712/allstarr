@@ -22,15 +22,15 @@ namespace allstarr.Tests;
 public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-controller", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private ExtensionControlPlaneService _service = null!;
     private ExtensionManager _manager = null!;
 
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "state.db")}").Options;
-        var factory = new DbFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        var factory = new DbFactory(_database.Options);
         await using var db = await factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -172,10 +172,10 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         LastSeenUtc = DateTime.UtcNow
     };
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        await _database.DisposeAsync();
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
-        return Task.CompletedTask;
     }
 
     private sealed class Clock : IPlatformClock

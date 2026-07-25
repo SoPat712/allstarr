@@ -13,7 +13,7 @@ namespace allstarr.Tests;
 
 public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), "allstarr-tests", $"runtime-settings-{Guid.NewGuid():N}.db");
+    private PostgresTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private Guid _tenantId;
     private Guid _userId;
@@ -21,9 +21,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={_path}").Options;
-        _factory = new(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         _tenantId = Guid.CreateVersion7(); _userId = Guid.CreateVersion7();
@@ -208,10 +207,9 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         return new(_factory, config, _clock, new RuntimeSettingsChangeSignal());
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (File.Exists(_path)) File.Delete(_path);
-        return Task.CompletedTask;
+        if (_database is not null) await _database.DisposeAsync();
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = now; }

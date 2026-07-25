@@ -1,5 +1,4 @@
 using allstarr.Core.Storage;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
@@ -7,14 +6,11 @@ namespace allstarr.Tests;
 public sealed class Phase4DurableModelTests
 {
     [Fact]
-    public async Task SqliteModel_PersistsScopedMatchAndOrderedPlaylistEvidence()
+    public async Task PostgresModel_PersistsScopedMatchAndOrderedPlaylistEvidence()
     {
-        await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite(connection).Options;
-        await using var context = new AllstarrDbContext(options);
-        await context.Database.EnsureCreatedAsync();
-        await context.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON");
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var context = new AllstarrDbContext(database.Options);
+        await context.Database.MigrateAsync();
 
         var now = DateTimeOffset.UtcNow;
         var tenantId = Guid.NewGuid();
@@ -267,14 +263,11 @@ public sealed class Phase4DurableModelTests
     }
 
     [Fact]
-    public async Task SqliteModel_RejectsCrossTenantMatchAndInvalidAcceptedShape()
+    public async Task PostgresModel_RejectsCrossTenantMatchAndInvalidAcceptedShape()
     {
-        await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite(connection).Options;
-        await using var context = new AllstarrDbContext(options);
-        await context.Database.EnsureCreatedAsync();
-        await context.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON");
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var context = new AllstarrDbContext(database.Options);
+        await context.Database.MigrateAsync();
 
         var tenant = Guid.NewGuid();
         var user = Guid.NewGuid();

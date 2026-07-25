@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class FavoriteActionPolicyTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), $"favorite-policy-{Guid.NewGuid():N}.db");
+    private PostgresTestDatabase _database = null!;
     private Factory _factory = null!;
     private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
@@ -22,8 +22,9 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={_path}").Options);
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
+        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "policy", Name = "Policy", CreatedAt = Clock.Now });
         db.Users.AddRange(User(_user, "Owner"), User(_other, "Other"));
         db.BackendIdentities.AddRange(Identity(_user, "principal"), Identity(_other, "other-principal"));
@@ -218,7 +219,13 @@ public sealed class FavoriteActionPolicyTests : IAsyncLifetime
         ExpiresAtUtc = Clock.Now.UtcDateTime.AddHours(1),
         LastSeenUtc = Clock.Now.UtcDateTime
     };
-    public Task DisposeAsync() { if (File.Exists(_path)) File.Delete(_path); return Task.CompletedTask; }
+    public async Task DisposeAsync()
+    {
+        if (_database is not null)
+        {
+            await _database.DisposeAsync();
+        }
+    }
     private sealed class Clock : IPlatformClock { public static DateTimeOffset Now => new(2026, 7, 12, 22, 0, 0, TimeSpan.Zero); public DateTimeOffset UtcNow => Now; }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }

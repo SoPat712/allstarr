@@ -12,9 +12,7 @@ public partial class AddApplicationCacheCategory : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var textType = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
-            ? "text"
-            : "TEXT";
+        var textType = "text";
 
         migrationBuilder.AddColumn<string>(
             name: "Category",

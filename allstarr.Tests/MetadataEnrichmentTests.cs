@@ -231,8 +231,8 @@ public sealed class MetadataEnrichmentTests
         Directory.CreateDirectory(root);
         try
         {
-            var factory = new DbFactory(new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite($"Data Source={Path.Combine(root, "test.db")}").Options);
+            await using var database = await PostgresTestDatabase.CreateAsync();
+            var factory = new DbFactory(database.Options);
             var tenantId = Guid.CreateVersion7();
             var userId = Guid.CreateVersion7();
             var jobId = Guid.CreateVersion7();
@@ -241,7 +241,7 @@ public sealed class MetadataEnrichmentTests
             var now = DateTimeOffset.UtcNow;
             await using (var db = await factory.CreateDbContextAsync())
             {
-                await db.Database.EnsureCreatedAsync();
+                await db.Database.MigrateAsync();
                 db.Tenants.Add(new TenantRecord { Id = tenantId, Slug = "enrichment-apps", Name = "Enrichment apps", CreatedAt = now });
                 db.Users.Add(new PlatformUserRecord
                 {
@@ -390,12 +390,12 @@ public sealed class MetadataEnrichmentTests
         Directory.CreateDirectory(root);
         try
         {
-            var factory = new DbFactory(new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite($"Data Source={Path.Combine(root, "test.db")}").Options);
+            await using var database = await PostgresTestDatabase.CreateAsync();
+            var factory = new DbFactory(database.Options);
             var tenant = Guid.CreateVersion7(); var foreignTenant = Guid.CreateVersion7(); var user = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())
             {
-                await db.Database.EnsureCreatedAsync();
+                await db.Database.MigrateAsync();
                 db.Tenants.AddRange(
                     new TenantRecord { Id = tenant, Slug = "owner", Name = "Owner", CreatedAt = DateTimeOffset.UtcNow },
                     new TenantRecord { Id = foreignTenant, Slug = "foreign", Name = "Foreign", CreatedAt = DateTimeOffset.UtcNow });

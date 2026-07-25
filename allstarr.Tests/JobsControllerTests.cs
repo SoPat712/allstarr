@@ -12,13 +12,10 @@ namespace allstarr.Tests;
 
 public sealed class JobsControllerTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableJobQueue _queue = null!;
     private Guid _ownJobId;
@@ -26,11 +23,8 @@ public sealed class JobsControllerTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "jobs-controller.db")}")
-            .Options;
-        _factory = new TestDbContextFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
@@ -140,15 +134,7 @@ public sealed class JobsControllerTests : IAsyncLifetime
             _tenantId,
             ownerId));
 
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

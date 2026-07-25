@@ -12,9 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class CacheDiagnosticsTests : IAsyncLifetime
 {
-    private readonly string _databasePath = Path.Combine(
-        Path.GetTempPath(),
-        $"allstarr-cache-diagnostics-{Guid.CreateVersion7():N}.db");
+    private PostgresTestDatabase _database = null!;
     private readonly string _mediaPath = Path.Combine(
         Path.GetTempPath(),
         $"allstarr-cache-diagnostics-media-{Guid.CreateVersion7():N}");
@@ -24,10 +22,8 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={_databasePath}")
-            .Options;
-        var factory = new TestFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        var factory = new TestFactory(_database.Options);
         var clock = new TestClock(
             new DateTimeOffset(2026, 7, 24, 12, 0, 0, TimeSpan.Zero));
         var database = new DatabaseApplicationCache(
@@ -42,7 +38,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         _cache = new HybridApplicationCache(_hot, _media);
 
         await using var context = await factory.CreateDbContextAsync();
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.MigrateAsync();
     }
 
     [Fact]
@@ -114,21 +110,16 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         Assert.IsType<BadRequestObjectResult>(await controller.Purge("arbitrary:*"));
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         _hot.Dispose();
         _media.Dispose();
-        if (File.Exists(_databasePath))
-        {
-            File.Delete(_databasePath);
-        }
 
         if (Directory.Exists(_mediaPath))
         {
             Directory.Delete(_mediaPath, recursive: true);
         }
-
-        return Task.CompletedTask;
+        if (_database is not null) await _database.DisposeAsync();
     }
 
     private static AdminAuthSession Session(bool isAdministrator) => new()

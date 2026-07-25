@@ -11,12 +11,11 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-            var guidType = postgres ? "uuid" : "TEXT";
-            var textType = postgres ? "text" : "TEXT";
-            var integerType = postgres ? "integer" : "INTEGER";
-            var bigintType = postgres ? "bigint" : "INTEGER";
-            var realType = postgres ? "double precision" : "REAL";
+            var guidType = "uuid";
+            var textType = "text";
+            var integerType = "integer";
+            var bigintType = "bigint";
+            var realType = "double precision";
 
             migrationBuilder.CreateTable(
                 name: "provider_health_rollups",

@@ -10,19 +10,15 @@ namespace allstarr.Tests;
 
 public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(
-        Path.GetTempPath(),
-        $"allstarr-cache-{Guid.CreateVersion7():N}.db");
+    private PostgresTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private TestClock _clock = null!;
     private DatabaseApplicationCache _cache = null!;
 
     public async Task InitializeAsync()
     {
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={_path}")
-            .Options;
-        _factory = new TestFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestFactory(_database.Options);
         _clock = new TestClock(new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero));
         _cache = new DatabaseApplicationCache(
             _factory,
@@ -30,7 +26,7 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             NullLogger<DatabaseApplicationCache>.Instance);
 
         await using var database = await _factory.CreateDbContextAsync();
-        await database.Database.EnsureCreatedAsync();
+        await database.Database.MigrateAsync();
     }
 
     [Fact]
@@ -212,14 +208,9 @@ public sealed class DatabaseApplicationCacheTests : IAsyncLifetime
             item.Category == nameof(ApplicationCacheCategory.Lyrics));
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (File.Exists(_path))
-        {
-            File.Delete(_path);
-        }
-
-        return Task.CompletedTask;
+        if (_database is not null) await _database.DisposeAsync();
     }
 
     private sealed class TestClock(DateTimeOffset now) : IPlatformClock

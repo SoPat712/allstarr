@@ -11,13 +11,12 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-            var text = postgres ? "text" : "TEXT";
-            var guid = postgres ? "uuid" : "TEXT";
-            var integer = postgres ? "integer" : "INTEGER";
-            var bigint = postgres ? "bigint" : "INTEGER";
-            var boolean = postgres ? "boolean" : "INTEGER";
-            var real = postgres ? "double precision" : "REAL";
+            var text = "text";
+            var guid = "uuid";
+            var integer = "integer";
+            var bigint = "bigint";
+            var boolean = "boolean";
+            var real = "double precision";
 
             migrationBuilder.CreateTable(
                 name: "intelligence_policies",

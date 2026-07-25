@@ -24,6 +24,7 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     private readonly Guid _firstUserId = Guid.CreateVersion7();
     private readonly Guid _secondTenantId = Guid.CreateVersion7();
     private readonly Guid _secondUserId = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private DurableRuntimeSettingsService _settings = null!;
     private LegacyEnvMigrationService _migration = null!;
@@ -31,11 +32,8 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        var databasePath = Path.Combine(_root, "onboarding.db");
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={databasePath}")
-            .Options;
-        _factory = new TestFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         var now = DateTimeOffset.Parse("2026-07-14T12:00:00Z");
@@ -206,14 +204,13 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     private static JsonElement Payload(object? value) =>
         JsonSerializer.SerializeToElement(value);
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        await _database.DisposeAsync();
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);
         }
-
-        return Task.CompletedTask;
     }
 
     private sealed class TestFactory(DbContextOptions<AllstarrDbContext> options)

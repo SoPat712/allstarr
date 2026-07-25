@@ -17,6 +17,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-control", Guid.NewGuid().ToString("N"));
     private readonly Guid _reviewer = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private DbFactory _factory = null!;
     private ExtensionControlPlaneService _service = null!;
     private IConfiguration _configuration = null!;
@@ -24,9 +25,8 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "state.db")}").Options;
-        _factory = new(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         var tenant = Guid.CreateVersion7();
@@ -351,10 +351,10 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         return directory?.FullName ?? throw new DirectoryNotFoundException("Repository root was not found.");
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        await _database.DisposeAsync();
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
-        return Task.CompletedTask;
     }
 
     private sealed class Clock : IPlatformClock

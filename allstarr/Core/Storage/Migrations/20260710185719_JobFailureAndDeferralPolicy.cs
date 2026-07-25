@@ -11,9 +11,7 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var integerType = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
-                ? "integer"
-                : "INTEGER";
+            var integerType = "integer";
             migrationBuilder.AddColumn<int>(
                 name: "DeferralCount",
                 table: "durable_jobs",

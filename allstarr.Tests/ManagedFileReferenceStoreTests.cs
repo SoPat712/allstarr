@@ -7,6 +7,7 @@ namespace allstarr.Tests;
 public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), $"allstarr-managed-references-{Guid.NewGuid():N}");
+    private PostgresTestDatabase database = null!;
     private DbContextOptions<AllstarrDbContext> options = null!;
     private Guid tenantId;
     private Guid userId;
@@ -14,8 +15,8 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(root);
-        options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(root, "references.db")}").Options;
+        database = await PostgresTestDatabase.CreateAsync();
+        options = database.Options;
         await using var db = new AllstarrDbContext(options);
         await db.Database.MigrateAsync();
         tenantId = Guid.CreateVersion7();
@@ -117,9 +118,9 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
     private ManagedFileReference Reference(Guid fileId, string key) => new(
         Guid.CreateVersion7(), fileId, tenantId, userId, "tenant:user:music", key, DateTimeOffset.UtcNow);
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-        return Task.CompletedTask;
+        if (database is not null) await database.DisposeAsync();
     }
 }

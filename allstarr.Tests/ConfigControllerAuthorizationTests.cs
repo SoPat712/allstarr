@@ -28,7 +28,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public class ConfigControllerAuthorizationTests : IDisposable
+public class ConfigControllerAuthorizationTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
@@ -37,27 +37,30 @@ public class ConfigControllerAuthorizationTests : IDisposable
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
-    private readonly TestDbContextFactory _factory;
-    private readonly DurableStorageState _storageState;
+    private PostgresTestDatabase _database = null!;
+    private TestDbContextFactory _factory = null!;
+    private DurableStorageState _storageState = null!;
     private readonly string _keyRingPath;
 
     public ConfigControllerAuthorizationTests()
     {
         Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "config-controller.db")}")
-            .Options;
-        _factory = new TestDbContextFactory(options);
-        _storageState = new DurableStorageState(new DurableStorageOptions
-        {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "config-controller.db")}"
-        });
-        _storageState.Set(DurableStorageReadiness.Ready, "fixture");
         _keyRingPath = Path.Combine(_root, "keyring.json");
         WriteKeyRing();
-        using var context = _factory.CreateDbContext();
-        context.Database.Migrate();
+    }
+
+    public async Task InitializeAsync()
+    {
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
+        _storageState = new DurableStorageState(new DurableStorageOptions
+        {
+            Provider = "Postgres",
+            ConnectionString = _database.ConnectionString
+        });
+        _storageState.Set(DurableStorageReadiness.Ready, "fixture");
+        await using var context = await _factory.CreateDbContextAsync();
+        await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,
@@ -84,7 +87,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
-        context.SaveChanges();
+        await context.SaveChangesAsync();
     }
     [Fact]
     public async Task UpdateConfig_WithoutAdminSession_ReturnsForbidden()
@@ -435,7 +438,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
             Options.Create(new JellyfinSettings()),
             webHostEnvironment.Object);
 
-        var redisCache = new DisabledApplicationCache();
+        var applicationCache = new DisabledApplicationCache();
         var spotifyCookieLogger = new Mock<ILogger<SpotifySessionCookieService>>();
         var spotifySessionCookieService = new SpotifySessionCookieService(
             Options.Create(new SpotifyApiSettings()),
@@ -482,7 +485,7 @@ public class ConfigControllerAuthorizationTests : IDisposable
             Options.Create(new ScrobblingSettings()),
             helperService,
             spotifySessionCookieService,
-            redisCache)
+            applicationCache)
         {
             ControllerContext = new ControllerContext
             {
@@ -493,8 +496,13 @@ public class ConfigControllerAuthorizationTests : IDisposable
         return controller;
     }
 
-    public void Dispose()
+    public async Task DisposeAsync()
     {
+        if (_database is not null)
+        {
+            await _database.DisposeAsync();
+        }
+
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);

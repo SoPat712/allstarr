@@ -11,25 +11,28 @@ using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
-public sealed class LegacyEnvMigrationServiceTests : IDisposable
+public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
-    private readonly TestDbContextFactory _factory;
+    private PostgresTestDatabase _database = null!;
+    private TestDbContextFactory _factory = null!;
     private readonly string _keyRingPath;
 
     public LegacyEnvMigrationServiceTests()
     {
         Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "migration.db")}")
-            .Options;
-        _factory = new TestDbContextFactory(options);
         _keyRingPath = Path.Combine(_root, "keyring.json");
         WriteKeyRing();
-        using var db = _factory.CreateDbContext();
-        db.Database.Migrate();
+    }
+
+    public async Task InitializeAsync()
+    {
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,
@@ -46,7 +49,7 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
-        db.SaveChanges();
+        await db.SaveChangesAsync();
     }
 
     [Fact]
@@ -557,8 +560,9 @@ public sealed class LegacyEnvMigrationServiceTests : IDisposable
         }
     }
 
-    public void Dispose()
+    public async Task DisposeAsync()
     {
+        await _database.DisposeAsync();
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);

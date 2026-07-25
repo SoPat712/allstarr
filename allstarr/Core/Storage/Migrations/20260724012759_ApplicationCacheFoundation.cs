@@ -8,30 +8,29 @@ public partial class ApplicationCacheFoundation : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
 
         migrationBuilder.CreateTable(
             name: "application_cache_entries",
             columns: table => new
             {
                 Key = table.Column<string>(
-                    type: postgres ? "character varying(512)" : "TEXT",
+                    type: "character varying(512)",
                     maxLength: 512,
                     nullable: false),
                 Value = table.Column<string>(
-                    type: postgres ? "text" : "TEXT",
+                    type: "text",
                     nullable: false),
                 PayloadBytes = table.Column<int>(
-                    type: postgres ? "integer" : "INTEGER",
+                    type: "integer",
                     nullable: false),
                 CreatedAt = table.Column<long>(
-                    type: postgres ? "bigint" : "INTEGER",
+                    type: "bigint",
                     nullable: false),
                 UpdatedAt = table.Column<long>(
-                    type: postgres ? "bigint" : "INTEGER",
+                    type: "bigint",
                     nullable: false),
                 ExpiresAt = table.Column<long>(
-                    type: postgres ? "bigint" : "INTEGER",
+                    type: "bigint",
                     nullable: true)
             },
             constraints: table =>

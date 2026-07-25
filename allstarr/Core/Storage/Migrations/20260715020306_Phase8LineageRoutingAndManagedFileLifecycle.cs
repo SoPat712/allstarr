@@ -11,17 +11,13 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var isSqlite = ActiveProvider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase);
-            if (!isSqlite)
-            {
-                migrationBuilder.DropForeignKey(
-                    name: "FK_durable_jobs_users_OwnerUserId",
-                    table: "durable_jobs");
+            migrationBuilder.DropForeignKey(
+                name: "FK_durable_jobs_users_OwnerUserId",
+                table: "durable_jobs");
 
-                migrationBuilder.DropForeignKey(
-                    name: "FK_provider_accounts_users_OwnerUserId",
-                    table: "provider_accounts");
-            }
+            migrationBuilder.DropForeignKey(
+                name: "FK_provider_accounts_users_OwnerUserId",
+                table: "provider_accounts");
 
             migrationBuilder.DropIndex(
                 name: "IX_provider_accounts_OwnerUserId",
@@ -266,52 +262,37 @@ namespace allstarr.Core.Storage.Migrations
                 table: "provider_route_outcomes",
                 columns: new[] { "RouteDecisionId", "TenantId" });
 
-            if (!isSqlite)
-            {
-                migrationBuilder.AddForeignKey(
-                    name: "FK_durable_job_tenant_owner",
-                    table: "durable_jobs",
-                    columns: new[] { "TenantId", "OwnerUserId" },
-                    principalTable: "users",
-                    principalColumns: new[] { "TenantId", "Id" },
-                    onDelete: ReferentialAction.Restrict);
+            migrationBuilder.AddForeignKey(
+                name: "FK_durable_job_tenant_owner",
+                table: "durable_jobs",
+                columns: new[] { "TenantId", "OwnerUserId" },
+                principalTable: "users",
+                principalColumns: new[] { "TenantId", "Id" },
+                onDelete: ReferentialAction.Restrict);
 
-                migrationBuilder.AddForeignKey(
-                    name: "FK_provider_account_tenant_owner",
-                    table: "provider_accounts",
-                    columns: new[] { "TenantId", "OwnerUserId" },
-                    principalTable: "users",
-                    principalColumns: new[] { "TenantId", "Id" },
-                    onDelete: ReferentialAction.Restrict);
-            }
+            migrationBuilder.AddForeignKey(
+                name: "FK_provider_account_tenant_owner",
+                table: "provider_accounts",
+                columns: new[] { "TenantId", "OwnerUserId" },
+                principalTable: "users",
+                principalColumns: new[] { "TenantId", "Id" },
+                onDelete: ReferentialAction.Restrict);
 
-            if (ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
-                ApplyPostgresLineageEnforcement(migrationBuilder);
-            else if (ActiveProvider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-                ApplySqliteLineageEnforcement(migrationBuilder);
-            else
-                throw new NotSupportedException($"Unsupported Phase 8 migration provider: {ActiveProvider}");
+            ApplyPostgresLineageEnforcement(migrationBuilder);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            if (ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
-                RemovePostgresLineageEnforcement(migrationBuilder);
-            else if (ActiveProvider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-                RemoveSqliteLineageEnforcement(migrationBuilder);
+            RemovePostgresLineageEnforcement(migrationBuilder);
 
-            var isSqlite = ActiveProvider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase);
-            if (!isSqlite)
-            {
-                migrationBuilder.DropForeignKey(
-                    name: "FK_durable_job_tenant_owner",
-                    table: "durable_jobs");
+            migrationBuilder.DropForeignKey(
+                name: "FK_durable_job_tenant_owner",
+                table: "durable_jobs");
 
-                migrationBuilder.DropForeignKey(
-                    name: "FK_provider_account_tenant_owner",
-                    table: "provider_accounts");
-            }
+            migrationBuilder.DropForeignKey(
+                name: "FK_provider_account_tenant_owner",
+                table: "provider_accounts");
 
             migrationBuilder.DropTable(
                 name: "managed_file_references");
@@ -374,24 +355,21 @@ namespace allstarr.Core.Storage.Migrations
                 table: "durable_jobs",
                 column: "TenantId");
 
-            if (!isSqlite)
-            {
-                migrationBuilder.AddForeignKey(
-                    name: "FK_durable_jobs_users_OwnerUserId",
-                    table: "durable_jobs",
-                    column: "OwnerUserId",
-                    principalTable: "users",
-                    principalColumn: "Id",
-                    onDelete: ReferentialAction.Restrict);
+            migrationBuilder.AddForeignKey(
+                name: "FK_durable_jobs_users_OwnerUserId",
+                table: "durable_jobs",
+                column: "OwnerUserId",
+                principalTable: "users",
+                principalColumn: "Id",
+                onDelete: ReferentialAction.Restrict);
 
-                migrationBuilder.AddForeignKey(
-                    name: "FK_provider_accounts_users_OwnerUserId",
-                    table: "provider_accounts",
-                    column: "OwnerUserId",
-                    principalTable: "users",
-                    principalColumn: "Id",
-                    onDelete: ReferentialAction.Restrict);
-            }
+            migrationBuilder.AddForeignKey(
+                name: "FK_provider_accounts_users_OwnerUserId",
+                table: "provider_accounts",
+                column: "OwnerUserId",
+                principalTable: "users",
+                principalColumn: "Id",
+                onDelete: ReferentialAction.Restrict);
         }
 
         private static void ApplyPostgresLineageEnforcement(MigrationBuilder migrationBuilder)
@@ -624,255 +602,5 @@ namespace allstarr.Core.Storage.Migrations
                 """);
         }
 
-        private static void ApplySqliteLineageEnforcement(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.Sql("""
-                INSERT OR IGNORE INTO "managed_file_references"
-                    ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
-                WITH RECURSIVE legacy(file_id, tenant_id, owner_user_id, scope_key, created_at, ordinal, maximum, compact_id) AS (
-                    SELECT "Id", "TenantId", "OwnerUserId", "ScopeKey", "CreatedAt", 1, "ReferenceCount",
-                           replace(lower(CAST("Id" AS TEXT)), '-', '')
-                    FROM "managed_files" WHERE "ReferenceCount" > 0
-                    UNION ALL
-                    SELECT file_id, tenant_id, owner_user_id, scope_key, created_at, ordinal + 1, maximum, compact_id
-                    FROM legacy WHERE ordinal < maximum
-                )
-                SELECT substr(compact_id,1,8)||'-'||substr(compact_id,9,4)||'-'||substr(compact_id,13,4)||'-'||
-                       substr(compact_id,17,4)||'-'||substr(compact_id,21,4)||printf('%08x', ordinal),
-                       file_id, tenant_id, owner_user_id, scope_key, 'legacy:' || ordinal, created_at, NULL, 1
-                FROM legacy;
-
-                CREATE TABLE "__phase8_lineage_guard" ("Id" INTEGER NOT NULL);
-                CREATE TRIGGER "TR_phase8_lineage_preflight" BEFORE INSERT ON "__phase8_lineage_guard"
-                WHEN
-                    EXISTS (SELECT 1 FROM "managed_files" c JOIN "durable_jobs" j ON j."Id"=c."SourceJobId"
-                        WHERE c."SourceJobId" IS NOT NULL AND (j."TenantId" IS NOT c."TenantId" OR (c."OwnerUserId" IS NOT NULL AND j."OwnerUserId" IS NOT c."OwnerUserId")))
-                    OR EXISTS (SELECT 1 FROM "favorite_events" c JOIN "durable_jobs" j ON j."Id"=c."JobId"
-                        WHERE j."TenantId" IS NOT c."TenantId" OR j."OwnerUserId" IS NOT c."OwnerUserId")
-                    OR EXISTS (SELECT 1 FROM "provider_download_workspaces" c JOIN "durable_jobs" j ON j."Id"=c."DurableJobId"
-                        WHERE j."TenantId" IS NOT c."TenantId" OR (c."OwnerUserId" IS NOT NULL AND j."OwnerUserId" IS NOT c."OwnerUserId"))
-                    OR EXISTS (SELECT 1 FROM "metadata_enrichment_plans" c JOIN "durable_jobs" j ON j."Id"=c."LineageJobId"
-                        JOIN "managed_files" f ON f."Id"=c."ManagedArtifactId" WHERE j."TenantId" IS NOT c."TenantId" OR j."OwnerUserId" IS NOT c."OwnerUserId"
-                        OR f."TenantId" IS NOT c."TenantId" OR f."OwnerUserId" IS NOT c."OwnerUserId")
-                    OR EXISTS (SELECT 1 FROM "metadata_enrichment_applications" c JOIN "durable_jobs" j ON j."Id"=c."LineageJobId"
-                        WHERE j."TenantId" IS NOT c."TenantId" OR j."OwnerUserId" IS NOT c."OwnerUserId")
-                    OR EXISTS (SELECT 1 FROM "provider_route_decisions" c JOIN "durable_jobs" j ON j."Id"=c."DurableJobId"
-                        WHERE c."DurableJobId" IS NOT NULL AND (j."TenantId" IS NOT c."TenantId" OR (c."ActorUserId" IS NOT NULL AND j."OwnerUserId" IS NOT c."ActorUserId")))
-                    OR EXISTS (SELECT 1 FROM "durable_jobs" c JOIN "provider_accounts" a ON a."Id"=c."ProviderAccountId" WHERE NOT (
-                        (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                        (a."Scope"='User' AND a."TenantId"=c."TenantId" AND a."OwnerUserId"=c."OwnerUserId" AND c."OwnerUserId" IS NOT NULL) OR
-                        (a."Scope"='Library' AND a."TenantId"=c."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=c."LibraryScopeId" AND c."LibraryScopeId" IS NOT NULL)))
-                    OR EXISTS (SELECT 1 FROM "provider_route_decisions" c JOIN "provider_accounts" a ON a."Id"=c."SelectedProviderAccountId" WHERE NOT (
-                        (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                        (a."Scope"='User' AND a."TenantId"=c."TenantId" AND a."OwnerUserId"=c."ActorUserId" AND c."ActorUserId" IS NOT NULL) OR
-                        (a."Scope"='Library' AND a."TenantId"=c."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=c."LibraryScopeId" AND c."LibraryScopeId" IS NOT NULL)))
-                BEGIN SELECT RAISE(ABORT, 'Phase 8 lineage preflight failed'); END;
-                INSERT INTO "__phase8_lineage_guard" VALUES (1);
-                DROP TABLE "__phase8_lineage_guard";
-                """);
-
-            migrationBuilder.Sql("""
-                CREATE TRIGGER "TR_durable_job_account_scope_insert" BEFORE INSERT ON "durable_jobs"
-                WHEN (NEW."OwnerUserId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "users" u WHERE u."Id"=NEW."OwnerUserId" AND u."TenantId"=NEW."TenantId"))
-                  OR (NEW."ProviderAccountId" IS NOT NULL AND NOT EXISTS (
-                    SELECT 1 FROM "provider_accounts" a WHERE a."Id"=NEW."ProviderAccountId" AND (
-                        (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                        (a."Scope"='User' AND NEW."OwnerUserId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId"=NEW."OwnerUserId") OR
-                        (a."Scope"='Library' AND NEW."LibraryScopeId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=NEW."LibraryScopeId"))))
-                BEGIN SELECT RAISE(ABORT, 'CK_durable_job_account_scope'); END;
-                CREATE TRIGGER "TR_durable_job_account_scope_update" BEFORE UPDATE OF "ProviderAccountId","TenantId","OwnerUserId","LibraryScopeId" ON "durable_jobs"
-                WHEN (NEW."OwnerUserId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "users" u WHERE u."Id"=NEW."OwnerUserId" AND u."TenantId"=NEW."TenantId"))
-                  OR (NEW."ProviderAccountId" IS NOT NULL AND NOT EXISTS (
-                    SELECT 1 FROM "provider_accounts" a WHERE a."Id"=NEW."ProviderAccountId" AND (
-                        (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                        (a."Scope"='User' AND NEW."OwnerUserId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId"=NEW."OwnerUserId") OR
-                        (a."Scope"='Library' AND NEW."LibraryScopeId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=NEW."LibraryScopeId"))))
-                BEGIN SELECT RAISE(ABORT, 'CK_durable_job_account_scope'); END;
-
-                CREATE TRIGGER "TR_provider_account_tenant_owner_insert" BEFORE INSERT ON "provider_accounts"
-                WHEN NEW."OwnerUserId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "users" u WHERE u."Id"=NEW."OwnerUserId" AND u."TenantId"=NEW."TenantId")
-                BEGIN SELECT RAISE(ABORT, 'FK_provider_account_tenant_owner'); END;
-                CREATE TRIGGER "TR_provider_account_tenant_owner_update" BEFORE UPDATE OF "TenantId","OwnerUserId" ON "provider_accounts"
-                WHEN NEW."OwnerUserId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "users" u WHERE u."Id"=NEW."OwnerUserId" AND u."TenantId"=NEW."TenantId")
-                BEGIN SELECT RAISE(ABORT, 'FK_provider_account_tenant_owner'); END;
-
-                CREATE TRIGGER "TR_managed_file_job_lineage_insert" BEFORE INSERT ON "managed_files"
-                WHEN NEW."SourceJobId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."SourceJobId" AND j."TenantId"=NEW."TenantId" AND (NEW."OwnerUserId" IS NULL OR j."OwnerUserId"=NEW."OwnerUserId"))
-                BEGIN SELECT RAISE(ABORT, 'FK_managed_file_job_tenant_lineage'); END;
-                CREATE TRIGGER "TR_managed_file_job_lineage_update" BEFORE UPDATE OF "SourceJobId","TenantId","OwnerUserId" ON "managed_files"
-                WHEN NEW."SourceJobId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."SourceJobId" AND j."TenantId"=NEW."TenantId" AND (NEW."OwnerUserId" IS NULL OR j."OwnerUserId"=NEW."OwnerUserId"))
-                BEGIN SELECT RAISE(ABORT, 'FK_managed_file_job_tenant_lineage'); END;
-
-                CREATE TRIGGER "TR_favorite_event_job_lineage_insert" BEFORE INSERT ON "favorite_events"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."JobId" AND j."TenantId"=NEW."TenantId" AND j."OwnerUserId"=NEW."OwnerUserId")
-                BEGIN SELECT RAISE(ABORT, 'FK_favorite_event_job_lineage'); END;
-                CREATE TRIGGER "TR_favorite_event_job_lineage_update" BEFORE UPDATE OF "JobId","TenantId","OwnerUserId" ON "favorite_events"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."JobId" AND j."TenantId"=NEW."TenantId" AND j."OwnerUserId"=NEW."OwnerUserId")
-                BEGIN SELECT RAISE(ABORT, 'FK_favorite_event_job_lineage'); END;
-
-                CREATE TRIGGER "TR_download_workspace_job_lineage_insert" BEFORE INSERT ON "provider_download_workspaces"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."DurableJobId" AND j."TenantId"=NEW."TenantId" AND (NEW."OwnerUserId" IS NULL OR j."OwnerUserId"=NEW."OwnerUserId"))
-                BEGIN SELECT RAISE(ABORT, 'FK_download_workspace_job_tenant_lineage'); END;
-                CREATE TRIGGER "TR_download_workspace_job_lineage_update" BEFORE UPDATE OF "DurableJobId","TenantId","OwnerUserId" ON "provider_download_workspaces"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."DurableJobId" AND j."TenantId"=NEW."TenantId" AND (NEW."OwnerUserId" IS NULL OR j."OwnerUserId"=NEW."OwnerUserId"))
-                BEGIN SELECT RAISE(ABORT, 'FK_download_workspace_job_tenant_lineage'); END;
-
-                CREATE TRIGGER "TR_enrichment_plan_lineage_insert" BEFORE INSERT ON "metadata_enrichment_plans"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."LineageJobId" AND j."TenantId"=NEW."TenantId" AND j."OwnerUserId"=NEW."OwnerUserId")
-                  OR NOT EXISTS (SELECT 1 FROM "managed_files" f WHERE f."Id"=NEW."ManagedArtifactId" AND f."TenantId"=NEW."TenantId" AND f."OwnerUserId"=NEW."OwnerUserId")
-                BEGIN SELECT RAISE(ABORT, 'FK_enrichment_plan_lineage'); END;
-                CREATE TRIGGER "TR_enrichment_plan_lineage_update" BEFORE UPDATE OF "LineageJobId","ManagedArtifactId","TenantId","OwnerUserId" ON "metadata_enrichment_plans"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."LineageJobId" AND j."TenantId"=NEW."TenantId" AND j."OwnerUserId"=NEW."OwnerUserId")
-                  OR NOT EXISTS (SELECT 1 FROM "managed_files" f WHERE f."Id"=NEW."ManagedArtifactId" AND f."TenantId"=NEW."TenantId" AND f."OwnerUserId"=NEW."OwnerUserId")
-                BEGIN SELECT RAISE(ABORT, 'FK_enrichment_plan_lineage'); END;
-
-                CREATE TRIGGER "TR_enrichment_application_job_lineage_insert" BEFORE INSERT ON "metadata_enrichment_applications"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."LineageJobId" AND j."TenantId"=NEW."TenantId" AND j."OwnerUserId"=NEW."OwnerUserId")
-                BEGIN SELECT RAISE(ABORT, 'FK_enrichment_application_job_lineage'); END;
-                CREATE TRIGGER "TR_enrichment_application_job_lineage_update" BEFORE UPDATE OF "LineageJobId","TenantId","OwnerUserId" ON "metadata_enrichment_applications"
-                WHEN NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."LineageJobId" AND j."TenantId"=NEW."TenantId" AND j."OwnerUserId"=NEW."OwnerUserId")
-                BEGIN SELECT RAISE(ABORT, 'FK_enrichment_application_job_lineage'); END;
-                """);
-
-            migrationBuilder.Sql("""
-                CREATE TRIGGER "TR_route_decision_lineage_insert" BEFORE INSERT ON "provider_route_decisions"
-                WHEN (NEW."DurableJobId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."DurableJobId" AND j."TenantId"=NEW."TenantId" AND (NEW."ActorUserId" IS NULL OR j."OwnerUserId"=NEW."ActorUserId")))
-                  OR (NEW."SelectedProviderAccountId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "provider_accounts" a WHERE a."Id"=NEW."SelectedProviderAccountId" AND a."ProviderId"=NEW."SelectedProviderId" AND (
-                    (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                    (a."Scope"='User' AND NEW."ActorUserId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId"=NEW."ActorUserId") OR
-                    (a."Scope"='Library' AND NEW."LibraryScopeId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=NEW."LibraryScopeId"))))
-                BEGIN SELECT RAISE(ABORT, 'FK_provider_route_decision_lineage'); END;
-                CREATE TRIGGER "TR_route_decision_lineage_update" BEFORE UPDATE OF "DurableJobId","TenantId","ActorUserId","LibraryScopeId","SelectedProviderAccountId","SelectedProviderId" ON "provider_route_decisions"
-                WHEN (NEW."DurableJobId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."Id"=NEW."DurableJobId" AND j."TenantId"=NEW."TenantId" AND (NEW."ActorUserId" IS NULL OR j."OwnerUserId"=NEW."ActorUserId")))
-                  OR (NEW."SelectedProviderAccountId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "provider_accounts" a WHERE a."Id"=NEW."SelectedProviderAccountId" AND a."ProviderId"=NEW."SelectedProviderId" AND (
-                    (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                    (a."Scope"='User' AND NEW."ActorUserId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId"=NEW."ActorUserId") OR
-                    (a."Scope"='Library' AND NEW."LibraryScopeId" IS NOT NULL AND a."TenantId"=NEW."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=NEW."LibraryScopeId"))))
-                BEGIN SELECT RAISE(ABORT, 'FK_provider_route_decision_lineage'); END;
-
-                CREATE TRIGGER "TR_route_outcome_account_scope_insert" BEFORE INSERT ON "provider_route_outcomes"
-                WHEN NEW."ProviderAccountId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "provider_route_decisions" d JOIN "provider_accounts" a ON a."Id"=NEW."ProviderAccountId" AND a."ProviderId"=NEW."ProviderId"
-                    WHERE d."Id"=NEW."RouteDecisionId" AND d."TenantId"=NEW."TenantId" AND (
-                    (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                    (a."Scope"='User' AND d."ActorUserId" IS NOT NULL AND a."TenantId"=d."TenantId" AND a."OwnerUserId"=d."ActorUserId") OR
-                    (a."Scope"='Library' AND d."LibraryScopeId" IS NOT NULL AND a."TenantId"=d."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=d."LibraryScopeId")))
-                BEGIN SELECT RAISE(ABORT, 'CK_provider_route_outcome_account_scope'); END;
-                CREATE TRIGGER "TR_route_outcome_account_scope_update" BEFORE UPDATE OF "ProviderAccountId","ProviderId","TenantId","RouteDecisionId" ON "provider_route_outcomes"
-                WHEN NEW."ProviderAccountId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "provider_route_decisions" d JOIN "provider_accounts" a ON a."Id"=NEW."ProviderAccountId" AND a."ProviderId"=NEW."ProviderId"
-                    WHERE d."Id"=NEW."RouteDecisionId" AND d."TenantId"=NEW."TenantId" AND (
-                    (a."Scope"='Global' AND a."TenantId" IS NULL AND a."OwnerUserId" IS NULL AND a."LibraryScopeId" IS NULL) OR
-                    (a."Scope"='User' AND d."ActorUserId" IS NOT NULL AND a."TenantId"=d."TenantId" AND a."OwnerUserId"=d."ActorUserId") OR
-                    (a."Scope"='Library' AND d."LibraryScopeId" IS NOT NULL AND a."TenantId"=d."TenantId" AND a."OwnerUserId" IS NULL AND a."LibraryScopeId"=d."LibraryScopeId")))
-                BEGIN SELECT RAISE(ABORT, 'CK_provider_route_outcome_account_scope'); END;
-                """);
-
-            migrationBuilder.Sql("""
-                CREATE TRIGGER "TR_managed_file_reference_lineage_insert" BEFORE INSERT ON "managed_file_references"
-                WHEN NOT EXISTS (SELECT 1 FROM "managed_files" f WHERE f."Id"=NEW."ManagedFileId" AND f."TenantId"=NEW."TenantId"
-                    AND f."OwnerUserId" IS NEW."OwnerUserId" AND f."ScopeKey"=NEW."ScopeKey")
-                BEGIN SELECT RAISE(ABORT, 'FK_managed_file_reference_lineage'); END;
-                CREATE TRIGGER "TR_managed_file_reference_lineage_update" BEFORE UPDATE OF "ManagedFileId","TenantId","OwnerUserId","ScopeKey" ON "managed_file_references"
-                WHEN NOT EXISTS (SELECT 1 FROM "managed_files" f WHERE f."Id"=NEW."ManagedFileId" AND f."TenantId"=NEW."TenantId"
-                    AND f."OwnerUserId" IS NEW."OwnerUserId" AND f."ScopeKey"=NEW."ScopeKey")
-                BEGIN SELECT RAISE(ABORT, 'FK_managed_file_reference_lineage'); END;
-
-                CREATE TRIGGER "TR_managed_file_reference_count_initialize" AFTER INSERT ON "managed_files"
-                WHEN NEW."ReferenceCount" <> 0
-                BEGIN UPDATE "managed_files" SET "ReferenceCount"=0, "Revision"="Revision"+1 WHERE "Id"=NEW."Id"; END;
-                CREATE TRIGGER "TR_managed_file_reference_count_insert" AFTER INSERT ON "managed_file_references"
-                BEGIN UPDATE "managed_files" SET "ReferenceCount"=(SELECT count(*) FROM "managed_file_references" r WHERE r."ManagedFileId"=NEW."ManagedFileId" AND r."ReleasedAt" IS NULL), "Revision"="Revision"+1 WHERE "Id"=NEW."ManagedFileId"; END;
-                CREATE TRIGGER "TR_managed_file_reference_count_update" AFTER UPDATE OF "ManagedFileId","ReleasedAt" ON "managed_file_references"
-                BEGIN
-                    UPDATE "managed_files" SET "ReferenceCount"=(SELECT count(*) FROM "managed_file_references" r WHERE r."ManagedFileId"=OLD."ManagedFileId" AND r."ReleasedAt" IS NULL), "Revision"="Revision"+1 WHERE "Id"=OLD."ManagedFileId";
-                    UPDATE "managed_files" SET "ReferenceCount"=(SELECT count(*) FROM "managed_file_references" r WHERE r."ManagedFileId"=NEW."ManagedFileId" AND r."ReleasedAt" IS NULL), "Revision"="Revision"+1 WHERE "Id"=NEW."ManagedFileId" AND NEW."ManagedFileId" IS NOT OLD."ManagedFileId";
-                END;
-                CREATE TRIGGER "TR_managed_file_reference_count_delete" AFTER DELETE ON "managed_file_references"
-                BEGIN UPDATE "managed_files" SET "ReferenceCount"=(SELECT count(*) FROM "managed_file_references" r WHERE r."ManagedFileId"=OLD."ManagedFileId" AND r."ReleasedAt" IS NULL), "Revision"="Revision"+1 WHERE "Id"=OLD."ManagedFileId"; END;
-                CREATE TRIGGER "TR_managed_file_reference_count_guard" BEFORE UPDATE OF "ReferenceCount","RemovedAt" ON "managed_files"
-                WHEN NEW."ReferenceCount" IS NOT (SELECT count(*) FROM "managed_file_references" r WHERE r."ManagedFileId"=NEW."Id" AND r."ReleasedAt" IS NULL)
-                  OR (NEW."RemovedAt" IS NOT NULL AND EXISTS (SELECT 1 FROM "managed_file_references" r WHERE r."ManagedFileId"=NEW."Id" AND r."ReleasedAt" IS NULL))
-                BEGIN SELECT RAISE(ABORT, 'CK_managed_file_reference_count'); END;
-
-                CREATE TRIGGER "TR_download_artifact_file_lineage_insert" BEFORE INSERT ON "provider_download_artifacts"
-                WHEN NEW."ManagedFileId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "managed_files" f WHERE f."Id"=NEW."ManagedFileId"
-                    AND f."TenantId"=NEW."TenantId" AND f."OwnerUserId" IS NEW."OwnerUserId" AND f."LibraryScopeId" IS NEW."LibraryScopeId")
-                BEGIN SELECT RAISE(ABORT, 'FK_download_artifact_managed_file_lineage'); END;
-                CREATE TRIGGER "TR_download_artifact_file_lineage_update" BEFORE UPDATE OF "ManagedFileId","TenantId","OwnerUserId","LibraryScopeId" ON "provider_download_artifacts"
-                WHEN NEW."ManagedFileId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "managed_files" f WHERE f."Id"=NEW."ManagedFileId"
-                    AND f."TenantId"=NEW."TenantId" AND f."OwnerUserId" IS NEW."OwnerUserId" AND f."LibraryScopeId" IS NEW."LibraryScopeId")
-                BEGIN SELECT RAISE(ABORT, 'FK_download_artifact_managed_file_lineage'); END;
-                CREATE TRIGGER "TR_download_artifact_file_parent_guard" BEFORE UPDATE OF "Id","TenantId","OwnerUserId","LibraryScopeId" ON "managed_files"
-                WHEN EXISTS (SELECT 1 FROM "provider_download_artifacts" a WHERE a."ManagedFileId"=OLD."Id" AND
-                    (a."TenantId" IS NOT NEW."TenantId" OR a."OwnerUserId" IS NOT NEW."OwnerUserId" OR a."LibraryScopeId" IS NOT NEW."LibraryScopeId"))
-                BEGIN SELECT RAISE(ABORT, 'FK_download_artifact_saved_file_lineage'); END;
-
-                CREATE TRIGGER "TR_durable_job_lineage_parent_guard" BEFORE UPDATE OF "Id","TenantId","OwnerUserId" ON "durable_jobs"
-                WHEN EXISTS (SELECT 1 FROM "managed_files" c WHERE c."SourceJobId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR (c."OwnerUserId" IS NOT NULL AND NEW."OwnerUserId" IS NOT c."OwnerUserId")))
-                  OR EXISTS (SELECT 1 FROM "favorite_events" c WHERE c."JobId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR NEW."OwnerUserId" IS NOT c."OwnerUserId"))
-                  OR EXISTS (SELECT 1 FROM "provider_download_workspaces" c WHERE c."DurableJobId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR (c."OwnerUserId" IS NOT NULL AND NEW."OwnerUserId" IS NOT c."OwnerUserId")))
-                  OR EXISTS (SELECT 1 FROM "metadata_enrichment_plans" c WHERE c."LineageJobId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR NEW."OwnerUserId" IS NOT c."OwnerUserId"))
-                  OR EXISTS (SELECT 1 FROM "metadata_enrichment_applications" c WHERE c."LineageJobId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR NEW."OwnerUserId" IS NOT c."OwnerUserId"))
-                  OR EXISTS (SELECT 1 FROM "provider_route_decisions" c WHERE c."DurableJobId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR (c."ActorUserId" IS NOT NULL AND NEW."OwnerUserId" IS NOT c."ActorUserId")))
-                BEGIN SELECT RAISE(ABORT, 'FK_durable_job_saved_lineage'); END;
-
-                CREATE TRIGGER "TR_managed_file_lineage_parent_guard" BEFORE UPDATE OF "Id","TenantId","OwnerUserId","ScopeKey" ON "managed_files"
-                WHEN EXISTS (SELECT 1 FROM "managed_file_references" c WHERE c."ManagedFileId"=OLD."Id" AND
-                    (NEW."TenantId" IS NOT c."TenantId" OR NEW."OwnerUserId" IS NOT c."OwnerUserId" OR NEW."ScopeKey" IS NOT c."ScopeKey"))
-                  OR EXISTS (SELECT 1 FROM "metadata_enrichment_plans" c WHERE c."ManagedArtifactId"=OLD."Id" AND (NEW."TenantId" IS NOT c."TenantId" OR NEW."OwnerUserId" IS NOT c."OwnerUserId"))
-                BEGIN SELECT RAISE(ABORT, 'FK_managed_file_saved_lineage'); END;
-
-                CREATE TRIGGER "TR_provider_account_lineage_parent_guard" BEFORE UPDATE OF "Scope","TenantId","OwnerUserId","LibraryScopeId" ON "provider_accounts"
-                WHEN EXISTS (SELECT 1 FROM "durable_jobs" j WHERE j."ProviderAccountId"=OLD."Id" AND NOT (
-                    (NEW."Scope"='Global' AND NEW."TenantId" IS NULL AND NEW."OwnerUserId" IS NULL AND NEW."LibraryScopeId" IS NULL) OR
-                    (NEW."Scope"='User' AND NEW."TenantId"=j."TenantId" AND NEW."OwnerUserId"=j."OwnerUserId") OR
-                    (NEW."Scope"='Library' AND NEW."TenantId"=j."TenantId" AND NEW."OwnerUserId" IS NULL AND NEW."LibraryScopeId"=j."LibraryScopeId")))
-                  OR EXISTS (SELECT 1 FROM "provider_route_decisions" d WHERE d."SelectedProviderAccountId"=OLD."Id" AND NOT (
-                    (NEW."Scope"='Global' AND NEW."TenantId" IS NULL AND NEW."OwnerUserId" IS NULL AND NEW."LibraryScopeId" IS NULL) OR
-                    (NEW."Scope"='User' AND NEW."TenantId"=d."TenantId" AND NEW."OwnerUserId"=d."ActorUserId") OR
-                    (NEW."Scope"='Library' AND NEW."TenantId"=d."TenantId" AND NEW."OwnerUserId" IS NULL AND NEW."LibraryScopeId"=d."LibraryScopeId")))
-                  OR EXISTS (SELECT 1 FROM "provider_route_outcomes" o JOIN "provider_route_decisions" d ON d."Id"=o."RouteDecisionId" AND d."TenantId"=o."TenantId" WHERE o."ProviderAccountId"=OLD."Id" AND NOT (
-                    (NEW."Scope"='Global' AND NEW."TenantId" IS NULL AND NEW."OwnerUserId" IS NULL AND NEW."LibraryScopeId" IS NULL) OR
-                    (NEW."Scope"='User' AND NEW."TenantId"=d."TenantId" AND NEW."OwnerUserId"=d."ActorUserId") OR
-                    (NEW."Scope"='Library' AND NEW."TenantId"=d."TenantId" AND NEW."OwnerUserId" IS NULL AND NEW."LibraryScopeId"=d."LibraryScopeId")))
-                BEGIN SELECT RAISE(ABORT, 'CK_provider_account_saved_lineage'); END;
-                """);
-        }
-
-        private static void RemoveSqliteLineageEnforcement(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.Sql("""
-                DROP TRIGGER IF EXISTS "TR_provider_account_lineage_parent_guard";
-                DROP TRIGGER IF EXISTS "TR_managed_file_lineage_parent_guard";
-                DROP TRIGGER IF EXISTS "TR_durable_job_lineage_parent_guard";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_count_guard";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_count_delete";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_count_update";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_count_insert";
-                DROP TRIGGER IF EXISTS "TR_managed_file_reference_count_initialize";
-                DROP TRIGGER IF EXISTS "TR_download_artifact_file_parent_guard";
-                DROP TRIGGER IF EXISTS "TR_download_artifact_file_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_download_artifact_file_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_route_outcome_account_scope_update";
-                DROP TRIGGER IF EXISTS "TR_route_outcome_account_scope_insert";
-                DROP TRIGGER IF EXISTS "TR_route_decision_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_route_decision_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_enrichment_application_job_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_enrichment_application_job_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_enrichment_plan_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_enrichment_plan_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_download_workspace_job_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_download_workspace_job_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_favorite_event_job_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_favorite_event_job_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_managed_file_job_lineage_update";
-                DROP TRIGGER IF EXISTS "TR_managed_file_job_lineage_insert";
-                DROP TRIGGER IF EXISTS "TR_durable_job_account_scope_update";
-                DROP TRIGGER IF EXISTS "TR_durable_job_account_scope_insert";
-                DROP TRIGGER IF EXISTS "TR_provider_account_tenant_owner_update";
-                DROP TRIGGER IF EXISTS "TR_provider_account_tenant_owner_insert";
-                """);
-        }
     }
 }

@@ -5,14 +5,13 @@ using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Microsoft.Data.Sqlite;
+using Npgsql;
 
 namespace allstarr.Tests;
 
 public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private Guid _tenantA;
     private Guid _tenantB;
@@ -26,11 +25,8 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "lineage.db")}")
-            .Options;
-        _factory = new TestDbContextFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
 
@@ -73,7 +69,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SqliteMigration_RejectsCrossScopeJobAndArtifactLineage()
+    public async Task PostgresMigration_RejectsCrossScopeJobAndArtifactLineage()
     {
         await RejectAsync(db => db.Jobs.Add(Job(
             Guid.CreateVersion7(), _tenantA, _userB, "cross-owner", DateTimeOffset.UtcNow)));
@@ -128,7 +124,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SqliteMigration_EnforcesReferenceDmlAndDerivesReferenceCount()
+    public async Task PostgresMigration_EnforcesReferenceDmlAndDerivesReferenceCount()
     {
         var first = Guid.CreateVersion7();
         var second = Guid.CreateVersion7();
@@ -149,7 +145,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             Assert.Equal(2, await db.ManagedFiles.Where(item => item.Id == _fileA)
                 .Select(item => item.ReferenceCount).SingleAsync());
 
-            await Assert.ThrowsAsync<SqliteException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
+            await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE managed_files SET ReferenceCount={9} WHERE Id={_fileA}
                 """));
 
@@ -161,7 +157,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         }
 
         await using var crossed = await _factory.CreateDbContextAsync();
-        await Assert.ThrowsAsync<SqliteException>(() => crossed.Database.ExecuteSqlInterpolatedAsync($"""
+        await Assert.ThrowsAsync<PostgresException>(() => crossed.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO managed_file_references
                 (Id, ManagedFileId, TenantId, OwnerUserId, ScopeKey, ReferenceKey, CreatedAt, ReleasedAt, Revision)
             VALUES ({Guid.CreateVersion7()}, {_fileA}, {_tenantB}, {_userB}, {$"{_tenantB:N}:{_userB:N}"}, {"direct:crossed"}, {DateTimeOffset.UtcNow.UtcTicks}, NULL, {1})
@@ -169,11 +165,11 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SqliteMigration_PreservesEveryLegacyReferenceAcrossUpgradeAndRollback()
+    public async Task PostgresMigration_PreservesEveryLegacyReferenceAcrossUpgradeAndRollback()
     {
         const string previous = "20260713225623_Phase2BLegacyEnvImportIdempotency";
-        var path = Path.Combine(_root, "legacy-reference-upgrade.db");
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={path}").Options;
+        await using var legacyDatabase = await PostgresTestDatabase.CreateAsync();
+        var options = legacyDatabase.Options;
         var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var file = Guid.CreateVersion7();
@@ -198,7 +194,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SqliteMigration_RejectsArtifactManagedFileOutsideExactScope()
+    public async Task PostgresMigration_RejectsArtifactManagedFileOutsideExactScope()
     {
         var workspaceId = Guid.CreateVersion7();
         var workspaceKey = Guid.NewGuid().ToString("N");
@@ -346,9 +342,8 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             Task.FromResult(new AllstarrDbContext(options));
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
-        return Task.CompletedTask;
+        await _database.DisposeAsync();
     }
 }

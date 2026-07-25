@@ -8,17 +8,16 @@ namespace allstarr.Tests;
 
 public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(
-        Path.GetTempPath(),
-        $"allstarr-hot-cache-{Guid.CreateVersion7():N}.db");
+    private PostgresTestDatabase _testDatabase = null!;
     private TestFactory _factory = null!;
     private DatabaseApplicationCache _database = null!;
     private BoundedHotApplicationCache _cache = null!;
 
     public async Task InitializeAsync()
     {
+        _testDatabase = await PostgresTestDatabase.CreateAsync();
         var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={_path}")
+            .UseNpgsql(_testDatabase.ConnectionString)
             .Options;
         _factory = new TestFactory(options);
         _database = new DatabaseApplicationCache(
@@ -28,7 +27,7 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
         _cache = new BoundedHotApplicationCache(_database);
 
         await using var context = await _factory.CreateDbContextAsync();
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.MigrateAsync();
     }
 
     [Fact]
@@ -78,15 +77,13 @@ public sealed class BoundedHotApplicationCacheTests : IAsyncLifetime
         Assert.Equal(value, await _cache.GetStringAsync("large:metadata"));
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         _cache.Dispose();
-        if (File.Exists(_path))
+        if (_testDatabase is not null)
         {
-            File.Delete(_path);
+            await _testDatabase.DisposeAsync();
         }
-
-        return Task.CompletedTask;
     }
 
     private sealed class TestClock : IPlatformClock

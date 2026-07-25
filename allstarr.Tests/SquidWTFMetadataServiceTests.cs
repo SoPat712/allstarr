@@ -39,7 +39,6 @@ public class SquidWTFMetadataServiceTests
             Quality = "FLAC"
         });
 
-        // Create mock Redis cache
         _mockCache = new Mock<IApplicationCache>();
 
         _apiUrls = new List<string>

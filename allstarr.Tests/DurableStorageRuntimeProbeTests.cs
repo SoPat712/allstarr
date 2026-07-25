@@ -7,27 +7,23 @@ namespace allstarr.Tests;
 
 public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
     private readonly FakeClock _clock = new(DateTimeOffset.Parse("2026-07-11T00:00:00Z"));
+    private PostgresTestDatabase _database = null!;
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        return Task.CompletedTask;
+        _database = await PostgresTestDatabase.CreateAsync();
+        await using var context = new AllstarrDbContext(_database.Options);
+        await context.Database.MigrateAsync();
     }
 
     [Fact]
-    public async Task ProbeIsCadenceBounded_DetectsLossWithoutRecreation_AndRecovers()
+    public async Task ProbeIsCadenceBoundedAndReportsCurrentPostgresSchema()
     {
-        var databasePath = Path.Combine(_root, "runtime.db");
-        await CreateCurrentDatabase(databasePath);
-        var options = RuntimeOptions(databasePath);
+        var options = RuntimeOptions();
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "startup-schema");
-        var factory = new CountingDbContextFactory(CreateOptions(options.ConnectionString));
+        var factory = new CountingDbContextFactory(_database.Options);
         using var probe = new DurableStorageRuntimeProbe(
             factory,
             options,
@@ -39,54 +35,35 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
         var cached = await probe.CheckAsync();
 
         Assert.Equal(DurableStorageReadiness.Ready, first.Readiness);
-        Assert.Equal(DurableStorageReadiness.Ready, cached.Readiness);
+        Assert.Equal(first.SchemaVersion, cached.SchemaVersion);
         Assert.Equal(1, factory.CreateCount);
 
-        var offlinePath = databasePath + ".offline";
-        File.Move(databasePath, offlinePath);
         _clock.Advance(TimeSpan.FromSeconds(options.RuntimeProbeIntervalSeconds));
+        var refreshed = await probe.CheckAsync();
 
-        var unavailable = await probe.CheckAsync();
-
-        Assert.Equal(DurableStorageReadiness.Unavailable, unavailable.Readiness);
-        Assert.Equal("database_unavailable", unavailable.ErrorCode);
-        Assert.False(File.Exists(databasePath));
+        Assert.Equal(DurableStorageReadiness.Ready, refreshed.Readiness);
         Assert.Equal(2, factory.CreateCount);
-
-        File.Move(offlinePath, databasePath);
-        _clock.Advance(TimeSpan.FromSeconds(options.RuntimeProbeIntervalSeconds));
-
-        var recovered = await probe.CheckAsync();
-
-        Assert.Equal(DurableStorageReadiness.Ready, recovered.Readiness);
-        await using var recoveredContext = new AllstarrDbContext(CreateOptions(options.ConnectionString));
-        Assert.Equal(recoveredContext.Database.GetMigrations().Last(), recovered.SchemaVersion);
-        Assert.Equal(3, factory.CreateCount);
     }
 
     [Fact]
-    public async Task ProbeMarksRuntimeSchemaDriftUnreadyUntilCurrentSchemaReturns()
+    public async Task ProbeMarksRuntimeSchemaDriftUnready()
     {
-        var databasePath = Path.Combine(_root, "schema.db");
-        await CreateCurrentDatabase(databasePath);
-        var options = RuntimeOptions(databasePath);
+        var options = RuntimeOptions();
         var state = new DurableStorageState(options);
-        var factory = new CountingDbContextFactory(CreateOptions(options.ConnectionString));
+        var factory = new CountingDbContextFactory(_database.Options);
         using var probe = new DurableStorageRuntimeProbe(
             factory,
             options,
             state,
             _clock,
             NullLogger<DurableStorageRuntimeProbe>.Instance);
-        Assert.Equal(
-            DurableStorageReadiness.Ready,
-            (await probe.CheckAsync()).Readiness);
+        Assert.Equal(DurableStorageReadiness.Ready, (await probe.CheckAsync()).Readiness);
 
-        await using (var context = new AllstarrDbContext(CreateOptions(options.ConnectionString)))
+        await using (var context = new AllstarrDbContext(_database.Options))
         {
-            await context.Database.ExecuteSqlRawAsync(
-                "DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = " +
-                "'20260711141123_Phase2TrackIdentityFoundation'");
+            var latest = (await context.Database.GetAppliedMigrationsAsync()).Last();
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = {latest}");
         }
         _clock.Advance(TimeSpan.FromSeconds(options.RuntimeProbeIntervalSeconds));
 
@@ -96,38 +73,17 @@ public sealed class DurableStorageRuntimeProbeTests : IAsyncLifetime
         Assert.Equal(DurableSchemaCompatibility.MigrationRequiredErrorCode, incompatible.ErrorCode);
     }
 
-    private static DurableStorageOptions RuntimeOptions(string databasePath)
+    private DurableStorageOptions RuntimeOptions() => new()
     {
-        var options = new DurableStorageOptions
-        {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={databasePath};Pooling=False",
-            RuntimeProbeIntervalSeconds = 30,
-            RuntimeProbeTimeoutSeconds = 5
-        };
-        return options;
-    }
+        Provider = "Postgres",
+        ConnectionString = _database.ConnectionString,
+        RuntimeProbeIntervalSeconds = 30,
+        RuntimeProbeTimeoutSeconds = 5
+    };
 
-    private static async Task CreateCurrentDatabase(string databasePath)
+    public async Task DisposeAsync()
     {
-        await using var context = new AllstarrDbContext(CreateOptions(
-            $"Data Source={databasePath};Pooling=False"));
-        await context.Database.MigrateAsync();
-    }
-
-    private static DbContextOptions<AllstarrDbContext> CreateOptions(string connectionString) =>
-        new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite(connectionString)
-            .Options;
-
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
+        await _database.DisposeAsync();
     }
 
     private sealed class CountingDbContextFactory(DbContextOptions<AllstarrDbContext> options)

@@ -9,15 +9,16 @@ namespace allstarr.Tests;
 
 public sealed class IntelligenceCoreTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), $"intelligence-{Guid.NewGuid():N}.db");
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private Factory _factory = null!; private Clock _clock = null!; private IntelligenceScope _scope = null!;
     private IntelligencePolicyService _policies = null!; private DurableJobQueue _jobs = null!;
     public async Task InitializeAsync()
     {
-        _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={_path}").Options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
         _clock = new(new(2026, 7, 13, 0, 0, 0, TimeSpan.Zero)); _scope = new(_tenant, _user, "jellyfin", "main", "music");
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
+        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "intel", Name = "Intelligence", CreatedAt = _clock.UtcNow });
         db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Listener", Status = PlatformUserStatus.Active, CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow });
         var identityId = Guid.CreateVersion7();
@@ -261,7 +262,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Equal(["library:11111111111111111111111111111111"], provider.Seeds);
     }
 
-    public Task DisposeAsync() { try { File.Delete(_path); } catch { } return Task.CompletedTask; }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class FixtureProvider : IRecommendationProvider
     {
         public string Id => "fixture";

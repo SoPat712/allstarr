@@ -14,10 +14,7 @@ namespace allstarr.Tests;
 
 public sealed class SidecarReadinessTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _storageState = null!;
     private FakeClock _clock = null!;
@@ -25,16 +22,13 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
+        _database = await PostgresTestDatabase.CreateAsync();
         var storage = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "sidecars.db")}"
+            Provider = "Postgres",
+            ConnectionString = _database.ConnectionString
         };
-        _factory = new TestDbContextFactory(
-            new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(storage.ConnectionString)
-                .Options);
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         context.ProviderAccounts.Add(new ProviderAccountRecord
@@ -102,7 +96,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
 
         Assert.False(snapshot.Ready);
         Assert.Contains(snapshot.Components, component =>
-            component.Id == "storage:sqlite" &&
+            component.Id == "storage:postgres" &&
             component.State == "unavailable" &&
             component.ErrorCode == "database_unavailable");
     }
@@ -435,15 +429,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         return new Guid(guidBytes);
     }
 
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class QueueHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
     {

@@ -11,12 +11,9 @@ namespace allstarr.Tests;
 
 public sealed class DurableJobQueueTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableJobOptions _options = null!;
@@ -24,11 +21,8 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "jobs.db")}")
-            .Options;
-        _factory = new TestDbContextFactory(dbOptions);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
@@ -628,12 +622,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         _options.LeaseSeconds = 5;
         _options.PollIntervalMilliseconds = 25;
         var queued = await Enqueue("restartable", "restart-1");
-        var storageOptions = new DurableStorageOptions
-        {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "jobs.db")}",
-            BackupDirectory = Path.Combine(_root, "backups")
-        };
+        var storageOptions = StorageOptions();
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var services = new ServiceCollection().BuildServiceProvider();
@@ -687,12 +676,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         _options.LeaseSeconds = 3;
         _options.PollIntervalMilliseconds = 20;
         var queued = await Enqueue("cooperative", "cooperative-cancellation");
-        var storageOptions = new DurableStorageOptions
-        {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "jobs.db")}",
-            BackupDirectory = Path.Combine(_root, "backups")
-        };
+        var storageOptions = StorageOptions();
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var services = new ServiceCollection().BuildServiceProvider();
@@ -744,12 +728,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             await context.SaveChangesAsync();
         }
 
-        var storageOptions = new DurableStorageOptions
-        {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "jobs.db")}",
-            BackupDirectory = Path.Combine(_root, "backups")
-        };
+        var storageOptions = StorageOptions();
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var services = new ServiceCollection().BuildServiceProvider();
@@ -782,12 +761,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     {
         _options.PollIntervalMilliseconds = 25;
         var queued = await Enqueue("provider.work", "runtime-storage-guard");
-        var storageOptions = new DurableStorageOptions
-        {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "jobs.db")}",
-            BackupDirectory = Path.Combine(_root, "backups")
-        };
+        var storageOptions = StorageOptions();
         var storageState = new DurableStorageState(storageOptions);
         storageState.Set(DurableStorageReadiness.Ready, "startup-schema");
         var checkedStorage = new TaskCompletionSource(
@@ -822,6 +796,12 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             new { itemId = key },
             _tenantId,
             _userId));
+
+    private DurableStorageOptions StorageOptions() => new()
+    {
+        Provider = "Postgres",
+        ConnectionString = _database.ConnectionString
+    };
 
     private async Task<ProviderAccountRecord> AddProviderAccount(string providerId, Guid ownerUserId)
     {
@@ -864,14 +844,9 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         throw new TimeoutException($"Job {jobId} did not reach {expected}.");
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
+        await _database.DisposeAsync();
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock

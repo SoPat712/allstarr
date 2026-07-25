@@ -20,6 +20,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private EncryptedSecretStore _secretStore = null!;
 
@@ -42,10 +43,8 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
 
-        var dbOptions = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "accounts.db")}")
-            .Options;
-        _factory = new TestDbContextFactory(dbOptions);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
@@ -416,14 +415,13 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         UpdatedAt = DateTimeOffset.UtcNow
     };
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        await _database.DisposeAsync();
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);
         }
-
-        return Task.CompletedTask;
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

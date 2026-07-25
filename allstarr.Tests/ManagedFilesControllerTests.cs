@@ -15,6 +15,7 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
     private readonly Guid tenant = Guid.CreateVersion7();
     private readonly Guid owner = Guid.CreateVersion7();
     private readonly Guid otherUser = Guid.CreateVersion7();
+    private PostgresTestDatabase database = null!;
     private DbFactory factory = null!;
     private AllstarrDbContext removalContext = null!;
     private ManagedFileOwnershipEntity owned = null!;
@@ -25,9 +26,8 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(root, "managed-controller.db")}").Options;
-        factory = new(options);
+        database = await PostgresTestDatabase.CreateAsync();
+        factory = new(database.Options);
         await using var db = await factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "managed", Name = "Managed", CreatedAt = DateTimeOffset.UtcNow });
@@ -39,7 +39,7 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
         otherReference = Reference(other, "favorite:other");
         db.ManagedFileReferences.AddRange(ownedReference, otherReference);
         await db.SaveChangesAsync();
-        removalContext = new AllstarrDbContext(options);
+        removalContext = new AllstarrDbContext(database.Options);
     }
 
     [Fact]
@@ -229,6 +229,7 @@ public sealed class ManagedFilesControllerTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await removalContext.DisposeAsync();
+        await database.DisposeAsync();
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
     }
 

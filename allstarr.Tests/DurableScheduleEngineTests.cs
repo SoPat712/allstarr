@@ -11,22 +11,20 @@ namespace allstarr.Tests;
 
 public sealed class DurableScheduleEngineTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-schedules", Guid.NewGuid().ToString("N"));
     private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
     private readonly Guid _schedule = Guid.CreateVersion7();
     private readonly Guid _link = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private FakeClock _clock = null!;
     private DurableScheduleEngine _engine = null!;
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "schedules.db")}").Options;
-        _factory = new TestFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         var now = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
@@ -342,7 +340,7 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
-    public Task DisposeAsync() { try { Directory.Delete(_root, true); } catch { } return Task.CompletedTask; }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class TestFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
         public AllstarrDbContext CreateDbContext() => new(options);

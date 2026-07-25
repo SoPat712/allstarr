@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 {
-    private readonly string root = Path.Combine(Path.GetTempPath(), "allstarr-playback", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase database = null!;
     private readonly Guid tenant = Guid.CreateVersion7();
     private readonly Guid user = Guid.CreateVersion7();
     private Factory factory = null!;
@@ -21,8 +21,8 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(root); var options = new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={Path.Combine(root, "playback.db")}").Options;
-        factory = new(options); await using var db = await factory.CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
+        database = await PostgresTestDatabase.CreateAsync();
+        factory = new(database.Options); await using var db = await factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         var now = DateTimeOffset.UtcNow; db.Tenants.Add(new() { Id = tenant, Slug = "playback", Name = "Playback", CreatedAt = now });
         db.Users.Add(new() { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();
         var identity = Guid.CreateVersion7(); db.BackendIdentities.Add(new() { Id = identity, TenantId = tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now });
@@ -380,7 +380,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         "correlation", clock.UtcNow.AddMinutes(1), default, libraryScopeId: "music"), transition, item, "device", "session", ticks, clock.UtcNow);
     private PlaybackSignalPayload Payload() => new(new(tenant, user, "jellyfin", "backend", "music"), PlaybackTransition.Stop,
         "track-1", "device", "session", TimeSpan.FromSeconds(100).Ticks, clock.UtcNow, new string('a', 64));
-    public Task DisposeAsync() { try { Directory.Delete(root, true); } catch { } return Task.CompletedTask; }
+    public async Task DisposeAsync() => await database.DisposeAsync();
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext> { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken token = default) => Task.FromResult(new AllstarrDbContext(options)); }
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } }
     private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public string? LastType; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; LastType = t; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) { Calls++; LastType = t; } return Task.FromResult(true); } }

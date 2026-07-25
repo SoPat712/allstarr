@@ -150,4 +150,4 @@ JSON, partial credential bundles, secret redaction, unknown keys, dry-run/apply 
 rejection, setting conflicts, account conflicts, transaction rollback, tenant scope, encryption/key rotation
 compatibility, and absence of startup import behavior.
 
-SQLite tests prove the complete transactional apply path, including encrypted secrets and rollback. Native Postgres integration verifies the portable runtime-settings migration and table contract. Release rehearsal must also exercise the WebUI migration against the target Postgres deployment before cutover.
+PostgreSQL tests prove the complete transactional apply path, including encrypted secrets and rollback, and verify the portable runtime-settings migration and table contract. Release rehearsal must also exercise the WebUI migration against the target Postgres deployment before cutover.

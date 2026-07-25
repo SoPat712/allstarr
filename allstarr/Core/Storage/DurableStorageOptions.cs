@@ -4,8 +4,7 @@ namespace allstarr.Core.Storage;
 
 public enum DurableStorageProvider
 {
-    Postgres,
-    Sqlite
+    Postgres
 }
 
 public sealed class DurableStorageOptions

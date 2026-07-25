@@ -68,8 +68,7 @@ runtime-image, backup/restore, and Compose exit gates are complete.
   song payloads.
 - `DurableStorageInitializer` initializes PostgreSQL, applies checked-in migrations under a database advisory
   lock, and reports durable readiness. `DurableStorageRuntimeProbe` checks connectivity and exact schema on a
-  bounded cadence after startup. SQLite can be selected only by an offline `storage` command while verifying or
-  exporting an existing legacy database for migration; it is never an application runtime or fallback.
+  bounded cadence after startup. PostgreSQL is the only runtime and offline storage-command target.
 - `DurableBackupService`, `DurableRestoreTargetVerifier`, `DurableStateTransferService`, and the offline
   `storage` command provide verified backup, isolated restore, export, and empty-target import operations.
   Backup manifests are strict inputs, not advisory notes. Restore accepts only an artifact and manifest that
@@ -219,7 +218,7 @@ gates pass. The bundle lock keeps incomplete switchovers blocked.
 - `allstarr/Middleware`: proxy websocket support, admin surface isolation, request logging, bot-probe blocking, global exception handling.
 - `allstarr/Filters`: admin port gating and backend-verified Jellyfin controller authentication.
 - `allstarr/Core/Storage`: mandatory PostgreSQL runtime, EF migrations, migration locking, backup/restore,
-  SQLite-to-PostgreSQL state transfer, readiness, and offline storage commands.
+  PostgreSQL state transfer, readiness, and offline storage commands.
 - `allstarr/Core/Identity`: backend identity bootstrap/resolution and provider-account scope policy.
 - `allstarr/Core/Secrets`: AES-GCM secret versions and the external key-ring provider.
 - `allstarr/Core/Jobs`: durable queue, worker, leases, attempts, outbox dispatch, retry, cancellation, and sidecar deferral policy.

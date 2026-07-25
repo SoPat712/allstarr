@@ -240,21 +240,19 @@ public sealed class PostgresStorageIntegrationTests
     [Trait("Category", "Postgres")]
     public async Task NativePostgresHostOptions_ImportPortableStateInsideExplicitTransaction()
     {
-        var connectionString = Environment.GetEnvironmentVariable("ALLSTARR_TEST_POSTGRES");
-        if (string.IsNullOrWhiteSpace(connectionString)) return;
-
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        await using var sourceDatabase = await PostgresTestDatabase.CreateAsync();
+        await using var targetDatabase = await PostgresTestDatabase.CreateAsync();
         try
         {
-            var sqliteOptions = new DurableStorageOptions
+            var sourceOptions = new DurableStorageOptions
             {
-                Provider = "Sqlite",
-                ConnectionString = $"Data Source={Path.Combine(root, "source.db")}",
+                Provider = "Postgres",
+                ConnectionString = sourceDatabase.ConnectionString,
                 BackupDirectory = Path.Combine(root, "backups")
             };
-            var sourceFactory = new TestDbContextFactory(new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(sqliteOptions.ConnectionString).Options);
+            var sourceFactory = new TestDbContextFactory(sourceDatabase.Options);
             string schema;
             await using (var source = await sourceFactory.CreateDbContextAsync())
             {
@@ -270,17 +268,12 @@ public sealed class PostgresStorageIntegrationTests
                 await source.SaveChangesAsync();
             }
 
-            var sourceState = new DurableStorageState(sqliteOptions);
+            var sourceState = new DurableStorageState(sourceOptions);
             sourceState.Set(DurableStorageReadiness.Ready, schema);
-            var transfer = new DurableStateTransferService(sourceFactory, sqliteOptions, sourceState);
+            var transfer = new DurableStateTransferService(sourceFactory, sourceOptions, sourceState);
             var artifact = await transfer.ExportAsync(Path.Combine(root, "transfer"), writesQuiesced: true);
 
-            await using var hostServices = BuildHostStorageServices(connectionString);
-            var targetFactory = hostServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
-            await using (var target = await targetFactory.CreateDbContextAsync())
-            {
-                await target.Database.ExecuteSqlRawAsync("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public");
-            }
+            var targetFactory = new TestDbContextFactory(targetDatabase.Options);
 
             await DurableStateTransferService.ImportAsync(artifact, targetFactory, targetConfirmedEmpty: true);
             await using var verify = await targetFactory.CreateDbContextAsync();

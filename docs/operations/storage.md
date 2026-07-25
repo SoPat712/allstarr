@@ -1,8 +1,6 @@
 # Storage operations
 
-This runbook covers the durable storage behavior shipped with Allstarr's new baseline. Every supported runtime
-uses PostgreSQL. SQLite is accepted only by offline storage commands that verify or export an existing legacy
-database for controlled migration into PostgreSQL.
+This runbook covers Allstarr's durable storage baseline. PostgreSQL is the only supported database for runtime, backup, restore, and controlled state transfer.
 
 ## What Postgres stores
 
@@ -17,11 +15,9 @@ The standard Compose mounts are:
 | Durable database | Postgres data directory | `postgres-data` named volume |
 | App state and database backup artifacts | `/app/state` | `allstarr-state` named volume |
 | Rebuildable app cache | `/app/cache` | `allstarr-cache` named volume |
-| Valkey cache data | `/data` | `valkey-data` named volume |
 
 The database stores application state such as users, backend identities, provider accounts, encrypted secret versions, durable jobs, outbox events, provider health, matches, playlist links, recommendation state, audit events, and the backup catalog. An audio file still belongs in a configured media root. A database row can point at a song. It does not contain the song.
 
-A database backup does **not** include `/app/downloads`, `/app/kept`, the secret key ring, or unrelated files under `/app/state`. Back up those items separately when they matter to your recovery plan. Valkey and the two cache locations are not authoritative state.
 
 ## PostgreSQL is mandatory at runtime
 
@@ -40,10 +36,8 @@ Storage__ConnectionString=Host=postgres;Port=5432;Database=...;Username=...;Incl
 Storage__PasswordFile=/run/secrets/postgres_password
 ```
 
-Changing an unrelated `.env` value cannot silently select SQLite. The Postgres password is read from the mounted secret file and is not placed on a process command line.
+The Postgres password is read from the mounted secret file and is not placed on a process command line.
 
-`Storage:Provider=Sqlite` is valid only when the executable is invoked with an offline
-`storage` command. Normal application startup rejects it before opening the database.
 
 `Storage:RuntimeProbeIntervalSeconds` controls the bounded PostgreSQL check cadence and
 defaults to 5 seconds. `Storage:RuntimeProbeTimeoutSeconds` also defaults to 5 seconds.
@@ -96,14 +90,13 @@ To discard the new app state and perform another genuinely fresh setup, remove t
 docker compose down --volumes --remove-orphans
 ```
 
-That command deletes the Postgres, Valkey, app-state, and app-cache named volumes. It does not delete the bind-mounted `downloads` and `kept` folders or the files in `secrets`. Leave those media folders alone if you want to keep the songs. Regenerate `.env` and both secret files only when you also intend to reset the deployment credentials and encrypted application secrets.
+That command deletes the Postgres, app-state, and app-cache named volumes. It does not delete the bind-mounted `downloads` and `kept` folders or the files in `secrets`. Leave those media folders alone if you want to keep the songs. Regenerate `.env` and both secret files only when you also intend to reset the deployment credentials and encrypted application secrets.
 
 ## Schema migrations and the migration lock
 
 `Storage__AutoMigrate` is `true` in standard Compose unless `STORAGE_AUTO_MIGRATE` says otherwise. On startup, Allstarr takes a database-specific lock before applying Entity Framework migrations:
 
 - Postgres uses an advisory lock scoped to the current database.
-- SQLite uses an exclusive `<database>.migration.lock` file beside the database.
 - The default lock wait is 120 seconds. `Storage:MigrationLockTimeoutSeconds` accepts 5 through 1800 seconds.
 
 Only the lock holder applies migrations. Other instances wait and do not become ready against a partially migrated schema. If the lock cannot be acquired, readiness reports `migration_lock_unavailable`.
@@ -137,9 +130,8 @@ The command prints one JSON object containing the artifact path, manifest path, 
 
 Backup creation is synchronous inside the request even though the endpoint returns an accepted response. Before it records a backup as `verified`, Allstarr does the following:
 
-- Postgres: creates a custom-format `pg_dump`, computes SHA-256, and checks the dump catalog with `pg_restore --list`.
-- SQLite: uses SQLite's online backup API, computes SHA-256, runs `PRAGMA integrity_check`, and confirms that the complete migration history exactly matches the running image.
-- Both: writes a versioned neighboring `.manifest.json` with the artifact name, provider, schema version, application version, checksum, and `SecretKeyMaterialIncluded: false`.
+- Postgres creates a custom-format `pg_dump`, computes SHA-256, and checks the dump catalog with `pg_restore --list`.
+- Allstarr writes a versioned neighboring `.manifest.json` with the artifact name, provider, schema version, application version, checksum, and `SecretKeyMaterialIncluded: false`.
 
 Restore treats that manifest as the source of truth for the backup, not as a note for people. Missing, repeated,
 unknown, or incorrectly typed fields are rejected. The provider, artifact filename, checksum, and schema must
@@ -265,46 +257,20 @@ curl --fail --silent --show-error http://127.0.0.1:5274/health/ready
 
 For an application rollback after a forward schema migration, restore the pre-upgrade dump into another new database name and start the prior image against that database. Do not point the prior image at a database already migrated by the newer image unless that exact compatibility has been tested.
 
-## Restore SQLite with the offline command
+## Controlled PostgreSQL state transfer
 
-The storage command verifies a SQLite artifact and restores it to an isolated file. It refuses an online restore over the active SQLite path. Stop the normal process first, retain the checksum printed when the backup was created, and choose a different target path:
-
-```bash
-Storage__Provider=Sqlite \
-Storage__ConnectionString='Data Source=/srv/allstarr/current.db' \
-dotnet allstarr.dll storage restore-sqlite \
-  --artifact /srv/backups/allstarr-sqlite-replace.sqlite \
-  --sha256 replace-with-the-recorded-64-character-hash \
-  --target /srv/allstarr/restored.db \
-  --confirm-target-offline
-```
-
-The neighboring `.manifest.json` is used by default. Pass `--manifest <path>` only when it was copied to a
-different name. A pre-existing target is rejected unless `--overwrite` is explicit. Allstarr verifies the
-restored temporary database against its checked-in migrations before moving it into the requested target path.
-Do not start the application against this file; export its state offline and import it into empty PostgreSQL.
-
-## Controlled SQLite-to-PostgreSQL state transfer
-
-Database-native dumps restore PostgreSQL. The provider-neutral state-transfer format moves an existing SQLite
-installation into PostgreSQL. It exports a checksummed zip of durable tables and imports only into a PostgreSQL
-target explicitly confirmed to be empty.
+Database-native dumps are the preferred PostgreSQL backup and restore format. The provider-neutral state-transfer format is reserved for controlled PostgreSQL-to-PostgreSQL moves where selective application state, rather than the whole database, must be transferred.
 
 The transfer has these hard rules:
 
 - Writes must be quiesced before export.
-- The source database must be ready.
-- The target provider is selected explicitly and migrated before rows are imported.
-- Import checks the artifact checksum and strictly parses the manifest before touching the target.
-- The manifest must name `Sqlite` or `Postgres`, the current schema, and the exact Allstarr application version running the import.
+- Source and target must both be PostgreSQL and run the same Allstarr application/schema version.
+- Import verifies the artifact checksum and strictly parses the manifest before touching the target.
 - Unknown, repeated, missing, or incorrectly typed manifest fields and archive entries are rejected.
-- Manifest provider, schema, creation time, and checksum metadata must agree with the requested artifact.
-- Every durable target table must be empty. Import does not treat a database with only health, outbox, audit, or backup rows as empty.
-- Encrypted secret bytes are transferred unchanged.
-- Encryption key material, song files, caches, and unrelated app-state files are not included.
-- The target must be PostgreSQL; the application cannot cut back to SQLite.
+- Every durable target table must be empty.
+- Encrypted secret bytes transfer unchanged; encryption key material, media files, and caches do not.
 
-The existing executable now exposes that offline export and import path. Stop every normal Allstarr instance that can write the source, then export into the durable state volume:
+Stop every normal Allstarr instance that can write the source, then export:
 
 ```bash
 docker compose stop allstarr
@@ -313,7 +279,7 @@ docker compose run --rm --no-deps allstarr storage export \
   --confirm-writes-stopped
 ```
 
-Record the artifact path and SHA-256 from the JSON output. Configure the explicitly selected empty target database, keep normal Allstarr instances stopped, and import:
+Configure an explicitly selected empty PostgreSQL target and import with the same image:
 
 ```bash
 docker compose run --rm --no-deps allstarr storage import \
@@ -322,12 +288,7 @@ docker compose run --rm --no-deps allstarr storage import \
   --confirm-empty-target
 ```
 
-Import verifies the checksum, exact archive shape, manifest fields, source provider, schema, application version,
-and artifact metadata before it migrates the PostgreSQL target. It rejects the operation if any durable target
-table already contains rows. Use the same Allstarr image for export and import, review `docker compose config`,
-and keep the SQLite source unchanged for rollback.
-
-If a transfer is implemented and used later, carry the original key ring through a separate protected channel. Validate encrypted provider credentials, row counts, job recovery, audit history, and `/health/ready` before cutover. Keep the source database unchanged for rollback.
+Carry the original key ring through a separate protected channel. Validate credentials, row counts, job recovery, audit history, and `/health/ready` before cutover.
 
 ## Key-ring handling
 

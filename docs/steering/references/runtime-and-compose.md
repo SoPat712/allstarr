@@ -17,7 +17,6 @@ Use this file for Postgres, Valkey, Docker Compose, sidecar profiles, resource m
 Use:
 
 - PostgreSQL for durable state in every supported runtime deployment.
-- SQLite only as an offline source for controlled migration into PostgreSQL.
 - Valkey or Redis for cache, queue acceleration, locks, probe state, and hot runtime data; it is never the only durable record of work.
 - Sidecars only for provider runtimes that need them.
 - Configured media roots or mounted folders for audio and other managed media. PostgreSQL stores paths, identities, checksums, metadata, and workflow state, never encoded song payloads.
@@ -37,15 +36,11 @@ This section preserves the Phase 1 exit evidence. It is historical, not the curr
 Phase 1 durable foundation and its runtime-image/Compose exit gate completed with the following behavior:
 
 - The application runtime accepts only `Postgres`. It owns the full EF model, migrations, readiness state,
-  mutation guard, backups, and durable workers. A failed PostgreSQL connection never creates or opens SQLite.
-  Offline storage commands may open an existing SQLite file for verification and export.
+  mutation guard, backups, and durable workers. A failed PostgreSQL connection leaves the application unready and mutation-guarded.
 - Seven checked-in provider-neutral migrations create the foundation, durable health rollups, separate job
-  failure/deferral policy, and the final operational fields. Startup serializes migration with a database-scoped
-  PostgreSQL advisory lock. Offline SQLite verification uses an exclusive file lock.
-- Native PostgreSQL 18 integration covers concurrent migrations, down-to-foundation/reapply, native `uuid` and
-  `bytea` storage, idempotent durable work, verified `pg_dump`, and isolated `pg_restore`. SQLite coverage is
-  limited to offline verification and one-way state transfer.
-- `storage backup`, `storage restore-sqlite`, `storage restore-postgres`, `storage export`, and `storage import`
+  failure/deferral policy, and the final operational fields. Startup serializes migration with a database-scoped PostgreSQL advisory lock.
+- Native PostgreSQL integration covers concurrent migrations, down-to-foundation/reapply, native `uuid` and `bytea` storage, idempotent durable work, verified `pg_dump`, isolated `pg_restore`, and state transfer.
+- `storage backup`, `storage restore-postgres`, `storage export`, and `storage import`
   run without starting the HTTP host or background workers. Destructive or quiesced operations require explicit
   confirmation flags, checksums are verified, output is JSON, and Postgres passwords use environment variables
   instead of command arguments.
@@ -80,12 +75,12 @@ The deployment profile and durable database provider are operator choices made b
 
 | Concern | Standard/AIO deployment | Manual or small deployment | Rule |
 | --- | --- | --- | --- |
-| Durable database | PostgreSQL on an explicit persistent volume or external managed PostgreSQL | External or local PostgreSQL | SQLite is not a runtime option. |
+| Durable database | PostgreSQL on an explicit persistent volume or external managed PostgreSQL | External or local PostgreSQL | No alternate runtime database is supported. |
 | Cache and acceleration | Valkey is included | Valkey may be omitted when the selected profile permits it | Cache loss may reduce performance, but must not lose committed data or jobs. |
 | App state and media | Explicit app-state and media/library volumes or bind mounts | The same, sized for the installation | Do not rely on anonymous or container-layer storage for user data. |
 | Sidecars | Only selected sidecar services are included | None unless deliberately selected | A sidecar is capability-scoped, not a global dependency. |
 
-An existing SQLite deployment can move one way into PostgreSQL through the offline export/import procedure. It is not a failover mechanism.
+Controlled state transfer moves data only between compatible PostgreSQL deployments; it is not a failover mechanism.
 
 ## Fresh-Install Baseline
 
@@ -101,8 +96,7 @@ Setup documentation must say what users keep, what they recreate, and what is in
 
 ### No Implicit Database Failover
 
-If PostgreSQL is unavailable, the app must not create or open SQLite. It remains unready, rejects state-changing
-work, and surfaces an actionable database-health error until the same PostgreSQL service recovers.
+If PostgreSQL is unavailable, the app remains unready, rejects state-changing work, and surfaces an actionable database-health error until the same PostgreSQL service recovers.
 
 This protects library state, account ownership, jobs, and audit history from split-brain deployments. A deliberate emergency change requires a backup/restore or import procedure and a recorded configuration change; it must never happen merely because a connection attempt failed.
 
@@ -235,7 +229,7 @@ Use `.env` only for local/deployment bootstrap values with restrictive file perm
 Low RAM:
 
 - Core app only.
-- PostgreSQL on persistent storage; never an automatic SQLite fallback.
+- PostgreSQL on persistent storage with no alternate database fallback.
 - Valkey may be omitted when durable jobs and locking remain correct without it.
 - Around 512 MB to 1 GB target.
 
@@ -317,8 +311,8 @@ Required test areas:
 - existing media-root reattachment and re-indexing without writing audio blobs to PostgreSQL
 - selected profile and storage-provider persistence across restarts
 - Postgres migration, migration lock, failed-migration readiness behavior, and backup/restore
-- offline SQLite verification/export; verify that runtime startup rejects SQLite
-- controlled SQLite-to-PostgreSQL migration and PostgreSQL rollback/restore runbooks
+- verify that runtime startup rejects unsupported storage providers
+- controlled PostgreSQL state transfer and rollback/restore runbooks
 - durable job and transactional-outbox recovery after process or Valkey restart
 - startup with missing optional sidecars
 - startup with disabled provider

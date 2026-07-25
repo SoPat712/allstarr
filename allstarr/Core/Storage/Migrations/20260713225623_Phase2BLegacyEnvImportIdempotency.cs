@@ -11,10 +11,9 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-            var text = postgres ? "text" : "TEXT";
-            var guid = postgres ? "uuid" : "TEXT";
-            var bigint = postgres ? "bigint" : "INTEGER";
+            var text = "text";
+            var guid = "uuid";
+            var bigint = "bigint";
 
             migrationBuilder.CreateTable(
                 name: "legacy_env_imports",

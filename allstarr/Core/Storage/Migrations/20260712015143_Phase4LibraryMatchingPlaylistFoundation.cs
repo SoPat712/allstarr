@@ -11,13 +11,12 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-            var textType = postgres ? "text" : "TEXT";
-            var guidType = postgres ? "uuid" : "TEXT";
-            var integerType = postgres ? "integer" : "INTEGER";
-            var bigintType = postgres ? "bigint" : "INTEGER";
-            var booleanType = postgres ? "boolean" : "INTEGER";
-            var doubleType = postgres ? "double precision" : "REAL";
+            var textType = "text";
+            var guidType = "uuid";
+            var integerType = "integer";
+            var bigintType = "bigint";
+            var booleanType = "boolean";
+            var doubleType = "double precision";
             migrationBuilder.CreateTable(
                 name: "external_metadata_snapshots",
                 columns: table => new

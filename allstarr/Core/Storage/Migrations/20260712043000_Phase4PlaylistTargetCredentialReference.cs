@@ -11,9 +11,7 @@ public partial class Phase4PlaylistTargetCredentialReference : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var guidType = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase)
-            ? "uuid"
-            : "TEXT";
+        var guidType = "uuid";
         migrationBuilder.AddColumn<Guid>(
             name: "TargetCredentialReferenceId",
             table: "playlist_links",

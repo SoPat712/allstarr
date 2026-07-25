@@ -11,11 +11,10 @@ public sealed class AddPlaylistLinkEnabled : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var isPostgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
         migrationBuilder.AddColumn<bool>(
             name: "Enabled",
             table: "playlist_links",
-            type: isPostgres ? "boolean" : "INTEGER",
+            type: "boolean",
             nullable: false,
             defaultValue: true);
     }

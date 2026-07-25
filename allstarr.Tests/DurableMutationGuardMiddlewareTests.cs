@@ -112,7 +112,7 @@ public sealed class DurableMutationGuardMiddlewareTests
             nextCalled = true;
             return Task.CompletedTask;
         });
-        var options = Options("Sqlite");
+        var options = Options("Postgres");
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "test-schema");
         var context = new DefaultHttpContext();
@@ -133,7 +133,7 @@ public sealed class DurableMutationGuardMiddlewareTests
             nextCalled = true;
             return Task.CompletedTask;
         });
-        var options = Options("Sqlite");
+        var options = Options("Postgres");
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "startup-schema");
         var context = new DefaultHttpContext();
@@ -154,9 +154,7 @@ public sealed class DurableMutationGuardMiddlewareTests
     private static DurableStorageOptions Options(string provider) => new()
     {
         Provider = provider,
-        ConnectionString = provider == "Postgres"
-            ? "Host=database;Database=allstarr;Username=allstarr;Password=not-used"
-            : "Data Source=:memory:"
+        ConnectionString = "Host=database;Database=allstarr;Username=allstarr;Password=not-used"
     };
 
     private sealed class StubStorageProbe(

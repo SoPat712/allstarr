@@ -12,13 +12,14 @@ namespace allstarr.Tests;
 
 public sealed class IntelligenceControllerTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), $"intelligence-controller-{Guid.NewGuid():N}.db");
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private Factory _factory = null!; private FakePolicy _policy = null!; private FakeRuns _runs = null!; private FakeSmart _smart = null!; private FakeReadiness _readiness = null!;
     public async Task InitializeAsync()
     {
-        _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={_path}").Options);
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
+        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         db.Tenants.Add(new() { Id = _tenant, Slug = "intelligence", Name = "Intelligence", CreatedAt = DateTimeOffset.UtcNow });
         db.Users.Add(new()
         {
@@ -443,7 +444,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         EnabledProvidersJson = "[\"lastfm\"]",
         Revision = 1
     };
-    public Task DisposeAsync() { if (File.Exists(_path)) File.Delete(_path); return Task.CompletedTask; }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
     private sealed class FakePolicy : IIntelligencePolicyService

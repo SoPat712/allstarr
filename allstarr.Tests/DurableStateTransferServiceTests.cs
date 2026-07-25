@@ -24,6 +24,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Path.GetTempPath(),
         "allstarr-tests",
         Guid.NewGuid().ToString("N"));
+    private readonly Dictionary<string, PostgresTestDatabase> _databases = [];
     private TestDbContextFactory _sourceFactory = null!;
     private DurableStateTransferService _service = null!;
     private string _currentSchema = null!;
@@ -31,14 +32,15 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        var sourcePath = Path.Combine(_root, "source.db");
+        var sourceDatabase = await PostgresTestDatabase.CreateAsync();
+        _databases["source"] = sourceDatabase;
         var options = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={sourcePath}",
+            Provider = "Postgres",
+            ConnectionString = sourceDatabase.ConnectionString,
             BackupDirectory = Path.Combine(_root, "backups")
         };
-        _sourceFactory = Factory(options.ConnectionString);
+        _sourceFactory = new TestDbContextFactory(sourceDatabase.Options);
         await using var context = await _sourceFactory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         _currentSchema = context.Database.GetMigrations().Last();
@@ -292,7 +294,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             CompletedAt = now,
             Revision = 1
         });
-        // Persist the managed parent before the placed artifact so SQLite's
+        // Persist the managed parent before the placed artifact so PostgreSQL's
         // database-native lineage trigger can validate the child insert.
         await context.SaveChangesAsync();
         context.ProviderDownloadArtifacts.Add(new ProviderDownloadArtifactEntity
@@ -799,7 +801,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Path.Combine(_root, "transfers"),
             writesQuiesced: true);
         var targetPath = Path.Combine(_root, "target.db");
-        var targetFactory = Factory($"Data Source={targetPath}");
+        var targetFactory = Factory($"postgres-fixture:{targetPath}");
 
         await DurableStateTransferService.ImportAsync(
             artifact,
@@ -909,7 +911,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
                 _ => throw new InvalidOperationException()
             };
         });
-        var targetFactory = Factory($"Data Source={Path.Combine(_root, $"bad-target-{Guid.NewGuid():N}.db")}");
+        var targetFactory = Factory($"postgres-fixture:{Path.Combine(_root, $"bad-target-{Guid.NewGuid():N}.db")}");
 
         var error = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact, targetFactory, true));
@@ -952,7 +954,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             await source.SaveChangesAsync();
         }
         var artifact = await _service.ExportAsync(Path.Combine(_root, "bad-recommendation-schedule"), true);
-        var validTargetFactory = Factory($"Data Source={Path.Combine(_root, "valid-recommendation-schedule-target.db")}");
+        var validTargetFactory = Factory($"postgres-fixture:{Path.Combine(_root, "valid-recommendation-schedule-target.db")}");
         await DurableStateTransferService.ImportAsync(artifact, validTargetFactory, true);
         await using (var validTarget = await validTargetFactory.CreateDbContextAsync())
         {
@@ -966,7 +968,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
                 Guid.Parse(item["id"]!.GetValue<string>()) == scheduleId);
             schedule["libraryScopeId"] = "another-library";
         });
-        var targetFactory = Factory($"Data Source={Path.Combine(_root, "bad-recommendation-schedule-target.db")}");
+        var targetFactory = Factory($"postgres-fixture:{Path.Combine(_root, "bad-recommendation-schedule-target.db")}");
 
         var error = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact, targetFactory, true));
@@ -1025,7 +1027,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Path.Combine(_root, "transfers"),
             writesQuiesced: true);
         var targetFactory = Factory(
-            $"Data Source={Path.Combine(_root, "two-tenant-target.db")}");
+            $"postgres-fixture:{Path.Combine(_root, "two-tenant-target.db")}");
 
         await DurableStateTransferService.ImportAsync(
             artifact,
@@ -1057,7 +1059,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, $"unsafe-path-{Guid.NewGuid():N}.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, $"unsafe-path-{Guid.NewGuid():N}.db")}"), true));
 
         Assert.Contains("managed file", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1071,7 +1073,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "invalid-managed-reference-count.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "invalid-managed-reference-count.db")}"), true));
 
         Assert.Contains("reference count", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1089,7 +1091,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-scope-managed-reference.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-scope-managed-reference.db")}"), true));
 
         Assert.Contains("managed file reference", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1116,7 +1118,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-user-route-candidate.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-user-route-candidate.db")}"), true));
 
         Assert.Contains("provider route", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1131,7 +1133,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-user-route-job.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-user-route-job.db")}"), true));
 
         Assert.Contains("provider route", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1161,7 +1163,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, $"unsafe-download-{Guid.NewGuid():N}.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, $"unsafe-download-{Guid.NewGuid():N}.db")}"), true));
 
         Assert.Contains("download artifact", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1179,7 +1181,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-download-workspace.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-download-workspace.db")}"), true));
         Assert.Contains("download workspace", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1196,7 +1198,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-download-artifact.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-download-artifact.db")}"), true));
         Assert.Contains("download artifact", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1213,7 +1215,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "invalid-download-facts.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "invalid-download-facts.db")}"), true));
         Assert.Contains("download artifact", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1260,7 +1262,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-download-managed.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-download-managed.db")}"), true));
         Assert.Contains("download artifact", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1277,7 +1279,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "duplicate-download-artifact.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "duplicate-download-artifact.db")}"), true));
         Assert.Contains("download artifact", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1294,7 +1296,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-favorite-target.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-favorite-target.db")}"), true));
 
         Assert.Contains("favorite event", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1312,7 +1314,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-enrichment-target.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-enrichment-target.db")}"), true));
 
         Assert.Contains("enrichment plan", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1326,7 +1328,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, "malformed-enrichment-target.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, "malformed-enrichment-target.db")}"), true));
 
         Assert.Contains("enrichment plan", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1363,7 +1365,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(artifact,
-                Factory($"Data Source={Path.Combine(_root, $"policy-{mutation}-target.db")}"), true));
+                Factory($"postgres-fixture:{Path.Combine(_root, $"policy-{mutation}-target.db")}"), true));
 
         Assert.Contains("favorite action policy", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1383,7 +1385,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-creator-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-creator-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("canonical recording", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -1404,7 +1406,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-canonical-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-canonical-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("canonical recording boundary", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -1429,7 +1431,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={Path.Combine(_root, "cross-account-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, "cross-account-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("invalid tenant", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -1453,7 +1455,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={Path.Combine(_root, $"account-{mutation}-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, $"account-{mutation}-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("provider account", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -1485,7 +1487,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={Path.Combine(_root, $"{mutation}-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, $"{mutation}-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("identity data is invalid", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -1509,7 +1511,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={Path.Combine(_root, $"{property}-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, $"{property}-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("malformed", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -1569,15 +1571,15 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Path.Combine(_root, "transfers"),
             writesQuiesced: true);
         var targetFactory = Factory(
-            $"Data Source={Path.Combine(_root, "operational-state-target.db")}");
+            $"postgres-fixture:{Path.Combine(_root, "operational-state-target.db")}");
         await using (var target = await targetFactory.CreateDbContextAsync())
         {
             await target.Database.MigrateAsync();
             target.Backups.Add(new BackupRecord
             {
                 Id = Guid.CreateVersion7(),
-                StorageProvider = "Sqlite",
-                ArtifactPath = "/fixture/backup.sqlite",
+                StorageProvider = "Postgres",
+                ArtifactPath = "/fixture/backup.dump",
                 Sha256 = new string('a', 64),
                 SchemaVersion = _currentSchema,
                 ApplicationVersion = AppVersion.Version,
@@ -1600,7 +1602,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     public async Task Import_RejectsTargetContainingProviderDownloadWorkspaceState()
     {
         var artifact = await _service.ExportAsync(Path.Combine(_root, "transfers"), writesQuiesced: true);
-        var targetFactory = Factory($"Data Source={Path.Combine(_root, "download-workspace-state-target.db")}");
+        var targetFactory = Factory($"postgres-fixture:{Path.Combine(_root, "download-workspace-state-target.db")}");
         await using (var target = await targetFactory.CreateDbContextAsync())
         {
             await target.Database.MigrateAsync();
@@ -1672,44 +1674,62 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             Path.Combine(_root, "transfers"),
             writesQuiesced: true);
         var targetFactory = Factory(
-            $"Data Source={Path.Combine(_root, $"{table}-target.db")}");
+            $"postgres-fixture:{Path.Combine(_root, $"{table}-target.db")}");
         await using (var target = await targetFactory.CreateDbContextAsync())
         {
             await target.Database.MigrateAsync();
-            await target.Database.OpenConnectionAsync();
-            try
+            var tenantId = Guid.CreateVersion7();
+            var userId = Guid.CreateVersion7();
+            var canonicalRecordingId = Guid.CreateVersion7();
+            var now = DateTimeOffset.UtcNow;
+            target.Tenants.Add(new TenantRecord
             {
-                await target.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF");
-                if (table == "canonical_recordings")
-                {
-                    await target.Database.ExecuteSqlRawAsync(
-                        "INSERT INTO canonical_recordings " +
-                        "(Id, TenantId, CreatedByUserId, CreatedAt, UpdatedAt, Revision) " +
-                        "VALUES ({0}, {1}, {2}, 0, 0, 0)",
-                        Guid.CreateVersion7(),
-                        Guid.CreateVersion7(),
-                        Guid.CreateVersion7());
-                }
-                else
-                {
-                    await target.Database.ExecuteSqlRawAsync(
-                        "INSERT INTO provider_track_identities " +
-                        "(Id, TenantId, CanonicalRecordingId, ProviderId, ResourceKind, " +
-                        "CatalogNamespace, Scope, ExternalId, ExternalIdHash, " +
-                        "Verification, VerificationMethod, DecisionVersion, VerifiedAt, " +
-                        "CreatedAt, UpdatedAt, Revision) " +
-                        "VALUES ({0}, {1}, {2}, 'fixture', 'Track', 'default', 'Catalog', " +
-                        "'fixture-track', {3}, 'Verified', 'fixture', 1, 0, 0, 0, 0)",
-                        Guid.CreateVersion7(),
-                        Guid.CreateVersion7(),
-                        Guid.CreateVersion7(),
-                        new string('c', 64));
-                }
-            }
-            finally
+                Id = tenantId,
+                Slug = $"target-{tenantId:N}",
+                Name = "Target fixture",
+                CreatedAt = now
+            });
+            target.Users.Add(new PlatformUserRecord
             {
-                await target.Database.CloseConnectionAsync();
+                Id = userId,
+                TenantId = tenantId,
+                DisplayName = "Target fixture",
+                Status = PlatformUserStatus.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            target.CanonicalRecordings.Add(new CanonicalRecordingRecord
+            {
+                Id = canonicalRecordingId,
+                TenantId = tenantId,
+                CreatedByUserId = userId,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1
+            });
+            if (table == "provider_track_identities")
+            {
+                target.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    TenantId = tenantId,
+                    CanonicalRecordingId = canonicalRecordingId,
+                    ProviderId = "fixture",
+                    ResourceKind = ProviderResourceKind.Track,
+                    CatalogNamespace = "default",
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = "fixture-track",
+                    ExternalIdHash = HashExternalId("fixture-track"),
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1,
+                    VerifiedAt = now,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    Revision = 1
+                });
             }
+            await target.SaveChangesAsync();
         }
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -1740,11 +1760,10 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={targetPath}"),
+                Factory($"postgres-fixture:{targetPath}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("schema", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.False(File.Exists(targetPath));
     }
 
     [Fact]
@@ -1764,11 +1783,10 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact,
-                Factory($"Data Source={targetPath}"),
+                Factory($"postgres-fixture:{targetPath}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("application", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.False(File.Exists(targetPath));
     }
 
     [Fact]
@@ -1796,7 +1814,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var unknownProviderArtifact = await RewriteManifestAsync(
             secondArtifact,
             json => json.Replace(
-                "\"sourceProvider\":\"Sqlite\"",
+                "\"sourceProvider\":\"Postgres\"",
                 "\"sourceProvider\":\"Automatic\"",
                 StringComparison.Ordinal));
 
@@ -1861,7 +1879,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
                 artifact with { SourceProvider = "Postgres" },
-                Factory($"Data Source={Path.Combine(_root, "metadata-target.db")}"),
+                Factory($"postgres-fixture:{Path.Combine(_root, "metadata-target.db")}"),
                 targetConfirmedEmpty: true));
 
         Assert.Contains("metadata", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -2115,22 +2133,28 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(externalId)))
             .ToLowerInvariant();
 
-    private static TestDbContextFactory Factory(string connectionString)
+    private TestDbContextFactory Factory(string databaseKey)
     {
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite(connectionString)
-            .Options;
-        return new TestDbContextFactory(options);
+        if (!_databases.TryGetValue(databaseKey, out var database))
+        {
+            database = PostgresTestDatabase.CreateAsync().GetAwaiter().GetResult();
+            _databases[databaseKey] = database;
+        }
+
+        return new TestDbContextFactory(database.Options);
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        foreach (var database in _databases.Values.Distinct())
+        {
+            await database.DisposeAsync();
+        }
+
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);
         }
-
-        return Task.CompletedTask;
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

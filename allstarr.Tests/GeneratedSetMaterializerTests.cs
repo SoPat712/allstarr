@@ -11,15 +11,16 @@ namespace allstarr.Tests;
 
 public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), $"generated-materializer-{Guid.NewGuid():N}.db");
+    private PostgresTestDatabase _database = null!;
     private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _backendIdentity = Guid.CreateVersion7(); private readonly Guid _set = Guid.CreateVersion7();
     private Factory _factory = null!;
 
     public async Task InitializeAsync()
     {
-        _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite($"Data Source={_path}").Options);
-        await using var db = await _factory.CreateDbContextAsync(); await db.Database.EnsureCreatedAsync();
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
+        await using var db = await _factory.CreateDbContextAsync(); await db.Database.MigrateAsync();
         var now = DateTimeOffset.UtcNow; var job = Guid.CreateVersion7(); var run = Guid.CreateVersion7();
         db.Tenants.Add(new() { Id = _tenant, Slug = "generated", Name = "Generated", CreatedAt = now });
         db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
@@ -361,7 +362,13 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
         new(new(_tenant, _user, protocol, "main", "music"), _set, candidates, "generated-set:test");
     private static RecommendationCandidate Candidate(string key, RecommendationTrackIdentity identity) =>
         new(key, .8, "fixture", [new("fixture", .8, "Fixture reason")], identity);
-    public Task DisposeAsync() { if (File.Exists(_path)) File.Delete(_path); return Task.CompletedTask; }
+    public async Task DisposeAsync()
+    {
+        if (_database is not null)
+        {
+            await _database.DisposeAsync();
+        }
+    }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
     private sealed class Resolver(IBackendPlaylistTarget target) : IBackendPlaylistTargetResolver { public IBackendPlaylistTarget Resolve(string targetProtocol) => target; }

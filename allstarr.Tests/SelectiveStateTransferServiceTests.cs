@@ -11,6 +11,7 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         Path.GetTempPath(),
         "allstarr-selective-tests",
         Guid.NewGuid().ToString("N"));
+    private readonly List<PostgresTestDatabase> _databases = [];
 
     public Task InitializeAsync()
     {
@@ -18,13 +19,17 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        foreach (var database in _databases)
+        {
+            await database.DisposeAsync();
+        }
+
         if (Directory.Exists(_root))
         {
             try { Directory.Delete(_root, recursive: true); } catch { }
         }
-        return Task.CompletedTask;
     }
 
     [Fact]
@@ -248,8 +253,8 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
     {
         var service = new SelectiveStateTransferService(
             new TestDbContextFactory(new DbContextOptionsBuilder<AllstarrDbContext>().Options),
-            new DurableStorageOptions { Provider = "Sqlite", ConnectionString = "Data Source=:memory:" },
-            new DurableStorageState(new DurableStorageOptions { Provider = "Sqlite", ConnectionString = "Data Source=:memory:" }));
+            new DurableStorageOptions { Provider = "Postgres", ConnectionString = "Host=database;Database=allstarr" },
+            new DurableStorageState(new DurableStorageOptions { Provider = "Postgres", ConnectionString = "Host=database;Database=allstarr" }));
 
         var included = service.ResolveIncludedCategories(new SelectiveExportRequest
         {
@@ -288,18 +293,16 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
     private async Task<(TestDbContextFactory Factory, DurableStorageOptions Options, DurableStorageState State)>
         CreateSeededContextAsync()
     {
-        var dbPath = Path.Combine(_root, $"seed-{Guid.NewGuid():N}.db");
+        var database = await PostgresTestDatabase.CreateAsync();
+        _databases.Add(database);
         var options = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={dbPath}",
+            Provider = "Postgres",
+            ConnectionString = database.ConnectionString,
             BackupDirectory = Path.Combine(_root, "backups"),
             AutoMigrate = true
         };
-        var factory = new TestDbContextFactory(
-            new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(options.ConnectionString)
-                .Options);
+        var factory = new TestDbContextFactory(database.Options);
         await using var context = await factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
 
@@ -359,18 +362,16 @@ public sealed class SelectiveStateTransferServiceTests : IAsyncLifetime
     private async Task<(TestDbContextFactory Factory, DurableStorageOptions Options, DurableStorageState State)>
         CreateEmptyContextAsync()
     {
-        var dbPath = Path.Combine(_root, $"target-{Guid.NewGuid():N}.db");
+        var database = await PostgresTestDatabase.CreateAsync();
+        _databases.Add(database);
         var options = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={dbPath}",
+            Provider = "Postgres",
+            ConnectionString = database.ConnectionString,
             BackupDirectory = Path.Combine(_root, "backups"),
             AutoMigrate = true
         };
-        var factory = new TestDbContextFactory(
-            new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(options.ConnectionString)
-                .Options);
+        var factory = new TestDbContextFactory(database.Options);
         await using var context = await factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
 

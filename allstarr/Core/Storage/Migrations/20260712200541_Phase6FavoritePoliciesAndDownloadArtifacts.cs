@@ -8,11 +8,10 @@ public sealed partial class Phase6FavoritePoliciesAndDownloadArtifacts : Migrati
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-        var text = postgres ? "text" : "TEXT";
-        var guid = postgres ? "uuid" : "TEXT";
-        var bigint = postgres ? "bigint" : "INTEGER";
-        var boolean = postgres ? "boolean" : "INTEGER";
+        var text = "text";
+        var guid = "uuid";
+        var bigint = "bigint";
+        var boolean = "boolean";
 
         migrationBuilder.CreateTable("favorite_action_policies", table => new
         {

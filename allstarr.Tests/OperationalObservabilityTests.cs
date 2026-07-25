@@ -13,26 +13,20 @@ namespace allstarr.Tests;
 
 public sealed class OperationalObservabilityTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _state = null!;
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
+        _database = await PostgresTestDatabase.CreateAsync();
         var options = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "metrics.db")}"
+            Provider = "Postgres",
+            ConnectionString = _database.ConnectionString
         };
-        _factory = new TestDbContextFactory(
-            new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(options.ConnectionString)
-                .Options);
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         context.Jobs.Add(new DurableJobRecord
@@ -62,8 +56,8 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
         context.Backups.Add(new BackupRecord
         {
             Id = Guid.CreateVersion7(),
-            StorageProvider = "Sqlite",
-            ArtifactPath = "/redacted/backup.sqlite",
+            StorageProvider = "Postgres",
+            ArtifactPath = "/redacted/backup.dump",
             Sha256 = new string('a', 64),
             SchemaVersion = "fixture",
             ApplicationVersion = AppVersion.Version,
@@ -109,7 +103,7 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
 
         var metrics = await service.RenderPrometheusAsync();
 
-        Assert.Contains("allstarr_storage_ready{provider=\"sqlite\"} 1", metrics, StringComparison.Ordinal);
+        Assert.Contains("allstarr_storage_ready{provider=\"postgres\"} 1", metrics, StringComparison.Ordinal);
         Assert.Contains("allstarr_jobs{state=\"failed\"} 1", metrics, StringComparison.Ordinal);
         Assert.Contains("allstarr_outbox_messages{state=\"pending\"} 1", metrics, StringComparison.Ordinal);
         Assert.Contains("allstarr_backup_age_seconds", metrics, StringComparison.Ordinal);
@@ -131,7 +125,7 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
 
         var metrics = await service.RenderPrometheusAsync();
 
-        Assert.Contains("allstarr_storage_ready{provider=\"sqlite\"} 0", metrics, StringComparison.Ordinal);
+        Assert.Contains("allstarr_storage_ready{provider=\"postgres\"} 0", metrics, StringComparison.Ordinal);
         Assert.DoesNotContain("allstarr_jobs{", metrics, StringComparison.Ordinal);
     }
 
@@ -341,15 +335,7 @@ public sealed class OperationalObservabilityTests : IAsyncLifetime
         Assert.DoesNotContain("private detail", log, StringComparison.Ordinal);
     }
 
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

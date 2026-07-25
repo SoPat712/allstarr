@@ -9,10 +9,7 @@ namespace allstarr.Tests;
 
 public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-tests",
-        Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _state = null!;
     private FakeClock _clock = null!;
@@ -20,16 +17,13 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
+        _database = await PostgresTestDatabase.CreateAsync();
         var storage = new DurableStorageOptions
         {
-            Provider = "Sqlite",
-            ConnectionString = $"Data Source={Path.Combine(_root, "health.db")}"
+            Provider = "Postgres",
+            ConnectionString = _database.ConnectionString
         };
-        _factory = new TestDbContextFactory(
-            new DbContextOptionsBuilder<AllstarrDbContext>()
-                .UseSqlite(storage.ConnectionString)
-                .Options);
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         _state = new DurableStorageState(storage);
@@ -281,15 +275,7 @@ public sealed class DurableProviderHealthStoreTests : IAsyncLifetime
         return new Guid(guidBytes);
     }
 
-    public Task DisposeAsync()
-    {
-        if (Directory.Exists(_root))
-        {
-            Directory.Delete(_root, recursive: true);
-        }
-
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock
     {

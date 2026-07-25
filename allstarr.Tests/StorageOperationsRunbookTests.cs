@@ -16,7 +16,7 @@ public sealed class StorageOperationsRunbookTests
         Assert.Contains("PostgreSQL is mandatory at runtime", runbook, StringComparison.Ordinal);
         Assert.Contains("mutations, durable jobs, and outbox delivery resume", runbook, StringComparison.Ordinal);
         Assert.Contains("\"status\":\"verified\"", runbook, StringComparison.Ordinal);
-        Assert.Contains("storage restore-sqlite", runbook, StringComparison.Ordinal);
+        Assert.Contains("storage restore-postgres", runbook, StringComparison.Ordinal);
         Assert.Contains("storage export", runbook, StringComparison.Ordinal);
         Assert.Contains("storage import", runbook, StringComparison.Ordinal);
         Assert.DoesNotContain("no supported operator command", runbook, StringComparison.OrdinalIgnoreCase);

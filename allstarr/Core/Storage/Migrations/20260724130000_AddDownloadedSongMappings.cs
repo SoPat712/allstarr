@@ -12,10 +12,9 @@ public partial class AddDownloadedSongMappings : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-        var textType = postgres ? "text" : "TEXT";
-        var guidType = postgres ? "uuid" : "TEXT";
-        var bigintType = postgres ? "bigint" : "INTEGER";
+        var textType = "text";
+        var guidType = "uuid";
+        var bigintType = "bigint";
 
         migrationBuilder.CreateTable(
             name: "downloaded_song_mappings",

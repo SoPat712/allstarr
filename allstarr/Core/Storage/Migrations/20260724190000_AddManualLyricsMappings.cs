@@ -12,11 +12,10 @@ public partial class AddManualLyricsMappings : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        var postgres = ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase);
-        var textType = postgres ? "text" : "TEXT";
-        var guidType = postgres ? "uuid" : "TEXT";
-        var integerType = postgres ? "integer" : "INTEGER";
-        var bigintType = postgres ? "bigint" : "INTEGER";
+        var textType = "text";
+        var guidType = "uuid";
+        var integerType = "integer";
+        var bigintType = "bigint";
 
         migrationBuilder.CreateTable(
             name: "manual_lyrics_mappings",

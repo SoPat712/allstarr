@@ -18,23 +18,20 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         "allstarr-tests",
         Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
-    private string _databasePath = string.Empty;
+    private PostgresTestDatabase _database = null!;
     private string _keyRingPath = string.Empty;
     private TestDbContextFactory _factory = null!;
 
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_root);
-        _databasePath = Path.Combine(_root, "allstarr.db");
+        _database = await PostgresTestDatabase.CreateAsync();
         _keyRingPath = Path.Combine(_root, "keyring.json");
         WriteKeyRing("key-1", new Dictionary<string, byte[]>
         {
             ["key-1"] = RandomNumberGenerator.GetBytes(32)
         });
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={_databasePath}")
-            .Options;
-        _factory = new TestDbContextFactory(options);
+        _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
         await context.Database.MigrateAsync();
         context.Tenants.Add(new TenantRecord
@@ -63,13 +60,12 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         await using (var context = await _factory.CreateDbContextAsync())
         {
             var version = await context.SecretVersions.SingleAsync();
-            Assert.NotEqual(Encoding.UTF8.GetBytes(plaintext), version.Ciphertext);
+            var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
+            Assert.NotEqual(plaintextBytes, version.Ciphertext);
+            Assert.True(version.Ciphertext.AsSpan().IndexOf(plaintextBytes) < 0);
             Assert.Equal(12, version.Nonce.Length);
             Assert.Equal(16, version.AuthenticationTag.Length);
         }
-
-        var databaseBytes = await File.ReadAllBytesAsync(_databasePath);
-        Assert.False(databaseBytes.AsSpan().IndexOf(Encoding.UTF8.GetBytes(plaintext)) >= 0);
 
         using var lease = await store.OpenAsync(info.Id, new SecretAccessContext(_tenantId));
         Assert.Equal(plaintext, lease.ReadUtf8());
@@ -275,14 +271,13 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             document.RootElement.GetProperty("keys").GetProperty(keyId).GetString()!);
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
         if (Directory.Exists(_root))
         {
             Directory.Delete(_root, recursive: true);
         }
-
-        return Task.CompletedTask;
+        if (_database is not null) await _database.DisposeAsync();
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

@@ -19,7 +19,7 @@
 - backend-neutral playback activity and bounded admin artwork resolution
 - scrobbling orchestration
 - JavaScript module syntax, responsive CSS, support-state, and keyboard-contract rules
-- explicit Postgres/SQLite storage, migration locks, native PostgreSQL schema types, backup/restore, state
+- explicit PostgreSQL storage, migration locks, native schema types, backup/restore, state
   transfer, and the offline storage command
 - tenant identity, provider-account scope, AES-GCM secret versions, key rotation/revocation, and API redaction
 - durable job/outbox idempotency, concurrent claims, lease recovery, retry, cancellation, owner visibility, and
@@ -84,19 +84,16 @@ deterministic fake. Optional provider startup probes default off in normal confi
 At the Phase 1 exit checkpoint, 1,002 .NET tests passed with no skips. The native PostgreSQL tests were
 run with `ALLSTARR_TEST_POSTGRES` against PostgreSQL 18 and matching libpq 18 tools. They are guarded by that
 environment variable so an ordinary developer run does not require a local PostgreSQL server. When the variable
-is present, the tests exercise the real database and command-line backup tools rather than substituting SQLite.
+is present, the tests exercise the real database and command-line backup tools against PostgreSQL itself.
 
 The Phase 1 checkpoint coverage included:
 
-- `DurableStorageTests` for explicit provider validation, SQLite migrations, concurrent SQLite migration
-  locking, one-shot SQLite bootstrap consumption, missing-file protection, bounded runtime connectivity/schema
-  checks and recovery, pending-schema readiness, additive rollback/reapply, generated native Postgres SQL, and
-  the rule that unavailable Postgres never creates a SQLite fallback.
+- `DurableStorageTests` for explicit PostgreSQL validation, migrations, advisory locking, bounded runtime connectivity/schema checks and recovery, pending-schema readiness, additive rollback/reapply, generated native SQL, and unavailable-database behavior.
 - `PostgresStorageIntegrationTests` for concurrent advisory-locked migrations, down-to-foundation/reapply,
   native `uuid`/`bytea` types, database-backed idempotent enqueue, custom-format `pg_dump` verification, and
   isolated `pg_restore` recovery.
 - `DurableBackupServiceTests`, `DurableStateTransferServiceTests`, `StorageOperatorCommandTests`, and
-  `StorageOperationsRunbookTests` for standalone SQLite backups, secret-safe Postgres process invocation,
+  `StorageOperationsRunbookTests` for secret-safe PostgreSQL process invocation,
   checksums, strict backup-manifest parsing, exact schema compatibility, restored-target verification,
   provider-neutral export/import, confirmation flags, bulk secret rotation, and checked-in operator commands.
 - `PlatformIdentityTests`, `ProviderAccountManagementOptionsTests`, `ProviderAccountsControllerTests`,
@@ -226,8 +223,7 @@ blocked in the lock are never bootstrapped or presented as active.
 - Security-sensitive helpers and middleware usually have direct regression coverage
 - JavaScript syntax tests use `node --check`, so Node must be installed for that part of the suite
 - Host/route fixtures use `Microsoft.AspNetCore.Mvc.Testing` with fake upstream HTTP and temporary state
-- Durable storage tests use temporary SQLite databases by default. Native Postgres tests use
-  `ALLSTARR_TEST_POSTGRES` and require matching `pg_dump`/`pg_restore` tools for backup coverage.
+- Durable storage tests use isolated PostgreSQL databases through `ALLSTARR_TEST_POSTGRES` and require matching `pg_dump`/`pg_restore` tools for backup coverage.
 - Storage command tests assert machine-readable JSON output and confirmation gates without printing connection
   strings or passwords.
 - Static WebUI contract tests are regression guards, not a substitute for functional browser, focus,

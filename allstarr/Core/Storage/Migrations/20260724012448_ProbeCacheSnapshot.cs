@@ -14,10 +14,6 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            if (!ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
             migrationBuilder.AlterColumn<bool>(
                 name: "Enabled",
                 table: "playlist_links",
@@ -32,10 +28,6 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            if (!ActiveProvider.Contains("Npgsql", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
             migrationBuilder.AlterColumn<int>(
                 name: "Enabled",
                 table: "playlist_links",

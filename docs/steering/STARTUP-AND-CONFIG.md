@@ -48,9 +48,7 @@ Spotify mapping, Redis, cache, or version-state formats. The overhaul baseline i
 database and identity are ready, an administrator can explicitly open the WebUI migration wizard for a reviewed
 subset of legacy configuration.
 
-SQLite is not an application runtime target. Offline `storage` commands may open an
-existing SQLite database only to verify, restore, or export legacy state for a controlled
-import into PostgreSQL.
+PostgreSQL is the only application and offline storage-command target. Legacy database files are not opened by the application.
 
 The WebUI importer follows the exact classification, scope, redaction, conflict, and transaction contract in
 [Legacy `.env` Import Contract](../operations/legacy-env-import.md). In particular, deployment keys remain in
