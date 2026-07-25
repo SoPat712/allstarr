@@ -200,7 +200,8 @@ public sealed class TrackMatchesController(
         var overrides = review.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
         var library = review.LibraryTracks.ToDictionary(item => item.Id);
         var libraryByCanonical = review.LibraryTracks
-            .GroupBy(item => item.CanonicalRecordingId)
+            .Where(item => item.CanonicalRecordingId.HasValue)
+            .GroupBy(item => item.CanonicalRecordingId!.Value)
             .ToDictionary(group => group.Key, group => group
                 .OrderBy(item => item.BackendItemId, StringComparer.Ordinal)
                 .First());

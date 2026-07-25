@@ -1070,7 +1070,7 @@ public sealed class TrackMatchCommandService(
         var libraryTracks = await db.LibraryTracks
             .Where(item =>
                 tenantIds.Contains(item.TenantId) &&
-                (!item.OwnerUserId.HasValue || ownerIds.Contains(item.OwnerUserId.Value)) &&
+                ownerIds.Contains(item.OwnerUserId) &&
                 libraryScopes.Contains(item.LibraryScopeId))
             .ToListAsync(cancellationToken);
         var latestDecisions = (await db.TrackMatches

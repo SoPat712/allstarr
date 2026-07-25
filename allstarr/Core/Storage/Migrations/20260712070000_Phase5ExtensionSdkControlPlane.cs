@@ -13,7 +13,6 @@ public sealed class Phase5ExtensionSdkControlPlane : Migration
     {
         var text = "text";
         var guid = "uuid";
-        var integer = "integer";
         var bigint = "bigint";
         var boolean = "boolean";
 
