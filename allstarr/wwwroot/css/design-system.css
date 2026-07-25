@@ -492,6 +492,19 @@ input:not(:is([type="checkbox"], [type="radio"], [type="range"], [type="color"])
   gap: 0.5rem;
 }
 
+.job-live-actions,
+.job-progress-facts {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.job-live-lines small {
+  display: block;
+  color: var(--text-muted);
+}
+
 .job-live-lines {
   max-height: 12rem;
   overflow: auto;

@@ -986,6 +986,7 @@ class AllstarrApp extends LitElement {
     this.downloads = null;
     this.cachedDownloads = null;
     this.jobs = [];
+    this.pausedJobConsoles = new Map();
     this.providerAccounts = [];
     this.providerHealth = [];
     this.providerSummaries = [];
@@ -6653,7 +6654,9 @@ class AllstarrApp extends LitElement {
               const state = job.state || job.State;
               const failure = job.lastErrorMessage || job.LastErrorMessage || job.lastErrorCode || job.LastErrorCode;
               const copy = jobCopy(job.type || job.Type, state, failure);
-              const progressEvents = asArray(job.progressEvents);
+              const liveProgressEvents = asArray(job.progressEvents);
+              const paused = this.pausedJobConsoles.has(String(id));
+              const progressEvents = paused ? this.pausedJobConsoles.get(String(id)) : liveProgressEvents;
               const latest = progressEvents[0];
               const latestDetails = latest?.details || {};
               const latestAt = Date.parse(latest?.createdAt || latest?.CreatedAt || job.updatedAt || job.UpdatedAt || "");
@@ -6680,13 +6683,36 @@ class AllstarrApp extends LitElement {
                       <section class="job-live-console" aria-label=${`Live progress for ${copy.label}`}>
                         <div class="job-live-heading">
                           <span>${icon(stalled ? "warning" : "activity", 17)}<strong>${stalled ? "Progress may be stalled" : "Live progress"}</strong></span>
-                          <span class="muted">${latest ? formatRelativeTime(latest.createdAt || latest.CreatedAt) : "Waiting for the first update"}</span>
+                          <span class="job-live-actions">
+                            <span class="muted">${paused ? "Paused" : latest ? formatRelativeTime(latest.createdAt || latest.CreatedAt) : "Waiting for the first update"}</span>
+                            <button class="compact" @click=${() => {
+                              if (paused) this.pausedJobConsoles.delete(String(id));
+                              else this.pausedJobConsoles.set(String(id), [...liveProgressEvents]);
+                              this.requestUpdate();
+                            }}>${paused ? "Resume" : "Pause"}</button>
+                            <button class="compact" ?disabled=${!progressEvents.length} @click=${async () => {
+                              const text = [...progressEvents].reverse().map((event) => {
+                                const details = event.details || {};
+                                return [
+                                  new Date(event.createdAt || event.CreatedAt).toLocaleString(),
+                                  titleCase(details.stage || event.action || event.Action),
+                                  details.message,
+                                  details.provider && `provider=${details.provider}`,
+                                  details.playlist && `playlist=${details.playlist}`,
+                                  details.track && `track=${details.track}`,
+                                  Number.isFinite(Number(details.throughputPerSecond)) && `throughput=${Number(details.throughputPerSecond).toFixed(2)} tracks/s`,
+                                ].filter(Boolean).join(" · ");
+                              }).join("\n");
+                              await navigator.clipboard.writeText(text);
+                              this.toast("Job progress copied");
+                            }}>Copy</button>
+                          </span>
                         </div>
                         ${determinate ? html`<div class="progress" style=${`--progress:${percent((completed / total) * 100)}%`}><span></span></div>` : html`<div class="progress indeterminate"><span></span></div>`}
                         <div class="job-live-lines">
                           ${progressEvents.length ? [...progressEvents].reverse().map((event) => {
                             const details = event.details || {};
-                            return html`<div><time>${new Date(event.createdAt || event.CreatedAt).toLocaleTimeString()}</time><span class="job-stage">${titleCase(details.stage || event.action || event.Action)}</span><span>${display(details.message, "Work is continuing.")}</span>${details.provider ? html`<span class="chip">${providerDisplayName(details.provider, this.schema?.providers)}</span>` : nothing}</div>`;
+                            return html`<div><time>${new Date(event.createdAt || event.CreatedAt).toLocaleTimeString()}</time><span class="job-stage">${titleCase(details.stage || event.action || event.Action)}</span><span><strong>${display(details.message, "Work is continuing.")}</strong>${details.playlist ? html`<small>${display(details.playlist)}${details.track ? ` · ${details.track}` : ""}</small>` : nothing}</span><span class="job-progress-facts">${details.provider ? html`<span class="chip">${providerDisplayName(details.provider, this.schema?.providers)}</span>` : nothing}${Number.isFinite(Number(details.throughputPerSecond)) ? html`<span class="chip">${Number(details.throughputPerSecond).toFixed(1)} tracks/s</span>` : nothing}</span></div>`;
                           }) : html`<div><time>--:--:--</time><span>Waiting for the worker to report its current stage.</span></div>`}
                         </div>
                       </section>

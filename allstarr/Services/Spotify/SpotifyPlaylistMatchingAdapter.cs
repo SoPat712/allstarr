@@ -993,12 +993,13 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 await progress(
                     new PlaylistMatchingProgress(
                         "provider-search",
-                        $"Finished route search for tracks {batchStart}-{batchEnd}.",
+                        $"Finished route search for tracks {batchStart}-{batchEnd} in {batchStopwatch.Elapsed.TotalSeconds:F1}s.",
                         batchEnd,
                         unmatchedSpotifyTracks.Count,
                         ProviderId,
                         playlistName,
-                        $"{completedTrack.PrimaryArtist} - {completedTrack.Title}"),
+                        $"{completedTrack.PrimaryArtist} - {completedTrack.Title}",
+                        batch.Count / Math.Max(0.001, batchStopwatch.Elapsed.TotalSeconds)),
                     cancellationToken);
             }
 

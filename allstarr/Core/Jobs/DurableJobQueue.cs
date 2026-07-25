@@ -75,7 +75,8 @@ public sealed record DurableJobProgressUpdate(
     string? Provider = null,
     string? Playlist = null,
     string? Track = null,
-    string? DeferralReason = null);
+    string? DeferralReason = null,
+    double? ThroughputPerSecond = null);
 
 public sealed class DurableJobQueue
 {
@@ -452,6 +453,9 @@ public sealed class DurableJobQueue
         var playlist = SafeOperationalText.Sanitize(update.Playlist, 300);
         var track = SafeOperationalText.Sanitize(update.Track, 500);
         var deferralReason = SafeOperationalText.Sanitize(update.DeferralReason, 500);
+        var throughputPerSecond = update.ThroughputPerSecond is >= 0 and < 10000
+            ? update.ThroughputPerSecond
+            : null;
         int? total = update.Total.HasValue ? Math.Max(0, update.Total.Value) : null;
         int? completed = update.Completed.HasValue ? Math.Max(0, update.Completed.Value) : null;
         if (total is > 0 && completed > total)
@@ -492,7 +496,8 @@ public sealed class DurableJobQueue
                 provider,
                 playlist,
                 track,
-                deferralReason
+                deferralReason,
+                throughputPerSecond
             }),
             CreatedAt = now
         });

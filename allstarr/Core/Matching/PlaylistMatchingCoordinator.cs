@@ -24,7 +24,8 @@ public sealed record PlaylistMatchingProgress(
     int Total,
     string? ProviderId = null,
     string? PlaylistName = null,
-    string? Track = null);
+    string? Track = null,
+    double? ThroughputPerSecond = null);
 
 public interface IPlaylistMatchingAdapter : IPlaylistMatchingCoordinator
 {
@@ -231,7 +232,8 @@ public sealed class PlaylistMatchAllJobHandler(IPlaylistMatchingCoordinator matc
                         progress.Total,
                         progress.ProviderId,
                         progress.PlaylistName,
-                        progress.Track),
+                        progress.Track,
+                        ThroughputPerSecond: progress.ThroughputPerSecond),
                     token);
             },
             cancellationToken);
