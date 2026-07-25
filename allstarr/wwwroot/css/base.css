@@ -2305,8 +2305,22 @@ fieldset.form-row > label small {
 .extension-permission-row {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-3);
+    border-top: 1px solid var(--border);
+}
+
+.extension-permission-row:first-child {
+    border-top: 0;
+}
+
+.extension-permission-identity {
+    display: flex;
+    align-items: center;
     gap: var(--space-3);
+    min-width: 0;
+    flex: 1;
 }
 
 .extension-package-heading > div,
@@ -2328,8 +2342,12 @@ fieldset.form-row > label small {
 
 .extension-permission-list {
     display: grid;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
+    gap: 0;
+    margin-top: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-1);
+    overflow: hidden;
 }
 
 .extension-value,
@@ -2347,9 +2365,15 @@ fieldset.form-row > label small {
     gap: var(--space-4);
 }
 
-.extension-permission-row {
-    border-top: 1px solid var(--border);
-    padding-top: var(--space-2);
+.extension-permission-row .row-actions {
+    flex-shrink: 0;
+}
+
+.extension-permission-row .row-actions button {
+    min-width: 76px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+    font-weight: 600;
 }
 
 .extension-log-list {
@@ -6259,35 +6283,109 @@ button.setup-choice {
 .permission-confirm {
     display: flex;
     align-items: center;
-    gap: 9px;
-    margin-top: 14px;
+    gap: 10px;
+    margin-top: var(--space-4);
+    padding: var(--space-3) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-elevated);
+    font-size: 0.86rem;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.permission-confirm input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    cursor: pointer;
 }
 
 .permission-summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    margin-bottom: 12px;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
     border: 1px solid var(--border);
-    border-radius: 11px;
+    border-radius: 10px;
     background: var(--surface-elevated);
-    padding: 12px;
+    padding: var(--space-3) var(--space-4);
 }
 
 .permission-summary > div {
     display: grid;
-    gap: 3px;
+    gap: 2px;
+    min-width: 0;
+}
+
+.permission-summary strong {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-primary);
 }
 
 .permission-summary span {
     color: var(--text-secondary);
-    font-size: .82rem;
+    font-size: 0.8rem;
+}
+
+.permission-summary button {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    font-size: 0.78rem;
+    font-weight: 600;
 }
 
 .extension-permission-row > div:first-child {
     display: grid;
     gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.extension-permission-row .extension-permission-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent-strong);
+}
+
+.extension-permission-row > div:nth-child(2) {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+}
+
+.extension-permission-row .extension-value {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    word-break: break-all;
+}
+
+.extension-permission-row .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.extension-permission-row > div:first-child strong {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: block;
 }
 
 @media (max-width: 1120px) {

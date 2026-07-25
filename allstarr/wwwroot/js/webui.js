@@ -6075,8 +6075,18 @@ class AllstarrApp extends LitElement {
           const permissionKind = String(review.permissionKind || review.PermissionKind || "externalApi");
           const permissionIcon = ({ network: "externalApi", filesystem: "download", secrets: "security", metadata: "metadata", playlist: "playlist", streaming: "streaming", download: "download", lyrics: "lyrics", library: "edit" })[permissionKind.toLowerCase()] || "security";
           return html`<div class="extension-permission-row">
-            <span class="extension-permission-icon" aria-hidden="true">${icon(permissionIcon, 18)}</span><div><strong>${titleCase(permissionKind)}</strong><small class="extension-value">${review.permissionValue || review.PermissionValue}</small>${(review.required ?? review.Required) ? html`<span class="chip warning">Required</span>` : nothing}</div>
-            <div class="row-actions" role="group" aria-label="Permission decision"><button class=${decision === "approved" ? "primary" : ""} @click=${() => this.setExtensionPermissionDecision(id, permissionId, true)}>Allow</button><button class=${decision === "denied" ? "danger" : ""} @click=${() => this.setExtensionPermissionDecision(id, permissionId, false)}>Deny</button></div>
+            <div class="extension-permission-identity">
+              <span class="extension-permission-icon" aria-hidden="true">${icon(permissionIcon, 18)}</span>
+              <div>
+                <strong>${titleCase(permissionKind)}</strong>
+                <small class="extension-value">${review.permissionValue || review.PermissionValue}</small>
+                ${(review.required ?? review.Required) ? html`<span class="chip warning">Required</span>` : nothing}
+              </div>
+            </div>
+            <div class="row-actions" role="group" aria-label="Permission decision">
+              <button class=${decision === "approved" ? "primary" : ""} @click=${() => this.setExtensionPermissionDecision(id, permissionId, true)}>Allow</button>
+              <button class=${decision === "denied" ? "danger" : ""} @click=${() => this.setExtensionPermissionDecision(id, permissionId, false)}>Deny</button>
+            </div>
           </div>`;
         })}</div>
         <label class="permission-confirm"><input type="checkbox" .checked=${this.extensionPermissionConfirmed} @change=${(event) => { this.extensionPermissionConfirmed = event.currentTarget.checked; }}><span>I understand the access requested by this extension.</span></label>
@@ -6239,7 +6249,7 @@ class AllstarrApp extends LitElement {
         const updateAction = update ? this.extensionActions[update.id || update.Id] : "";
         return html`<article class="extension-row">${this.renderExtensionLogo(item, "large")}<div class="extension-row-copy"><div class="extension-row-title"><strong>${item.displayName || item.DisplayName}</strong><span>v${item.version || item.Version}</span></div><small>${display(item.author || item.Author, "Extension package")}</small><p>${display(item.description || item.Description, "No description supplied by this extension.")}</p></div><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><span class="status-chip ${state === "active" ? "configured" : state === "failed" ? "error" : state === "disabled" ? "disabled" : "warning"}">${update ? `v${update.version || update.Version} available` : label}</span><div class="extension-row-actions">${update ? html`<button class="primary" ?disabled=${Boolean(updateAction)} @click=${() => this.installExtension(update, true)}>${updateAction || "Update"}</button>` : nothing}<button ?disabled=${Boolean(action)} @click=${() => this.openExtensionManager(item)}>Manage</button></div></article>`;
       }) : html`<div class="empty"><strong>No extensions installed</strong><span>Install one from a connected registry.</span></div>`}</div>
-    </div><section class="panel extension-activity-summary extension-activity-preview"><div class="section-heading"><div><h3>Recent extension activity</h3><p>Expand an event to inspect its package, level, timestamp, and runtime message.</p></div><button @click=${() => { this.extensionViewTab = "activity"; }}>View all activity</button></div><div class="extension-activity-feed">${asArray(this.extensionLogs).slice(0, 6).map((entry) => renderActivityEntry(entry, true))}</div></section></div>`;
+    </div>`;
     const renderAvailable = () => html`<div class="panel extension-catalog"><div class="section-heading"><div><h3>Available extensions</h3><p>Packages are verified before permission review.</p></div><label class="extension-search">${icon("search", 17)}<input aria-label="Search available extensions" placeholder="Search extensions…" .value=${this.extensionSearch} @input=${(event) => { this.extensionSearch = event.target.value; }}></label></div>${errors.map((error) => html`<div class="error-text">${error.Repository || error.repository}: ${error.Message || error.message}</div>`)}<div class="extension-store-grid">${available.filter((item) => !this.extensionSearch || `${item.displayName || item.DisplayName} ${item.description || item.Description}`.toLowerCase().includes(this.extensionSearch.toLowerCase())).map((item) => html`<article class="extension-store-card"><div class="extension-store-card-heading"><div class="provider-brand">${this.renderExtensionLogo(item, "large")}<div><strong>${item.displayName || item.DisplayName}</strong><small>v${item.version || item.Version}</small></div></div></div><p>${display(item.description || item.Description)}</p><div class="extension-row-chips">${this.extensionCapabilities(item).map((capability) => html`<span class="chip">${titleCase(capability)}</span>`)}</div><button class="primary" ?disabled=${!(item.sha256 || item.Sha256)} @click=${() => this.installExtension(item)}>Install</button></article>`)}</div></div>`;
     const renderRegistries = () => html`<div class="panel extension-registry-panel">
       <div class="section-heading"><div><h3>Registries</h3><p>Catalog sources that supply verified extension packages.</p></div><button class="primary compact icon-label" @click=${() => { this.extensionRegistryFormOpen = !this.extensionRegistryFormOpen; this.extensionRegistryError = ""; }}>${icon(this.extensionRegistryFormOpen ? "close" : "plus", 16)}<span>${this.extensionRegistryFormOpen ? "Cancel" : "Add registry"}</span></button></div>
@@ -6663,7 +6673,6 @@ class AllstarrApp extends LitElement {
     if (!this.isAdministrator()) {
       return html`
         <section class="view-stack settings-view">
-          <div class="view-header"><div><h2>Settings</h2><p>Application preferences available to your account.</p></div></div>
           <div class="empty-state"><strong>Source connections moved to Sources</strong><span>Connect credentials, manage access, and test provider health from one workspace.</span><button class="primary" @click=${() => this.navigate("/sources")}>Open Sources</button></div>
         </section>`;
     }
@@ -6700,12 +6709,6 @@ class AllstarrApp extends LitElement {
       general;
     return html`
       <section class="view-stack settings-view">
-        <div class="view-header settings-page-header">
-          <div>
-            <h2>Settings</h2>
-            <p>Routing, extensions, application preferences, and maintenance. Source connections are managed in Sources.</p>
-          </div>
-        </div>
         ${this.renderSettingsNav(sub, true)}
         ${tabContent}
       </section>
