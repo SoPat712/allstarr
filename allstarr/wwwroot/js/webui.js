@@ -697,6 +697,10 @@ const API = {
     requestJson(`/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/rematch`, { method: "POST" }, "Failed to rematch track"),
   searchMappingLocalTargets: (query, libraryScopeId = "") =>
     requestJson(`/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}`, {}, "Failed to search indexed library"),
+  searchMappingProviderTargets: (query, provider, limit = 20) => {
+    const params = new URLSearchParams({ query, provider, limit: String(limit) });
+    return requestJson(`/api/admin/track-matches/targets/provider?${params}`, {}, "Failed to search the playback provider");
+  },
   deleteMapping: (overrideId, expectedRevision = 0) =>
     requestJson(`/api/admin/playlist-links/matches/overrides/${encodeURIComponent(overrideId)}?expectedRevision=${encodeURIComponent(expectedRevision)}`, { method: "DELETE" }, "Failed to clear match review"),
   extensionStore: () => requestJson("/api/admin/extensions/store", {}, "Failed to load extension store"),
@@ -4662,7 +4666,7 @@ class AllstarrApp extends LitElement {
     const editor = this.mappingEditor;
     if (!editor || editor.query.trim().length < 2) return;
     editor.busy = true; editor.error = ""; editor.searched = true; this.requestUpdate();
-    try { const response = editor.targetType === "local" ? await API.searchMappingLocalTargets(editor.query.trim(), editor.mapping.libraryScopeId || "") : await API.searchExternalTracks(editor.query.trim(), editor.provider.trim()); editor.results = asArray(response?.tracks || response?.songs || response?.results || response?.items || response?.Items || response); } catch (error) { editor.error = error?.message || "Search failed"; editor.results = []; } finally { editor.busy = false; this.requestUpdate(); }
+    try { const response = editor.targetType === "local" ? await API.searchMappingLocalTargets(editor.query.trim(), editor.mapping.libraryScopeId || "") : await API.searchMappingProviderTargets(editor.query.trim(), editor.provider.trim()); editor.results = asArray(response?.tracks || response?.songs || response?.results || response?.items || response?.Items || response); } catch (error) { editor.error = error?.message || "Search failed"; editor.results = []; } finally { editor.busy = false; this.requestUpdate(); }
   }
 
   async applyMappingTarget(result, local) {

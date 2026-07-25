@@ -124,6 +124,29 @@ public static class PerProviderTrackMatcher
                 walked,
                 acceptedMatches);
     }
+
+    public static async Task<IReadOnlyList<Song>> SearchPlayableAsync(
+        IEnumerable<IConcreteMetadataService> services,
+        string providerId,
+        string query,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var service = PerProviderServiceResolver.Resolve(services, providerId);
+        if (service == null)
+        {
+            return Array.Empty<Song>();
+        }
+
+        var songs = await service.SearchSongsAsync(query, limit, cancellationToken);
+        return songs
+            .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
+            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalId))
+            .GroupBy(song => song.ExternalId!, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(limit)
+            .ToArray();
+    }
 }
 
 /// <summary>
@@ -461,10 +484,12 @@ public sealed class PerProviderTrackWalker
     {
         try
         {
-            var results = await service.SearchSongsAsync(query, _searchLimit, cancellationToken);
-            var candidates = results
-                .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
-                .ToList();
+            var candidates = await PerProviderTrackMatcher.SearchPlayableAsync(
+                new[] { service },
+                providerId,
+                query,
+                _searchLimit,
+                cancellationToken);
 
             if (candidates.Count == 0)
             {

@@ -7,6 +7,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Models.Spotify;
+using allstarr.Services;
 using allstarr.Services.Admin;
 using allstarr.Services.Spotify;
 using Microsoft.AspNetCore.Mvc;
@@ -22,7 +23,8 @@ namespace allstarr.Controllers;
 [Route("api/admin/track-matches")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class TrackMatchesController(
-    ITrackMatchRepository trackMatchCommands) : ControllerBase
+    ITrackMatchRepository trackMatchCommands,
+    IEnumerable<IConcreteMetadataService> metadataServices) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -293,6 +295,43 @@ public sealed class TrackMatchesController(
             item.CoverArtReference
         }).ToArray();
         return Ok(new { tracks = values });
+    }
+
+    [HttpGet("targets/provider")]
+    public async Task<IActionResult> SearchProviderTargets(
+        [FromQuery] string query,
+        [FromQuery] string provider,
+        [FromQuery] int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TrySession(out _, out var error)) return error!;
+        query = query?.Trim() ?? string.Empty;
+        provider = provider?.Trim() ?? string.Empty;
+        if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
+        if (provider.Length is < 2 or > 128) return BadRequest(new { error = "Select a playback provider" });
+        limit = Math.Clamp(limit, 1, 50);
+
+        var songs = await PerProviderTrackMatcher.SearchPlayableAsync(
+            metadataServices,
+            provider,
+            query,
+            limit,
+            cancellationToken);
+        return Ok(new
+        {
+            tracks = songs.Select(song => new
+            {
+                id = song.ExternalId,
+                externalId = song.ExternalId,
+                externalProvider = song.ExternalProvider ?? provider,
+                song.Title,
+                song.Artist,
+                song.Album,
+                artworkUrl = song.CoverArtUrl,
+                durationMilliseconds = song.Duration * 1000,
+                song.Isrc
+            })
+        });
     }
 
     [HttpPost("{externalSnapshotId:guid}/resolve")]
