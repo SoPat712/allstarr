@@ -50,7 +50,7 @@ public sealed class SpotifyPathfinderFixtureTests
         Assert.Contains("\"flatten\":true", decodedRequest, StringComparison.Ordinal);
         Assert.Contains("\"expandedFolders\":[]", decodedRequest, StringComparison.Ordinal);
         Assert.Contains("\"folderUri\":null", decodedRequest, StringComparison.Ordinal);
-        Assert.Contains("\"includeFoldersWhenFlattening\":false", decodedRequest, StringComparison.Ordinal);
+        Assert.Contains("\"includeFoldersWhenFlattening\":true", decodedRequest, StringComparison.Ordinal);
         Assert.Contains("\"withCuration\":true", decodedRequest, StringComparison.Ordinal);
         Assert.Contains("Bearer account-access-token", handler.Authorization);
     }

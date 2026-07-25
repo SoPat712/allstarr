@@ -64,7 +64,7 @@ public sealed class SpotifyPathfinderPlaylistClient
             flatten = true,
             expandedFolders = System.Array.Empty<string>(),
             folderUri = (string?)null,
-            includeFoldersWhenFlattening = false,
+            includeFoldersWhenFlattening = true,
             withCuration = true
         };
         var response = await QueryAsync(token, LibraryQuery, variables, cancellationToken);

@@ -36,6 +36,7 @@ public static class DurableStorageRegistration
         services.AddSingleton<IDurableRestoreTargetVerifier, DurableRestoreTargetVerifier>();
         services.AddSingleton<DurableBackupService>();
         services.AddSingleton<DurableStateTransferService>();
+        services.AddSingleton<SelectiveStateTransferService>();
         services.AddSingleton<allstarr.Core.Operations.OperationalMetricsService>();
         services.AddDbContextFactory<AllstarrDbContext>(builder =>
         {

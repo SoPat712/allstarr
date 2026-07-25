@@ -753,6 +753,125 @@ public class ConfigController : ControllerBase
         });
     }
 
+    [HttpPost("export-selective-state")]
+    public async Task<IActionResult> ExportSelectiveState(
+        [FromBody] SelectiveStateTransferControllerRequest? request,
+        [FromServices] SelectiveStateTransferService transferService,
+        CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("export selective state");
+        if (adminCheck != null) return adminCheck;
+
+        var session = GetAdminSession();
+        if (session == null) return Unauthorized(new { error = "Admin session required" });
+
+        var exportRequest = (request ?? new SelectiveStateTransferControllerRequest()).ToServiceRequest();
+        var tempDir = Path.Combine(Path.GetTempPath(), "allstarr-export", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var (artifact, report) = await transferService.ExportAsync(
+                tempDir,
+                exportRequest,
+                writesQuiesced: true,
+                cancellationToken);
+
+            var reportJson = JsonSerializer.Serialize(report, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+            var reportBytes = System.Text.Encoding.UTF8.GetBytes(reportJson);
+            var filename = $"allstarr-selective-export-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
+
+            Response.Headers["X-Allstarr-Selective-Report"] = Convert.ToBase64String(reportBytes);
+            return File(
+                await System.IO.File.ReadAllBytesAsync(artifact.Path, cancellationToken),
+                "application/zip",
+                filename);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
+
+    [HttpPost("import-selective-state")]
+    public async Task<IActionResult> ImportSelectiveState(
+        [FromBody] SelectiveStateTransferControllerRequest request,
+        [FromServices] SelectiveStateTransferService transferService,
+        CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("import selective state");
+        if (adminCheck != null) return adminCheck;
+
+        var session = GetAdminSession();
+        if (session == null) return Unauthorized(new { error = "Admin session required" });
+        if (string.IsNullOrWhiteSpace(request?.BackupJson))
+        {
+            return BadRequest(new { error = "BackupJson payload is required" });
+        }
+
+        try
+        {
+            var importRequest = request.ToServiceImportRequest();
+            var report = await transferService.ImportAsync(importRequest, cancellationToken);
+            return Ok(new
+            {
+                success = true,
+                message = "Selective import applied cleanly.",
+                report = new
+                {
+                    includedCategories = report.IncludedCategories,
+                    excludedCategories = report.ExcludedCategories,
+                    totalRows = report.TotalRows,
+                    rowsByEntry = report.RowsByEntry
+                }
+            });
+        }
+        catch (SelectiveTransferValidationException ex)
+        {
+            _logger.LogWarning(ex, "Selective state import rejected by validation");
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (SelectiveTransferSchemaMismatchException ex)
+        {
+            _logger.LogWarning(ex, "Selective state import schema mismatch");
+            return StatusCode(StatusCodes.Status409Conflict, new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("preview-selective-state")]
+    public IActionResult PreviewSelectiveState(
+        [FromBody] SelectiveStateTransferControllerRequest request,
+        [FromServices] SelectiveStateTransferService transferService)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("preview selective state");
+        if (adminCheck != null) return adminCheck;
+
+        if (string.IsNullOrWhiteSpace(request?.BackupJson))
+        {
+            return BadRequest(new { error = "BackupJson payload is required" });
+        }
+
+        try
+        {
+            var importRequest = request.ToServiceImportRequest();
+            var included = transferService.ResolveIncludedCategories(importRequest);
+            return Ok(new
+            {
+                includedCategories = included.Select(category => category.ToString()).ToArray(),
+                message = included.Count == 0
+                    ? "No categories selected. The import would be a no-op."
+                    : $"Preview will apply {included.Count} categor{(included.Count == 1 ? "y" : "ies")}."
+            });
+        }
+        catch (SelectiveTransferValidationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpGet("config/migration/status")]
     public async Task<IActionResult> GetEnvMigrationStatus(CancellationToken cancellationToken = default)
     {
@@ -1202,4 +1321,68 @@ public class ConfigController : ControllerBase
     /// <summary>
     /// Gets detailed memory usage statistics for debugging.
     /// </summary>
+}
+
+public sealed class SelectiveStateTransferControllerRequest
+{
+    public bool IncludeSettings { get; set; } = true;
+    public bool IncludeAccounts { get; set; } = true;
+    public bool IncludePlaylists { get; set; } = true;
+    public bool IncludeIntelligence { get; set; } = true;
+    public bool IncludeExtensions { get; set; } = true;
+    public bool ImportSettings { get; set; } = true;
+    public bool ImportAccounts { get; set; } = true;
+    public bool ImportPlaylists { get; set; } = true;
+    public bool ImportIntelligence { get; set; } = true;
+    public bool ImportExtensions { get; set; } = true;
+    public string? BackupJson { get; set; }
+
+    public SelectiveExportRequest ToServiceExportRequest() => new()
+    {
+        IncludeSettings = IncludeSettings,
+        IncludeAccounts = IncludeAccounts,
+        IncludePlaylists = IncludePlaylists,
+        IncludeIntelligence = IncludeIntelligence,
+        IncludeExtensions = IncludeExtensions
+    };
+
+    public SelectiveImportRequest ToServiceImportRequest() => new()
+    {
+        ImportSettings = ImportSettings,
+        ImportAccounts = ImportAccounts,
+        ImportPlaylists = ImportPlaylists,
+        ImportIntelligence = ImportIntelligence,
+        ImportExtensions = ImportExtensions,
+        BackupJson = BackupJson ?? string.Empty
+    };
+}
+
+internal static class SelectiveStateTransferRequestAdapter
+{
+    public static SelectiveExportRequest ToServiceRequest(this SelectiveStateTransferControllerRequest controller)
+    {
+        var c = controller ?? new SelectiveStateTransferControllerRequest();
+        return new SelectiveExportRequest
+        {
+            IncludeSettings = c.IncludeSettings,
+            IncludeAccounts = c.IncludeAccounts,
+            IncludePlaylists = c.IncludePlaylists,
+            IncludeIntelligence = c.IncludeIntelligence,
+            IncludeExtensions = c.IncludeExtensions
+        };
+    }
+
+    public static SelectiveImportRequest ToServiceImportRequest(this SelectiveStateTransferControllerRequest controller)
+    {
+        var c = controller ?? new SelectiveStateTransferControllerRequest();
+        return new SelectiveImportRequest
+        {
+            ImportSettings = c.ImportSettings || c.IncludeSettings,
+            ImportAccounts = c.ImportAccounts || c.IncludeAccounts,
+            ImportPlaylists = c.ImportPlaylists || c.IncludePlaylists,
+            ImportIntelligence = c.ImportIntelligence || c.IncludeIntelligence,
+            ImportExtensions = c.ImportExtensions || c.IncludeExtensions,
+            BackupJson = c.BackupJson ?? string.Empty
+        };
+    }
 }

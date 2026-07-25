@@ -403,7 +403,10 @@ async function requestBlob(url, options = {}, fallback = "Request failed") {
     throw error;
   }
 
-  return response.blob();
+  return {
+    blob: await response.blob(),
+    headers: response.headers
+  };
 }
 
 function jsonBody(payload, method = "POST") {
@@ -451,6 +454,30 @@ const API = {
   clearCache: () => requestJson("/api/admin/cache/clear", { method: "POST" }, "Failed to clear cache"),
   restart: () => requestJson("/api/admin/restart", { method: "POST" }, "Failed to restart"),
   exportEnv: () => requestBlob("/api/admin/export-env", {}, "Failed to export .env"),
+  exportSelectiveState: (options) =>
+    requestBlob(
+      "/api/admin/export-selective-state",
+      jsonBody(options || {
+        IncludeSettings: true,
+        IncludeAccounts: true,
+        IncludePlaylists: true,
+        IncludeIntelligence: true,
+        IncludeExtensions: true
+      }),
+      "Failed to export selective state"
+    ),
+  importSelectiveState: (payload) =>
+    requestJson(
+      "/api/admin/import-selective-state",
+      jsonBody(payload),
+      "Failed to import selective state"
+    ),
+  previewSelectiveState: (payload) =>
+    requestJson(
+      "/api/admin/preview-selective-state",
+      jsonBody(payload),
+      "Failed to preview selective state"
+    ),
   envMigrationStatus: () =>
     requestJson(ENV_MIGRATION_ENDPOINTS.status, { cache: "no-store" }, "Failed to check legacy migration status"),
   previewEnvMigration: (source, sourceName) => {
@@ -904,6 +931,21 @@ class AllstarrApp extends LitElement {
     this.selectedTrackDetails = null;
     this.selectedTrackContext = null;
     this.trackDetailsLoading = false;
+    this.selectiveTransferOptions = {
+      IncludeSettings: true,
+      IncludeAccounts: true,
+      IncludePlaylists: true,
+      IncludeIntelligence: true,
+      IncludeExtensions: true,
+      ImportSettings: true,
+      ImportAccounts: true,
+      ImportPlaylists: true,
+      ImportIntelligence: true,
+      ImportExtensions: true
+    };
+    this.selectiveTransferBusy = false;
+    this.selectiveTransferError = null;
+    this.selectiveTransferReport = null;
     this.downloads = null;
     this.cachedDownloads = null;
     this.jobs = [];
@@ -6673,6 +6715,162 @@ class AllstarrApp extends LitElement {
     </details>`;
   }
 
+  renderSelectiveTransferDisclosure() {
+    const report = this.selectiveTransferReport;
+    const categories = [
+      { key: "Settings", label: "Settings", description: "Tenants, runtime configuration, audit events." },
+      { key: "Accounts", label: "Accounts", description: "Users, backend identities, provider accounts, secret references." },
+      { key: "Playlists", label: "Playlists and mappings", description: "Library tracks, canonical recordings, playlist links, sync runs, target memberships." },
+      { key: "Intelligence", label: "Intelligence and jobs", description: "Policies, signals, recommendations, favorites, downloads, durable jobs and schedules." },
+      { key: "Extensions", label: "Extensions", description: "Extension registries, packages, permission reviews, logs." }
+    ];
+    return html`
+      <details class="content-disclosure panel settings-disclosure" @toggle=${(event) => { if (event.target.open) this.selectiveTransferReport = null; }}>
+        <summary><span><strong>Selective granular import and export</strong><small>Choose exactly which categories to back up or restore</small></span></summary>
+        <div class="disclosure-body">
+          <p class="muted">Select the categories to include. Dependencies are enforced by the server, so Accounts requires Settings, and Playlists and Intelligence require both.</p>
+          <div class="stat-list compact">
+            ${categories.map((category) => {
+              const exportKey = `Include${category.key}`;
+              const importKey = `Import${category.key}`;
+              return html`
+                <div class="stat-row">
+                  <div class="toggle-group">
+                    <label class="toggle-row">
+                      <input type="checkbox" .checked=${this.selectiveTransferOptions[exportKey] ?? true} @change=${(event) => { this.selectiveTransferOptions = { ...this.selectiveTransferOptions, [exportKey]: event.target.checked }; this.requestUpdate(); }}>
+                      <span><strong>${category.label}</strong><small>${category.description}</small></span>
+                    </label>
+                  </div>
+                  <div class="toggle-group">
+                    <label class="inline-check" title="Import this category from the backup archive">
+                      <input type="checkbox" .checked=${this.selectiveTransferOptions[importKey] ?? true} @change=${(event) => { this.selectiveTransferOptions = { ...this.selectiveTransferOptions, [importKey]: event.target.checked }; this.requestUpdate(); }}>
+                      Import
+                    </label>
+                  </div>
+                </div>`;
+            })}
+          </div>
+          <div class="actions">
+            <button class="primary" @click=${this.handleSelectiveExport}>Export selected categories</button>
+            <label class="ghost file-button">
+              <input type="file" accept=".zip" .disabled=${this.selectiveTransferBusy} @change=${this.handleSelectiveImportFile}>
+              <span>${this.selectiveTransferBusy ? "Working…" : "Import selected categories from archive"}</span>
+            </label>
+          </div>
+          ${this.selectiveTransferError ? html`<div class="callout degraded" role="status"><strong>Selective transfer failed</strong><span>${this.selectiveTransferError}</span></div>` : nothing}
+          ${report ? html`
+            <div class="callout success" role="status" aria-live="polite">
+              <strong>${report.kind === "export" ? "Selective export complete" : "Selective import complete"}</strong>
+              <span>${report.message}</span>
+              ${report.includedCategories?.length ? html`<small>Included: ${report.includedCategories.join(", ")}</small>` : nothing}
+              ${report.excludedCategories?.length ? html`<small>Excluded: ${report.excludedCategories.join(", ")}</small>` : nothing}
+              ${report.rowsByEntry ? html`<small>Rows: ${Object.entries(report.rowsByEntry).map(([name, count]) => `${name} (${count})`).join(" · ")}</small>` : nothing}
+            </div>
+          ` : nothing}
+        </div>
+      </details>
+    `;
+  }
+
+  handleSelectiveExport = async () => {
+    if (this.selectiveTransferBusy) return;
+    const options = this.selectiveTransferOptions;
+    const anySelected = ["IncludeSettings", "IncludeAccounts", "IncludePlaylists", "IncludeIntelligence", "IncludeExtensions"]
+      .some((key) => options[key] ?? true);
+    if (!anySelected) {
+      this.toast("Select at least one category to export");
+      return;
+    }
+    this.selectiveTransferBusy = true;
+    this.selectiveTransferError = null;
+    try {
+      const result = await API.exportSelectiveState(options);
+      const blob = result?.blob || result;
+      const headers = result?.headers;
+      const reportHeader = headers?.get?.("X-Allstarr-Selective-Report");
+      if (reportHeader) {
+        try {
+          const decoded = atob(reportHeader);
+          const parsed = JSON.parse(decoded);
+          this.selectiveTransferReport = {
+            kind: "export",
+            message: `${parsed.totalRows} rows across ${(parsed.includedCategories || []).length} categories.`,
+            includedCategories: parsed.includedCategories || [],
+            excludedCategories: parsed.excludedCategories || [],
+            rowsByEntry: parsed.rowsByEntry || {}
+          };
+        } catch { /* ignore report decode failure */ }
+      } else {
+        this.selectiveTransferReport = {
+          kind: "export",
+          message: "Export archive downloaded.",
+          includedCategories: Object.keys(options).filter((key) => key.startsWith("Include") && options[key]).map((key) => key.replace("Include", "")),
+          excludedCategories: []
+        };
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `allstarr-selective-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.toast("Selective export archive downloaded");
+    } catch (err) {
+      this.selectiveTransferError = err?.message || "Failed to export selective state";
+    } finally {
+      this.selectiveTransferBusy = false;
+      this.requestUpdate();
+    }
+  };
+
+  handleSelectiveImportFile = async (event) => {
+    const file = event.target?.files?.[0];
+    if (!file) return;
+    if (this.selectiveTransferBusy) return;
+    const options = this.selectiveTransferOptions;
+    const anySelected = ["ImportSettings", "ImportAccounts", "ImportPlaylists", "ImportIntelligence", "ImportExtensions"]
+      .some((key) => options[key] ?? true);
+    if (!anySelected) {
+      this.toast("Select at least one category to import");
+      event.target.value = "";
+      return;
+    }
+    this.selectiveTransferBusy = true;
+    this.selectiveTransferError = null;
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result;
+          if (typeof result !== "string") {
+            reject(new Error("Could not read archive"));
+            return;
+          }
+          const comma = result.indexOf(",");
+          resolve(comma >= 0 ? result.slice(comma + 1) : result);
+        };
+        reader.onerror = () => reject(reader.error || new Error("Could not read archive"));
+        reader.readAsDataURL(file);
+      });
+      const payload = { ...options, BackupJson: JSON.stringify({ archiveBase64: base64 }) };
+      const response = await API.importSelectiveState(payload);
+      this.selectiveTransferReport = {
+        kind: "import",
+        message: response?.message || "Selective import applied.",
+        includedCategories: response?.report?.includedCategories || [],
+        excludedCategories: response?.report?.excludedCategories || [],
+        rowsByEntry: response?.report?.rowsByEntry || {}
+      };
+      this.toast("Selective import applied cleanly");
+    } catch (err) {
+      this.selectiveTransferError = err?.message || "Failed to import selective state";
+    } finally {
+      this.selectiveTransferBusy = false;
+      event.target.value = "";
+      this.requestUpdate();
+    }
+  };
+
   renderSettingsMaintenance() {
     return html`
       <details class="content-disclosure panel settings-disclosure">
@@ -6689,6 +6887,7 @@ class AllstarrApp extends LitElement {
             <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
           </div>
       </details>
+        ${this.renderSelectiveTransferDisclosure()}
         ${this.renderCacheDiagnostics()}
         <details class="content-disclosure panel settings-disclosure" open>
           <summary><span><strong>Media diagnostics</strong><small>Verify metadata and album artwork through Allstarr</small></span></summary>
@@ -7133,7 +7332,8 @@ class AllstarrApp extends LitElement {
   }
 
   async exportEnv() {
-    const blob = await API.exportEnv();
+    const result = await API.exportEnv();
+    const blob = result?.blob || result;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
