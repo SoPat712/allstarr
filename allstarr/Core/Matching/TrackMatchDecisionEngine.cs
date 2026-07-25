@@ -232,7 +232,7 @@ public sealed class TrackMatchDecisionEngine
                 new Dictionary<string, double> { ["isrc"] = 1 });
         }
 
-        if (candidate.ProviderTrackIds?.TryGetValue(source.ProviderId, out var providerId) == true &&
+        if (TryGetProviderTrackId(candidate.ProviderTrackIds, source.ProviderId, out var providerId) &&
             providerId.Equals(source.ExternalId, StringComparison.Ordinal))
         {
             return Score(candidate, 1, ["provider_track_id_exact"], warnings,
@@ -274,6 +274,37 @@ public sealed class TrackMatchDecisionEngine
                 ["albumArtist"] = Math.Round(albumArtist, 4),
                 ["duration"] = Math.Round(duration, 4)
             });
+    }
+
+    private static bool TryGetProviderTrackId(
+        IReadOnlyDictionary<string, string>? providerTrackIds,
+        string providerId,
+        out string trackId)
+    {
+        trackId = string.Empty;
+        if (providerTrackIds == null || string.IsNullOrWhiteSpace(providerId))
+        {
+            return false;
+        }
+
+        if (providerTrackIds.TryGetValue(providerId, out var exact) &&
+            !string.IsNullOrWhiteSpace(exact))
+        {
+            trackId = exact;
+            return true;
+        }
+
+        foreach (var (candidateProviderId, candidateTrackId) in providerTrackIds)
+        {
+            if (candidateProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(candidateTrackId))
+            {
+                trackId = candidateTrackId;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private double DurationScore(int? source, int? candidate)

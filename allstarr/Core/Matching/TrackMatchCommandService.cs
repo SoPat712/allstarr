@@ -1282,7 +1282,8 @@ public sealed class TrackMatchCommandService(
                 : null,
             item.Isrc,
             item.MusicBrainzRecordingId,
-            null)).ToArray();
+            null,
+            ReadProviderTrackIds(item.ProviderIdsJson))).ToArray();
         var scope = new TrackMatchScope(
             actor.TenantId,
             snapshot.OwnerUserId,
@@ -1678,6 +1679,27 @@ public sealed class TrackMatchCommandService(
         {
         }
         return null;
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadProviderTrackIds(string json)
+    {
+        try
+        {
+            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            var normalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (providerId, trackId) in values ?? [])
+            {
+                if (!string.IsNullOrWhiteSpace(providerId) && !string.IsNullOrWhiteSpace(trackId))
+                {
+                    normalized[providerId.Trim()] = trackId.Trim();
+                }
+            }
+            return normalized;
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private static string? ReadString(JsonElement root, params string[] names)

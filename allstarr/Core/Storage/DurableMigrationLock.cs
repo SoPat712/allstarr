@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Microsoft.Data.Sqlite;
 using Npgsql;
 
 namespace allstarr.Core.Storage;
@@ -20,9 +19,7 @@ public sealed class DurableMigrationLock
         CancellationToken cancellationToken = default)
     {
         var timeout = TimeSpan.FromSeconds(_options.MigrationLockTimeoutSeconds);
-        return _options.ParseProvider() == DurableStorageProvider.Postgres
-            ? await AcquirePostgresAsync(timeout, cancellationToken)
-            : await AcquireSqliteAsync(timeout, cancellationToken);
+        return await AcquirePostgresAsync(timeout, cancellationToken);
     }
 
     private async Task<IAsyncDisposable> AcquirePostgresAsync(
@@ -57,43 +54,6 @@ public sealed class DurableMigrationLock
         throw new MigrationLockException("Timed out waiting for the durable database migration lock.");
     }
 
-    private async Task<IAsyncDisposable> AcquireSqliteAsync(
-        TimeSpan timeout,
-        CancellationToken cancellationToken)
-    {
-        var databasePath = _options.GetSqlitePath();
-        if (databasePath == null)
-        {
-            throw new MigrationLockException(
-                "SQLite automatic migration requires a persistent database path.");
-        }
-
-        var lockPath = databasePath + ".migration.lock";
-        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
-        var stopwatch = Stopwatch.StartNew();
-        while (stopwatch.Elapsed < timeout)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                var stream = new FileStream(
-                    lockPath,
-                    FileMode.OpenOrCreate,
-                    FileAccess.ReadWrite,
-                    FileShare.None,
-                    1,
-                    FileOptions.Asynchronous | FileOptions.DeleteOnClose);
-                return new SqliteLease(stream);
-            }
-            catch (IOException)
-            {
-                await Task.Delay(100, cancellationToken);
-            }
-        }
-
-        throw new MigrationLockException("Timed out waiting for the SQLite migration lock.");
-    }
-
     private sealed class PostgresLease(NpgsqlConnection connection) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
@@ -110,10 +70,5 @@ public sealed class DurableMigrationLock
                 await connection.DisposeAsync();
             }
         }
-    }
-
-    private sealed class SqliteLease(FileStream stream) : IAsyncDisposable
-    {
-        public ValueTask DisposeAsync() => stream.DisposeAsync();
     }
 }

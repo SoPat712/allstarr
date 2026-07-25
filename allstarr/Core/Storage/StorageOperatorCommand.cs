@@ -1,6 +1,5 @@
 using System.Text.Json;
 using allstarr.Core.Secrets;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Storage;
@@ -31,8 +30,6 @@ public static class StorageOperatorCommand
             {
                 "backup" => await Backup(provider, output, cancellationToken),
                 "export" => await Export(provider, arguments, output, cancellationToken),
-                "restore-sqlite" => await RestoreSqlite(
-                    provider, arguments, output, cancellationToken),
                 "restore-postgres" => await RestorePostgres(
                     provider, arguments, output, cancellationToken),
                 "import" => await Import(provider, arguments, output, cancellationToken),
@@ -93,40 +90,6 @@ public static class StorageOperatorCommand
             sourceProvider = artifact.SourceProvider,
             schemaVersion = artifact.SchemaVersion,
             createdAt = artifact.CreatedAt
-        });
-        return 0;
-    }
-
-    private static async Task<int> RestoreSqlite(
-        IServiceProvider provider,
-        IReadOnlyDictionary<string, string?> arguments,
-        TextWriter output,
-        CancellationToken cancellationToken)
-    {
-        RequireFlag(arguments, "confirm-target-offline");
-        var service = provider.GetRequiredService<DurableBackupService>();
-        var artifact = await BackupArtifactFromArguments(
-            service,
-            arguments,
-            DurableStorageProvider.Sqlite,
-            cancellationToken);
-        var targetPath = Path.GetFullPath(RequireValue(arguments, "target"));
-        var targetConnection = new SqliteConnectionStringBuilder
-        {
-            DataSource = targetPath
-        }.ToString();
-        var compatibility = await service.RestoreSqliteToAsync(
-            artifact,
-            targetConnection,
-            overwrite: arguments.ContainsKey("overwrite"),
-            cancellationToken);
-        await WriteJson(output, new
-        {
-            status = "verified",
-            provider = "Sqlite",
-            targetPath,
-            sha256 = artifact.Sha256,
-            schemaVersion = compatibility.CurrentSchemaVersion
         });
         return 0;
     }
@@ -341,7 +304,6 @@ public static class StorageOperatorCommand
 
           storage backup
           storage export --output <directory> --confirm-writes-stopped
-          storage restore-sqlite --artifact <file> --sha256 <hash> --target <file> --confirm-target-offline [--overwrite]
           storage restore-postgres --artifact <file> --sha256 <hash> --target-connection-env <name> --confirm-isolated-target-database <name> --confirm-destructive-restore
           storage import --artifact <file> --sha256 <hash> --confirm-empty-target
           storage rotate-secrets --confirm-writes-stopped

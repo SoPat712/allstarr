@@ -9,6 +9,7 @@ const SETUP_GUIDE_LAST_STEP = 4;
 const REDACTION_MODE_KEY = "allstarr-sharing-redaction";
 const SIDEBAR_COLLAPSED_KEY = "allstarr-sidebar-collapsed";
 const ACCOUNT_MANAGED_PROVIDERS = new Set(["spotify", "deezer", "qobuz", "lastfm", "listenbrainz", "apple-musickit"]);
+const REQUEST_TIMEOUT_MS = 45_000;
 
 function normalizeRoute(hash = window.location.hash) {
   const route = hash.replace(/^#/, "") || DEFAULT_ROUTE;
@@ -371,10 +372,36 @@ async function readErrorDetails(response, fallback) {
 }
 
 async function requestJson(url, options = {}, fallback = "Request failed") {
-  const response = await fetch(url, {
-    credentials: "same-origin",
-    ...options,
-  });
+  const { signal, timeoutMs = REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  if (signal?.aborted) {
+    abortFromCaller();
+  } else {
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      credentials: "same-origin",
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`${fallback}: the server did not respond within ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
 
   if (!response.ok) {
     const details = await readErrorDetails(response, fallback);
@@ -781,6 +808,7 @@ class AllstarrApp extends LitElement {
     authenticated: { type: Boolean },
     loading: { type: Boolean },
     bootMessageIndex: { state: true },
+    bootError: { state: true },
     route: { type: String },
     navOpen: { type: Boolean },
     sidebarCollapsed: { type: Boolean },
@@ -898,6 +926,8 @@ class AllstarrApp extends LitElement {
     this.loading = true;
     this.bootMessageIndex = 0;
     this.bootMessageTimer = null;
+    this.bootError = "";
+    this.bootstrapAttempt = 0;
     this.route = normalizeRoute();
     this.navOpen = false;
     this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
@@ -1179,10 +1209,13 @@ class AllstarrApp extends LitElement {
   }
 
   async bootstrap() {
+    const attempt = ++this.bootstrapAttempt;
     this.loading = true;
+    this.bootError = "";
     this.startSignalBoot();
     try {
       const authState = await API.me();
+      if (attempt !== this.bootstrapAttempt) return;
       this.authBackend = authState.backend || authState.Backend || "media server";
       if (!(authState.authenticated || authState.Authenticated)) {
         this.authenticated = false;
@@ -1222,6 +1255,7 @@ class AllstarrApp extends LitElement {
       }
       await this.loadForRoute();
     } catch (error) {
+      if (attempt !== this.bootstrapAttempt) return;
       // A confirmed session must not be discarded because a later UI bootstrap
       // request failed. Only the auth check itself can leave us unauthenticated.
       if (!this.authenticated) {
@@ -1230,9 +1264,12 @@ class AllstarrApp extends LitElement {
       if (!String(error.message).includes("Authentication")) {
         this.toast(error.message, "error");
       }
+      this.bootError = error?.message || "Allstarr could not finish loading.";
     } finally {
-      this.stopSignalBoot();
-      this.loading = false;
+      if (attempt === this.bootstrapAttempt) {
+        this.stopSignalBoot();
+        this.loading = false;
+      }
     }
   }
 
@@ -2589,6 +2626,10 @@ class AllstarrApp extends LitElement {
       return this.renderSignalBoot();
     }
 
+    if (this.bootError) {
+      return this.renderBootFailure();
+    }
+
     if (!this.authenticated) {
       return this.renderAuth();
     }
@@ -2627,7 +2668,20 @@ class AllstarrApp extends LitElement {
         <div class="signal-boot-mark" aria-hidden="true"><span class="signal-boot-orbit"></span><span class="signal-boot-pulse"></span><span class="signal-boot-core">A</span></div>
         <h1 class="signal-boot-status">${BOOT_MESSAGES[this.bootMessageIndex]}</h1>
         <div class="signal-boot-meter" aria-hidden="true">${Array.from({ length: 9 }, () => html`<span></span>`)}</div>
-        <span class="signal-boot-accessible" role="status">Loading Allstarr. Tuning provider routes.</span>
+        <span class="signal-boot-accessible" role="status">Loading Allstarr. ${BOOT_MESSAGES[this.bootMessageIndex]}.</span>
+      </div>
+    </section>`;
+  }
+
+  renderBootFailure() {
+    return html`<section class="signal-boot signal-boot-failed" aria-labelledby="boot-failure-title">
+      <div class="signal-boot-grid" aria-hidden="true"></div>
+      <div class="signal-boot-console">
+        <div class="signal-boot-mark" aria-hidden="true"><span class="signal-boot-core">!</span></div>
+        <h1 id="boot-failure-title">Allstarr could not finish starting</h1>
+        <p class="signal-boot-detail">${this.bootError}</p>
+        <button class="primary signal-boot-retry" @click=${() => this.bootstrap()}>Try again</button>
+        <small>Check PostgreSQL readiness and the container logs if retrying does not recover.</small>
       </div>
     </section>`;
   }

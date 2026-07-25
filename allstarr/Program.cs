@@ -55,8 +55,7 @@ builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new RedactingConsoleLoggerProvider(builder.Configuration));
 builder.Services.AddDurableStorage(
     builder.Configuration,
-    builder.Environment,
-    allowOfflineSqlite: isStorageOperatorCommand);
+    builder.Environment);
 builder.Services.AddDurableRuntimeSettings();
 builder.Services.AddEncryptedSecretStore(builder.Configuration);
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();

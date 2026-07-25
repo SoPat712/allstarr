@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -56,21 +55,14 @@ public sealed class DurableBackupService
         var id = Guid.CreateVersion7();
         var directory = Path.GetFullPath(_options.BackupDirectory);
         Directory.CreateDirectory(directory);
-        var extension = provider == DurableStorageProvider.Sqlite ? ".sqlite" : ".dump";
+        var extension = ".dump";
         var baseName = $"allstarr-{provider.ToString().ToLowerInvariant()}-{now:yyyyMMddTHHmmssZ}-{id:N}";
         var artifactPath = Path.Combine(directory, baseName + extension);
         var temporaryPath = artifactPath + ".partial";
 
         try
         {
-            if (provider == DurableStorageProvider.Sqlite)
-            {
-                await BackupSqliteAsync(temporaryPath, cancellationToken);
-            }
-            else
-            {
-                await BackupPostgresAsync(temporaryPath, cancellationToken);
-            }
+            await BackupPostgresAsync(temporaryPath, cancellationToken);
 
             File.Move(temporaryPath, artifactPath, overwrite: false);
             var hash = await ComputeSha256Async(artifactPath, cancellationToken);
@@ -182,112 +174,19 @@ public sealed class DurableBackupService
             throw new BackupVerificationException("Backup checksum verification failed.");
         }
 
-        if (artifact.Provider == DurableStorageProvider.Sqlite)
+        if (artifact.Provider != DurableStorageProvider.Postgres)
         {
-            await _restoreTargetVerifier.VerifyAsync(
-                DurableStorageProvider.Sqlite,
-                new SqliteConnectionStringBuilder
-                {
-                    DataSource = artifact.ArtifactPath,
-                    Mode = SqliteOpenMode.ReadOnly
-                }.ToString(),
-                cancellationToken);
-        }
-        else
-        {
-            var result = await _processRunner.RunAsync(new StorageProcessRequest(
-                "pg_restore",
-                ["--list", artifact.ArtifactPath],
-                new Dictionary<string, string?>()), cancellationToken);
-            if (result.ExitCode != 0)
-            {
-                throw new BackupVerificationException(
-                    result.SafeError ?? "Postgres backup catalog verification failed.");
-            }
-        }
-    }
-
-    public async Task<DurableSchemaCompatibilitySnapshot> RestoreSqliteToAsync(
-        BackupArtifact artifact,
-        string targetConnectionString,
-        bool overwrite,
-        CancellationToken cancellationToken = default)
-    {
-        if (artifact.Provider != DurableStorageProvider.Sqlite)
-        {
-            throw new InvalidOperationException("The selected backup is not a SQLite artifact.");
+            throw new BackupVerificationException("Only PostgreSQL backup artifacts are supported.");
         }
 
-        await VerifyAsync(artifact, cancellationToken);
-        var target = new SqliteConnectionStringBuilder(targetConnectionString).DataSource;
-        if (string.IsNullOrWhiteSpace(target) || target == ":memory:")
+        var result = await _processRunner.RunAsync(new StorageProcessRequest(
+            "pg_restore",
+            ["--list", artifact.ArtifactPath],
+            new Dictionary<string, string?>()), cancellationToken);
+        if (result.ExitCode != 0)
         {
-            throw new ArgumentException("Restore target must be a persistent SQLite file.", nameof(targetConnectionString));
-        }
-
-        target = Path.GetFullPath(target);
-        var current = _options.GetSqlitePath();
-        if (current != null && current.Equals(target, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "Online in-place restore is not allowed. Restore to an isolated path, validate it, then cut over while writes are stopped.");
-        }
-
-        if (File.Exists(target) && !overwrite)
-        {
-            throw new IOException("Restore target already exists.");
-        }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        await RecordRestoreStatusAsync(artifact, "verification_pending", null, cancellationToken);
-        var temporary = target + $".{Guid.NewGuid():N}.restore";
-        var restoreCompleted = false;
-        var targetVerified = false;
-        try
-        {
-            await using var source = new SqliteConnection(
-                new SqliteConnectionStringBuilder
-                {
-                    DataSource = artifact.ArtifactPath,
-                    Mode = SqliteOpenMode.ReadOnly
-                }.ToString());
-            await using var destination = new SqliteConnection($"Data Source={temporary}");
-            await source.OpenAsync(cancellationToken);
-            await destination.OpenAsync(cancellationToken);
-            source.BackupDatabase(destination);
-            await SetStandaloneSqliteJournalMode(destination, cancellationToken);
-            await destination.CloseAsync();
-            await source.CloseAsync();
-            restoreCompleted = true;
-            var compatibility = await _restoreTargetVerifier.VerifyAsync(
-                DurableStorageProvider.Sqlite,
-                new SqliteConnectionStringBuilder
-                {
-                    DataSource = temporary,
-                    Mode = SqliteOpenMode.ReadOnly
-                }.ToString(),
-                cancellationToken);
-            targetVerified = true;
-            File.Move(temporary, target, overwrite);
-            await RecordRestoreStatusAsync(
-                artifact,
-                "verified",
-                DateTimeOffset.UtcNow,
-                cancellationToken);
-            return compatibility;
-        }
-        catch
-        {
-            TryDelete(temporary);
-            await TryRecordRestoreFailureAsync(
-                artifact,
-                targetVerified
-                    ? "cutover_failed"
-                    : restoreCompleted
-                        ? "verification_failed"
-                        : "restore_failed",
-                CancellationToken.None);
-            throw;
+            throw new BackupVerificationException(
+                result.SafeError ?? "Postgres backup catalog verification failed.");
         }
     }
 
@@ -326,17 +225,14 @@ public sealed class DurableBackupService
                 "Postgres restore requires the isolated target database name to be confirmed exactly.");
         }
 
-        if (_options.ParseProvider() == DurableStorageProvider.Postgres)
+        var current = new NpgsqlConnectionStringBuilder(_options.ConnectionString);
+        if (string.Equals(
+                current.Database?.Trim(),
+                targetDatabase,
+                StringComparison.OrdinalIgnoreCase))
         {
-            var current = new NpgsqlConnectionStringBuilder(_options.ConnectionString);
-            if (string.Equals(
-                    current.Database?.Trim(),
-                    targetDatabase,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "Postgres restore refuses the configured current database name. Restore into a new isolated database name.");
-            }
+            throw new InvalidOperationException(
+                "Postgres restore refuses the configured current database name. Restore into a new isolated database name.");
         }
 
         await VerifyAsync(artifact, cancellationToken);
@@ -383,16 +279,6 @@ public sealed class DurableBackupService
         }
     }
 
-    private async Task BackupSqliteAsync(string destinationPath, CancellationToken cancellationToken)
-    {
-        await using var source = new SqliteConnection(_options.ConnectionString);
-        await using var destination = new SqliteConnection($"Data Source={destinationPath}");
-        await source.OpenAsync(cancellationToken);
-        await destination.OpenAsync(cancellationToken);
-        source.BackupDatabase(destination);
-        await SetStandaloneSqliteJournalMode(destination, cancellationToken);
-    }
-
     private async Task BackupPostgresAsync(string destinationPath, CancellationToken cancellationToken)
     {
         var connection = new NpgsqlConnectionStringBuilder(_options.ConnectionString);
@@ -423,15 +309,6 @@ public sealed class DurableBackupService
             ["PGPASSWORD"] = connection.Password,
             ["PGSSLMODE"] = connection.SslMode.ToString().ToLowerInvariant()
         };
-
-    private static async Task SetStandaloneSqliteJournalMode(
-        SqliteConnection connection,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA journal_mode=DELETE";
-        await command.ExecuteScalarAsync(cancellationToken);
-    }
 
     private async Task RecordAsync(BackupArtifact artifact, CancellationToken cancellationToken)
     {

@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Npgsql;
 
 namespace allstarr.Core.Storage;
@@ -38,11 +37,10 @@ public sealed class DurableStorageOptions
 
     public DurableStorageProvider ParseProvider()
     {
-        if (!Enum.TryParse<DurableStorageProvider>(Provider, ignoreCase: true, out var parsed))
+        if (!Provider.Equals(nameof(DurableStorageProvider.Postgres), StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"Storage:Provider must be '{nameof(DurableStorageProvider.Postgres)}' or " +
-                $"'{nameof(DurableStorageProvider.Sqlite)}'.");
+                $"Storage:Provider must be '{nameof(DurableStorageProvider.Postgres)}'.");
         }
 
         if (string.IsNullOrWhiteSpace(ConnectionString))
@@ -78,7 +76,7 @@ public sealed class DurableStorageOptions
                 "Storage:RuntimeProbeTimeoutSeconds must be between 1 and 60.");
         }
 
-        return parsed;
+        return DurableStorageProvider.Postgres;
     }
 
     public void ApplyPasswordFile(DurableStorageProvider provider)
@@ -110,25 +108,5 @@ public sealed class DurableStorageOptions
             Password = password
         };
         ConnectionString = builder.ConnectionString;
-    }
-
-    public string? GetSqlitePath()
-    {
-        if (ParseProvider() != DurableStorageProvider.Sqlite)
-        {
-            return null;
-        }
-
-        return GetSqlitePath(new SqliteConnectionStringBuilder(ConnectionString));
-    }
-
-    private static string? GetSqlitePath(SqliteConnectionStringBuilder builder)
-    {
-        if (string.IsNullOrWhiteSpace(builder.DataSource) || builder.DataSource == ":memory:")
-        {
-            return null;
-        }
-
-        return Path.GetFullPath(builder.DataSource);
     }
 }
