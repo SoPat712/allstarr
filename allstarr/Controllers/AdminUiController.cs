@@ -1024,7 +1024,7 @@ public class AdminUiController : ControllerBase
             return new AdminUiPinnedProvider
             {
                 Id = "subsonic-local",
-                Name = "Subsonic / Navidrome library",
+                Name = "Subsonic",
                 Icon = "subsonic",
                 Reason = "Local library is always checked first. This entry is fixed."
             };
@@ -1033,7 +1033,7 @@ public class AdminUiController : ControllerBase
         return new AdminUiPinnedProvider
         {
             Id = "jellyfin-local",
-            Name = "Jellyfin library",
+            Name = "Jellyfin",
             Icon = "jellyfin",
             Reason = "Local library is always checked first. This entry is fixed."
         };

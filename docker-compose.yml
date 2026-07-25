@@ -39,6 +39,9 @@ services:
       - host.docker.internal:host-gateway
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      # Backend selection is deployment-owned. Keep this explicit so rebuilding or
+      # updating the container cannot fall through to an image-level default.
+      Backend__Type: ${BACKEND_TYPE:-Jellyfin}
 
       # Bootstrap and network security. Product, provider, account, matching, retention,
       # and feature settings are persisted through Allstarr's PostgreSQL settings store.
