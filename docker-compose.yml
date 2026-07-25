@@ -40,8 +40,16 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       # Backend selection is deployment-owned. Keep this explicit so rebuilding or
-      # updating the container cannot fall through to an image-level default.
+      # updating the container cannot fall through to an image-level default. The
+      # selected media server's bootstrap endpoint and Jellyfin service credential
+      # remain deployment-owned as well; product behavior belongs in PostgreSQL.
       Backend__Type: ${BACKEND_TYPE:-Jellyfin}
+      Jellyfin__Url: ${JELLYFIN_URL:-}
+      Jellyfin__ApiKey: ${JELLYFIN_API_KEY:-}
+      Jellyfin__UserId: ${JELLYFIN_USER_ID:-}
+      Jellyfin__ClientUsername: ${JELLYFIN_CLIENT_USERNAME:-allstarr}
+      Jellyfin__LibraryId: ${JELLYFIN_LIBRARY_ID:-}
+      Subsonic__Url: ${SUBSONIC_URL:-}
 
       # Bootstrap and network security. Product, provider, account, matching, retention,
       # and feature settings are persisted through Allstarr's PostgreSQL settings store.
