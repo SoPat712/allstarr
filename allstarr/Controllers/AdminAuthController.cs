@@ -167,7 +167,7 @@ public class AdminAuthController : ControllerBase
                     isAdministrator = session.IsAdministrator,
                     tenantId = session.TenantId,
                     allstarrUserId = session.AllstarrUserId,
-                    avatarUrl = "/api/admin/auth/me/avatar"
+                    avatarUrl = $"/api/admin/auth/me/avatar?user={Uri.EscapeDataString(session.UserId)}"
                 },
                 rememberMe = session.IsPersistent,
                 backend = BackendType.Jellyfin.ToString(),
@@ -214,7 +214,7 @@ public class AdminAuthController : ControllerBase
                 tenantId = session.TenantId,
                 allstarrUserId = session.AllstarrUserId,
                 avatarUrl = session.BackendType.Equals(BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase)
-                    ? "/api/admin/auth/me/avatar"
+                    ? $"/api/admin/auth/me/avatar?user={Uri.EscapeDataString(session.UserId)}"
                     : null
             },
             rememberMe = session.IsPersistent,
@@ -246,7 +246,14 @@ public class AdminAuthController : ControllerBase
         }
 
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        return bytes.Length is > 0 and <= 5 * 1024 * 1024 ? File(bytes, contentType) : NotFound();
+        if (bytes.Length is <= 0 or > 5 * 1024 * 1024)
+        {
+            return NotFound();
+        }
+
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.Vary = "Cookie";
+        return File(bytes, contentType);
     }
 
     [HttpPost("logout")]

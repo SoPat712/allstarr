@@ -813,6 +813,7 @@ class AllstarrApp extends LitElement {
     navOpen: { type: Boolean },
     sidebarCollapsed: { type: Boolean },
     session: { state: true },
+    avatarFailed: { state: true },
     authBackend: { state: true },
     schema: { state: true },
     config: { state: true },
@@ -932,6 +933,7 @@ class AllstarrApp extends LitElement {
     this.navOpen = false;
     this.sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
     this.session = null;
+    this.avatarFailed = false;
     this.authBackend = "media server";
     this.schema = null;
     this.config = null;
@@ -1224,6 +1226,7 @@ class AllstarrApp extends LitElement {
       }
 
       this.session = authState.user || authState.User;
+      this.avatarFailed = false;
       this.authenticated = true;
       await this.loadSchema();
       if (this.isAdministrator()) {
@@ -1597,6 +1600,7 @@ class AllstarrApp extends LitElement {
       const authState = await API.me();
       if (!(authState.authenticated || authState.Authenticated)) return false;
       this.session = authState.user || authState.User || this.session;
+      this.avatarFailed = false;
       return true;
     } catch {
       // A failed confirmation request is not proof that the cookie expired.
@@ -2777,7 +2781,7 @@ class AllstarrApp extends LitElement {
           <div class="nav-section">${primaryRoutes.map(renderNavLink)}</div>
         </nav>
         <div class="sidebar-footer">
-          <div class="user-summary"><span class="user-avatar">${this.session?.avatarUrl || this.session?.AvatarUrl ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="" decoding="async">` : display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
+          <div class="user-summary"><span class="user-avatar">${display(this.session?.name || this.session?.Name, "U").slice(0, 1).toUpperCase()}${(this.session?.avatarUrl || this.session?.AvatarUrl) && !this.avatarFailed ? html`<img src=${this.session.avatarUrl || this.session.AvatarUrl} alt="" decoding="async" @error=${() => { this.avatarFailed = true; }}>` : nothing}</span><span><small>Signed in as</small><strong>${display(this.session?.name || this.session?.Name)}</strong></span></div>
           ${administrator ? html`<button class="ghost" title=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-label=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
           <button class="ghost" title="Logout" aria-label="Logout" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
         </div>
