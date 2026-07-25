@@ -338,10 +338,24 @@ public sealed class TrackMatchDecisionEngine
             return 0;
         }
 
-        return FuzzyMatcher.CalculateArtistMatchScore(
-            sourceArtists,
-            candidateArtists[0],
-            candidateArtists.Skip(1).ToList()) / 100d;
+        static double BestScore(string artist, IReadOnlyList<string> candidates) =>
+            candidates.Max(candidate =>
+                FuzzyMatcher.CalculateSimilarityAggressive(artist, candidate) / 100d);
+
+        var sourceCoverage = sourceArtists
+            .Average(artist => BestScore(artist, candidateArtists));
+        var candidatePrecision = candidateArtists
+            .Average(artist => BestScore(artist, sourceArtists));
+        var primaryArtist = FuzzyMatcher.CalculateSimilarityAggressive(
+            sourceArtists[0],
+            candidateArtists[0]) / 100d;
+
+        // Backend libraries often retain only the primary artist while source
+        // providers expose every featured artist. Treat a strong primary match as
+        // authoritative supporting evidence instead of rejecting the candidate
+        // because the credit-list lengths differ.
+        var asymmetricCreditScore = (candidatePrecision * 0.75) + (sourceCoverage * 0.25);
+        return Math.Round(Math.Max(asymmetricCreditScore, primaryArtist * 0.85), 4);
     }
 
     private static List<string> SplitArtists(string? value) =>

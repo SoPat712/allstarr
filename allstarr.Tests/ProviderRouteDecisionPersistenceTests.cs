@@ -11,27 +11,21 @@ namespace allstarr.Tests;
 
 public sealed class ProviderRouteDecisionPersistenceTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(),
-        "allstarr-route-decision-tests",
-        Guid.NewGuid().ToString("N"));
     private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _jobId = Guid.CreateVersion7();
     private readonly Guid _accountId = Guid.CreateVersion7();
+    private PostgresTestDatabase _database = null!;
     private TestFactory _factory = null!;
     private FakeClock _clock = null!;
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        var options = new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "route-decisions.db")}")
-            .Options;
-        _factory = new TestFactory(options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new TestFactory(_database.Options);
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 14, 20, 0, 0, TimeSpan.Zero));
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.EnsureCreatedAsync();
+        await db.Database.MigrateAsync();
         db.Tenants.Add(new TenantRecord
         {
             Id = _tenantId,
@@ -373,13 +367,7 @@ public sealed class ProviderRouteDecisionPersistenceTests : IAsyncLifetime
             ["checkAvailability", "download"])],
         new ProviderPermissionDescriptor());
 
-    public Task DisposeAsync()
-    {
-        try { Directory.Delete(_root, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-        return Task.CompletedTask;
-    }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
 
     private sealed class TestFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

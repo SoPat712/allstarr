@@ -23,7 +23,8 @@ public sealed record PlaylistMatchingProgress(
     int Completed,
     int Total,
     string? ProviderId = null,
-    string? PlaylistName = null);
+    string? PlaylistName = null,
+    string? Track = null);
 
 public interface IPlaylistMatchingAdapter : IPlaylistMatchingCoordinator
 {
@@ -90,7 +91,7 @@ public sealed class PlaylistMatchingCoordinator(
                         await progress(
                             adapterProgress with
                             {
-                                ProviderId = adapter.ProviderId
+                                ProviderId = adapterProgress.ProviderId ?? adapter.ProviderId
                             },
                             token);
                     },
@@ -229,7 +230,8 @@ public sealed class PlaylistMatchAllJobHandler(IPlaylistMatchingCoordinator matc
                         progress.Completed,
                         progress.Total,
                         progress.ProviderId,
-                        progress.PlaylistName),
+                        progress.PlaylistName,
+                        progress.Track),
                     token);
             },
             cancellationToken);

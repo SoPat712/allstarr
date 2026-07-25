@@ -932,6 +932,11 @@ public sealed class PlaylistLinksController(
         var runEntries = run == null
             ? []
             : entriesByRun.GetValueOrDefault(run.Id) ?? [];
+        var sourceEntryIds = entries.Select(item => item.Id).ToHashSet();
+        var currentRunEntryGroups = runEntries
+            .Where(item => sourceEntryIds.Contains(item.PlaylistSourceEntryId))
+            .GroupBy(item => item.PlaylistSourceEntryId)
+            .ToArray();
         var matched = decisions.Count(item => item?.State is TrackMatchState.Accepted or TrackMatchState.Pinned);
         var review = decisions.Count(item => item?.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous);
         var rejected = decisions.Count(item => item?.State == TrackMatchState.Rejected);
@@ -943,11 +948,11 @@ public sealed class PlaylistLinksController(
             PlaylistEntryOutcome.Added,
             PlaylistEntryOutcome.Reordered
         };
-        var playable = runEntries.Length == 0
+        var playable = currentRunEntryGroups.Length == 0
             ? matched
-            : runEntries.Count(item => playableOutcomes.Contains(item.Outcome));
-        var materialized = runEntries.Count(item =>
-            item.Outcome is PlaylistEntryOutcome.Reused or PlaylistEntryOutcome.Added or PlaylistEntryOutcome.Reordered);
+            : currentRunEntryGroups.Count(group => group.Any(item => playableOutcomes.Contains(item.Outcome)));
+        var materialized = currentRunEntryGroups.Count(group => group.Any(item =>
+            item.Outcome is PlaylistEntryOutcome.Reused or PlaylistEntryOutcome.Added or PlaylistEntryOutcome.Reordered));
         return new PlaylistListMetrics(
             entries.Length,
             matched,

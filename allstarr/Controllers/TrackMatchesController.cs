@@ -196,15 +196,47 @@ public sealed class TrackMatchesController(
             libraryScopeId,
             search,
             cancellationToken: cancellationToken);
-        var snapshots = review.Snapshots;
         var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
         var overrides = review.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
         var library = review.LibraryTracks.ToDictionary(item => item.Id);
+        var libraryByCanonical = review.LibraryTracks
+            .GroupBy(item => item.CanonicalRecordingId)
+            .ToDictionary(group => group.Key, group => group
+                .OrderBy(item => item.BackendItemId, StringComparer.Ordinal)
+                .First());
+        var sourceIdentities = review.ProviderIdentities.ToDictionary(item => item.Id);
         var identities = review.ProviderIdentities
             .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray());
 
-        var allRows = snapshots.Select(snapshot => Row(snapshot, decisions.GetValueOrDefault(snapshot.Id),
-                overrides.GetValueOrDefault(snapshot.Id), library, identities))
+        var allRows = review.Snapshots
+            .GroupBy(snapshot => new
+            {
+                snapshot.OwnerUserId,
+                snapshot.LibraryScopeId,
+                SourceIdentity = snapshot.ProviderTrackIdentityId?.ToString("N") ??
+                    $"{snapshot.ProviderId}:{snapshot.ExternalIdHash}"
+            })
+            .Select(group =>
+            {
+                var snapshot = group
+                    .OrderByDescending(item => item.RetrievedAt)
+                    .ThenByDescending(item => item.SnapshotVersion)
+                    .First();
+                var decision = group
+                    .Select(item => decisions.GetValueOrDefault(item.Id))
+                    .Where(item => item != null)
+                    .OrderByDescending(item => item!.DecidedAt)
+                    .FirstOrDefault();
+                var manual = group
+                    .Select(item => overrides.GetValueOrDefault(item.Id))
+                    .Where(item => item != null)
+                    .OrderByDescending(item => item!.CreatedAt)
+                    .FirstOrDefault();
+                var sourceIdentity = snapshot.ProviderTrackIdentityId.HasValue
+                    ? sourceIdentities.GetValueOrDefault(snapshot.ProviderTrackIdentityId.Value)
+                    : null;
+                return Row(snapshot, decision, manual, sourceIdentity, library, libraryByCanonical, identities);
+            })
             .ToArray();
         var rows = allRows.Where(row => MatchesStateFilter(row.State, state)).ToArray();
         var total = rows.Length;
@@ -215,9 +247,13 @@ public sealed class TrackMatchesController(
             stats = new
             {
                 total = allRows.Length,
+                matched = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
                 accepted = allRows.Count(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned),
                 unresolved = allRows.Count(item => item.State == TrackMatchState.Unresolved),
-                review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous)
+                review = allRows.Count(item => item.State is TrackMatchState.Suggested or TrackMatchState.Ambiguous),
+                rejected = allRows.Count(item => item.State == TrackMatchState.Rejected),
+                attention = allRows.Count(item => item.State is TrackMatchState.Unresolved or
+                    TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected)
             },
             pagination = new { page, pageSize, total, totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)) }
         }
@@ -367,14 +403,23 @@ public sealed class TrackMatchesController(
         };
 
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
-        ManualTrackOverrideRecord? manual, IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
+        ManualTrackOverrideRecord? manual, ProviderTrackIdentityRecord? sourceIdentity,
+        IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
+        IReadOnlyDictionary<Guid, LibraryTrackRecord> libraryByCanonical,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities)
     {
         var state = manual?.Decision == ManualOverrideDecision.Pin ? TrackMatchState.Pinned :
-            manual?.Decision == ManualOverrideDecision.Reject ? TrackMatchState.Rejected : decision?.State ?? TrackMatchState.Unresolved;
+            manual?.Decision == ManualOverrideDecision.Reject ? TrackMatchState.Rejected :
+            decision?.State ?? (sourceIdentity == null ? TrackMatchState.Unresolved : TrackMatchState.Accepted);
         var trackId = manual?.LibraryTrackId ?? decision?.LibraryTrackId;
         library.TryGetValue(trackId ?? Guid.Empty, out var track);
-        var canonicalId = decision?.CanonicalRecordingId ?? track?.CanonicalRecordingId;
+        var canonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId ?? track?.CanonicalRecordingId;
+        if (track == null && canonicalId.HasValue &&
+            libraryByCanonical.TryGetValue(canonicalId.Value, out var canonicalTrack))
+        {
+            track = canonicalTrack;
+            trackId = canonicalTrack.Id;
+        }
         var providerIdentities = canonicalId.HasValue && identities.TryGetValue(canonicalId.Value, out var values)
             ? values.Select(item => new { item.ProviderId, item.ExternalId, scope = item.Scope.ToString(), verification = item.Verification.ToString() }).ToArray()
             : [];
@@ -386,6 +431,13 @@ public sealed class TrackMatchesController(
             snapshot.ProviderAccountId,
             snapshot.LibraryScopeId,
             state = state.ToString().ToLowerInvariant(),
+            decisionSource = manual != null
+                ? "manual_override"
+                : decision != null
+                    ? "track_match_decision"
+                    : sourceIdentity != null
+                        ? "canonical_provider_identity"
+                        : "unresolved",
             decision?.Confidence,
             decision?.Threshold,
             decision?.DecisionVersion,
@@ -396,12 +448,24 @@ public sealed class TrackMatchesController(
             title = metadata.Title,
             artist = metadata.Artist,
             album = metadata.Album,
-            artworkUrl = metadata.ArtworkUrl,
+            artworkUrl = metadata.ArtworkUrl ?? track?.CoverArtReference,
             isrc = metadata.Isrc,
-            localTrack = track == null ? null : new { track.Id, track.BackendItemId, track.Title, track.Artist, track.Album },
+            durationMilliseconds = track?.DurationMilliseconds,
+            localTrack = track == null ? null : new
+            {
+                track.Id,
+                track.BackendItemId,
+                track.Title,
+                track.Artist,
+                track.Album,
+                track.CoverArtReference,
+                providerIds = ParseObject(track.ProviderIdsJson)
+            },
             providerIdentities,
             candidates = ParseCandidates(decision?.CandidateResultsJson),
-            reasons = ParseArray(decision?.ReasonsJson),
+            reasons = decision == null && sourceIdentity != null
+                ? ["Existing canonical provider identity is available."]
+                : ParseArray(decision?.ReasonsJson),
             warnings = ParseArray(decision?.WarningsJson),
             decidedAt = decision?.DecidedAt,
             reviewedAt = manual?.CreatedAt
@@ -424,7 +488,8 @@ public sealed class TrackMatchesController(
                 artist,
                 Text(root, "album") ?? Text(root, "Album") ?? Text(root, "albumTitle") ?? Text(root, "AlbumTitle"),
                 Text(root, "artworkUrl") ?? Text(root, "ArtworkUrl") ?? Text(root, "coverUrl") ?? Text(root, "CoverUrl") ??
-                    Text(root, "imageUrl") ?? Text(root, "ImageUrl"),
+                    Text(root, "imageUrl") ?? Text(root, "ImageUrl") ??
+                    Text(root, "artworkReference") ?? Text(root, "ArtworkReference"),
                 Text(root, "isrc") ?? Text(root, "Isrc") ?? Text(root, "ISRC"));
         }
         catch (JsonException) { return (null, null, null, null, null); }

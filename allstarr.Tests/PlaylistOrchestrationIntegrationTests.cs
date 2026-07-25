@@ -15,7 +15,7 @@ namespace allstarr.Tests;
 
 public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase _database = null!;
     private DbFactory _factory = null!;
     private FakeSource _source = null!;
     private FakeTarget _target = null!;
@@ -32,9 +32,8 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        Directory.CreateDirectory(_root);
-        _factory = new(new DbContextOptionsBuilder<AllstarrDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(_root, "orchestration.db")}").Options);
+        _database = await PostgresTestDatabase.CreateAsync();
+        _factory = new(_database.Options);
         _source = new FakeSource();
         _target = new FakeTarget();
         var clock = new Clock(_now);
@@ -47,7 +46,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
             new TrackMatchDecisionEngine(), trackMatches, clock);
         await using var db = await _factory.CreateDbContextAsync();
-        await db.Database.EnsureCreatedAsync();
+        await db.Database.MigrateAsync();
         _identity = Guid.CreateVersion7(); _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "orchestration", Name = "Orchestration", CreatedAt = _now });
         db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = _now, UpdatedAt = _now });
@@ -302,7 +301,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         new(position, Hash(entry), Hash(source), null, title, ["Artist"], "Album", TimeSpan.FromMinutes(3), null, false);
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    public Task DisposeAsync() { if (Directory.Exists(_root)) Directory.Delete(_root, true); return Task.CompletedTask; }
+    public async Task DisposeAsync() => await _database.DisposeAsync();
     private sealed class Clock(DateTimeOffset now) : IPlatformClock { public DateTimeOffset UtcNow => now; }
     private sealed class DbFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {

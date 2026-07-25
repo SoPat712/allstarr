@@ -184,7 +184,8 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
     private async Task MatchSinglePlaylistAsync(
         string playlistName,
         CancellationToken cancellationToken,
-        bool enrichProviderBackups = false)
+        bool enrichProviderBackups = false,
+        Func<PlaylistMatchingProgress, CancellationToken, Task>? progress = null)
     {
         var playlist = _spotifySettings.Playlists
             .FirstOrDefault(p => p.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
@@ -215,7 +216,8 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                     playlistFetcher,
                     metadataService,
                     cancellationToken,
-                    enrichProviderBackups);
+                    enrichProviderBackups,
+                    progress);
             }
             else
             {
@@ -419,7 +421,11 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeout.CancelAfter(PlaylistMatchingTimeout);
-                await MatchSinglePlaylistAsync(playlist.Name, timeout.Token)
+                await MatchSinglePlaylistAsync(
+                        playlist.Name,
+                        timeout.Token,
+                        enrichProviderBackups: true,
+                        progress: progress)
                     .WaitAsync(timeout.Token);
                 completed++;
                 if (progress != null)
@@ -494,7 +500,8 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         SpotifyPlaylistFetcher playlistFetcher,
         IMusicMetadataService metadataService,
         CancellationToken cancellationToken,
-        bool enrichProviderBackups = false)
+        bool enrichProviderBackups = false,
+        Func<PlaylistMatchingProgress, CancellationToken, Task>? progress = null)
     {
         var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
 
@@ -518,6 +525,18 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 track.AlbumArtUrl,
                 "spotify-playlist-v1")).ToArray(),
             cancellationToken);
+        if (progress != null)
+        {
+            await progress(
+                new PlaylistMatchingProgress(
+                    "local-matching",
+                    $"Scoring {spotifyTracks.Count} tracks against the indexed library.",
+                    0,
+                    spotifyTracks.Count,
+                    ProviderId,
+                    playlistName),
+                cancellationToken);
+        }
 
         // Get the Jellyfin playlist ID to check which tracks already exist
         var playlistConfig = _spotifySettings.Playlists
@@ -712,55 +731,44 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             }
         }
 
-        // PHASE 2: Match Jellyfin tracks → Spotify tracks using fuzzy matching
-        _logger.LogInformation("🔍 Matching {JellyfinCount} Jellyfin tracks to {SpotifyCount} Spotify tracks",
-            jellyfinTracks.Count, spotifyTracks.Count);
-
+        // PHASE 2: Match every source track through the provider-neutral durable
+        // decision engine. Automatic, interactive, and rematch decisions now use
+        // the same normalization, scoring, thresholds, and persisted candidates.
         var localMatches = new Dictionary<string, (Song JellyfinTrack, SpotifyPlaylistTrack SpotifyTrack, double Score)>();
-        var usedSpotifyIds = new HashSet<string>();
-
-        // Build all possible matches with scores
-        var allLocalCandidates = new List<(Song JellyfinTrack, SpotifyPlaylistTrack SpotifyTrack, double Score)>();
-
-        foreach (var jellyfinTrack in jellyfinTracks)
+        var durableLocalMatches = await _trackMatchCommands.MatchSourceTracksAsync(
+            spotifyTracks.Select(track => new SourceTrackSeed(
+                "spotify",
+                track.SpotifyId,
+                track.Title,
+                track.PrimaryArtist,
+                track.Album,
+                track.DurationMs,
+                track.Isrc,
+                track.AlbumArtUrl,
+                "spotify-playlist-v1")).ToArray(),
+            $"playlist-match-{playlistName}",
+            cancellationToken);
+        foreach (var result in durableLocalMatches.Where(item =>
+                     (item.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned) &&
+                     !string.IsNullOrWhiteSpace(item.LocalBackendItemId)))
         {
-            foreach (var spotifyTrack in spotifyTracks)
+            var spotifyTrack = spotifyTracks.First(track =>
+                track.SpotifyId.Equals(result.ExternalId, StringComparison.OrdinalIgnoreCase));
+            var jellyfinTrack = jellyfinTracks.FirstOrDefault(track =>
+                track.Id.Equals(result.LocalBackendItemId, StringComparison.OrdinalIgnoreCase)) ?? new Song
             {
-                var score = CalculateLocalMatchScore(jellyfinTrack, spotifyTrack);
-
-                if (score >= 70) // Only consider good matches
-                {
-                    allLocalCandidates.Add((jellyfinTrack, spotifyTrack, score));
-                }
-            }
+                Id = result.LocalBackendItemId!,
+                Title = result.Title ?? spotifyTrack.Title,
+                Artist = result.Artist ?? spotifyTrack.PrimaryArtist,
+                Album = result.Album ?? spotifyTrack.Album,
+                Duration = result.DurationSeconds,
+                Isrc = result.Isrc ?? spotifyTrack.Isrc,
+                IsLocal = true
+            };
+            localMatches[result.ExternalId] =
+                (jellyfinTrack, spotifyTrack, result.Confidence * 100d);
         }
-
-        // Pick the best local route independently for every source entry. A source
-        // playlist may contain the same recording more than once, and Jellyfin can
-        // materialize the same library item at each of those positions.
-        foreach (var (jellyfinTrack, spotifyTrack, score) in allLocalCandidates
-                     .GroupBy(candidate => candidate.SpotifyTrack.SpotifyId, StringComparer.OrdinalIgnoreCase)
-                     .Select(group => group.OrderByDescending(candidate => candidate.Score).First())
-                     .OrderBy(candidate => candidate.SpotifyTrack.Position))
-        {
-            if (usedSpotifyIds.Contains(spotifyTrack.SpotifyId)) continue;
-
-            localMatches[spotifyTrack.SpotifyId] = (jellyfinTrack, spotifyTrack, score);
-            usedSpotifyIds.Add(spotifyTrack.SpotifyId);
-
-            // Save local mapping
-            await _trackMatchCommands.PersistAutomatedSpotifyAsync(
-                spotifyTrack.SpotifyId,
-                new PersistAutomatedTrackMatchCommand(
-                    "local",
-                    jellyfinTrack.Id,
-                    Confidence: Math.Clamp(score / 100d, 0, 1)),
-                $"auto-local-{spotifyTrack.SpotifyId}",
-                cancellationToken);
-
-            _logger.LogInformation("  ✓ Local: {SpotifyTitle} → {JellyfinTitle} (score: {Score:F1})",
-                spotifyTrack.Title, jellyfinTrack.Title, score);
-        }
+        var usedSpotifyIds = localMatches.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         _logger.LogInformation("✅ Matched {LocalCount}/{SpotifyCount} Spotify tracks to local Jellyfin tracks",
             localMatches.Count, spotifyTracks.Count);
@@ -814,6 +822,20 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 batchStart,
                 batchEnd,
                 unmatchedSpotifyTracks.Count);
+            if (progress != null)
+            {
+                var activeTrack = batch[0];
+                await progress(
+                    new PlaylistMatchingProgress(
+                        "provider-search",
+                        $"Searching playback routes for tracks {batchStart}-{batchEnd}.",
+                        i,
+                        unmatchedSpotifyTracks.Count,
+                        ProviderId,
+                        playlistName,
+                        $"{activeTrack.PrimaryArtist} - {activeTrack.Title}"),
+                    cancellationToken);
+            }
 
             var batchTasks = batch.Select(async spotifyTrack =>
             {
@@ -965,6 +987,20 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 unmatchedSpotifyTracks.Count,
                 batchStopwatch.ElapsedMilliseconds,
                 batchCandidateCount);
+            if (progress != null)
+            {
+                var completedTrack = batch[^1];
+                await progress(
+                    new PlaylistMatchingProgress(
+                        "provider-search",
+                        $"Finished route search for tracks {batchStart}-{batchEnd}.",
+                        batchEnd,
+                        unmatchedSpotifyTracks.Count,
+                        ProviderId,
+                        playlistName,
+                        $"{completedTrack.PrimaryArtist} - {completedTrack.Title}"),
+                    cancellationToken);
+            }
 
             if (i + BatchSize < unmatchedSpotifyTracks.Count)
             {
@@ -976,25 +1012,6 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         // acceptable external route in configured provider order. Repeated playlist
         // entries may intentionally reuse the same local or provider track.
         var externalAssignments = new Dictionary<string, (Song Song, double Score, string MatchType)>();
-
-        foreach (var candidate in allCandidates
-                     .Where(candidate => candidate.MatchedSong.IsLocal)
-                     .GroupBy(candidate => candidate.SpotifyTrack.SpotifyId, StringComparer.OrdinalIgnoreCase)
-                     .Select(group => group.OrderByDescending(candidate => candidate.Score).First()))
-        {
-            if (localMatches.ContainsKey(candidate.SpotifyTrack.SpotifyId)) continue;
-
-            localMatches[candidate.SpotifyTrack.SpotifyId] =
-                (candidate.MatchedSong, candidate.SpotifyTrack, candidate.Score);
-            await _trackMatchCommands.PersistAutomatedSpotifyAsync(
-                candidate.SpotifyTrack.SpotifyId,
-                new PersistAutomatedTrackMatchCommand(
-                    "local",
-                    candidate.MatchedSong.Id,
-                    Confidence: Math.Clamp(candidate.Score / 100d, 0, 1)),
-                $"auto-local-{candidate.SpotifyTrack.SpotifyId}",
-                cancellationToken);
-        }
 
         // playbackProviderRanks is computed once at the start of phase 3 above.
 
@@ -1021,7 +1038,8 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 externalAssignments[spotifyTrack.SpotifyId] = (song, score, matchType);
             }
 
-            await _trackMatchCommands.PersistAutomatedSpotifyAsync(
+            await _trackMatchCommands.PersistAutomatedAsync(
+                "spotify",
                 spotifyTrack.SpotifyId,
                 new PersistAutomatedTrackMatchCommand(
                     "provider",
@@ -1334,23 +1352,6 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         }
 
         return allCandidates;
-    }
-
-    private static double CalculateLocalMatchScore(Song jellyfinTrack, SpotifyPlaylistTrack spotifyTrack)
-    {
-        var titleScore = FuzzyMatcher.CalculateSimilarityAggressive(spotifyTrack.Title, jellyfinTrack.Title);
-        var artistScore = FuzzyMatcher.CalculateArtistMatchScore(
-            spotifyTrack.Artists,
-            jellyfinTrack.Artist,
-            jellyfinTrack.Artists.Concat(jellyfinTrack.Contributors).ToList());
-        var albumScore = string.IsNullOrWhiteSpace(spotifyTrack.Album) || string.IsNullOrWhiteSpace(jellyfinTrack.Album)
-            ? 50
-            : FuzzyMatcher.CalculateSimilarityAggressive(spotifyTrack.Album, jellyfinTrack.Album);
-        var durationScore = jellyfinTrack.Duration is > 0 && spotifyTrack.DurationMs > 0
-            ? Math.Max(0, 100 - (Math.Abs((jellyfinTrack.Duration.Value * 1000L) - spotifyTrack.DurationMs) / 100.0))
-            : 50;
-
-        return (titleScore * 0.55) + (artistScore * 0.30) + (albumScore * 0.10) + (durationScore * 0.05);
     }
 
     /// <summary>

@@ -17,6 +17,7 @@ namespace allstarr.Controllers;
 public sealed class PlaylistDryRunPreviewController(
     IProviderRegistry providers,
     ProviderPlaylistSnapshotCollector collector,
+    ProviderAccountResolver accountResolver,
     ILibraryIndexService libraryIndex,
     TrackMatchDecisionEngine matcher,
     IDbContextFactory<AllstarrDbContext> contextFactory) : ControllerBase
@@ -61,20 +62,6 @@ public sealed class PlaylistDryRunPreviewController(
             item.Id == request.ProviderAccountId && item.Enabled, deadline.Token);
         if (account == null)
             return NotFound(new { error = "The selected playlist account is unavailable." });
-        if (account.Scope == ProviderAccountScope.Global ||
-            account.TenantId != session.TenantId.Value ||
-            account.Scope == ProviderAccountScope.User && account.OwnerUserId != session.AllstarrUserId.Value ||
-            account.Scope == ProviderAccountScope.Library && account.LibraryScopeId != request.LibraryScopeId.Trim())
-            return StatusCode(StatusCodes.Status403Forbidden, new
-            {
-                error = "The selected playlist account is outside the signed-in user and library scope."
-            });
-
-        if (!providers.TryGetCapability<IProviderPlaylistCapability>(
-                account.ProviderId, ProviderCapabilityKind.Playlist, out var playlistCapability) ||
-            playlistCapability == null)
-            return BadRequest(new { error = "The selected account provider cannot read playlists." });
-
         var principal = new AllstarrPrincipal(
             session.TenantId.Value,
             session.AllstarrUserId.Value,
@@ -83,6 +70,35 @@ public sealed class PlaylistDryRunPreviewController(
             identity.PrincipalId,
             identity.DisplayName ?? session.UserName,
             true);
+        ResolvedProviderAccount? resolvedAccount;
+        try
+        {
+            resolvedAccount = await accountResolver.ResolveAsync(
+                new ProviderAccountResolutionRequest(
+                    principal,
+                    account.ProviderId,
+                    "playlist",
+                    account.Id,
+                    request.LibraryScopeId.Trim()),
+                deadline.Token);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "The selected playlist account is outside the signed-in user and library scope."
+            });
+        }
+
+        if (resolvedAccount == null)
+            return NotFound(new { error = "The selected playlist account is unavailable." });
+        account = resolvedAccount.Account;
+
+        if (!providers.TryGetCapability<IProviderPlaylistCapability>(
+                account.ProviderId, ProviderCapabilityKind.Playlist, out var playlistCapability) ||
+            playlistCapability == null)
+            return BadRequest(new { error = "The selected account provider cannot read playlists." });
+
         var correlationId = HttpContext.TraceIdentifier.Length <= 100
             ? HttpContext.TraceIdentifier
             : HttpContext.TraceIdentifier[..100];
@@ -116,7 +132,7 @@ public sealed class PlaylistDryRunPreviewController(
                 new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow,
                 allowFallback: false,
-                allowSharedAccount: false,
+                allowSharedAccount: account.Scope == ProviderAccountScope.Global,
                 allowManagedDownloads: false,
                 [account.ProviderId]),
             "playlist-dry-run-source",
@@ -156,10 +172,6 @@ public sealed class PlaylistDryRunPreviewController(
                 request.LibraryScopeId.Trim(),
                 deadline.Token);
             var candidateById = candidates.ToDictionary(item => item.LibraryTrackId);
-            var candidatesByIsrc = candidates
-                .Where(item => NormalizeIsrc(item.Isrc) != null)
-                .GroupBy(item => NormalizeIsrc(item.Isrc)!, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => (IReadOnlyList<LocalTrackMatchCandidate>)group.ToArray(), StringComparer.Ordinal);
             var enabledProviderIds = (await db.ProviderAccounts.AsNoTracking()
                     .Where(item => item.Enabled &&
                         (item.Scope == ProviderAccountScope.Global ||
@@ -198,24 +210,21 @@ public sealed class PlaylistDryRunPreviewController(
                 SourceSnapshotVersion: 1);
             var decisions = snapshot.Entries.Select(entry =>
                 {
-                    var isrc = NormalizeIsrc(entry.Isrc);
-                    var matchCandidates = isrc != null && candidatesByIsrc.TryGetValue(isrc, out var exact)
-                        ? exact
-                        : candidates;
-                    var local = Decide(entry, account.ProviderId, scope, matchCandidates, matcher);
-                    var providerMatch = local.Decision.State != TrackMatchReviewState.Accepted &&
-                                        entry.CanonicalRecordingId.HasValue &&
-                                        playableByCanonical.TryGetValue(entry.CanonicalRecordingId.Value, out var providerMatches)
-                        ? providerMatches.FirstOrDefault()
-                        : null;
-                    return local with { ProviderMatchId = providerMatch };
+                    var local = Decide(entry, account.ProviderId, scope, candidates, matcher);
+                    var providerMatches = entry.CanonicalRecordingId.HasValue &&
+                                          playableByCanonical.TryGetValue(entry.CanonicalRecordingId.Value, out var routes)
+                        ? routes
+                        : [];
+                    return local with { ProviderMatchIds = providerMatches };
                 })
                 .ToArray();
             var accepted = decisions.Count(item => item.Decision.State == TrackMatchReviewState.Accepted);
-            var providerMatched = decisions.Count(item => item.ProviderMatchId != null);
+            var providerMatched = decisions.Count(item => item.ProviderMatchIds.Count > 0);
             var suggested = decisions.Count(item => item.Decision.State == TrackMatchReviewState.Suggested);
             var ambiguous = decisions.Count(item => item.Decision.State == TrackMatchReviewState.Ambiguous);
-            var unresolved = decisions.Length - accepted - providerMatched;
+            var unresolved = decisions.Count(item =>
+                item.Decision.State != TrackMatchReviewState.Accepted &&
+                item.ProviderMatchIds.Count == 0);
             var duplicateLocalIds = decisions
                 .Where(item => item.Decision.State == TrackMatchReviewState.Accepted &&
                                item.Decision.SelectedLibraryTrackId.HasValue)
@@ -253,7 +262,9 @@ public sealed class PlaylistDryRunPreviewController(
                     ambiguous,
                     unresolved,
                     duplicateLocalTracks = duplicateLocalIds,
-                    estimatedAdds = Math.Max(0, accepted - duplicateLocalIds) + providerMatched,
+                    estimatedAdds = decisions.Count(item =>
+                        item.Decision.State == TrackMatchReviewState.Accepted ||
+                        item.ProviderMatchIds.Count > 0) - duplicateLocalIds,
                     estimatedSkips = unresolved + duplicateLocalIds
                 },
                 providerRouteEvaluation = "verified-identity-and-enabled-account",
@@ -275,10 +286,13 @@ public sealed class PlaylistDryRunPreviewController(
                         artists = item.Entry.Artists,
                         item.Entry.Album,
                         durationSeconds = item.Entry.Duration?.TotalSeconds,
-                        state = item.ProviderMatchId != null
-                            ? "provider-match"
-                            : item.Decision.State.ToString().ToLowerInvariant(),
-                        providerId = item.ProviderMatchId,
+                        state = item.Decision.State == TrackMatchReviewState.Accepted
+                            ? "accepted"
+                            : item.ProviderMatchIds.Count > 0
+                                ? "provider-match"
+                                : item.Decision.State.ToString().ToLowerInvariant(),
+                        providerId = item.ProviderMatchIds.FirstOrDefault(),
+                        providerIds = item.ProviderMatchIds,
                         confidence = Math.Round(item.Decision.Confidence, 4),
                         libraryTrackId = selected?.LibraryTrackId,
                         backendItemId = selected?.BackendItemId,
@@ -357,17 +371,13 @@ public sealed class PlaylistDryRunPreviewController(
         return true;
     }
 
-    private static string? NormalizeIsrc(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var normalized = value.Replace("-", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
-        return normalized.Length == 12 && normalized.All(char.IsLetterOrDigit) ? normalized : null;
-    }
-
     private sealed record PreviewDecision(
         CollectedPlaylistSourceEntry Entry,
         TrackMatchDecision Decision,
-        string? ProviderMatchId = null);
+        IReadOnlyList<string> ProviderMatchIds = null!)
+    {
+        public IReadOnlyList<string> ProviderMatchIds { get; init; } = ProviderMatchIds ?? [];
+    }
 }
 
 public sealed class PlaylistDryRunPreviewRequest
