@@ -3282,10 +3282,12 @@ class AllstarrApp extends LitElement {
     const sort = this.playlistTableSorts[table] || {};
     const active = sort.key === key;
     const direction = active ? sort.direction : "none";
-    const marker = !active ? "↕" : sort.direction === "ascending" ? "↑" : "↓";
+    const arrow = active
+      ? (sort.direction === "ascending" ? icon("chevronUp", 14) : icon("chevronDown", 14))
+      : nothing;
     return html`<th scope="col" aria-sort=${direction}><button class="table-sort-button" type="button"
       aria-label=${`${label}: ${active ? `sorted ${sort.direction}; activate to reverse` : "activate to sort ascending"}`}
-      @click=${() => this.setPlaylistTableSort(table, key)}><span>${label}</span><span aria-hidden="true">${marker}</span></button></th>`;
+      @click=${() => this.setPlaylistTableSort(table, key)}><span>${label}</span>${arrow ? html`<span class="table-sort-marker" aria-hidden="true">${arrow}</span>` : nothing}</button></th>`;
   }
 
   renderPlaylistLinkWizard() {

@@ -772,8 +772,8 @@
 .injected-data-table .select-col { width: 44px; }
 .injected-data-table .playlist-col { width: 220px; }
 .injected-data-table .tracks-col { width: 70px; }
-.injected-data-table .matched-col { width: 82px; }
-.injected-data-table .unmatched-col { width: 92px; }
+.injected-data-table .matched-col { width: 102px; }
+.injected-data-table .unmatched-col { width: 112px; }
 .injected-data-table .schedule-col { width: 160px; }
 .injected-data-table .coverage-col { width: 190px; }
 .injected-data-table .last-sync-col { width: 105px; }
@@ -820,9 +820,12 @@
     transform: none;
 }
 
-.table-sort-button > span:last-child {
+.table-sort-marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: var(--accent);
-    font-size: .85rem;
+    flex-shrink: 0;
 }
 
 @media (min-width: 761px) {
