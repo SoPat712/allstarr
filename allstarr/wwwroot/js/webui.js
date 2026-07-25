@@ -850,6 +850,7 @@ class AllstarrApp extends LitElement {
     providerHealth: { state: true },
     providerSummaries: { state: true },
     dashboardActivity: { state: true },
+    eventLogError: { state: true },
     eventLogCursor: { state: true },
     eventLogCursorId: { state: true },
     eventLogHasMore: { state: true },
@@ -985,6 +986,7 @@ class AllstarrApp extends LitElement {
     this.providerHealth = [];
     this.providerSummaries = [];
     this.dashboardActivity = [];
+    this.eventLogError = "";
     this.eventLogCursor = "";
     this.eventLogCursorId = "";
     this.eventLogHasMore = false;
@@ -1720,12 +1722,24 @@ class AllstarrApp extends LitElement {
   }
 
   async loadDashboardPresentation() {
-    const [summaries, activity] = await Promise.all([
+    const [summaries, activityResult] = await Promise.all([
       API.providerSummaries().catch(() => ({ providers: [] })),
-      API.dashboardActivity(100).catch(() => ({ items: [] })),
+      API.dashboardActivity(100)
+        .then((activity) => ({ activity, error: null }))
+        .catch((error) => ({ activity: null, error })),
     ]);
     this.providerSummaries = asArray(summaries?.providers || summaries?.Providers);
+    if (activityResult.error) {
+      this.dashboardActivity = [];
+      this.eventLogError = activityResult.error.message || "The Event log could not be loaded.";
+      this.eventLogCursor = "";
+      this.eventLogCursorId = "";
+      this.eventLogHasMore = false;
+      return;
+    }
+    const activity = activityResult.activity;
     this.dashboardActivity = asArray(activity?.items || activity?.Items);
+    this.eventLogError = "";
     this.eventLogCursor = activity?.nextCursor || activity?.NextCursor || "";
     this.eventLogCursorId = activity?.nextCursorId || activity?.NextCursorId || "";
     this.eventLogHasMore = Boolean(activity?.hasMore ?? activity?.HasMore);
@@ -1743,6 +1757,7 @@ class AllstarrApp extends LitElement {
       this.eventLogCursorId = response?.nextCursorId || response?.NextCursorId || "";
       this.eventLogHasMore = Boolean(response?.hasMore ?? response?.HasMore);
     } catch (error) {
+      this.eventLogError = error.message || "Earlier events could not be loaded.";
       this.toast(error.message || "Earlier events could not be loaded", "error");
     } finally {
       this.eventLogLoading = false;
@@ -4073,17 +4088,29 @@ class AllstarrApp extends LitElement {
               </div>
             </section>
             <section class="playlist-operation-group timing-group" aria-label="Synchronization timing">
-              <div class="playlist-operation-heading"><span>${icon("clock", 16)}</span><div><small>Synchronization</small><strong>${lastSuccessfulSyncAt ? `Last ran ${formatRelativeTime(lastSuccessfulSyncAt)}` : "Not synced yet"}</strong></div></div>
+              <div class="playlist-operation-heading"><span>${icon("clock", 16)}</span><div><small>Timing</small><strong>Source and target cadence</strong></div></div>
               <div class="playlist-operation-metrics">
                 <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
                 <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not yet"}</strong></span>
                 <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
               </div>
             </section>
-          </div><button class="primary compact playlist-rematch-action" @click=${async () => {
-            await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
-            await this.reloadInjectedPlaylistDetails();
-          }}>${icon("refresh", 15)}<span>Sync & rematch</span></button></div>
+          </div><div class="playlist-operation-actions" aria-label="Playlist actions">
+            <button class="primary compact playlist-rematch-action" @click=${async () => {
+              await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
+              await this.reloadInjectedPlaylistDetails();
+            }}>${icon("refresh", 15)}<span>Sync now</span></button>
+            <button class="compact" @click=${async () => {
+              await API.matchPlaylist(this.selectedInjectedPlaylist);
+              await this.reloadInjectedPlaylistDetails();
+              this.toast("Rematching requested");
+            }}>${icon("search", 15)}<span>Rematch</span></button>
+            <button class="compact" @click=${async () => {
+              await API.refreshPlaylist(this.selectedInjectedPlaylist);
+              await this.reloadInjectedPlaylistDetails();
+              this.toast("Source refresh requested");
+            }}>${icon("download", 15)}<span>Refresh source</span></button>
+          </div></div>
           ${matchStatus === "rematch_required" ? html`<div class="playlist-match-notice" role="status">
             ${icon("warning", 17)}<span><strong>Current source snapshot needs matching</strong><small>The provider playlist changed after its last completed match. Run a sync now or wait for the next scheduled sync.</small></span>
           </div>` : nothing}` : nothing}
@@ -4530,13 +4557,23 @@ class AllstarrApp extends LitElement {
     const mappings = asArray(this.mappings?.matches);
     const stats = this.mappings?.stats || {};
     const pagination = this.mappings?.pagination || {};
-    const attention = Number(stats.unresolved || 0) + Number(stats.review || 0);
+    const attention = Number(stats.attention || 0);
+    const setFilter = async (state) => {
+      this.mappingFilters.state = state;
+      this.mappingFilters.page = 1;
+      await this.loadMappings();
+    };
     const filters = [["attention", "Needs attention"], ["", "All tracks"], ["matched", "Matched"], ["rejected", "Rejected"]];
     return html`
       <section class="mapping-review-queue">
         <div class="section-heading mapping-review-heading"><div><div class="eyebrow">Library matching</div><h2>Match review queue</h2><p>Resolve unmatched tracks against your indexed library or any playback provider. No storage IDs are required.</p></div><button class="secondary" @click=${async () => { await this.loadMappings(); this.toast("Match queue refreshed"); }}>Refresh</button></div>
-        <div class="metric-grid mapping-metrics"><article class="metric-card"><span>Total</span><strong>${stats.total ?? 0}</strong></article><article class="metric-card attention"><span>Needs attention</span><strong>${attention}</strong></article><article class="metric-card"><span>Matched</span><strong>${stats.accepted ?? 0}</strong></article><article class="metric-card"><span>Unresolved</span><strong>${stats.unresolved ?? 0}</strong></article></div>
-        <div class="mapping-filter-bar" role="group" aria-label="Mapping status filter">${filters.map(([value, label]) => html`<button class=${this.mappingFilters.state === value ? "active" : ""} @click=${async () => { this.mappingFilters.state = value; this.mappingFilters.page = 1; await this.loadMappings(); }}>${label}</button>`)}</div>
+        <div class="metric-grid mapping-metrics">
+          <button class="metric-card mapping-metric" aria-pressed=${this.mappingFilters.state === ""} @click=${() => setFilter("")}><span>Total</span><strong>${stats.total ?? 0}</strong></button>
+          <button class="metric-card mapping-metric attention" aria-pressed=${this.mappingFilters.state === "attention"} @click=${() => setFilter("attention")}><span>Needs attention</span><strong>${attention}</strong></button>
+          <button class="metric-card mapping-metric" aria-pressed=${this.mappingFilters.state === "matched"} @click=${() => setFilter("matched")}><span>Matched</span><strong>${stats.matched ?? 0}</strong></button>
+          <button class="metric-card mapping-metric" aria-pressed=${this.mappingFilters.state === "unresolved"} @click=${() => setFilter("unresolved")}><span>Unresolved</span><strong>${stats.unresolved ?? 0}</strong></button>
+        </div>
+        <div class="mapping-filter-bar" role="group" aria-label="Mapping status filter">${filters.map(([value, label]) => html`<button class=${this.mappingFilters.state === value ? "active" : ""} @click=${() => setFilter(value)}>${label}</button>`)}</div>
         <form class="mapping-search-bar" @submit=${async (event) => { event.preventDefault(); this.mappingFilters.page = 1; await this.loadMappings(); }}><label class="search-field"><span>Search mappings</span><input .value=${this.mappingFilters.search} @input=${(event) => { this.mappingFilters.search = event.target.value; }} placeholder="Title, artist, album, or provider"></label><label><span>Library scope</span><input .value=${this.mappingFilters.libraryScopeId} @input=${(event) => { this.mappingFilters.libraryScopeId = event.target.value; }} placeholder="All libraries"></label><button class="primary" type="submit">Search</button></form>
         <div class="mapping-card-list">${mappings.length ? mappings.map((mapping) => this.renderMappingReviewRow(mapping)) : html`<div class="empty-state compact"><strong>No mappings found.</strong><span>Try another filter, or wait for the next playlist match.</span></div>`}</div>
         <div class="pagination mapping-pagination"><span>${pagination.total ?? 0} tracks</span><div><button ?disabled=${(pagination.page ?? 1) <= 1} @click=${async () => { this.mappingFilters.page -= 1; await this.loadMappings(); }}>Previous</button><span>Page ${pagination.page ?? 1} of ${pagination.totalPages ?? 1}</span><button ?disabled=${(pagination.page ?? 1) >= (pagination.totalPages ?? 1)} @click=${async () => { this.mappingFilters.page += 1; await this.loadMappings(); }}>Next</button></div></div>
@@ -4573,9 +4610,19 @@ class AllstarrApp extends LitElement {
           <span class="mapping-route-arrow" aria-hidden="true">${icon("chevronRight", 18)}</span>
           <span class="mapping-route-node ${targetProvider ? "" : "unresolved"}">${targetProvider ? this.renderProviderLogo(targetProvider, "tiny") : icon("search", 18)}<span><small>Current match</small><strong>${route || "No playable match"}</strong></span></span>
         </div>
-        ${notes.length ? html`<div class="mapping-notes">${notes.slice(0, 3).map((note) => html`<span>${note}</span>`)}</div>` : ""}
+        ${notes.length ? html`<div class="mapping-notes">${notes.slice(0, 3).map((note) => html`<span>${titleCase(String(note).replaceAll("_", " "))}</span>`)}</div>` : ""}
       </div>
-      <div class="mapping-card-actions"><button class="primary" @click=${() => this.openMappingReview(mapping)}>Review match</button><button @click=${async () => { await API.rematchMapping(mapping.externalSnapshotId); await this.loadMappings(); this.toast("Rematch requested"); }}>Rematch</button><button @click=${async () => { await API.resolveMapping(mapping.externalSnapshotId, { targetType: "reject", reason: "Rejected from the match review queue" }); await this.loadMappings(); this.toast("Track rejected"); }}>Reject</button>${mapping.overrideId ? html`<button class="danger" @click=${async () => { await API.deleteMapping(mapping.overrideId, mapping.overrideRevision ?? 0); await this.loadMappings(); this.toast("Manual review cleared"); }}>Clear review</button>` : ""}</div>
+      <div class="mapping-card-actions">
+        <button class="primary" @click=${() => this.openMappingReview(mapping)}>Review match</button>
+        <details class="mapping-actions-menu">
+          <summary class="icon-button" aria-label=${`More actions for ${display(mapping.title, "track")}`}>${icon("moreVertical", 18)}</summary>
+          <div>
+            <button @click=${async () => { await API.rematchMapping(mapping.externalSnapshotId); await this.loadMappings(); this.toast("Rematch requested"); }}>Rematch</button>
+            <button @click=${async () => { await API.resolveMapping(mapping.externalSnapshotId, { targetType: "reject", reason: "Rejected from the match review queue" }); await this.loadMappings(); this.toast("Track rejected"); }}>Reject</button>
+            ${mapping.overrideId ? html`<button class="danger" @click=${async () => { await API.deleteMapping(mapping.overrideId, mapping.overrideRevision ?? 0); await this.loadMappings(); this.toast("Manual review cleared"); }}>Clear review</button>` : ""}
+          </div>
+        </details>
+      </div>
     </article>`;
   }
 
@@ -6335,7 +6382,10 @@ class AllstarrApp extends LitElement {
             <h2>Event log</h2>
             <p>Background work, download activity, scrobbling, and endpoint usage.</p>
           </div>
-          <button class="primary" @click=${async () => { await Promise.all([this.loadDashboardPresentation(), this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]); this.toast("Event log refreshed"); }}>Refresh</button>
+          <button class="primary" @click=${async () => {
+            await Promise.all([this.loadDashboardPresentation(), this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs()]);
+            this.toast(this.eventLogError || "Event log refreshed", this.eventLogError ? "error" : "success");
+          }}>Refresh</button>
         </div>
         ${this.renderEventLogFeed()}
         <div class="panel durable-jobs-panel">
@@ -6524,7 +6574,22 @@ class AllstarrApp extends LitElement {
               ${group.entries.length > 1 ? html`<button class="event-log-collapse" @click=${(event) => event.currentTarget.closest("details")?.removeAttribute("open")}>Collapse ${group.entries.length} events</button>` : nothing}
             </div>
           </details>`;
-        }) : html`<div class="empty">No events match these filters.</div>`}
+        }) : this.eventLogError
+          ? html`<div class="empty error-state"><strong>Event log unavailable</strong><p>${this.eventLogError}</p><button @click=${() => this.loadDashboardPresentation()}>Try again</button></div>`
+          : all.length
+            ? html`<div class="empty"><strong>No events match these filters</strong><span>Clear the current time, source, outcome, identifier, and search filters to return to the complete loaded feed.</span><button @click=${() => {
+              this.eventLogTime = "all";
+              this.eventLogSeverity = "all";
+              this.eventLogCategory = "all";
+              this.eventLogSource = "all";
+              this.eventLogProvider = "all";
+              this.eventLogPlaylist = "all";
+              this.eventLogState = "all";
+              this.eventLogCorrelation = "";
+              this.eventLogQuery = "";
+              this.requestUpdate();
+            }}>Reset filters</button></div>`
+            : html`<div class="empty">No events have been recorded yet.</div>`}
       </div>
       ${this.eventLogHasMore ? html`<div class="event-log-pagination"><button ?disabled=${this.eventLogLoading} @click=${() => this.loadEarlierEvents()}>${this.eventLogLoading ? "Loading…" : "Load earlier events"}</button></div>` : nothing}
     </section>`;
@@ -6960,7 +7025,7 @@ class AllstarrApp extends LitElement {
               <button class="primary" @click=${async () => { await API.createDatabaseBackup(); this.toast("Verified database backup created"); }}>Create database backup</button>
               <button @click=${() => this.exportEnv()}>Export bootstrap .env</button>
             </div>
-            <p class="muted">Restore and database-provider migration are offline operator procedures; the app never restores over its active database or fails over to SQLite.</p>
+            <p class="muted">Restore and state transfer are offline operator procedures; the app never restores over its active PostgreSQL database.</p>
           </div>
       </details>
         ${this.renderSelectiveTransferDisclosure()}

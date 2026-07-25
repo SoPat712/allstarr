@@ -5,7 +5,9 @@
  */
 
 .subnav,
-.settings-tabs {
+.settings-tabs,
+.library-tabs,
+.workspace-tabs {
     display: flex;
     gap: 4px;
     width: 100%;
@@ -19,12 +21,16 @@
 }
 
 .subnav::-webkit-scrollbar,
-.settings-tabs::-webkit-scrollbar {
+.settings-tabs::-webkit-scrollbar,
+.library-tabs::-webkit-scrollbar,
+.workspace-tabs::-webkit-scrollbar {
     display: none;
 }
 
 .subnav a,
-.settings-tabs a {
+.settings-tabs a,
+.library-tabs > a,
+.workspace-tabs > button {
     display: inline-flex;
     flex: 1 0 max-content;
     gap: 8px;
@@ -41,13 +47,17 @@
 }
 
 .subnav a:hover,
-.settings-tabs a:hover {
+.settings-tabs a:hover,
+.library-tabs > a:hover,
+.workspace-tabs > button:hover {
     color: var(--text-primary);
     background: var(--surface-control-hover);
 }
 
 .subnav a.active,
-.settings-tabs a.active {
+.settings-tabs a.active,
+.library-tabs > a.active,
+.workspace-tabs > button.active {
     color: var(--text-primary);
     background: var(--accent-soft);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);

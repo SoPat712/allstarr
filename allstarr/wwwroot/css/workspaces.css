@@ -387,8 +387,20 @@
     color: var(--warning);
 }
 
-.playlist-rematch-action {
-    place-self: center;
+.playlist-operation-actions {
+    display: grid;
+    grid-template-rows: repeat(3, minmax(40px, 1fr));
+    align-self: stretch;
+    gap: 8px;
+    min-width: 164px;
+}
+
+.playlist-operation-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
     min-width: 164px;
     min-height: 40px;
     margin: 0;
@@ -421,6 +433,32 @@
     min-height: 0;
     padding: 16px 24px 20px;
     overflow: auto;
+}
+
+.playlist-track-search {
+    position: relative;
+    display: block;
+}
+
+.playlist-track-search > .ui-icon {
+    position: absolute;
+    top: 50%;
+    left: 13px;
+    z-index: 1;
+    pointer-events: none;
+    transform: translateY(-50%);
+}
+
+.playlist-track-search > input {
+    width: 100%;
+    padding-left: 40px;
+}
+
+.playlist-track-row > .track-menu-cell .track-action-menu {
+    display: grid;
+    width: 42px;
+    height: 42px;
+    place-items: center;
 }
 
 .playlist-track-inspectable {
@@ -2329,6 +2367,17 @@
   margin: 0;
 }
 
+.mapping-metric {
+  display: grid;
+  justify-items: start;
+  text-align: left;
+}
+
+.mapping-metric[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised));
+}
+
 .mapping-filter-bar {
   display: flex;
   gap: 0.45rem;
@@ -2369,7 +2418,7 @@
 
 .mapping-review-card {
   display: grid;
-  grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: start;
   padding: 1rem;
@@ -2525,9 +2574,44 @@
 }
 
 .mapping-card-actions {
-  display: grid;
+  display: flex;
   gap: 0.5rem;
-  min-width: 8rem;
+  align-items: center;
+}
+
+.mapping-actions-menu {
+  position: relative;
+}
+
+.mapping-actions-menu > summary {
+  display: grid;
+  list-style: none;
+  place-items: center;
+  cursor: pointer;
+}
+
+.mapping-actions-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mapping-actions-menu > div {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 10rem;
+  padding: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.mapping-actions-menu > div > button {
+  justify-content: flex-start;
+  width: 100%;
 }
 
 .mapping-pagination {

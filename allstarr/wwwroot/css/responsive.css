@@ -40,6 +40,16 @@
         grid-template-columns: minmax(0, 1fr);
     }
 
+    .playlist-operation-actions {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: minmax(40px, auto);
+        width: 100%;
+    }
+
+    .playlist-operation-actions button {
+        min-width: 0;
+    }
+
     .playlist-operation-summary {
         grid-template-columns: minmax(0, 1fr);
     }
@@ -158,16 +168,6 @@
     }
 }
 
-@media (max-width: 900px) {
-    .playlist-operation-row {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .playlist-rematch-action {
-        justify-self: end;
-    }
-}
-
 @media (max-width: 620px) {
     .playlist-operation-summary {
         grid-template-columns: minmax(0, 1fr);
@@ -180,6 +180,11 @@
     .playlist-operation-group + .playlist-operation-group {
         border-top: 1px solid var(--border);
         border-left: 0;
+    }
+
+    .playlist-operation-actions {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: repeat(3, minmax(40px, auto));
     }
 }
 
@@ -619,59 +624,6 @@
         bottom: max(12px, env(safe-area-inset-bottom));
         z-index: 1100;
         width: calc(100vw - 24px);
-    }
-
-    .playlist-track-head {
-        display: none;
-    }
-
-    .playlist-track-table {
-        display: grid;
-        width: 100%;
-        min-width: 0;
-        gap: 10px;
-        overflow: visible;
-        border: 0;
-    }
-
-    .playlist-track-row {
-        grid-template-columns: 30px minmax(0, 1fr) 44px;
-        min-width: 0;
-        gap: 8px;
-        padding: 12px;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: var(--surface-elevated);
-    }
-
-    .track-position {
-        grid-column: 1;
-        grid-row: 1;
-    }
-
-    .track-primary-action {
-        grid-column: 2;
-        grid-row: 1;
-    }
-
-    .track-menu-cell {
-        grid-column: 3;
-        grid-row: 1;
-    }
-
-    .track-provider-cell {
-        display: grid;
-        grid-column: 2;
-        grid-row: 2;
-        gap: 4px;
-        align-items: center;
-        min-width: 0;
-    }
-
-    .track-duration-cell {
-        grid-column: 3;
-        grid-row: 2;
-        align-self: center;
     }
 
     .track-details-dialog {
