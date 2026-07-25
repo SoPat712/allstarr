@@ -245,16 +245,16 @@ public sealed class TrackMatchesController(
             limit,
             cancellationToken);
         var values = tracks.Select(item => new
-            {
-                item.Id,
-                item.BackendItemId,
-                item.Title,
-                item.Artist,
-                item.Album,
-                item.DurationMilliseconds,
-                item.Isrc,
-                item.CoverArtReference
-            }).ToArray();
+        {
+            item.Id,
+            item.BackendItemId,
+            item.Title,
+            item.Artist,
+            item.Album,
+            item.DurationMilliseconds,
+            item.Isrc,
+            item.CoverArtReference
+        }).ToArray();
         return Ok(new { tracks = values });
     }
 

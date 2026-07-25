@@ -1005,12 +1005,12 @@ public sealed class SelectiveStateTransferService
                     context.Jobs.AddRange(rows);
                     return rows.Count;
                 }
-                case "job-attempts":
-                    {
-                        var rows = await ReadJsonAsync<JobAttemptRecord>(archiveEntry, cancellationToken);
-                        context.JobAttempts.AddRange(rows);
-                        return rows.Count;
-                    }
+            case "job-attempts":
+                {
+                    var rows = await ReadJsonAsync<JobAttemptRecord>(archiveEntry, cancellationToken);
+                    context.JobAttempts.AddRange(rows);
+                    return rows.Count;
+                }
             case "job-schedules":
                 {
                     var rows = await ReadJsonAsync<JobScheduleRecord>(archiveEntry, cancellationToken);

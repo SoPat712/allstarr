@@ -19,7 +19,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
                 Artist = "Post Malone, Swae Lee",
                 Duration = 158,
                 CoverArtUrlLarge = "https://artwork.example/sunflower.jpg"
-        });
+            });
         var resolver = new ExternalPlaybackMetadataResolver(
             service.Object,
             new TestMemoryApplicationCache(),

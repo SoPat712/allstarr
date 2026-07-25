@@ -400,18 +400,18 @@ public class SpotifyApiClient : IDisposable
         ProviderPlaylistSummary summary,
         List<SpotifyPlaylistTrack> tracks,
         string? artworkUrl) => new()
-    {
-        SpotifyId = summary.Id.Value,
-        Name = summary.Name,
-        Description = summary.Description,
-        OwnerId = summary.Owner.ProviderUserId,
-        OwnerName = summary.Owner.DisplayName ?? summary.Owner.ProviderUserId,
-        TotalTracks = summary.TrackCount ?? tracks.Count,
-        ImageUrl = artworkUrl ?? summary.Artwork?.PublicUri?.ToString(),
-        Tracks = tracks.OrderBy(track => track.Position).ToList(),
-        SnapshotId = summary.SourceRevision,
-        FetchedAt = DateTime.UtcNow
-    };
+        {
+            SpotifyId = summary.Id.Value,
+            Name = summary.Name,
+            Description = summary.Description,
+            OwnerId = summary.Owner.ProviderUserId,
+            OwnerName = summary.Owner.DisplayName ?? summary.Owner.ProviderUserId,
+            TotalTracks = summary.TrackCount ?? tracks.Count,
+            ImageUrl = artworkUrl ?? summary.Artwork?.PublicUri?.ToString(),
+            Tracks = tracks.OrderBy(track => track.Position).ToList(),
+            SnapshotId = summary.SourceRevision,
+            FetchedAt = DateTime.UtcNow
+        };
 
     /// <summary>
     /// Searches the selected account's playlists through the shared Pathfinder transport.
