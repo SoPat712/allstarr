@@ -3040,7 +3040,7 @@ class AllstarrApp extends LitElement {
       ${playlists.length ? html`<div class="compact-playlist-table">
         <div class="compact-playlist-head"><span>Playlist</span><span>Tracks</span><span>Matched</span><span>Provider</span><span>Last sync</span><span>Status</span></div>
         ${playlists.slice(0, 6).map((playlist) => html`<button class="compact-playlist-row" @click=${() => { this.navigate("/library/playlists"); window.setTimeout(() => this.openInjectedPlaylist(playlist.name), 0); }}>
-          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong><small>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Managed playlist"}</small></span></span>
+          <span class="playlist-cell"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong><small>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : ""}</small></span></span>
           <span>${display(playlist.trackCount, 0)}</span>
           <span>${display(playlist.matchedTracks ?? Number(playlist.localTracks || 0) + Number(playlist.externalTracks || 0), 0)} <small>${display(playlist.matchPercent, 0)}%</small></span>
           <span class="provider-row-label">${playlist.sourceProvider ? this.renderProviderLogo(playlist.sourceProvider, "tiny") : icon("warning", 15)}<span>${playlist.sourceProvider ? providerDisplayName(playlist.sourceProvider, this.schema?.providers) : "Unknown source"}</span></span>
@@ -3850,7 +3850,7 @@ class AllstarrApp extends LitElement {
               aria-label="Open ${playlist.name} playlist details" @click=${openRow}
               @keydown=${(event) => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest("button, input, details, summary, a, select")) { event.preventDefault(); this.openInjectedPlaylist(playlist.name); } }}>
               <td class="selection-cell"><input type="checkbox" aria-label="Select ${playlist.name}" .checked=${selected.has(playlist.name)} @change=${(event) => updateSelection(playlist.name, event.target.checked)}></td>
-              <td class="playlist-main-cell" data-label="Playlist"><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong><small>Managed playlist</small></span></span></td>
+              <td class="playlist-main-cell" data-label="Playlist"><span class="playlist-cell playlist-name-button"><img src=${playlist.artworkUrl || "/images/playlist-placeholder.svg"} alt="" loading="lazy" decoding="async"><span><strong>${playlist.name}</strong></span></span></td>
               <td data-label="Tracks">${trackCount}</td>
               <td data-label="Matched"><strong>${matched}</strong><small>${matchPercent.toFixed(1)}%</small></td>
               <td data-label="Unmatched"><strong>${unmatched}</strong><small>${(100 - matchPercent).toFixed(1)}%</small></td>

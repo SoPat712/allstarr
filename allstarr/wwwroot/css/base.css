@@ -4253,23 +4253,23 @@ button.setup-choice {
 }
 
 .global-search {
-    position: relative;
     display: flex;
     align-items: center;
+    gap: 8px;
     width: 100%;
 }
 
 .global-search > .ui-icon {
-    position: absolute;
-    left: 13px;
-    z-index: 1;
+    flex-shrink: 0;
     color: var(--text-muted);
-    pointer-events: none;
+    z-index: 1;
 }
 
 .global-search > input {
+    flex: 1;
+    min-width: 0;
     height: 42px;
-    padding-left: 41px;
+    padding-inline: 12px;
     border-radius: 11px;
     background: color-mix(in srgb, var(--surface-control), transparent 4%);
 }
@@ -4889,19 +4889,17 @@ button.setup-choice {
 }
 
 .search-control {
-    position: relative;
     display: flex;
     align-items: center;
+    gap: 8px;
 }
 
 .search-control .ui-icon {
-    position: absolute;
-    left: 13px;
+    flex-shrink: 0;
     color: var(--text-muted);
-    pointer-events: none;
 }
 
-.search-control input { padding-left: 40px; }
+.search-control input { flex: 1; min-width: 0; }
 
 .injected-playlist-table {
     display: grid;
@@ -6201,6 +6199,9 @@ button.setup-choice {
 }
 
 .extension-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     min-width: min(310px, 100%);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -6210,6 +6211,8 @@ button.setup-choice {
 }
 
 .extension-search input {
+    flex: 1;
+    min-width: 0;
     width: 100%;
     border: 0;
     background: transparent;
