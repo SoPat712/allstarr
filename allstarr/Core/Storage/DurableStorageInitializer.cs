@@ -64,6 +64,7 @@ public sealed class DurableStorageInitializer : IHostedService
             {
                 _state.Set(DurableStorageReadiness.Unavailable, errorCode: "database_initialization_failed");
                 _logger.LogError(
+                    ex,
                     "Durable storage initialization failed for {StorageProvider} ({ExceptionType})",
                     _options.ParseProvider(),
                     ex.GetType().Name);
