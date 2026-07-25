@@ -89,8 +89,9 @@ public sealed class WebUiResponsiveContractTests
         var responsive = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "responsive.css"));
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
-        Assert.Contains("/css/foundation.css", index, StringComparison.Ordinal);
-        Assert.Contains("/css/workspaces.css", index, StringComparison.Ordinal);
+        Assert.Contains("/css/app.css", index, StringComparison.Ordinal);
+        Assert.Contains("@layer tokens, legacy, foundation, primitives, shell, workspaces, responsive;", app, StringComparison.Ordinal);
+        Assert.Contains("@import url(\"./responsive.css\") layer(responsive);", app, StringComparison.Ordinal);
         Assert.Contains(".sidebar {\n        position: fixed;", responsive, StringComparison.Ordinal);
         Assert.Contains(".main-shell.has-now-playing", responsive, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"main-shell\"", script, StringComparison.Ordinal);
