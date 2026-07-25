@@ -641,7 +641,7 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "Subsonic",
-            Name = "Navidrome / Subsonic",
+            Name = "Subsonic",
             Icon = "subsonic",
             ConfigSchema =
             [
@@ -704,7 +704,7 @@ public class AdminUiController : ControllerBase
         new()
         {
             Id = "apple-musickit",
-            Name = "Apple Music library",
+            Name = "Apple Music",
             Icon = "applemusic",
             Status = "available",
             Categories = ["playlist"],

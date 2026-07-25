@@ -2085,7 +2085,7 @@ class AllstarrApp extends LitElement {
       const username = String(data.get("intelligenceTargetUsername") || "").trim();
       const password = String(data.get("intelligenceTargetPassword") || "");
       if (password) {
-        if (!username) throw new Error("Navidrome / Subsonic username is required when changing the password");
+        if (!username) throw new Error("Subsonic username is required when changing the password");
         const body = { targetProtocol: "subsonic", username, password };
         if (payload.targetCredentialReferenceId) {
           await API.rotatePlaylistBackendCredential(payload.targetCredentialReferenceId, body);
@@ -2094,7 +2094,7 @@ class AllstarrApp extends LitElement {
           payload.targetCredentialReferenceId = credential.referenceId || credential.ReferenceId;
         }
       }
-      if (!payload.targetCredentialReferenceId) throw new Error("Navidrome / Subsonic credentials are required for generated playlists");
+      if (!payload.targetCredentialReferenceId) throw new Error("Subsonic credentials are required for generated playlists");
     } else if (payload.protocol === "jellyfin") {
       payload.targetCredentialReferenceId = null;
     }
@@ -3169,7 +3169,7 @@ class AllstarrApp extends LitElement {
       <div class="view-header"><div><h2>Intelligence</h2>
         <p>Private listening signals, explained recommendations, and generated playlist previews.</p></div></div>
       <form class="panel config-grid" @submit=${this.loadIntelligence} aria-label="Intelligence scope">
-        <div class="form-row"><label>Protocol</label><select name="protocol"><option value="jellyfin">Jellyfin</option><option value="subsonic">Subsonic / Navidrome</option></select></div>
+        <div class="form-row"><label>Protocol</label><select name="protocol"><option value="jellyfin">Jellyfin</option><option value="subsonic">Subsonic</option></select></div>
         <div class="form-row"><label>Backend instance ID</label><input name="backendInstanceId" maxlength="200" required></div>
         <div class="form-row"><label>Library scope</label><input name="libraryScopeId" maxlength="300" required></div>
         <div class="actions"><button class="primary" ?disabled=${this.intelligenceLoading}>${this.intelligenceLoading ? "Loading..." : "Load intelligence"}</button></div>
@@ -3184,8 +3184,8 @@ class AllstarrApp extends LitElement {
           <label class="toggle-row"><input type="checkbox" name="enabled" .checked=${Boolean(policy.enabled)}><span>Enable intelligence for this scope</span></label>
           <div class="form-row"><label>Keep signals for</label><select name="retentionDays" .value=${String(policy.retentionDays || 30)}><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></div>
           ${data.scope.protocol === "subsonic" ? html`
-            <div class="form-row"><label>Navidrome / Subsonic username</label><input name="intelligenceTargetUsername" autocomplete="username"><small>${policy.targetCredentialReferenceId ? "A target credential is configured. Leave the password blank to keep it." : "Required to create generated playlists."}</small></div>
-            <div class="form-row"><label>Navidrome / Subsonic password</label><input name="intelligenceTargetPassword" type="password" autocomplete="new-password"><small>Stored as an encrypted tenant-scoped secret. It is never returned to this page.</small></div>
+            <div class="form-row"><label>Subsonic username</label><input name="intelligenceTargetUsername" autocomplete="username"><small>${policy.targetCredentialReferenceId ? "A target credential is configured. Leave the password blank to keep it." : "Required to create generated playlists."}</small></div>
+            <div class="form-row"><label>Subsonic password</label><input name="intelligenceTargetPassword" type="password" autocomplete="new-password"><small>Stored as an encrypted tenant-scoped secret. It is never returned to this page.</small></div>
           ` : nothing}
           <fieldset class="form-row"><legend>Signals</legend>${asArray(data.availableSignalTypes).map((item) => html`<label><input type="checkbox" name="signalTypes" value=${item.id} .checked=${Boolean(item.enabled)}>${item.label}</label>`)}</fieldset>
           <fieldset class="form-row"><legend>Sources</legend>${asArray(data.providers).map((item) => html`<label><input type="checkbox" name="providers" value=${item.id} .checked=${Boolean(item.enabled)} ?disabled=${!item.available}>${item.label} <span class="muted">${titleCase(item.state)}</span><small>${display(item.description)}</small></label>`)}</fieldset>
@@ -3450,7 +3450,7 @@ class AllstarrApp extends LitElement {
         ${this.mediaTargets.map((target) => {
           const id = String(target.id || target.Id);
           const protocol = target.protocol || target.Protocol;
-          return html`<button class="choice-card ${draft.targetIdentityId === id ? "selected" : ""}" @click=${() => this.chooseMediaTarget(id)}><span class="provider-choice-icon">${protocol === "jellyfin" ? this.renderProviderLogo("jellyfin", "tiny") : icon("library", 22)}</span><span><strong>${target.displayName || target.DisplayName || (protocol === "jellyfin" ? "Jellyfin" : "Navidrome / Subsonic")}</strong><small>${protocol === "jellyfin" ? "Jellyfin" : "Navidrome / Subsonic"}</small></span></button>`;
+          return html`<button class="choice-card ${draft.targetIdentityId === id ? "selected" : ""}" @click=${() => this.chooseMediaTarget(id)}><span class="provider-choice-icon">${protocol === "jellyfin" ? this.renderProviderLogo("jellyfin", "tiny") : icon("library", 22)}</span><span><strong>${target.displayName || target.DisplayName || (protocol === "jellyfin" ? "Jellyfin" : "Subsonic")}</strong><small>${protocol === "jellyfin" ? "Jellyfin" : "Subsonic"}</small></span></button>`;
         })}
       </div>
       ${draft.targetIdentityId ? html`<div class="picker-search"><input aria-label="Search target playlists" placeholder="Search existing playlists" .value=${draft.targetQuery} @input=${(event) => this.updatePlaylistWizard({ targetQuery: event.target.value })} @keydown=${(event) => { if (event.key === "Enter") this.searchTargetPlaylists(); }}><button @click=${() => this.searchTargetPlaylists()}>Search</button></div><button class="choice-card create-choice ${draft.createTarget ? "selected" : ""}" @click=${() => this.updatePlaylistWizard({ createTarget: true, targetPlaylist: null })}>${icon("plus")}<span><strong>Create a new playlist</strong><small>Use the source playlist name and artwork</small></span></button>${this.renderPlaylistChoices(this.targetPlaylistResults, draft.targetPlaylist, (playlist) => this.updatePlaylistWizard({ targetPlaylist: playlist, createTarget: false }), "target")}${draft.targetNextCursor ? html`<button class="load-more" ?disabled=${draft.loading} @click=${() => this.loadMoreTargetPlaylists()}>Load more playlists</button>` : nothing}` : nothing}
@@ -3590,7 +3590,7 @@ class AllstarrApp extends LitElement {
       <td data-label="Tracks">${total}</td>
       <td data-label="Matched"><strong>${playable}</strong><small>${matchPercent.toFixed(1)}%</small></td>
       <td data-label="Source">${providerDisplayName(provider, this.schema?.providers)}</td>
-      <td data-label="Target">${String(target).toLowerCase() === "subsonic" ? "Navidrome / Subsonic" : display(target)}</td>
+      <td data-label="Target">${String(target).toLowerCase() === "subsonic" ? "Subsonic" : display(target)}</td>
       <td data-label="Last run"><span class="status-chip ${String(state).toLowerCase()}">${titleCase(state)}</span><div class="muted">${formatDate(link.lastRunAt || link.LastRunAt)}</div></td>
       <td class="row-actions mobile-actions" data-label="Actions"><button @click=${() => this.loadPlaylistLinkPreview(id)}>Preview</button><button class="primary" ?disabled=${!enabled} @click=${() => this.runPlaylistLink(id)}>Run now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${link.name || link.Name || "playlist"}">${icon("more")}</summary><div><button @click=${() => { this.editingPlaylistLink = link; }}>Edit behavior</button><button @click=${() => this.togglePlaylistLink(link)}>${enabled ? "Pause" : "Resume"}</button><button ?disabled=${!enabled} @click=${() => this.loadPlaylistLinkPreview(id, true)}>Refresh source</button>${String(target).toLowerCase() === "subsonic" ? html`<details><summary>Rotate credentials</summary><form class="form-stack" @submit=${(event) => this.savePlaylistBackendCredential(link, event)}><input name="username" aria-label="Subsonic username" autocomplete="username" required><input name="password" aria-label="Subsonic password" type="password" autocomplete="new-password" required><button type="submit">Save encrypted credentials</button></form></details>` : nothing}<button class="danger-text" @click=${() => this.deletePlaylistLink(link)}>Remove playlist</button></div></details></td>
     </tr>`;
@@ -5018,7 +5018,7 @@ class AllstarrApp extends LitElement {
         <p class="muted">Policies are isolated by your user, backend, and optional library. Current source: ${display(effective.source || "configured default")}</p>
       </div></div>
       ${canOverride ? html`<form class="config-grid" @submit=${this.saveFavoritePolicy}>
-        <div class="form-row"><label>Protocol</label><select name="protocol"><option value="jellyfin">Jellyfin</option><option value="subsonic">Subsonic / Navidrome</option></select></div>
+        <div class="form-row"><label>Protocol</label><select name="protocol"><option value="jellyfin">Jellyfin</option><option value="subsonic">Subsonic</option></select></div>
         <div class="form-row"><label>Backend instance ID</label><input name="backendInstanceId" maxlength="200" required></div>
         <div class="form-row"><label>Library scope (optional)</label><input name="libraryScopeId" maxlength="300"></div>
         ${this.isAdministrator() ? html`<div class="form-row"><label>Save as</label><select name="policyOwner"><option value="global">Global policy for this tenant/backend</option><option value="me">My override</option></select></div>` : nothing}
@@ -5121,7 +5121,7 @@ class AllstarrApp extends LitElement {
     const builtIns = [
       { id: "spotify", name: "Spotify" }, { id: "deezer", name: "Deezer" },
       { id: "qobuz", name: "Qobuz" }, { id: "lastfm", name: "Last.fm" },
-      { id: "listenbrainz", name: "ListenBrainz" }, { id: "apple-musickit", name: "Apple Music library" },
+      { id: "listenbrainz", name: "ListenBrainz" }, { id: "apple-musickit", name: "Apple Music" },
     ];
     const extensions = asArray(this.schema?.providers)
       .filter((provider) => asArray(provider.accountSettings).length)

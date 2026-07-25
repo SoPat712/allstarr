@@ -158,7 +158,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     });
 
     public static ProviderRegistration CreateRegistration(AppleMusicKitPlaylistCapabilityAdapter adapter) => new(
-        new ProviderDescriptor(StableProviderId, "Apple MusicKit",
+        new ProviderDescriptor(StableProviderId, "Apple Music",
             "Account-bound Apple Music playlist intake through a selected per-user Music User Token. Metadata, search, and lyrics are supplied by separate providers.",
             ProviderOrigin.BuiltIn, "1", "apple-musickit-library-playlist-v1",
             [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Playlist, ProviderCapabilitySupportState.Supported,
@@ -171,7 +171,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     public static ProviderRegistration CreateRegistration(
         AppleMusicKitPlaylistCapabilityAdapter playlist,
         AppleMusicKitMetadataCapabilityAdapter metadata) => new(
-        new ProviderDescriptor(StableProviderId, "Apple MusicKit",
+        new ProviderDescriptor(StableProviderId, "Apple Music",
             "Account-bound Apple Music personal-library metadata and playlists through a selected per-user Music User Token.",
             ProviderOrigin.BuiltIn, "1", "apple-musickit-library-v2",
             [
