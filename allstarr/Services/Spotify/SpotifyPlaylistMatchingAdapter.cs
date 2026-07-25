@@ -756,15 +756,15 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 track.SpotifyId.Equals(result.ExternalId, StringComparison.OrdinalIgnoreCase));
             var jellyfinTrack = jellyfinTracks.FirstOrDefault(track =>
                 track.Id.Equals(result.LocalBackendItemId, StringComparison.OrdinalIgnoreCase)) ?? new Song
-            {
-                Id = result.LocalBackendItemId!,
-                Title = result.Title ?? spotifyTrack.Title,
-                Artist = result.Artist ?? spotifyTrack.PrimaryArtist,
-                Album = result.Album ?? spotifyTrack.Album,
-                Duration = result.DurationSeconds,
-                Isrc = result.Isrc ?? spotifyTrack.Isrc,
-                IsLocal = true
-            };
+                {
+                    Id = result.LocalBackendItemId!,
+                    Title = result.Title ?? spotifyTrack.Title,
+                    Artist = result.Artist ?? spotifyTrack.PrimaryArtist,
+                    Album = result.Album ?? spotifyTrack.Album,
+                    Duration = result.DurationSeconds,
+                    Isrc = result.Isrc ?? spotifyTrack.Isrc,
+                    IsLocal = true
+                };
             localMatches[result.ExternalId] =
                 (jellyfinTrack, spotifyTrack, result.Confidence * 100d);
         }

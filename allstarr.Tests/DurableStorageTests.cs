@@ -199,19 +199,16 @@ public sealed class DurableStorageTests : IAsyncLifetime
     private TestDbContextFactory Factory() => new(_database.Options);
 
     private static async Task<bool> TableExists(AllstarrDbContext context, string table) =>
-        await context.Database.SqlQueryRaw<bool>(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables " +
-            $"WHERE table_schema = 'public' AND table_name = '{table}') AS \"Value\"")
+        await context.Database.SqlQuery<bool>(
+            $"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = {table}) AS \"Value\"")
             .SingleAsync();
 
     private static async Task<bool> ColumnExists(
         AllstarrDbContext context,
         string table,
         string column) =>
-        await context.Database.SqlQueryRaw<bool>(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns " +
-            $"WHERE table_schema = 'public' AND table_name = '{table}' " +
-            $"AND column_name = '{column}') AS \"Value\"")
+        await context.Database.SqlQuery<bool>(
+            $"SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = {table} AND column_name = {column}) AS \"Value\"")
             .SingleAsync();
 
     public async Task DisposeAsync()
