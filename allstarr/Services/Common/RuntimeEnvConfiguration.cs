@@ -1,7 +1,16 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using allstarr.Models.Settings;
 
 namespace allstarr.Services.Common;
+
+public sealed record BackendSelectionAuthority(
+    BackendType Type,
+    string EffectiveValue,
+    string Source,
+    bool IsExplicitDeploymentValue,
+    bool HasConflictingDotEnvValue,
+    string? ConflictingDotEnvValue);
 
 /// <summary>
 /// Loads supported flat .env keys into ASP.NET configuration so Docker/admin UI
@@ -159,6 +168,7 @@ public static class RuntimeEnvConfiguration
         string envFilePath)
     {
         var deploymentOwnedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var deploymentOverrides = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (System.Collections.DictionaryEntry variable in Environment.GetEnvironmentVariables())
         {
             foreach (var mapping in MapEnvVarToConfiguration(
@@ -166,16 +176,67 @@ public static class RuntimeEnvConfiguration
                          Convert.ToString(variable.Value)))
             {
                 deploymentOwnedKeys.Add(mapping.Key);
+                deploymentOverrides[mapping.Key] = mapping.Value;
             }
         }
 
         var overrides = LoadDotEnvOverrides(envFilePath, deploymentOwnedKeys);
-        if (overrides.Count == 0)
+        if (overrides.Count > 0)
         {
-            return;
+            configuration.AddInMemoryCollection(overrides);
         }
 
-        configuration.AddInMemoryCollection(overrides);
+        // Flat deployment aliases such as BACKEND_TYPE are not translated by the
+        // framework environment provider. Add their mapped values last so an explicit
+        // process environment value remains authoritative over a mounted .env file.
+        if (deploymentOverrides.Count > 0)
+        {
+            configuration.AddInMemoryCollection(deploymentOverrides);
+        }
+    }
+
+    public static BackendSelectionAuthority ResolveBackendSelection(
+        IConfiguration configuration,
+        IHostEnvironment environment)
+    {
+        var rawValue = configuration["Backend:Type"]?.Trim();
+        if (string.IsNullOrWhiteSpace(rawValue) ||
+            !Enum.TryParse<BackendType>(rawValue, ignoreCase: true, out var backendType) ||
+            !Enum.IsDefined(backendType))
+        {
+            throw new InvalidOperationException(
+                "Backend:Type must explicitly select Jellyfin or Subsonic.");
+        }
+
+        var processValue = FirstNonEmptyEnvironmentValue("Backend__Type", "BACKEND_TYPE");
+        var envFilePath = ResolveEnvFilePath(environment);
+        var dotEnvValue = ReadDotEnvValue(envFilePath, "Backend__Type", "BACKEND_TYPE");
+        var hasProcessValue = !string.IsNullOrWhiteSpace(processValue);
+        var hasDotEnvValue = !string.IsNullOrWhiteSpace(dotEnvValue);
+        var source = hasProcessValue
+            ? "process-environment"
+            : hasDotEnvValue
+                ? "deployment-env-file"
+                : "application-default";
+        var explicitDeploymentValue = hasProcessValue || hasDotEnvValue;
+
+        if (environment.IsProduction() && !explicitDeploymentValue)
+        {
+            throw new InvalidOperationException(
+                "Production requires an explicit Backend__Type or BACKEND_TYPE deployment value; " +
+                "the image default cannot select the active media-server backend.");
+        }
+
+        var conflictingDotEnv = hasProcessValue &&
+                                hasDotEnvValue &&
+                                !processValue!.Equals(dotEnvValue, StringComparison.OrdinalIgnoreCase);
+        return new BackendSelectionAuthority(
+            backendType,
+            backendType.ToString(),
+            source,
+            explicitDeploymentValue,
+            conflictingDotEnv,
+            conflictingDotEnv ? dotEnvValue : null);
     }
 
     public static Dictionary<string, string?> LoadDotEnvOverrides(
@@ -263,5 +324,53 @@ public static class RuntimeEnvConfiguration
         }
 
         return value;
+    }
+
+    private static string? FirstNonEmptyEnvironmentValue(params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ReadDotEnvValue(string path, params string[] keys)
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var accepted = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string? selected = null;
+        foreach (var line in File.ReadLines(path))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+            {
+                continue;
+            }
+
+            if (trimmed.StartsWith("export ", StringComparison.Ordinal))
+            {
+                trimmed = trimmed[7..].TrimStart();
+            }
+
+            var separator = trimmed.IndexOf('=');
+            if (separator <= 0 || !accepted.Contains(trimmed[..separator].Trim()))
+            {
+                continue;
+            }
+
+            selected = StripQuotes(trimmed[(separator + 1)..].Trim());
+        }
+
+        return string.IsNullOrWhiteSpace(selected) ? null : selected.Trim();
     }
 }

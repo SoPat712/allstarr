@@ -33,6 +33,7 @@ public class DiagnosticsController : ControllerBase
     private readonly List<string> _squidWtfApiUrls;
     private readonly DurableStorageState _storageState;
     private readonly ISafeJsonProxyClient _safeJsonProxyClient;
+    private readonly BackendSelectionAuthority _backendSelection;
     private static int _urlIndex = 0;
     private static readonly object _urlIndexLock = new();
 
@@ -49,7 +50,8 @@ public class DiagnosticsController : ControllerBase
         SquidWtfEndpointCatalog squidWtfEndpointCatalog,
         IApplicationCache cache,
         DurableStorageState storageState,
-        ISafeJsonProxyClient safeJsonProxyClient)
+        ISafeJsonProxyClient safeJsonProxyClient,
+        BackendSelectionAuthority? backendSelection = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -64,6 +66,18 @@ public class DiagnosticsController : ControllerBase
         _squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
         _storageState = storageState;
         _safeJsonProxyClient = safeJsonProxyClient;
+        _backendSelection = backendSelection ?? new BackendSelectionAuthority(
+            Enum.TryParse<BackendType>(
+                configuration["Backend:Type"],
+                ignoreCase: true,
+                out var configuredBackend)
+                ? configuredBackend
+                : BackendType.Jellyfin,
+            configuration["Backend:Type"] ?? BackendType.Jellyfin.ToString(),
+            "test-or-legacy-construction",
+            false,
+            false,
+            null);
     }
 
     [HttpGet("status")]
@@ -101,7 +115,15 @@ public class DiagnosticsController : ControllerBase
         return Ok(new
         {
             version = AppVersion.Version,
-            backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin",
+            backendType = _backendSelection.EffectiveValue,
+            backendSelection = new
+            {
+                effective = _backendSelection.EffectiveValue,
+                source = _backendSelection.Source,
+                deploymentOwned = _backendSelection.IsExplicitDeploymentValue,
+                conflict = _backendSelection.HasConflictingDotEnvValue,
+                conflictingDotEnvValue = _backendSelection.ConflictingDotEnvValue
+            },
             durableStorage = new
             {
                 provider = storage.Provider.ToString(),
@@ -162,7 +184,7 @@ public class DiagnosticsController : ControllerBase
     [HttpGet("media-probe")]
     public async Task<IActionResult> ProbeMediaPipeline(CancellationToken cancellationToken = default)
     {
-        var backendType = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
+        var backendType = _backendSelection.EffectiveValue;
         if (!backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase))
         {
             return Ok(new

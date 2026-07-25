@@ -92,10 +92,10 @@ public class ConfigController : ControllerBase
         int RuntimeInt(string key, int fallback) =>
             runtimeSettings.TryGetValue(key, out var setting) && setting.Value is int value ? value : fallback;
 
-        var backendType = GetEnvString(
-            envVars,
-            "BACKEND_TYPE",
-            _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin");
+        // Backend selection is resolved once at process startup. Never let a stale
+        // legacy .env file disagree with the controller and Home status.
+        var backendType = _configuration.GetValue<string>("Backend:Type")
+            ?? throw new InvalidOperationException("The deployment backend is unavailable.");
         var useJellyfinSettings = backendType.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase);
 
         var fallbackExplicitFilter = useJellyfinSettings

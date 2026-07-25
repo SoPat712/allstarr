@@ -134,7 +134,6 @@ public static class LegacyEnvParser
     {
         "JELLYFIN_API_KEY",
         "ALLSTARR_STORAGE_CONNECTION_STRING",
-        "REDIS_CONNECTION_STRING",
         "MUSICBRAINZ_PASSWORD"
     };
 
@@ -142,9 +141,9 @@ public static class LegacyEnvParser
     {
         "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD_FILE", "ALLSTARR_KEYRING_FILE",
         "STORAGE_AUTO_MIGRATE", "ALLSTARR_IMAGE", "PROXY_BIND_ADDRESS", "PROXY_PORT",
-        "ADMIN_BIND_ADDRESS", "ADMIN_PORT", "VALKEY_MAX_MEMORY", "ADMIN__ENABLE_ENV_EXPORT",
+        "ADMIN_BIND_ADDRESS", "ADMIN_PORT", "ADMIN__ENABLE_ENV_EXPORT",
         "CORS__ALLOWED_ORIGINS", "CORS__ALLOWED_METHODS", "CORS__ALLOWED_HEADERS", "CORS__ALLOW_CREDENTIALS",
-        "BACKEND_TYPE", "ADMIN_BIND_ANY_IP", "ADMIN_TRUSTED_SUBNETS", "ADMIN_ENABLE_ENV_EXPORT",
+        "BACKEND_TYPE", "Backend__Type", "ADMIN_BIND_ANY_IP", "ADMIN_TRUSTED_SUBNETS", "ADMIN_ENABLE_ENV_EXPORT",
         "CORS_ALLOWED_ORIGINS", "CORS_ALLOWED_METHODS", "CORS_ALLOWED_HEADERS", "CORS_ALLOW_CREDENTIALS",
         "SUBSONIC_URL", "JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_USER_ID", "JELLYFIN_CLIENT_USERNAME",
         "JELLYFIN_LIBRARY_ID", "ALLSTARR_STORAGE_PROVIDER", "ALLSTARR_STORAGE_CONNECTION_STRING",
@@ -154,14 +153,15 @@ public static class LegacyEnvParser
         "ALLSTARR_BACKEND_INSTANCE_ID", "ALLSTARR_PROVIDER_ACCOUNT_MANAGEMENT_MODE",
         "ALLSTARR_ALLOW_GLOBAL_ACCOUNTS", "ALLSTARR_ALLOW_GLOBAL_PERSONAL_ACCOUNTS",
         "ALLSTARR_SHARED_DOWNLOADER_ACCOUNT_ID", "LIBRARY_DOWNLOAD_PATH", "LIBRARY_KEPT_PATH",
-        "DOWNLOAD_PATH", "KEPT_PATH", "CACHE_PATH", "REDIS_ENABLED", "REDIS_CONNECTION_STRING",
+        "DOWNLOAD_PATH", "KEPT_PATH", "CACHE_PATH",
         "DEBUG_LOG_ALL_REQUESTS", "DEBUG_REDACT_SENSITIVE_REQUEST_VALUES", "MUSICBRAINZ_USERNAME",
         "MUSICBRAINZ_PASSWORD"
     };
 
     private static readonly HashSet<string> IgnoredKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "MUSIC_SERVICE", "EXTENSION_REPOSITORIES", "REDIS_DATA_PATH", "REDIS_HOST", "REDIS_PORT",
+        "MUSIC_SERVICE", "EXTENSION_REPOSITORIES", "VALKEY_MAX_MEMORY", "REDIS_ENABLED",
+        "REDIS_CONNECTION_STRING", "REDIS_DATA_PATH", "REDIS_HOST", "REDIS_PORT",
         "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_DATABASE", "REDIS_DB", "REDIS_SSL",
         "SPOTIFY_IMPORT_SYNC_START_HOUR", "SPOTIFY_IMPORT_SYNC_START_MINUTE",
         "SPOTIFY_IMPORT_SYNC_WINDOW_HOURS", "SPOTIFY_IMPORT_PLAYLIST_IDS",
@@ -313,6 +313,16 @@ public static class LegacyEnvParser
 
         if (DeploymentKeys.Contains(key))
         {
+            if (key.Equals("BACKEND_TYPE", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("Backend__Type", StringComparison.OrdinalIgnoreCase))
+            {
+                return new(key, value, line, LegacyEnvDisposition.DeploymentChecklist,
+                    "quarantine_deployment_backend",
+                    "The imported backend is preserved for review but never applied. " +
+                    "The explicit deployment backend remains authoritative.",
+                    false);
+            }
+
             return new(key, value, line, LegacyEnvDisposition.DeploymentChecklist, "retain_in_deployment",
                 "This bootstrap or deployment value remains outside durable runtime settings.",
                 SensitiveDeploymentKeys.Contains(key));

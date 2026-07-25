@@ -175,8 +175,13 @@ static string? GetConfiguredValue(IConfiguration configuration, params string[] 
     return null;
 }
 
-// Determine backend type FIRST
-var backendType = builder.Configuration.GetValue<BackendType>("Backend:Type");
+// Backend identity is deployment-owned and must never fall through to the enum's
+// zero value (Subsonic). Production requires an explicit deployment value.
+var backendSelection = RuntimeEnvConfiguration.ResolveBackendSelection(
+    builder.Configuration,
+    builder.Environment);
+var backendType = backendSelection.Type;
+builder.Services.AddSingleton(backendSelection);
 
 // Configure Kestrel for large responses over VPN/Tailscale
 // Also configure admin port on 5275 (internal only, not exposed)
@@ -393,9 +398,9 @@ if (backendType == BackendType.Jellyfin)
     // Register JellyfinController as a service for dependency injection
     builder.Services.AddScoped<allstarr.Controllers.JellyfinController>();
 }
-else
+else if (backendType == BackendType.Subsonic)
 {
-    // Subsonic services (default)
+    // Subsonic services
     builder.Services.AddSingleton<SubsonicRequestParser>();
     builder.Services.AddSingleton<SubsonicResponseBuilder>();
     builder.Services.AddSingleton<SubsonicModelMapper>();
@@ -406,6 +411,10 @@ else
     builder.Services.AddSingleton<SubsonicSearchProtocolAdapter>();
     builder.Services.AddSingleton<SubsonicScrobbleProtocolAdapter>();
     builder.Services.AddScoped<SubsonicAuthFilter>();
+}
+else
+{
+    throw new InvalidOperationException($"Unsupported backend type '{backendType}'.");
 }
 
 // ----------------------------------------------------

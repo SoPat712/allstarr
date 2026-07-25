@@ -1,6 +1,11 @@
 # Configuration
 
-Start with [.env.example](.env.example). It is the checked-in list of deployment-facing settings for standard Compose. The dashboard can manage supported runtime settings, but secrets should still enter through protected bootstrap files or the encrypted provider-account flow, not source control.
+Start with [.env.example](.env.example). It contains only deployment bootstrap,
+host-path, listener, and security-boundary settings for standard Compose. Runtime
+product configuration is durable PostgreSQL state managed through the dashboard.
+Provider secrets enter through the encrypted provider-account flow; the database
+password, encryption key ring, and optional sidecar secrets remain protected host
+files or environment values and must never enter source control.
 
 For the turnkey install, optional-service, update, and custom-overlay commands, use the
 [deployment profile guide](docs/operations/deployment-profiles.md).
@@ -30,7 +35,8 @@ For Jellyfin, set `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, and op
 
 For Navidrome or another Subsonic-compatible backend, set `SUBSONIC_URL`. User-specific operations that need backend credentials store an encrypted credential reference through the UI/API instead of borrowing another user's credentials.
 
-`ALLSTARR_BACKEND_INSTANCE_ID` gives the configured backend a stable identity. Do not casually change it after users, policies, jobs, or playlist links exist.
+Allstarr assigns the configured backend a durable identity in PostgreSQL. Do not
+replace the database when changing ordinary runtime settings.
 
 ### Durable storage and encryption
 
@@ -70,15 +76,14 @@ The optional Spotify lyrics service is likewise absent from Standard and AIO. Ad
 [docs/operations/spotify-lyrics-sidecar.md](docs/operations/spotify-lyrics-sidecar.md). Its cookie stays in the host
 `.env`; the dashboard migration imports endpoint configuration but never manages Docker or exports provider secrets.
 
-PostgreSQL is the runtime and EF design-time default. Custom manual deployments may
-still select the temporary SQLite compatibility mode explicitly. SQLite bootstrap has an
-intentional one-shot confirmation requirement, and no automatic Postgres-to-SQLite
-fallback exists. Follow [docs/operations/storage.md](docs/operations/storage.md) instead
-of guessing these settings.
+PostgreSQL is the only supported runtime and EF design-time database. There is no
+SQLite or Valkey fallback. Follow [docs/operations/storage.md](docs/operations/storage.md)
+for backup, restore, migration, and recovery procedures.
 
 ### Identity and provider-account ownership
 
-`ALLSTARR_MULTI_USER_MODE` controls stable user provisioning. `Hybrid` is the normal default. `ALLSTARR_PROVIDER_ACCOUNT_MANAGEMENT_MODE` accepts `AdminManaged`, `UserManaged`, or `Hybrid` and controls who can connect provider accounts.
+Identity and provider-account ownership policy is configured in the dashboard and
+stored in PostgreSQL. It is not fresh-install Compose configuration.
 
 Account scope is part of every decision:
 
@@ -106,31 +111,33 @@ Replace the example with the network that should be trusted. For a reverse proxy
 
 The old `MUSIC_SERVICE` primary-provider switch is retained only for compatibility. New work uses capability-specific provider order and account policy. Streaming, downloading, metadata, playlists, lyrics, enrichment, scrobbling, and recommendations may use different eligible providers.
 
-Provider credentials should be connected through the provider-account UI/API so the durable record contains only an encrypted secret reference. Legacy environment fields for Deezer, Qobuz, Spotify, Last.fm, and ListenBrainz remain documented in `.env.example` where the compatibility path still reads them. Never commit real values.
+Provider credentials must be connected through the provider-account UI/API so the
+durable record contains only an encrypted secret reference. Legacy environment fields
+for Deezer, Qobuz, Spotify, Last.fm, and ListenBrainz are accepted only by the explicit
+legacy import workflow; they are intentionally absent from the fresh-install template.
+Never commit real values.
 
 Current built-in or first-party integrations include provider work for Deezer, Qobuz, SquidWTF, Spotify, Apple MusicKit, lyrics services, Last.fm, ListenBrainz, MusicBrainz, and optional AudioMuse-AI. A feature is ready only when its account, permissions, optional sidecar, and health checks pass. An optional integration may be absent without breaking unrelated startup.
 
-AudioMuse-AI is deployment configuration in the current beta. Set its base URL before recreating the Allstarr
-container:
-
-```dotenv
-INTELLIGENCE__AUDIOMUSE__URL=https://audiomuse.example.internal
-```
-
-Use the real AudioMuse service base URL, not the Jellyfin plugin URL. Allstarr checks `api/health` and calls
-`api/sonic_fingerprint/generate`. The Intelligence screen then shows whether the source is ready for the selected
-user and library scope. The current adapter does not send an AudioMuse API key or authorization header. Keep the
-setting empty if the service requires separate HTTP authentication. Jellyfin users are identified with their
-resolved Jellyfin principal. Subsonic/Navidrome recommendation runs use the target credential reference stored on
-the exact intelligence policy; that credential is for the backend request body, not AudioMuse HTTP authentication.
+Configure AudioMuse-AI through the Intelligence settings using the real service base
+URL, not the Jellyfin plugin URL. Allstarr checks `api/health` and calls
+`api/sonic_fingerprint/generate`. The current adapter does not send an AudioMuse API key
+or authorization header, so leave it disabled if the service requires separate HTTP
+authentication. Jellyfin users are identified with their resolved Jellyfin principal.
+Subsonic/Navidrome recommendation runs use the target credential reference stored on
+the exact intelligence policy; that credential is for the backend request body, not
+AudioMuse HTTP authentication.
 
 Provider extensions are installed packages with declared capability hooks, scopes, network hosts, and secret permissions. Installation verifies the package and uses staged activation and rollback. Allstarr does not add a third-party registry on your behalf. See [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md).
 
 ## Media, Downloads, And Favorites
 
-`DOWNLOAD_PATH` is the persistent base for permanent downloads. Temporary cache behavior is controlled by `STORAGE_MODE`, `CACHE_DURATION_HOURS`, and the process/container temporary directory. `KEPT_PATH` is mounted separately in standard Compose.
+`DOWNLOAD_PATH` is the host mount for permanent downloads and `KEPT_PATH` is the
+separate host mount for intentionally retained media. Temporary cache behavior,
+storage mode, and cache duration are dashboard settings stored in PostgreSQL.
 
-`DOWNLOAD_MODE=Track` downloads only the requested track. `Album` may queue the remaining album after the requested track. Provider quality and rate-limit settings remain provider-specific.
+Download mode, provider quality, and rate-limit settings remain provider-specific
+dashboard settings.
 
 Original libraries are read-only inputs. Favorite-triggered work is off until an exact-scope policy enables it. A policy may queue matching, provider download, managed placement, enrichment, and backend refresh. Unfavorite does not remove source or managed audio. Managed removal is a separate confirmed action.
 
@@ -150,7 +157,10 @@ Intelligence is also opt-in at an exact user/backend/library scope. Configure re
 
 ## Cache Settings
 
-The `CACHE_*` variables tune rebuildable data such as search results, playlist images, playlist items, lyrics, genres, metadata, Odesli lookups, proxy images, and transcoded files. Longer TTLs reduce provider traffic but may show stale results. These values do not control durable jobs or Postgres retention.
+Cache settings in the dashboard tune rebuildable data such as search results, playlist
+images, playlist items, lyrics, genres, metadata, Odesli lookups, proxy images, and
+transcoded files. Longer TTLs reduce provider traffic but may show stale results. These
+values do not control durable jobs or PostgreSQL event retention.
 
 Cache data is not a backup. It is safe for PostgreSQL cache rows and `/app/cache` media to rebuild after loss.
 
@@ -165,7 +175,8 @@ docker compose run --rm --no-deps allstarr storage backup
 
 Copy the dump and its neighboring manifest out of `/app/state/backups`. Back up the media roots and encryption key ring separately. Restore Postgres into a new database, verify it, then switch the configured database name. Do not run a destructive restore against the live database and do not treat a schema down-migration as rollback.
 
-The exact tested commands, checksum rules, SQLite behavior, state transfer, and cutover procedure are in [docs/operations/storage.md](docs/operations/storage.md).
+The exact tested commands, checksum rules, state transfer, and cutover procedure are
+in [docs/operations/storage.md](docs/operations/storage.md).
 
 ## Validation And Troubleshooting
 
