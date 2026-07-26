@@ -139,11 +139,6 @@ public static class CacheKeyBuilder
         return "spotify:playlist:stats:*";
     }
 
-    public static string BuildSpotifyMissingTracksKey(string playlistName)
-    {
-        return $"spotify:missing:{playlistName}";
-    }
-
     public static string BuildSpotifyGlobalMappingKey(string spotifyId)
     {
         return $"spotify:global-map:{spotifyId}";

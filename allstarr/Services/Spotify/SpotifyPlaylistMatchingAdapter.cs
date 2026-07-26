@@ -15,10 +15,6 @@ namespace allstarr.Services.Spotify;
 /// <summary>
 /// Background service that pre-matches Spotify tracks with external providers.
 ///
-/// Supports two modes:
-/// 1. Legacy mode: Uses MissingTrack from Jellyfin plugin (no ISRC, no ordering)
-/// 2. Direct API mode: Uses SpotifyPlaylistTrack (with ISRC and ordering)
-///
 /// When ISRC is available, exact matching is preferred. Falls back to fuzzy matching.
 ///
 /// CRON SCHEDULING: Each playlist has its own cron schedule.
@@ -119,7 +115,6 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         var keysToDelete = new[]
         {
             CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name),
-            CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlist.Name),
             CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlist.Name), // Legacy key
             CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name),
             CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name),
@@ -161,9 +156,9 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             }
             else
             {
-                // Fall back to legacy mode after a rebuild clears retained source state.
-                await MatchPlaylistTracksLegacyAsync(
-                    playlist.Name, metadataService, cancellationToken);
+                _logger.LogWarning(
+                    "Skipping legacy playlist {Playlist}; configure a provider account and durable playlist link",
+                    playlist.Name);
             }
         }
         catch (Exception ex)
@@ -224,22 +219,6 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 var cachedSource = await _cache.GetAsync<SpotifyPlaylist>(
                     CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name));
                 var sourceTracks = cachedSource?.Tracks;
-                if (sourceTracks is not { Count: > 0 })
-                {
-                    var legacySource = await _cache.GetAsync<List<MissingTrack>>(
-                        CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlist.Name));
-                    sourceTracks = legacySource?
-                        .Select((track, position) => new SpotifyPlaylistTrack
-                        {
-                            SpotifyId = track.SpotifyId,
-                            Position = position,
-                            Title = track.Title,
-                            Album = track.Album,
-                            Artists = track.Artists
-                        })
-                        .ToList();
-                }
-
                 if (sourceTracks is { Count: > 0 })
                 {
                     await MatchPlaylistTracksWithIsrcAsync(
@@ -253,8 +232,9 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
                 }
                 else
                 {
-                    await MatchPlaylistTracksLegacyAsync(
-                        playlist.Name, metadataService, cancellationToken);
+                    _logger.LogWarning(
+                        "Skipping legacy playlist {Playlist}; no provider snapshot is available",
+                        playlist.Name);
                 }
             }
 
@@ -1493,238 +1473,6 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         }
     }
 
-    /// <summary>
-    /// Legacy matching mode using MissingTrack from Jellyfin plugin.
-    /// </summary>
-    private async Task MatchPlaylistTracksLegacyAsync(
-        string playlistName,
-        IMusicMetadataService metadataService,
-        CancellationToken cancellationToken)
-    {
-        var missingTracksKey = CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName);
-        var matchedTracksKey = CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlistName);
-        var currentSource = await _cache.GetAsync<SpotifyPlaylist>(
-            CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
-
-        // Check if we already have matched tracks cached
-        var existingMatched = await _cache.GetAsync<List<Song>>(matchedTracksKey);
-        if (existingMatched != null && existingMatched.Count > 0)
-        {
-            var playableMatched = existingMatched
-                .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
-                .ToList();
-            var blockedCount = existingMatched.Count - playableMatched.Count;
-            var exactRetained = currentSource?.Tracks is { Count: > 0 }
-                ? LegacyPlaylistMatchRecovery.ReconstructExact(currentSource.Tracks, playableMatched)
-                : [];
-            var sourceGenerationChanged = currentSource?.Tracks is { Count: > 0 } &&
-                                          exactRetained.Count != playableMatched.Count;
-
-            if (blockedCount == 0 && !sourceGenerationChanged)
-            {
-                if (exactRetained.Count > 0)
-                {
-                    await _cache.SetAsync(
-                        CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
-                        exactRetained,
-                        CacheExtensions.SpotifyMatchedTracksTTL);
-                }
-                _logger.LogWarning("Playlist {Playlist} already has {Count} matched tracks cached, skipping",
-                    playlistName, existingMatched.Count);
-                await EnsureLegacyPlaylistItemsCacheAsync(playlistName, cancellationToken);
-                return;
-            }
-
-            if (sourceGenerationChanged)
-            {
-                await _cache.DeleteAsync(matchedTracksKey);
-                await _cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName));
-                _logger.LogInformation(
-                    "Discarded {Count} retained matches for {Playlist} because the provider playlist generation changed",
-                    playableMatched.Count,
-                    playlistName);
-            }
-
-            if (!sourceGenerationChanged && playableMatched.Count > 0)
-            {
-                await _cache.SetAsync(
-                    matchedTracksKey,
-                    playableMatched,
-                    CacheExtensions.SpotifyMatchedTracksTTL);
-            }
-            else
-            {
-                await _cache.DeleteAsync(matchedTracksKey);
-            }
-
-            if (blockedCount > 0)
-            {
-                _logger.LogWarning(
-                    "Removed {BlockedCount} unavailable cached tracks from {Playlist}; rebuilding legacy matches",
-                    blockedCount,
-                    playlistName);
-            }
-        }
-
-        // Get missing tracks
-        var missingTracks = await _cache.GetAsync<List<MissingTrack>>(missingTracksKey);
-        if (currentSource?.Tracks is { Count: > 0 } currentTracks)
-        {
-            var currentIds = currentTracks
-                .Select(track => track.SpotifyId)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var missingSnapshotIsStale = missingTracks is not { Count: > 0 } ||
-                                         missingTracks.Any(track => !currentIds.Contains(track.SpotifyId));
-
-            if (missingSnapshotIsStale)
-            {
-                missingTracks = currentTracks
-                    .OrderBy(track => track.Position)
-                    .Select(track => track.ToMissingTrack())
-                    .ToList();
-                await _cache.SetAsync(
-                    missingTracksKey,
-                    missingTracks,
-                    CacheExtensions.SpotifyPlaylistItemsTTL);
-                _logger.LogInformation(
-                    "Replaced stale missing-track snapshot for {Playlist} with {Count} tracks from the current provider generation",
-                    playlistName,
-                    missingTracks.Count);
-            }
-        }
-
-        if (missingTracks == null || missingTracks.Count == 0)
-        {
-            _logger.LogDebug("No missing tracks found for {Playlist}, skipping matching", playlistName);
-            return;
-        }
-
-        _logger.LogInformation("Matching {Count} tracks for {Playlist} (with rate limiting)",
-            missingTracks.Count, playlistName);
-
-        var matchedSongs = new List<Song>();
-        var orderedMatches = new List<MatchedTrack>();
-        var playlist = _spotifySettings.Playlists.FirstOrDefault(item =>
-            item.Name.Equals(playlistName, StringComparison.OrdinalIgnoreCase));
-        var legacySourceTracks = missingTracks.Select((track, position) => new SpotifyPlaylistTrack
-        {
-            SpotifyId = track.SpotifyId,
-            Position = position,
-            Title = track.Title,
-            Album = track.Album,
-            Artists = track.Artists
-        }).ToList();
-        var matchCount = 0;
-
-        for (var missingPosition = 0; missingPosition < missingTracks.Count; missingPosition++)
-        {
-            var track = missingTracks[missingPosition];
-            if (cancellationToken.IsCancellationRequested) break;
-
-            try
-            {
-                var query = $"{track.Title} {track.PrimaryArtist}";
-                var results = await SearchPlayableSongsAsync(metadataService, query, 5, cancellationToken);
-
-                if (results.Count > 0)
-                {
-                    // Fuzzy match to find best result
-                    // Check that ALL artists match (not just some)
-                    var bestMatch = results
-                        .Where(ExternalTrackPlaybackPolicy.CanUseForPlayback)
-                        .Select(song => new
-                        {
-                            Song = song,
-                            TitleScore = FuzzyMatcher.CalculateSimilarity(track.Title, song.Title),
-                            // Calculate artist score by checking ALL artists match
-                            ArtistScore = FuzzyMatcher.CalculateArtistMatchScore(track.Artists, song.Artist, song.Contributors)
-                        })
-                        .Select(x => new
-                        {
-                            x.Song,
-                            x.TitleScore,
-                            x.ArtistScore,
-                            TotalScore = (x.TitleScore * 0.6) + (x.ArtistScore * 0.4)
-                        })
-                        .OrderByDescending(x => x.TotalScore)
-                        .FirstOrDefault();
-
-                    if (bestMatch != null && bestMatch.TotalScore >= 60)
-                    {
-                        matchedSongs.Add(bestMatch.Song);
-                        orderedMatches.Add(new MatchedTrack
-                        {
-                            Position = missingPosition,
-                            SpotifyId = track.SpotifyId,
-                            SpotifyTitle = track.Title,
-                            SpotifyArtist = track.PrimaryArtist,
-                            MatchType = "legacy-provider-search",
-                            MatchedSong = bestMatch.Song
-                        });
-                        matchCount++;
-
-                        if (matchCount % 10 == 0)
-                        {
-                            _logger.LogInformation("Matched {Count}/{Total} tracks for {Playlist}",
-                                matchCount, missingTracks.Count, playlistName);
-                            await _cache.SetAsync(
-                                CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
-                                orderedMatches,
-                                CacheExtensions.SpotifyMatchedTracksTTL);
-                            if (!string.IsNullOrWhiteSpace(playlist?.JellyfinId))
-                            {
-                                await PreBuildPlaylistItemsCacheAsync(
-                                    playlistName,
-                                    playlist.JellyfinId,
-                                    legacySourceTracks,
-                                    orderedMatches,
-                                    TimeSpan.FromHours(24),
-                                    cancellationToken,
-                                    includeUnorderedLocalItems: true);
-                            }
-                        }
-                    }
-                }
-
-                // Rate limiting: delay between searches
-                await Task.Delay(DelayBetweenSearchesMs, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to match track: {Title} - {Artist}",
-                    track.Title, track.PrimaryArtist);
-            }
-        }
-
-        if (matchedSongs.Count > 0)
-        {
-            // Cache matched tracks for configurable duration
-            await _cache.SetAsync(matchedTracksKey, matchedSongs, CacheExtensions.SpotifyMatchedTracksTTL);
-            _logger.LogInformation("✓ Cached {Matched}/{Total} matched tracks for {Playlist}",
-                matchedSongs.Count, missingTracks.Count, playlistName);
-
-            if (orderedMatches.Count > 0 && !string.IsNullOrWhiteSpace(playlist?.JellyfinId))
-            {
-                await _cache.SetAsync(
-                    CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName),
-                    orderedMatches,
-                    CacheExtensions.SpotifyMatchedTracksTTL);
-                await PreBuildPlaylistItemsCacheAsync(
-                    playlistName,
-                    playlist.JellyfinId,
-                    legacySourceTracks,
-                    orderedMatches,
-                    TimeSpan.FromHours(24),
-                    cancellationToken,
-                    includeUnorderedLocalItems: true);
-            }
-        }
-        else
-        {
-            _logger.LogInformation("No tracks matched for {Playlist}", playlistName);
-        }
-    }
 
     /// <summary>
     /// Adapter that converts a <see cref="SpotifyPlaylistTrack"/> into a

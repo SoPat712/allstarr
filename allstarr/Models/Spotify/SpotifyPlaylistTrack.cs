@@ -110,19 +110,6 @@ public class SpotifyPlaylistTrack
     /// </summary>
     public TimeSpan Duration => TimeSpan.FromMilliseconds(DurationMs);
 
-    /// <summary>
-    /// Converts to the legacy MissingTrack format for compatibility with existing matching logic.
-    /// </summary>
-    public MissingTrack ToMissingTrack() => new()
-    {
-        SpotifyId = SpotifyId,
-        Title = Title,
-        Album = Album,
-        Artists = Artists,
-        AlbumArtUrl = AlbumArtUrl,
-        DurationMs = DurationMs,
-        Isrc = Isrc
-    };
 }
 
 /// <summary>

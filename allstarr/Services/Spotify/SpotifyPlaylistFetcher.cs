@@ -215,8 +215,7 @@ public class SpotifyPlaylistFetcher : BackgroundService
         _cache.GetAsync<SpotifyPlaylist>(CacheKeyBuilder.BuildSpotifyPlaylistKey(playlistName));
 
     /// <summary>
-    /// Gets missing tracks for a playlist (tracks not found in Jellyfin library).
-    /// This provides compatibility with the existing SpotifyMissingTracksFetcher interface.
+    /// Gets source tracks not present in the supplied local-library identity set.
     /// </summary>
     /// <param name="playlistName">Playlist name</param>
     /// <param name="jellyfinTrackIds">Set of Spotify IDs that exist in Jellyfin library</param>

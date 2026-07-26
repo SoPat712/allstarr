@@ -211,27 +211,7 @@ public class PlaylistController : ControllerBase
         Dictionary<string, int> ProviderBreakdown);
 
     private async Task<List<SpotifyPlaylistTrack>> GetSourcePlaylistTracksAsync(string playlistName)
-    {
-        var tracks = await _playlistFetcher.GetPlaylistTracksAsync(playlistName);
-        if (tracks.Count > 0)
-        {
-            return tracks;
-        }
-
-        var retained = await _cache.GetAsync<List<MissingTrack>>(
-            CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName));
-        return retained?.Select((track, position) => new SpotifyPlaylistTrack
-        {
-            SpotifyId = track.SpotifyId,
-            Position = position,
-            Title = track.Title,
-            Album = track.Album,
-            Artists = track.Artists,
-            AlbumArtUrl = track.AlbumArtUrl,
-            DurationMs = track.DurationMs,
-            Isrc = track.Isrc
-        }).ToList() ?? [];
-    }
+        => await _playlistFetcher.GetPlaylistTracksAsync(playlistName);
 
     private async Task<PlaylistCoverage> ResolveCanonicalPlaylistCoverageAsync(
         string playlistName,

@@ -525,7 +525,6 @@ public class ConfigController : ControllerBase
             var keysToDelete = new[]
             {
                 CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name),
-                CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlist.Name),
                 CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlist.Name),
                 CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name),
                 CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name)

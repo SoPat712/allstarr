@@ -56,7 +56,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistSummarySchemaVersion = 9", controller, StringComparison.Ordinal);
         Assert.Equal(2, Count(controller, "GetSourcePlaylistTracksAsync(") - 1);
-        Assert.Contains("BuildSpotifyMissingTracksKey(playlistName)", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildSpotifyMissingTracksKey", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistCoverageMath.Normalize(", controller, StringComparison.Ordinal);
         Assert.Contains("[\"providerBreakdown\"]", controller, StringComparison.Ordinal);
         Assert.Contains("class=\"playlist-coverage\"", script, StringComparison.Ordinal);
@@ -164,7 +164,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var matcher = File.ReadAllText(FindRepositoryFile("allstarr", "Core", "Matching", "PlaylistMatchingCoordinator.cs"));
         var adapter = File.ReadAllText(FindRepositoryFile("allstarr", "Services", "Spotify", "SpotifyPlaylistMatchingAdapter.cs"));
         Assert.Contains("PlaylistMatchAllJobHandler", matcher, StringComparison.Ordinal);
-        Assert.Contains("BuildSpotifyMissingTracksKey(playlist.Name)", adapter, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildSpotifyMissingTracksKey", adapter, StringComparison.Ordinal);
         Assert.Contains("sourceTracks is { Count: > 0 }", adapter, StringComparison.Ordinal);
         Assert.Contains("MatchPlaylistTracksWithIsrcAsync(", adapter, StringComparison.Ordinal);
         Assert.Contains("sourceTracks?.OrderBy(track => track.Position)", adapter, StringComparison.Ordinal);

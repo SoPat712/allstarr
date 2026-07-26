@@ -217,37 +217,6 @@ public class SpotifyAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Get all playlists from Jellyfin
-    /// </summary>
-    [HttpGet("spotify/sync")]
-    public async Task<IActionResult> TriggerSpotifySync(
-        [FromServices] SpotifyMissingTracksFetcher fetcherService)
-    {
-        try
-        {
-            if (!_spotifyImportSettings.Enabled)
-            {
-                return BadRequest(new { error = "Spotify Import is not enabled" });
-            }
-
-            _logger.LogInformation("Manual Spotify sync triggered via admin endpoint");
-            await fetcherService.TriggerFetchAsync(HttpContext.RequestAborted);
-            _logger.LogInformation("Manual Spotify sync completed successfully");
-
-            return Ok(new
-            {
-                message = "Spotify sync completed",
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error triggering Spotify sync");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
     /// Manual trigger endpoint to force Spotify track matching.
     /// </summary>
     [HttpGet("spotify/match")]

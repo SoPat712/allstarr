@@ -33,27 +33,16 @@ public sealed class OperationalNoiseRegressionTests
     }
 
     [Fact]
-    public void LegacySpotifyAdminOperations_UseTypedBoundedServicePaths()
+    public void LegacyMissingTrackFileAuthority_IsRemoved()
     {
         var program = Read("allstarr/Program.cs");
         var controller = Read("allstarr/Controllers/SpotifyAdminController.cs");
-        var fetcher = Read("allstarr/Services/Spotify/SpotifyMissingTracksFetcher.cs");
         var extensionManager = Read("allstarr/Services/Common/ExtensionManager.cs");
 
-        Assert.Contains("AddSingleton<allstarr.Services.Spotify.SpotifyMissingTracksFetcher>()", program, StringComparison.Ordinal);
-        Assert.Contains("fetcherService.TriggerFetchAsync(HttpContext.RequestAborted)", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("SpotifyMissingTracksFetcher", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("spotify/sync", controller, StringComparison.Ordinal);
         Assert.Contains("matchingService.TriggerMatchingAsync(HttpContext.RequestAborted)", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("BindingFlags.NonPublic", controller, StringComparison.Ordinal);
-        Assert.Contains("MaximumCandidateProbes = 256", fetcher, StringComparison.Ordinal);
-        Assert.Contains("waitForActiveRun", fetcher, StringComparison.Ordinal);
-        Assert.Contains("MissingTrackExportRetryPolicy", fetcher, StringComparison.Ordinal);
-        Assert.Contains("MissingTrackFileProbeStatus.Unavailable", fetcher, StringComparison.Ordinal);
-        Assert.Contains("LogDebug(", fetcher, StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "No missing-track export is available for {Playlist} in the bounded schedule window\");",
-            fetcher,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain("totalMinutesToSearch = 72 * 60", fetcher, StringComparison.Ordinal);
         Assert.Contains("\"extension.runtime.error\"", extensionManager, StringComparison.Ordinal);
         Assert.Contains("_extensionId", extensionManager, StringComparison.Ordinal);
         Assert.DoesNotContain("[JS EXT]", extensionManager, StringComparison.Ordinal);
