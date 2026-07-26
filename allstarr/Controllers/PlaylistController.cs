@@ -713,16 +713,24 @@ public class PlaylistController : ControllerBase
         var localTrackCount = 0;
         var externalTrackCount = 0;
         var providerBreakdown = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(decodedName);
         var playlistArtworkUrl = playlistMetadata?.ImageUrl ?? spotifyTracks.FirstOrDefault()?.AlbumArtUrl;
+        if (string.IsNullOrWhiteSpace(playlistArtworkUrl) &&
+            targetBackend == "jellyfin" &&
+            !string.IsNullOrWhiteSpace(playlistConfig?.JellyfinId))
+        {
+            playlistArtworkUrl = $"/Items/{Uri.EscapeDataString(playlistConfig.JellyfinId)}/Images/Primary";
+        }
         var playlistArtworkSource = !string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl)
             ? "playlist"
-            : "track_fallback";
+            : !string.IsNullOrWhiteSpace(spotifyTracks.FirstOrDefault()?.AlbumArtUrl)
+                ? "track_fallback"
+                : "target";
         var syncSchedule = playlistConfig?.SyncSchedule ?? "0 8 * * *";
         var lastSourceRefreshAt = playlistMetadata?.FetchedAt ?? ReadPlaylistCacheTimestamp(decodedName);
         var lastSuccessfulSyncAt = await ResolveLastSuccessfulSyncAtAsync(decodedName);
         var nextSyncAt = GetNextScheduledOccurrence(syncSchedule);
-        var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin").ToLowerInvariant();
         var matchedTracksBySpotifyId = new Dictionary<string, MatchedTrack>(StringComparer.OrdinalIgnoreCase);
 
         try
@@ -1037,6 +1045,17 @@ public class PlaylistController : ControllerBase
                     }
                 }
 
+                var backendItemId = isLocal == true
+                    ? cachedItem != null ? ReadCachedString(cachedItem, "Id") : manualMappingId
+                    : null;
+                var albumArtUrl = track.AlbumArtUrl;
+                if (string.IsNullOrWhiteSpace(albumArtUrl) &&
+                    targetBackend == "jellyfin" &&
+                    !string.IsNullOrWhiteSpace(backendItemId))
+                {
+                    albumArtUrl = $"/Items/{Uri.EscapeDataString(backendItemId)}/Images/Primary";
+                }
+
                 tracksWithStatus.Add(new
                 {
                     position = trackIndex + 1,
@@ -1047,10 +1066,8 @@ public class PlaylistController : ControllerBase
                     isrc = track.Isrc,
                     spotifyId = track.SpotifyId,
                     durationMs = track.DurationMs,
-                    albumArtUrl = track.AlbumArtUrl,
-                    backendItemId = isLocal == true
-                        ? cachedItem != null ? ReadCachedString(cachedItem, "Id") : manualMappingId
-                        : null,
+                    albumArtUrl,
+                    backendItemId,
                     isLocal = isLocal,
                     externalProvider = externalProvider,
                     provider = isLocal == true ? targetBackend : externalProvider,
@@ -1153,6 +1170,14 @@ public class PlaylistController : ControllerBase
                 }
             }
 
+            var albumArtUrl = track.AlbumArtUrl;
+            if (string.IsNullOrWhiteSpace(albumArtUrl) &&
+                targetBackend == "jellyfin" &&
+                !string.IsNullOrWhiteSpace(backendItemId))
+            {
+                albumArtUrl = $"/Items/{Uri.EscapeDataString(backendItemId)}/Images/Primary";
+            }
+
             tracksWithStatus.Add(new
             {
                 position = trackIndex + 1,
@@ -1163,7 +1188,7 @@ public class PlaylistController : ControllerBase
                 isrc = track.Isrc,
                 spotifyId = track.SpotifyId,
                 durationMs = track.DurationMs,
-                albumArtUrl = track.AlbumArtUrl,
+                albumArtUrl,
                 backendItemId,
                 isLocal = isLocal,
                 externalProvider = externalProvider,

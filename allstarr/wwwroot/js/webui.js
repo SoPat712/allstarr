@@ -4098,7 +4098,7 @@ class AllstarrApp extends LitElement {
         aria-labelledby="injected-playlist-title" tabindex="-1">
         <div class="playlist-dialog-hero">
           <img class="playlist-hero-art" src=${details?.artworkUrl || "/images/playlist-placeholder.svg"} alt="" decoding="async">
-          <div class="playlist-hero-content"><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p>
+          <div class="playlist-hero-content"><div class="playlist-hero-title-row"><div><h3 id="injected-playlist-title">${display(details?.name || details?.Name || this.selectedInjectedPlaylist)}</h3><p>${details ? `${tracks.length} tracks in provider order` : "Loading tracks…"}</p></div>
             <div class="playlist-hero-stats">
               <div>${this.renderProviderLogo(sourceProvider, "small")}<span><small>Source provider</small><strong>${providerDisplayName(sourceProvider, this.schema?.providers)}</strong></span></div>
               <div class="playlist-playable-stat ${playableRatio === null ? "unknown" : ""}"
@@ -4108,6 +4108,7 @@ class AllstarrApp extends LitElement {
               </div>
               <div>${this.renderProviderLogo(targetBackend, "small")}<span><small>Target</small><strong>${titleCase(targetBackend)}</strong></span></div>
             </div>
+          </div>
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
           ${details ? html`<div class="playlist-operation-row"><div class="playlist-operation-summary" aria-label="Playlist synchronization details">
