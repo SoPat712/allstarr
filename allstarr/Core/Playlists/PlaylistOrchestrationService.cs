@@ -372,6 +372,25 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var latestVersions = storedExternals
             .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Max(item => item.SnapshotVersion), StringComparer.Ordinal);
+        var providerTrackHashes = payloads.Keys.ToArray();
+        var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item =>
+                item.TenantId == link.TenantId &&
+                item.ProviderId == link.SourceProviderId &&
+                item.ResourceKind == ProviderResourceKind.Track &&
+                providerTrackHashes.Contains(item.ExternalIdHash) &&
+                (item.Verification == ProviderIdentityVerification.Verified ||
+                 item.Verification == ProviderIdentityVerification.Pinned))
+            .ToListAsync(cancellationToken);
+        var providerIdentityByHash = providerIdentities
+            .GroupBy(item => item.ExternalIdHash, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
+                    .ThenByDescending(item => item.VerifiedAt)
+                    .First(),
+                StringComparer.Ordinal);
         foreach (var entry in collected.Entries.OrderBy(item => item.SourcePosition))
         {
             if (externalByTrack.TryGetValue(entry.ProviderTrackIdHash, out var duplicateExternal))
@@ -390,6 +409,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     TenantId = link.TenantId,
                     OwnerUserId = link.OwnerUserId,
                     ProviderAccountId = link.ProviderAccountId,
+                    ProviderTrackIdentityId = providerIdentityByHash
+                        .GetValueOrDefault(entry.ProviderTrackIdHash)?.Id,
                     SourceJobId = jobId,
                     LibraryScopeId = link.LibraryScopeId,
                     BackendInstanceId = link.TargetBackendInstanceId,
@@ -473,14 +494,68 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var externals = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
             externalIds.Contains(item.Id) && item.TenantId == link.TenantId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var providerIdentityIds = externals.Values
+            .Where(item => item.ProviderTrackIdentityId.HasValue)
+            .Select(item => item.ProviderTrackIdentityId!.Value)
+            .Distinct()
+            .ToArray();
+        var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == link.TenantId &&
+                           providerIdentityIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
 
         var candidates = await db.LibraryTracks.AsNoTracking().Where(item =>
             item.TenantId == link.TenantId && item.OwnerUserId == link.OwnerUserId &&
             item.LibraryScopeId == link.LibraryScopeId && item.BackendInstanceId == link.TargetBackendInstanceId)
             .ToListAsync(cancellationToken);
+        var candidateIds = candidates.Select(item => item.Id).ToHashSet();
+        var priorAccepted = (await db.TrackMatches.AsNoTracking()
+                .Where(item =>
+                    item.TenantId == link.TenantId &&
+                    item.OwnerUserId == link.OwnerUserId &&
+                    item.LibraryScopeId == link.LibraryScopeId &&
+                    item.CanonicalRecordingId.HasValue &&
+                    item.LibraryTrackId.HasValue &&
+                    candidateIds.Contains(item.LibraryTrackId.Value))
+                .OrderByDescending(item => item.DecisionVersion)
+                .ThenByDescending(item => item.DecidedAt)
+                .ToListAsync(cancellationToken))
+            .GroupBy(item => item.ExternalSnapshotId)
+            .Select(group => group.First())
+            .Where(item => item.State is TrackMatchState.Accepted or TrackMatchState.Pinned)
+            .OrderByDescending(item => item.DecidedAt)
+            .GroupBy(item => item.LibraryTrackId!.Value)
+            .ToDictionary(group => group.Key, group => group.First().CanonicalRecordingId!.Value);
+        var identityCanonicalByProviderTrack = providerIdentities.Values
+            .SelectMany(identity => new[]
+            {
+                new { Key = $"{identity.ProviderId}:{identity.ExternalId}", identity.CanonicalRecordingId },
+                new { Key = $"{identity.ProviderId}:{identity.ExternalIdHash}", identity.CanonicalRecordingId }
+            })
+            .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First().CanonicalRecordingId,
+                StringComparer.OrdinalIgnoreCase);
 
         // Optimization: Map candidates once outside the loop instead of doing it N times
-        var mappedCandidates = candidates.Select(ToCandidate).ToArray();
+        var mappedCandidates = candidates.Select(ToCandidate)
+            .Select(candidate =>
+            {
+                var canonicalRecordingId = candidate.ProviderTrackIds?
+                    .Select(item => identityCanonicalByProviderTrack.TryGetValue(
+                        $"{item.Key}:{item.Value}", out var identityCanonical)
+                            ? (Guid?)identityCanonical
+                            : null)
+                    .FirstOrDefault(item => item.HasValue);
+                if (!canonicalRecordingId.HasValue &&
+                    priorAccepted.TryGetValue(candidate.LibraryTrackId, out var acceptedCanonical))
+                    canonicalRecordingId = acceptedCanonical;
+                return !candidate.CanonicalRecordingId.HasValue && canonicalRecordingId.HasValue
+                    ? candidate with { CanonicalRecordingId = canonicalRecordingId }
+                    : candidate;
+            })
+            .ToArray();
         var candidateIndex = new TrackMatchCandidateIndex(mappedCandidates);
         var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(mappedCandidates);
         var candidateById = candidates.ToDictionary(item => item.Id);
@@ -518,13 +593,23 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 using var payload = JsonDocument.Parse(external.PayloadJson);
                 var root = payload.RootElement;
                 var artists = root.GetProperty("Artists").EnumerateArray().Select(item => item.GetString()).Where(item => item != null).ToArray();
+                var canonicalRecordingId = external.ProviderTrackIdentityId.HasValue &&
+                                           providerIdentities.TryGetValue(
+                                               external.ProviderTrackIdentityId.Value, out var providerIdentity)
+                    ? providerIdentity.CanonicalRecordingId
+                    : root.TryGetProperty("CanonicalRecordingId", out var canonical) &&
+                      canonical.ValueKind == JsonValueKind.String &&
+                      canonical.TryGetGuid(out var parsedCanonical)
+                        ? parsedCanonical
+                        : (Guid?)null;
                 var source = new ExternalTrackMatchSnapshot(external.Id.ToString("N"), link.SourceProviderId,
                     external.ExternalIdHash, root.TryGetProperty("Title", out var title) ? title.GetString() ?? "Unknown" : "Unknown",
                     artists.Length > 0 ? string.Join(", ", artists) : "Unknown",
                     root.TryGetProperty("Album", out var album) ? album.GetString() : null, null,
                     root.TryGetProperty("durationSeconds", out var duration) && duration.ValueKind == JsonValueKind.Number ? (int?)Math.Round(duration.GetDouble()) : null,
                     root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
-                    root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null);
+                    root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
+                    canonicalRecordingId);
 
                 var matchCandidates = candidateIndex.Select(source);
                 var rejectedOverride =
@@ -554,7 +639,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                         match.SelectedLibraryTrackId,
                         match.SelectedLibraryTrackId.HasValue &&
                         candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCand)
-                            ? matchedCand.CanonicalRecordingId
+                            ? canonicalRecordingId ?? matchedCand.CanonicalRecordingId
                             : null,
                         ToStorageState(match.State),
                         match.Confidence,

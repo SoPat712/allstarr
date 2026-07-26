@@ -38,7 +38,8 @@ public sealed record ExternalTrackMatchSnapshot(
     int? DurationSeconds,
     string? Isrc,
     string? MusicBrainzRecordingId,
-    bool? IsExplicit);
+    bool? IsExplicit,
+    Guid? CanonicalRecordingId = null);
 
 public sealed record LocalTrackMatchCandidate(
     Guid LibraryTrackId,
@@ -249,6 +250,12 @@ public sealed class TrackMatchDecisionEngine
     {
         var reasons = new List<string>();
         var warnings = new List<string>();
+        if (source.CanonicalRecordingId.HasValue &&
+            source.CanonicalRecordingId == candidate.CanonicalRecordingId)
+        {
+            return Score(candidate, 1, ["canonical_recording_id_exact"], warnings,
+                new Dictionary<string, double> { ["canonicalRecordingId"] = 1 });
+        }
         if (EqualsNormalized(source.MusicBrainzRecordingId, candidate.MusicBrainzRecordingId))
         {
             return Score(candidate, 1, ["musicbrainz_recording_id_exact"], warnings,
@@ -559,12 +566,19 @@ public static class TrackMatchOverridePolicy
 
 public sealed class TrackMatchCandidateIndex
 {
+    private readonly IReadOnlyDictionary<Guid, IReadOnlyList<LocalTrackMatchCandidate>> _byCanonical;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byIsrc;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byMatchKey;
 
     public TrackMatchCandidateIndex(IEnumerable<LocalTrackMatchCandidate> candidates)
     {
         var items = candidates.ToArray();
+        _byCanonical = items
+            .Where(item => item.CanonicalRecordingId.HasValue)
+            .GroupBy(item => item.CanonicalRecordingId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<LocalTrackMatchCandidate>)group.ToArray());
         _byIsrc = items
             .Where(item => NormalizeIsrc(item.Isrc) != null)
             .GroupBy(item => NormalizeIsrc(item.Isrc)!, StringComparer.Ordinal)
@@ -587,6 +601,10 @@ public sealed class TrackMatchCandidateIndex
 
     public IReadOnlyList<LocalTrackMatchCandidate> Select(ExternalTrackMatchSnapshot source)
     {
+        if (source.CanonicalRecordingId.HasValue &&
+            _byCanonical.TryGetValue(source.CanonicalRecordingId.Value, out var canonicalCandidates))
+            return canonicalCandidates;
+
         var isrc = NormalizeIsrc(source.Isrc);
         if (isrc != null && _byIsrc.TryGetValue(isrc, out var isrcCandidates))
             return isrcCandidates;

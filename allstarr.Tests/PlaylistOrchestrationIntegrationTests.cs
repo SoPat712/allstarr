@@ -27,6 +27,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     private readonly Guid _link = Guid.CreateVersion7();
     private readonly Guid _credential = Guid.CreateVersion7();
     private Guid _identity;
+    private Guid _canonical;
     private Guid _trackOne;
     private Guid _trackTwo;
     private readonly DateTimeOffset _now = new(2026, 7, 12, 5, 0, 0, TimeSpan.Zero);
@@ -48,7 +49,8 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             new TrackMatchDecisionEngine(), _trackMatches, clock);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
-        _identity = Guid.CreateVersion7(); _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
+        _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
+        _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
         db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "orchestration", Name = "Orchestration", CreatedAt = _now });
         db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = _now, UpdatedAt = _now });
         db.BackendIdentities.Add(new BackendIdentityRecord
@@ -74,6 +76,17 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             CreatedAt = _now,
             UpdatedAt = _now
         });
+        db.CanonicalRecordings.Add(new CanonicalRecordingRecord
+        {
+            Id = _canonical,
+            TenantId = _tenant,
+            CreatedByUserId = _user,
+            CreatedAt = _now,
+            UpdatedAt = _now
+        });
+        db.ProviderTrackIdentities.AddRange(
+            ProviderIdentity("source-1"),
+            ProviderIdentity("source-alias"));
         db.LibraryTracks.AddRange(Local(_trackOne, "local-1", "source-1", "One"), Local(_trackTwo, "local-2", "source-2", "Two"));
         db.PlaylistLinks.Add(Link());
         await db.SaveChangesAsync();
@@ -164,6 +177,39 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Null(ambiguous.LibraryTrackId);
         Assert.Equal(TrackMatchState.Unresolved, unresolved.State);
         Assert.Null(unresolved.LibraryTrackId);
+    }
+
+    [Fact]
+    public async Task Accepted_canonical_mapping_is_reused_for_aliases_and_duplicate_rows()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot(
+            "revision-canonical-source",
+            Entry(0, "entry-source", "source-1", "One"));
+        await _service.RefreshAsync(Context(), _link);
+
+        _source.Snapshot = Snapshot(
+            "revision-canonical-alias",
+            Entry(0, "entry-alias-1", "source-alias", "Different metadata"),
+            Entry(1, "entry-alias-2", "source-alias", "Different metadata"));
+        var aliasRefresh = await _service.RefreshAsync(Context(), _link);
+        var plan = await _service.RunAsync(Context(), new(_link, 2, aliasRefresh.SnapshotId));
+
+        Assert.Equal(["local-1"], plan.Plan.OrderedBackendItemIds);
+        await using var db = await _factory.CreateDbContextAsync();
+        var aliasSnapshotIds = await db.ExternalMetadataSnapshots
+            .Where(item => item.ExternalIdHash == Hash("source-alias"))
+            .Select(item => item.Id)
+            .ToArrayAsync();
+        var aliasDecision = Assert.Single(await db.TrackMatches
+            .Where(item => aliasSnapshotIds.Contains(item.ExternalSnapshotId))
+            .ToListAsync());
+        Assert.Equal(2, await db.PlaylistSourceEntries.CountAsync(item =>
+            item.PlaylistSourceSnapshotId == aliasRefresh.SnapshotId));
+        Assert.Equal(TrackMatchState.Accepted, aliasDecision.State);
+        Assert.Equal(_trackOne, aliasDecision.LibraryTrackId);
+        Assert.Equal(_canonical, aliasDecision.CanonicalRecordingId);
+        Assert.Contains("canonical_recording_id_exact", aliasDecision.ReasonsJson);
     }
 
     [Fact]
@@ -408,6 +454,25 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         ProviderIdsJson = $"{{\"fixture\":\"{Hash(sourceId)}\"}}",
         IndexedAt = _now,
         SourceModifiedAt = _now,
+        UpdatedAt = _now
+    };
+
+    private ProviderTrackIdentityRecord ProviderIdentity(string externalId) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        TenantId = _tenant,
+        CanonicalRecordingId = _canonical,
+        ProviderId = "fixture",
+        ResourceKind = ProviderResourceKind.Track,
+        CatalogNamespace = "default",
+        Scope = ProviderIdentityScope.Catalog,
+        ExternalId = externalId,
+        ExternalIdHash = Hash(externalId),
+        Verification = ProviderIdentityVerification.Verified,
+        VerificationMethod = "fixture",
+        DecisionVersion = 1,
+        VerifiedAt = _now,
+        CreatedAt = _now,
         UpdatedAt = _now
     };
 
