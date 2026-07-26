@@ -56,7 +56,7 @@
     "target": "Tenant-scoped virtual/materialized/hybrid playlist links with paging and idempotent writes.",
     "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact tenant owner, library, protocol, and backend instance before persisted snapshots or matches are read.",
     "fixture": "jellyfin-playlist-order.json; provider-neutral-virtual-playlists.json",
-    "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; InjectedPlaylistItemHelperTests; VirtualPlaylistProtocolAdapterTests",
+    "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; VirtualPlaylistProtocolAdapterTests",
     "notes": "External compatibility reads and provider-neutral virtual/hybrid reads preserve source order. The provider-neutral path exposes accepted or pinned local matches only and never invokes a backend playlist target."
   },
   {

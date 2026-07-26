@@ -1100,8 +1100,6 @@ public class AdminUiController : ControllerBase
         [
             Field("CACHE_DURATION_HOURS", "Track cache hours", "number", "library.cacheDurationHours", min: 1),
             Field("CACHE_SEARCH_RESULTS_MINUTES", "Search results minutes", "number", "cache.searchResultsMinutes", min: 1),
-            Field("CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS", "Spotify playlist items hours", "number", "cache.spotifyPlaylistItemsHours", min: 1),
-            Field("CACHE_SPOTIFY_MATCHED_TRACKS_DAYS", "Matched tracks days", "number", "cache.spotifyMatchedTracksDays", min: 1),
             Field("CACHE_LYRICS_DAYS", "Lyrics days", "number", "cache.lyricsDays", min: 1),
             Field("CACHE_METADATA_DAYS", "Metadata days", "number", "cache.metadataDays", min: 1),
             Field("CACHE_PROXY_IMAGES_DAYS", "Proxy images days", "number", "cache.proxyImagesDays", min: 1),

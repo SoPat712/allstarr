@@ -537,18 +537,6 @@ const API = {
     const query = params.size ? `?${params}` : "";
     return requestJson(`/api/admin/track-matches/spotify/${encodeURIComponent(spotifyId)}${query}`, {}, "Failed to load track mapping history");
   },
-  searchLocalTracks: (query) =>
-    requestJson(`/api/admin/jellyfin/search?query=${encodeURIComponent(query)}`, {}, "Failed to search the local library"),
-  searchExternalTracks: (query, provider, limit = 20) => {
-    const params = new URLSearchParams({ query, provider, limit: String(limit) });
-    return requestJson(`/api/admin/external/search?${params}`, {}, "Failed to search the provider");
-  },
-  saveInjectedTrackMapping: (name, payload) =>
-    requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/map`, jsonBody(payload), "Failed to save the track match"),
-  clearInjectedTrackMapping: (name, spotifyId) => {
-    const params = new URLSearchParams({ playlist: name, spotifyId });
-    return requestJson(`/api/admin/mappings/tracks?${params}`, { method: "DELETE" }, "Failed to clear the track match");
-  },
   addPlaylist: (name, spotifyId, localTracksPosition = "first") =>
     requestJson("/api/admin/playlists", jsonBody({ name, spotifyId, localTracksPosition }), "Failed to add playlist"),
   removePlaylist: (name) =>
@@ -4432,8 +4420,6 @@ class AllstarrApp extends LitElement {
       }}>
         <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.openInjectedTrackEditor(track, "local", event.currentTarget.closest(".track-action-menu")?.querySelector(".track-action-trigger")); }}>Match</button>
         <button role="menuitem" @click=${(event) => { event.stopPropagation(); this.rematchInjectedTrack(track); }}>Search</button>
-        <button role="menuitem" class="danger-text" ?disabled=${track.isLocal == null && !track.isManualMapping}
-          @click=${(event) => { event.stopPropagation(); this.clearInjectedTrackMapping(track); }}>Clear match</button>
       </div>` : nothing}
     </div>`;
   }
@@ -4521,8 +4507,8 @@ class AllstarrApp extends LitElement {
     this.injectedTrackEditor = { ...editor, loading: true, searched: true };
     try {
       const response = editor.mode === "local"
-        ? await API.searchLocalTracks(editor.query.trim())
-        : await API.searchExternalTracks(editor.query.trim(), editor.provider);
+        ? await API.searchMappingLocalTargets(editor.query.trim())
+        : await API.searchMappingProviderTargets(editor.query.trim(), editor.provider);
       this.injectedTrackEditor = { ...editor, results: asArray(response.results || response.tracks), loading: false, searched: true };
     } catch (error) {
       this.injectedTrackEditor = { ...editor, loading: false, searched: true, results: [] };
@@ -4532,12 +4518,12 @@ class AllstarrApp extends LitElement {
 
   async applyInjectedTrackMatch(result) {
     const editor = this.injectedTrackEditor;
-    if (!editor?.track?.spotifyId) return;
+    if (!editor?.track?.externalSnapshotId) return;
     const payload = editor.mode === "local"
-      ? { spotifyId: editor.track.spotifyId, jellyfinId: result.id }
-      : { spotifyId: editor.track.spotifyId, externalProvider: result.externalProvider || editor.provider, externalId: result.externalId || result.id };
+      ? { targetType: "local", libraryTrackId: result.id, reason: `Selected from playlist ${this.selectedInjectedPlaylist}` }
+      : { targetType: "provider", externalProvider: result.externalProvider || editor.provider, externalId: result.externalId || result.id, reason: `Selected from playlist ${this.selectedInjectedPlaylist}` };
     try {
-      await API.saveInjectedTrackMapping(this.selectedInjectedPlaylist, payload);
+      await API.resolveMapping(editor.track.externalSnapshotId, payload);
       await this.reloadInjectedPlaylistDetails();
       this.closeInjectedTrackEditor();
       this.toast("Track match saved");
@@ -4546,26 +4532,16 @@ class AllstarrApp extends LitElement {
     }
   }
 
-  async clearInjectedTrackMapping(track, rematch = false) {
+  async rematchInjectedTrack(track) {
     this.injectedTrackMenuId = "";
+    if (!track.externalSnapshotId) return;
     try {
-      await API.clearInjectedTrackMapping(this.selectedInjectedPlaylist, track.spotifyId);
-      if (rematch && track.externalSnapshotId) await API.rematchMapping(track.externalSnapshotId);
+      await API.rematchMapping(track.externalSnapshotId);
       await this.reloadInjectedPlaylistDetails();
-      this.toast(rematch ? "Track rematched" : "Track match cleared");
+      this.toast("Track rematched");
     } catch (error) {
-      if (rematch && error.status === 404) {
-        if (track.externalSnapshotId) await API.rematchMapping(track.externalSnapshotId);
-        await this.reloadInjectedPlaylistDetails();
-        this.toast("Track rematched");
-        return;
-      }
       this.toast(error.message, "error");
     }
-  }
-
-  async rematchInjectedTrack(track) {
-    await this.clearInjectedTrackMapping(track, true);
   }
 
   async reloadInjectedPlaylistDetails() {

@@ -89,12 +89,6 @@ public class AdminAuthenticationMiddleware
         }
 
         if (HttpMethods.IsGet(method) &&
-            path.Equals("/api/admin/spotify/user-playlists", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (HttpMethods.IsGet(method) &&
             path.Equals("/api/admin/ui/schema", StringComparison.OrdinalIgnoreCase))
         {
             return true;

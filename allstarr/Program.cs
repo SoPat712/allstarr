@@ -561,8 +561,6 @@ builder.Services.Configure<allstarr.Models.Settings.SpotifyApiSettings>(options 
     }
 
 });
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClient>();
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyApiClientFactory>();
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifySessionCookieService>();
 
 // Register Spotify lyrics service (uses Spotify's color-lyrics API)

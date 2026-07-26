@@ -1,13 +1,5 @@
 namespace allstarr.Models.Admin;
 
-public class ManualMappingRequest
-{
-    public string SpotifyId { get; set; } = "";
-    public string? JellyfinId { get; set; }
-    public string? ExternalProvider { get; set; }
-    public string? ExternalId { get; set; }
-}
-
 public class LyricsMappingRequest
 {
     public string Artist { get; set; } = "";
@@ -51,25 +43,6 @@ public class UpdateScheduleRequest
 {
     public string SyncSchedule { get; set; } = string.Empty;
 }
-public class SpotifyMappingRequest
-{
-    public required string SpotifyId { get; set; }
-    public required string TargetType { get; set; } // "local" or "external"
-    public string? LocalId { get; set; }
-    public string? ExternalProvider { get; set; }
-    public string? ExternalId { get; set; }
-    public TrackMetadataRequest? Metadata { get; set; }
-}
-
-public class TrackMetadataRequest
-{
-    public string? Title { get; set; }
-    public string? Artist { get; set; }
-    public string? Album { get; set; }
-    public string? ArtworkUrl { get; set; }
-    public int? DurationMs { get; set; }
-}
-
 /// <summary>
 /// Request model for updating configuration
 /// </summary>

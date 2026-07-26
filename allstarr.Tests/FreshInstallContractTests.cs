@@ -132,6 +132,16 @@ public sealed class FreshInstallContractTests
             Assert.DoesNotContain(removedMatcher, program, StringComparison.Ordinal);
             Assert.DoesNotContain(removedMatcher, runtimeSource, StringComparison.Ordinal);
         }
+        foreach (var removedCompatibilityPath in new[]
+                 {
+                     "SpotifyApiClient", "InjectedPlaylistItemHelper",
+                     "SpotifyPlaylistCountHelper", "mappings/tracks",
+                     "playlists/{name}/map", "jellyfin/search",
+                     "external/search", "spotify/user-playlists"
+                 })
+        {
+            Assert.DoesNotContain(removedCompatibilityPath, runtimeSource, StringComparison.OrdinalIgnoreCase);
+        }
         Assert.Contains("PlaylistMaterializationJobHandler", runtimeSource, StringComparison.Ordinal);
     }
 

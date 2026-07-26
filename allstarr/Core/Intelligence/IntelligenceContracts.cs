@@ -36,10 +36,6 @@ public interface IRecommendationProviderReadiness
 {
     Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken cancellationToken = default);
 }
-public interface IRecommendationProviderReadinessService
-{
-    Task<RecommendationProviderReadiness> CheckAsync(string providerId, IntelligenceScope scope, CancellationToken cancellationToken = default);
-}
 public interface IRecommendationProviderStatusService
 {
     Task<IReadOnlyList<RecommendationProviderReadiness>> ListAsync(IntelligenceScope scope, CancellationToken cancellationToken = default);
@@ -52,12 +48,6 @@ public interface ISmartPlaylistService
 {
     Task<Guid> CreateGeneratedSetAsync(IntelligenceScope scope, Guid runId, string name,
         IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default);
-}
-public interface IVisualizationProvider
-{
-    string Id { get; }
-    Task<IReadOnlyDictionary<string, double>> BuildAsync(IntelligenceScope scope,
-        ListeningProfile profile, CancellationToken cancellationToken);
 }
 public sealed record GeneratedSetMaterializationRequest(IntelligenceScope Scope, Guid GeneratedSetId,
     IReadOnlyList<RecommendationCandidate> OrderedCandidates, string IdempotencyKey);
