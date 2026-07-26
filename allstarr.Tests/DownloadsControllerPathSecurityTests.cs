@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 
 namespace allstarr.Tests;
 
@@ -79,6 +80,31 @@ public class DownloadsControllerPathSecurityTests
             var result = await controller.DownloadFile("Artist/track.mp3");
 
             Assert.IsType<FileStreamResult>(result);
+        }
+        finally
+        {
+            DeleteTestRoot(testRoot);
+        }
+    }
+
+    [Fact]
+    public void GetDownloads_UsesNullableMillisecondsForUnreadableDuration()
+    {
+        var testRoot = CreateTestRoot();
+        var downloadsRoot = Path.Combine(testRoot, "downloads");
+        var artistDir = Path.Combine(downloadsRoot, "kept", "Artist");
+        Directory.CreateDirectory(artistDir);
+        File.WriteAllText(Path.Combine(artistDir, "track.mp3"), "not-a-complete-audio-file");
+
+        try
+        {
+            var result = Assert.IsType<OkObjectResult>(CreateController(downloadsRoot).GetDownloads());
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(
+                result.Value,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var file = Assert.Single(document.RootElement.GetProperty("files").EnumerateArray());
+            Assert.Equal(JsonValueKind.Null, file.GetProperty("durationMilliseconds").ValueKind);
+            Assert.False(file.TryGetProperty("durationSeconds", out _));
         }
         finally
         {

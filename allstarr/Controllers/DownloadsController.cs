@@ -289,7 +289,7 @@ public class DownloadsController : ControllerBase
         int? sampleRate = null;
         int? bitDepth = null;
         int? channels = null;
-        double? durationSeconds = null;
+        long? durationMilliseconds = null;
         try
         {
             using var tagFile = TagLib.File.Create(filePath);
@@ -300,8 +300,8 @@ public class DownloadsController : ControllerBase
             sampleRate = Positive(tagFile.Properties.AudioSampleRate);
             bitDepth = Positive(tagFile.Properties.BitsPerSample);
             channels = Positive(tagFile.Properties.AudioChannels);
-            durationSeconds = tagFile.Properties.Duration.TotalSeconds > 0
-                ? Math.Round(tagFile.Properties.Duration.TotalSeconds, 1)
+            durationMilliseconds = tagFile.Properties.Duration > TimeSpan.Zero
+                ? checked((long)Math.Round(tagFile.Properties.Duration.TotalMilliseconds))
                 : null;
         }
         catch (Exception)
@@ -336,7 +336,7 @@ public class DownloadsController : ControllerBase
             sampleRate,
             bitDepth,
             channels,
-            durationSeconds,
+            durationMilliseconds,
             quality,
             identity.Provider,
             identity.ExternalId);
@@ -496,7 +496,7 @@ public class DownloadsController : ControllerBase
         int? SampleRateHz,
         int? BitDepth,
         int? Channels,
-        double? DurationSeconds,
+        long? DurationMilliseconds,
         string Quality,
         string? Provider,
         string? ExternalId);

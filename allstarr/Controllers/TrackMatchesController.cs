@@ -113,13 +113,22 @@ public sealed class TrackMatchesController(
         }
 
         var primaryLocal = localTracks.FirstOrDefault();
+        var latestSnapshot = snapshots.FirstOrDefault();
+        var sourceMetadata = latestSnapshot == null ? default : Metadata(latestSnapshot.PayloadJson);
+        var effectiveDuration = primaryLocal?.DurationMilliseconds ?? sourceMetadata.DurationMilliseconds;
         return Ok(new
         {
             spotifyId,
             found = identities.Count > 0 || decisions.Count > 0 || localTracks.Count > 0,
             firstMappedAt,
             lastMappedAt,
-            durationMilliseconds = primaryLocal?.DurationMilliseconds,
+            durationMilliseconds = effectiveDuration,
+            durationProvenance = primaryLocal?.DurationMilliseconds.HasValue == true
+                ? primaryLocal.DurationProvenance ?? primaryLocal.Protocol
+                : sourceMetadata.DurationMilliseconds.HasValue ? latestSnapshot?.ProviderId : null,
+            durationRetrievedAt = primaryLocal?.DurationMilliseconds.HasValue == true
+                ? primaryLocal.DurationRetrievedAt ?? primaryLocal.IndexedAt
+                : sourceMetadata.DurationMilliseconds.HasValue ? latestSnapshot?.RetrievedAt : null,
             metadata = new
             {
                 title = primaryLocal?.Title,
@@ -155,6 +164,8 @@ public sealed class TrackMatchesController(
                 item.Album,
                 item.AlbumArtist,
                 item.DurationMilliseconds,
+                item.DurationProvenance,
+                item.DurationRetrievedAt,
                 item.Isrc,
                 item.MusicBrainzRecordingId,
                 providerIds = ParseObject(item.ProviderIdsJson),
@@ -479,7 +490,13 @@ public sealed class TrackMatchesController(
             album = metadata.Album,
             artworkUrl = metadata.ArtworkUrl ?? track?.CoverArtReference,
             isrc = metadata.Isrc,
-            durationMilliseconds = track?.DurationMilliseconds,
+            durationMilliseconds = track?.DurationMilliseconds ?? metadata.DurationMilliseconds,
+            durationProvenance = track?.DurationMilliseconds.HasValue == true
+                ? track.DurationProvenance ?? track.Protocol
+                : metadata.DurationMilliseconds.HasValue ? snapshot.ProviderId : null,
+            durationRetrievedAt = track?.DurationMilliseconds.HasValue == true
+                ? (DateTimeOffset?)(track.DurationRetrievedAt ?? track.IndexedAt)
+                : metadata.DurationMilliseconds.HasValue ? snapshot.RetrievedAt : null,
             localTrack = track == null ? null : new
             {
                 track.Id,
@@ -487,6 +504,9 @@ public sealed class TrackMatchesController(
                 track.Title,
                 track.Artist,
                 track.Album,
+                track.DurationMilliseconds,
+                track.DurationProvenance,
+                track.DurationRetrievedAt,
                 track.CoverArtReference,
                 providerIds = ParseObject(track.ProviderIdsJson)
             },
@@ -502,7 +522,7 @@ public sealed class TrackMatchesController(
         return new(state, $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}", value);
     }
 
-    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc) Metadata(string json)
+    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds) Metadata(string json)
     {
         try
         {
@@ -519,9 +539,27 @@ public sealed class TrackMatchesController(
                 Text(root, "artworkUrl") ?? Text(root, "ArtworkUrl") ?? Text(root, "coverUrl") ?? Text(root, "CoverUrl") ??
                     Text(root, "imageUrl") ?? Text(root, "ImageUrl") ??
                     Text(root, "artworkReference") ?? Text(root, "ArtworkReference"),
-                Text(root, "isrc") ?? Text(root, "Isrc") ?? Text(root, "ISRC"));
+                Text(root, "isrc") ?? Text(root, "Isrc") ?? Text(root, "ISRC"),
+                DurationMilliseconds(root));
         }
-        catch (JsonException) { return (null, null, null, null, null); }
+        catch (JsonException) { return (null, null, null, null, null, null); }
+    }
+
+    private static long? DurationMilliseconds(JsonElement root)
+    {
+        if ((root.TryGetProperty("durationMilliseconds", out var value) ||
+             root.TryGetProperty("DurationMilliseconds", out value) ||
+             root.TryGetProperty("durationMs", out value) ||
+             root.TryGetProperty("DurationMs", out value)) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetDouble(out var milliseconds))
+            return checked((long)Math.Round(milliseconds));
+        return (root.TryGetProperty("durationSeconds", out value) ||
+                root.TryGetProperty("DurationSeconds", out value)) &&
+               value.ValueKind == JsonValueKind.Number &&
+               value.TryGetDouble(out var seconds)
+            ? checked((long)Math.Round(seconds * 1000d))
+            : null;
     }
 
     private static string? Text(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&

@@ -106,8 +106,32 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         var external = Assert.Single(await db.ExternalMetadataSnapshots.ToListAsync());
         Assert.Contains("\"DurationMilliseconds\":180000", external.PayloadJson);
         Assert.Contains("\"durationProvenance\":\"fixture\"", external.PayloadJson);
-        Assert.Contains("\"durationRetrievedAt\":\"2026-07-12T05:00:00+00:00\"", external.PayloadJson);
+        Assert.Equal(_now, external.RetrievedAt);
         Assert.Equal(2, await db.PlaylistSourceEntries.CountAsync());
+    }
+
+    [Fact]
+    public async Task Refresh_BackfillsNewDurationWithoutMutatingThePriorGeneration()
+    {
+        var entry = Entry(0, "entry-duration", "source-1", "One");
+        _source.Snapshot = Snapshot("revision-duration", entry with { DurationMilliseconds = null });
+        var first = await _service.RefreshAsync(Context(), _link);
+
+        _source.Snapshot = Snapshot("revision-duration", entry);
+        var second = await _service.RefreshAsync(Context(), _link);
+        var repeated = await _service.RefreshAsync(Context(), _link);
+
+        Assert.NotEqual(first.SnapshotId, second.SnapshotId);
+        Assert.Equal(1, first.SnapshotVersion);
+        Assert.Equal(2, second.SnapshotVersion);
+        Assert.Equal(second.SnapshotId, repeated.SnapshotId);
+        await using var db = await _factory.CreateDbContextAsync();
+        var external = await db.ExternalMetadataSnapshots
+            .OrderBy(item => item.SnapshotVersion)
+            .ToListAsync();
+        Assert.Equal(2, external.Count);
+        Assert.DoesNotContain("DurationMilliseconds\":180000", external[0].PayloadJson);
+        Assert.Contains("DurationMilliseconds\":180000", external[1].PayloadJson);
     }
 
     [Fact]
@@ -401,6 +425,12 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Durable_projection_reads_latest_generation_metrics_and_receipt()
     {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var local = await db.LibraryTracks.SingleAsync(item => item.Id == _trackOne);
+            local.DurationMilliseconds = 200_000;
+            await db.SaveChangesAsync();
+        }
         _source.Snapshot = Snapshot(
             "revision-projection",
             Entry(0, "entry-projection-1", "source-1", "One"),
@@ -414,10 +444,15 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(2, projection.Entries.Count);
         Assert.Equal(2, projection.LocalCount);
         Assert.Equal(0, projection.MissingCount);
-        Assert.Equal(360000, projection.DurationMilliseconds);
+        Assert.Equal(380000, projection.DurationMilliseconds);
         Assert.Equal(PlaylistSyncState.PartiallySucceeded, projection.SyncState);
         Assert.Equal(_now, projection.CompletedAt);
-        Assert.All(projection.Entries, item => Assert.NotNull(item.BackendItemId));
+        Assert.All(projection.Entries, item =>
+        {
+            Assert.NotNull(item.BackendItemId);
+            Assert.Equal("jellyfin", item.DurationProvenance);
+            Assert.Equal(_now, item.DurationRetrievedAt);
+        });
     }
 
     private PlaylistLinkRecord Link() => new()

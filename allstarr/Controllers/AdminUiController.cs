@@ -356,6 +356,8 @@ public class AdminUiController : ControllerBase
                 TargetTitle: libraryTrack?.Title,
                 TargetArtist: libraryTrack?.Artist,
                 ConfidenceLabel: $"{Math.Round(item.Confidence * 100, 1)}%",
+                DurationMilliseconds: libraryTrack?.DurationMilliseconds ??
+                    (snapshot == null ? null : AuditDurationMilliseconds(snapshot.PayloadJson)),
                 Isrc: snapshot == null ? libraryTrack?.Isrc : AuditDetail(snapshot.PayloadJson, "isrc") ?? libraryTrack?.Isrc,
                 SourceProviderTrackId: identity?.ExternalId,
                 BackendItemId: libraryTrack?.BackendItemId,
@@ -480,7 +482,23 @@ public class AdminUiController : ControllerBase
             RouteDecisionId: Detail(details, "routeDecisionId"),
             ActorUserId: item.ActorUserId?.ToString("N"),
             Action: item.Action,
+            DurationMilliseconds: LongDetail(details, "durationMilliseconds", "durationMs"),
             TechnicalDetails: details);
+    }
+
+    private static long? AuditDurationMilliseconds(string json)
+    {
+        var milliseconds = AuditDetail(json, "durationMilliseconds") ?? AuditDetail(json, "durationMs");
+        if (long.TryParse(milliseconds, out var value) && value > 0) return value;
+        return double.TryParse(AuditDetail(json, "durationSeconds"), out var seconds) && seconds > 0
+            ? checked((long)Math.Round(seconds * 1000d))
+            : null;
+    }
+
+    private static long? LongDetail(IReadOnlyDictionary<string, string> details, params string[] names)
+    {
+        var value = Detail(details, names);
+        return long.TryParse(value, out var parsed) && parsed > 0 ? parsed : null;
     }
 
     private static IReadOnlyDictionary<string, string> SafeAuditDetails(string json)
@@ -1201,4 +1219,5 @@ public sealed record AdminUiActivityItem(
     string? RouteDecisionId = null,
     string? ActorUserId = null,
     string? Action = null,
+    long? DurationMilliseconds = null,
     IReadOnlyDictionary<string, string>? TechnicalDetails = null);

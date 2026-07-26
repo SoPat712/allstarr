@@ -322,16 +322,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     {
         var collected = await _source.CollectAsync(execution, link, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var existing = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
-            item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
-            item.ProviderRevision == collected.SourceRevision)
-            .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
-        if (existing != null) return existing;
-        var version = (await db.PlaylistSourceSnapshots.Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
-            .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
         var now = _clock.UtcNow;
-        var externalByTrack = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
-        var externalBySourceEntry = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         var distinctEntries = collected.Entries
             .OrderBy(item => item.SourcePosition)
             .GroupBy(item => item.ProviderTrackIdHash, StringComparer.Ordinal)
@@ -349,7 +340,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     entry.Album,
                     entry.DurationMilliseconds,
                     durationProvenance = entry.DurationMilliseconds.HasValue ? link.SourceProviderId : null,
-                    durationRetrievedAt = entry.DurationMilliseconds.HasValue ? now : (DateTimeOffset?)null,
                     entry.Isrc,
                     entry.IsExplicit,
                     entry.CanonicalRecordingId
@@ -357,6 +347,32 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 return (Payload: payload, PayloadHash: Hash(payload));
             },
             StringComparer.Ordinal);
+        var playlistPayload = JsonSerializer.Serialize(new
+        {
+            collected.SourceRevision,
+            collected.Name,
+            collected.Description,
+            collected.ArtworkReferenceKey,
+            entries = collected.Entries.Select(item => new
+            {
+                item.SourcePosition,
+                item.SourceEntryIdHash,
+                item.ProviderTrackIdHash,
+                metadataSha256 = payloads[item.ProviderTrackIdHash].PayloadHash
+            })
+        });
+        var playlistPayloadHash = Hash(playlistPayload);
+        var existing = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
+                item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
+                item.ProviderRevision == collected.SourceRevision &&
+                item.PayloadSha256 == playlistPayloadHash)
+            .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
+        if (existing != null) return existing;
+        var version = (await db.PlaylistSourceSnapshots.Where(item =>
+                item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
+            .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
+        var externalByTrack = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
+        var externalBySourceEntry = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         var storedExternals = new List<ExternalMetadataSnapshotRecord>();
         foreach (var hashes in payloads.Keys.Chunk(500))
         {
@@ -433,14 +449,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             externalByTrack[entry.ProviderTrackIdHash] = external;
             externalBySourceEntry[entry.SourceEntryIdHash] = external;
         }
-        var playlistPayload = JsonSerializer.Serialize(new
-        {
-            collected.SourceRevision,
-            collected.Name,
-            collected.Description,
-            collected.ArtworkReferenceKey,
-            entries = collected.Entries.Select(item => new { item.SourcePosition, item.SourceEntryIdHash, item.ProviderTrackIdHash })
-        });
         var snapshot = new PlaylistSourceSnapshotRecord
         {
             Id = Guid.CreateVersion7(),
@@ -455,7 +463,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             Name = collected.Name,
             Description = collected.Description,
             ArtworkReferenceKey = collected.ArtworkReferenceKey,
-            PayloadSha256 = Hash(playlistPayload),
+            PayloadSha256 = playlistPayloadHash,
             CorrelationId = execution.CorrelationId,
             RetrievedAt = now
         };
@@ -843,6 +851,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     {
         if ((root.TryGetProperty("DurationMilliseconds", out var value) ||
              root.TryGetProperty("durationMilliseconds", out value)) &&
+            value.ValueKind == JsonValueKind.Number &&
             value.TryGetInt64(out var milliseconds))
             return milliseconds;
         return root.TryGetProperty("durationSeconds", out value) && value.TryGetDouble(out var seconds)

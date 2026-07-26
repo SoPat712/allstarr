@@ -14,6 +14,8 @@ public sealed record DurablePlaylistEntryProjection(
     string? Album,
     string? Isrc,
     long? DurationMilliseconds,
+    string? DurationProvenance,
+    DateTimeOffset? DurationRetrievedAt,
     TrackMatchState? MatchState,
     string? BackendItemId);
 
@@ -130,11 +132,11 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
     {
         matches.TryGetValue(external.Id, out var match);
-        var backendItemId = match?.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
-                            match.LibraryTrackId is { } libraryId &&
-                            library.TryGetValue(libraryId, out var local)
-            ? local.BackendItemId
-            : null;
+        LibraryTrackRecord? local = null;
+        if (match?.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
+            match.LibraryTrackId is { } libraryId)
+            library.TryGetValue(libraryId, out local);
+        var backendItemId = local?.BackendItemId;
         var metadata = ReadMetadata(external.PayloadJson);
         var externalId = external.ProviderTrackIdentityId is { } identityId &&
                          identities.TryGetValue(identityId, out var identity)
@@ -148,7 +150,13 @@ public sealed class DurablePlaylistProjectionReader(
             metadata.Artists,
             metadata.Album,
             metadata.Isrc,
-            metadata.DurationMilliseconds,
+            local?.DurationMilliseconds ?? metadata.DurationMilliseconds,
+            local?.DurationMilliseconds.HasValue == true
+                ? local.DurationProvenance ?? local.Protocol
+                : metadata.DurationMilliseconds.HasValue ? external.ProviderId : null,
+            local?.DurationMilliseconds.HasValue == true
+                ? local.DurationRetrievedAt ?? local.IndexedAt
+                : metadata.DurationMilliseconds.HasValue ? external.RetrievedAt : null,
             match?.State,
             backendItemId);
     }
@@ -166,12 +174,15 @@ public sealed class DurablePlaylistProjectionReader(
                 .ToArray()
             : [];
         var duration = root.TryGetProperty("DurationMilliseconds", out var durationValue) &&
+                       durationValue.ValueKind == JsonValueKind.Number &&
                        durationValue.TryGetInt64(out var milliseconds)
             ? milliseconds
             : root.TryGetProperty("durationMilliseconds", out durationValue) &&
+              durationValue.ValueKind == JsonValueKind.Number &&
               durationValue.TryGetInt64(out milliseconds)
                 ? milliseconds
                 : root.TryGetProperty("durationSeconds", out durationValue) &&
+                  durationValue.ValueKind == JsonValueKind.Number &&
                   durationValue.TryGetDouble(out var seconds)
                     ? (long?)Math.Round(seconds * 1000d)
                     : null;
