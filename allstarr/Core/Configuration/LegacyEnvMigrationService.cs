@@ -217,6 +217,10 @@ public sealed class LegacyEnvMigrationService
                     reason = $"Import into your encrypted user-owned {personalProviderId} account.";
                 }
             }
+            else if (action == "conflict_invalid_value")
+            {
+                conflicts.Add($"{entry.Key} has an invalid value and must be corrected before apply.");
+            }
 
             previewItems.Add(new(
                 entry.Key,
@@ -225,7 +229,7 @@ public sealed class LegacyEnvMigrationService
                 action,
                 reason,
                 entry.Sensitive,
-                entry.Value,
+                entry.Sensitive ? null : entry.Value,
                 entry.DurableKey,
                 entry.ProviderId ?? PersonalProviderId(entry.Key),
                 existingRevision,

@@ -220,7 +220,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var previewJson = JsonSerializer.Serialize(
             previewResult.Value,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        Assert.Contains("controller-secret", previewJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("controller-secret", previewJson, StringComparison.Ordinal);
         Assert.Equal("no-store", controller.Response.Headers.CacheControl);
         Assert.Equal("no-cache", controller.Response.Headers.Pragma);
         using var previewDocument = JsonDocument.Parse(previewJson);

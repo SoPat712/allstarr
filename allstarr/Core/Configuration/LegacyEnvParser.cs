@@ -253,6 +253,7 @@ public static class LegacyEnvParser
             }
 
             ApplyProviderBundleCompleteness(entries);
+            ApplyBackendValidation(entries);
             var playlistEntry = entries.SingleOrDefault(entry =>
                 entry.Key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase));
             if (playlistEntry is { Value.Length: > 0 })
@@ -453,6 +454,33 @@ public static class LegacyEnvParser
             }
         }
     }
+
+    private static void ApplyBackendValidation(List<LegacyEnvEntry> entries)
+    {
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            var reason = entry.Key.ToUpperInvariant() switch
+            {
+                "BACKEND_TYPE" or "BACKEND__TYPE"
+                    when !entry.Value.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase) &&
+                         !entry.Value.Equals("Subsonic", StringComparison.OrdinalIgnoreCase) =>
+                    "The deployment backend must be Jellyfin or Subsonic.",
+                "JELLYFIN_URL" or "SUBSONIC_URL" when !IsHttpUrl(entry.Value) =>
+                    $"{entry.Key} must be an absolute HTTP or HTTPS URL.",
+                _ => null
+            };
+            if (reason != null)
+            {
+                entries[index] = entry with { Action = "conflict_invalid_value", Reason = reason };
+            }
+        }
+    }
+
+    private static bool IsHttpUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+        string.IsNullOrEmpty(uri.UserInfo);
 
     private static bool HasValue(IReadOnlyDictionary<string, LegacyEnvEntry> entries, string key) =>
         entries.TryGetValue(key, out var entry) && entry.Value.Length > 0;

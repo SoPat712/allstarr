@@ -53,7 +53,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Preview_IsReadOnlyBoundedAndReturnsValuesToAuthenticatedAdministrator()
+    public async Task Preview_IsReadOnlyBoundedAndRedactsSensitiveValues()
     {
         var service = CreateService();
         var preview = await service.PreviewAsync(Source("""
@@ -78,7 +78,9 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.True(preview.PreviewToken.Length >= 40);
         var deezer = Assert.Single(preview.Items, item => item.Key == "DEEZER_ARL");
         Assert.Equal(2, deezer.SourceLine);
-        Assert.Equal("never-return-this-arl", deezer.ValuePreview);
+        Assert.Null(deezer.ValuePreview);
+        Assert.Equal("21", Assert.Single(preview.Items, item => item.Key == "CACHE_LYRICS_DAYS").ValuePreview);
+        Assert.All(preview.Items.Where(item => item.Sensitive), item => Assert.Null(item.ValuePreview));
         Assert.Equal("retain_in_deployment", Assert.Single(preview.Items, item => item.Key == "JELLYFIN_API_KEY").Action);
         Assert.Equal("import_for_current_user", Assert.Single(preview.Items, item => item.Key == "SCROBBLING_LASTFM_SESSION_KEY").Action);
         Assert.Contains("duplicate", Assert.Single(preview.Items,
@@ -91,8 +93,8 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal("import_if_absent", playlistSetting.Action);
 
         var json = JsonSerializer.Serialize(preview);
-        Assert.Contains("never-return-this-arl", json, StringComparison.Ordinal);
-        Assert.Contains("never-return-this-session", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("never-return-this-arl", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("never-return-this-session", json, StringComparison.Ordinal);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
@@ -137,7 +139,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Contains(preview.Warnings, warning => warning.Contains("DEEZER_ARL", StringComparison.Ordinal));
         var serializedPreview = JsonSerializer.Serialize(preview);
         Assert.DoesNotContain("first-private-value", serializedPreview, StringComparison.Ordinal);
-        Assert.Contains("second-private-value", serializedPreview, StringComparison.Ordinal);
+        Assert.DoesNotContain("second-private-value", serializedPreview, StringComparison.Ordinal);
 
         await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
 
@@ -263,6 +265,8 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
     [InlineData("CACHE_LYRICS_DAYS=not-a-number")]
     [InlineData("QOBUZ_USER_AUTH_TOKEN=token-without-user-id")]
     [InlineData("SPOTIFY_API_SESSION_COOKIE=cookie\nSPOTIFY_API_SESSION_COOKIE_SET_DATE=not-a-date")]
+    [InlineData("BACKEND_TYPE=unsupported")]
+    [InlineData("JELLYFIN_URL=not-a-url")]
     public async Task Apply_ServerSideRejectsBlockedPreviews(string source)
     {
         var service = CreateService();

@@ -160,6 +160,19 @@ public sealed class LegacyEnvParserTests
     }
 
     [Theory]
+    [InlineData("BACKEND_TYPE=unsupported", "BACKEND_TYPE")]
+    [InlineData("Backend__Type=", "Backend__Type")]
+    [InlineData("JELLYFIN_URL=jellyfin:8096", "JELLYFIN_URL")]
+    [InlineData("SUBSONIC_URL=https://user:password@example.test", "SUBSONIC_URL")]
+    public void Parse_FlagsInvalidBackendConfiguration(string source, string key)
+    {
+        var document = Parse(source);
+
+        AssertEntry(document, key, LegacyEnvDisposition.DeploymentChecklist,
+            "conflict_invalid_value", false);
+    }
+
+    [Theory]
     [InlineData("NOT AN ASSIGNMENT", "KEY=VALUE")]
     [InlineData("SPOTIFY_IMPORT_PLAYLISTS=not-json", "invalid JSON")]
     [InlineData("SPOTIFY_IMPORT_PLAYLISTS=[[\"name\",\"\",\"target\"]]", "are required")]
