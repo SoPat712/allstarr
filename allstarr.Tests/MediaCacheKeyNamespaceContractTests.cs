@@ -7,8 +7,7 @@ public sealed class MediaCacheKeyNamespaceContractTests
         Path.Combine("allstarr", "Controllers", "JellyfinController.PlaylistHandler.cs"),
         Path.Combine("allstarr", "Controllers", "SubSonicController.cs"),
         Path.Combine("allstarr", "Services", "Jellyfin", "JellyfinProxyService.cs"),
-        Path.Combine("allstarr", "Services", "Spotify", "SpotifyPlaylistFetcher.cs"),
-        Path.Combine("allstarr", "Services", "Spotify", "SpotifyPlaylistMatchingAdapter.cs")
+        Path.Combine("allstarr", "Services", "Spotify", "SpotifyPlaylistFetcher.cs")
     ];
 
     [Fact]

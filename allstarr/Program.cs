@@ -579,17 +579,6 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
 
-// Register Spotify track matching service (pre-matches tracks with rate limiting)
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistMatchingAdapter>();
-builder.Services.AddSingleton<allstarr.Core.Matching.IPlaylistMatchingAdapter>(sp =>
-    sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistMatchingAdapter>());
-builder.Services.AddSingleton<allstarr.Core.Matching.PlaylistMatchingCoordinator>();
-builder.Services.AddSingleton<allstarr.Core.Matching.IPlaylistMatchingCoordinator>(sp =>
-    sp.GetRequiredService<allstarr.Core.Matching.PlaylistMatchingCoordinator>());
-builder.Services.AddHostedService(sp =>
-    sp.GetRequiredService<allstarr.Core.Matching.PlaylistMatchingCoordinator>());
-builder.Services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, allstarr.Core.Matching.PlaylistMatchAllJobHandler>();
-
 // Register lyrics prefetch service (prefetches lyrics for all playlist tracks)
 // DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast
 // builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPrefetchService>();

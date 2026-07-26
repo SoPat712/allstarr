@@ -80,6 +80,61 @@ public sealed class FreshInstallContractTests
         Assert.DoesNotContain("automatically started in docker-compose", example, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Architecture_PublishesAndEnforcesTheStateOwnershipMatrix()
+    {
+        var architecture = File.ReadAllText(Path.Combine(
+            _repositoryRoot, "docs", "architecture", "overview.md"));
+        foreach (var owner in new[] { "PostgreSQL", "Filesystem", "Environment / deployment secrets" })
+        {
+            Assert.Contains($"| {owner} |", architecture, StringComparison.Ordinal);
+        }
+        Assert.Contains("Legacy `.env` input is accepted only through the explicit preview/apply migration boundary", architecture, StringComparison.Ordinal);
+
+        var dbContext = string.Join('\n',
+            Directory.GetFiles(
+                    Path.Combine(_repositoryRoot, "allstarr", "Core", "Storage"),
+                    "AllstarrDbContext*.cs")
+                .Select(File.ReadAllText));
+        foreach (var durableEntity in new[]
+                 {
+                     "AdminAuthSession", "ProviderAccount", "TenantRuntimeSetting",
+                     "PlaylistLink", "PlaylistSourceSnapshot", "PlaylistSyncRun",
+                     "TrackMatch", "ProviderRouteDecision", "DurableJob",
+                     "ProviderHealthSample", "AuditEvent", "ExtensionPackage"
+                 })
+        {
+            Assert.Contains($"DbSet<{durableEntity}", dbContext, StringComparison.Ordinal);
+        }
+
+        var runtimeSource = string.Join('\n',
+            Directory.GetFiles(
+                    Path.Combine(_repositoryRoot, "allstarr"),
+                    "*.cs",
+                    SearchOption.AllDirectories)
+                .Select(File.ReadAllText));
+        foreach (var removedAuthority in new[]
+                 {
+                     "mappings.json", "sessions.protected", "endpoint-usage.csv",
+                     "missing_tracks.json", "_spotify.json"
+                 })
+        {
+            Assert.DoesNotContain(removedAuthority, runtimeSource, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var program = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr", "Program.cs"));
+        foreach (var removedMatcher in new[]
+                 {
+                     "SpotifyPlaylistMatchingAdapter", "PlaylistMatchingCoordinator",
+                     "IPlaylistMatchingCoordinator", "playlist.match-all"
+                 })
+        {
+            Assert.DoesNotContain(removedMatcher, program, StringComparison.Ordinal);
+            Assert.DoesNotContain(removedMatcher, runtimeSource, StringComparison.Ordinal);
+        }
+        Assert.Contains("PlaylistMaterializationJobHandler", runtimeSource, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

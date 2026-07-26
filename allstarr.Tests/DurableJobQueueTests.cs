@@ -387,7 +387,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     [Fact]
     public async Task Progress_IsPersistedForTheActiveLeaseAndRedactsUnsafeDetails()
     {
-        await Enqueue("playlist.match-all", "match-all-progress");
+        await Enqueue("playlist.materialize", "playlist-progress");
         var claim = (await _queue.ClaimNextAsync("worker-progress"))!;
 
         var reported = await _queue.ReportProgressAsync(

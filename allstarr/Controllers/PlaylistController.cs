@@ -27,7 +27,6 @@ public class PlaylistController : ControllerBase
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly SpotifyPlaylistFetcher _playlistFetcher;
-    private readonly IPlaylistMatchingCoordinator? _matchingService;
     private readonly ITrackMatchRepository _trackMatchCommands;
     private readonly IApplicationCache _cache;
     private readonly HttpClient _jellyfinHttpClient;
@@ -46,14 +45,12 @@ public class PlaylistController : ControllerBase
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         AdminHelperService helperService,
-        IServiceProvider serviceProvider,
-        IPlaylistMatchingCoordinator? matchingService = null)
+        IServiceProvider serviceProvider)
     {
         _logger = logger;
         _jellyfinSettings = jellyfinSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _playlistFetcher = playlistFetcher;
-        _matchingService = matchingService;
         _trackMatchCommands = trackMatchCommands;
         _cache = cache;
         _jellyfinHttpClient = httpClientFactory.CreateClient();
@@ -731,78 +728,6 @@ public class PlaylistController : ControllerBase
     }
 
     /// <summary>
-    /// Re-match tracks when LOCAL library has changed (checks if Jellyfin playlist changed).
-    /// This is a lightweight operation that reuses cached Spotify data.
-    /// </summary>
-    [HttpPost("playlists/{name}/match")]
-    public async Task<IActionResult> MatchPlaylistTracks(string name)
-    {
-        var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Re-match tracks triggered for playlist: {Name} (checking for local changes)", decodedName);
-
-        if (_matchingService == null)
-        {
-            return BadRequest(new { error = "Track matching service is not available" });
-        }
-
-        try
-        {
-            // Trigger matching through the durable command path.
-            await _matchingService.TriggerMatchingForPlaylistAsync(decodedName);
-
-            // Invalidate playlist summary cache
-            await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
-
-            return Ok(new
-            {
-                message = $"Re-matching tracks for {decodedName} (checking local changes)",
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to trigger track matching for {Name}", decodedName);
-            return StatusCode(500, new { error = "Failed to trigger track matching" });
-        }
-    }
-
-    /// <summary>
-    /// Rebuild playlist from scratch when REMOTE (Spotify) playlist has changed.
-    /// Clears all caches including Spotify data and forces fresh fetch.
-    /// </summary>
-    [HttpPost("playlists/{name}/clear-cache")]
-    public async Task<IActionResult> ClearPlaylistCache(string name)
-    {
-        var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Rebuild from scratch triggered for playlist: {Name}", decodedName);
-
-        if (_matchingService == null)
-        {
-            return BadRequest(new { error = "Track matching service is not available" });
-        }
-
-        try
-        {
-            // Use the unified per-playlist rebuild method (same workflow as per-playlist cron rebuilds)
-            await _matchingService.TriggerRebuildForPlaylistAsync(decodedName);
-
-            // Invalidate playlist summary cache
-            await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
-
-            return Ok(new
-            {
-                message = $"Rebuilding {decodedName} from scratch",
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to rebuild playlist {Name}", decodedName);
-            return StatusCode(500, new { error = "Failed to rebuild playlist" });
-        }
-    }
-
-    /// <summary>
     /// Search Jellyfin library for tracks (for manual mapping)
     /// </summary>
     [HttpGet("jellyfin/search")]
@@ -1293,43 +1218,16 @@ public class PlaylistController : ControllerBase
                 }
             }
 
-            // Trigger immediate playlist rebuild with the new mapping
-            if (_matchingService != null)
-            {
-                _logger.LogInformation("Triggering immediate playlist rebuild for {Playlist} with new manual mapping", decodedName);
-
-                try
-                {
-                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
-                    cts.CancelAfter(TimeSpan.FromMinutes(2));
-                    await _matchingService.TriggerMatchingForPlaylistAsync(decodedName).WaitAsync(cts.Token);
-                    _logger.LogInformation("✓ Playlist {Playlist} rebuilt successfully with manual mapping", decodedName);
-                }
-                catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
-                {
-                    _logger.LogWarning("Playlist rebuild for {Playlist} timed out after 2 minutes", decodedName);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogError(ex, "Failed to rebuild playlist {Playlist} after manual mapping", decodedName);
-                }
-            }
-            else
-            {
-                _logger.LogWarning("Matching service not available - playlist will rebuild on next scheduled run");
-            }
-
             if (hasJellyfinMapping)
             {
                 return Ok(new
                 {
-                    message = "Mapping saved and playlist rebuild triggered",
+                    message = "Mapping saved",
                     track = new
                     {
                         id = request.JellyfinId,
                         isLocal = true
-                    },
-                    rebuildTriggered = _matchingService != null
+                    }
                 });
             }
 
@@ -1346,9 +1244,8 @@ public class PlaylistController : ControllerBase
 
             return Ok(new
             {
-                message = "Mapping saved and playlist rebuild triggered",
-                track = mappedTrack,
-                rebuildTriggered = _matchingService != null
+                message = "Mapping saved",
+                track = mappedTrack
             });
         }
         catch (Exception ex)
@@ -1356,39 +1253,6 @@ public class PlaylistController : ControllerBase
             _logger.LogError(ex, "Failed to save manual mapping");
             return StatusCode(500, new { error = "Failed to save mapping" });
         }
-    }
-
-    /// <summary>
-    /// Trigger track matching for all playlists
-    /// </summary>
-    [HttpPost("playlists/match-all")]
-    public async Task<IActionResult> MatchAllPlaylistTracks(
-        [FromServices] DurableJobQueue jobs,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Manual track matching triggered for all playlists");
-
-        if (_matchingService == null)
-        {
-            return BadRequest(new { error = "Track matching service is not available" });
-        }
-
-        if (!TrySession(out var session, out var error)) return error!;
-        var generation = DateTimeOffset.UtcNow.UtcTicks;
-        var receipt = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMatchAllJobPayload>(
-            "playlist.match-all",
-            $"playlist-match-all:{session!.TenantId:N}:{generation / TimeSpan.TicksPerMinute}",
-            new(generation),
-            session.TenantId,
-            session.AllstarrUserId,
-            CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
-        return Accepted(new
-        {
-            message = receipt.Created ? "Playlist rematching queued" : "Playlist rematching is already queued",
-            jobId = receipt.JobId,
-            created = receipt.Created,
-            generation
-        });
     }
 
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
@@ -1536,32 +1400,6 @@ public class PlaylistController : ControllerBase
         }
 
         return NormalizeExternalProviderForDisplay(mapping.ExternalProvider);
-    }
-
-    /// <summary>
-    /// Rebuild all playlists from scratch (clear cache, fetch fresh data, re-match).
-    /// This is a manual bulk action across all playlists - used by "Rebuild All Remote" button.
-    /// </summary>
-    [HttpPost("playlists/rebuild-all")]
-    public async Task<IActionResult> RebuildAllPlaylists()
-    {
-        _logger.LogInformation("Manual full rebuild triggered for all playlists");
-
-        if (_matchingService == null)
-        {
-            return BadRequest(new { error = "Track matching service is not available" });
-        }
-
-        try
-        {
-            await _matchingService.TriggerRebuildAllAsync();
-            return Ok(new { message = "Full rebuild triggered for all playlists", timestamp = DateTime.UtcNow });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to trigger full rebuild for all playlists");
-            return StatusCode(500, new { error = "Failed to trigger full rebuild" });
-        }
     }
 
     /// <summary>

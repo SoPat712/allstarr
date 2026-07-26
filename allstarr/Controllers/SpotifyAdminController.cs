@@ -186,37 +186,6 @@ public class SpotifyAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Manual trigger endpoint to force Spotify track matching.
-    /// </summary>
-    [HttpGet("spotify/match")]
-    public async Task<IActionResult> TriggerSpotifyMatch(
-        [FromServices] IPlaylistMatchingCoordinator matchingService)
-    {
-        try
-        {
-            if (!_spotifyApiSettings.Enabled)
-            {
-                return BadRequest(new { error = "Spotify API is not enabled" });
-            }
-
-            _logger.LogInformation("Manual Spotify track matching triggered via admin endpoint");
-            await matchingService.TriggerMatchingAsync(HttpContext.RequestAborted);
-            _logger.LogInformation("Manual Spotify track matching completed successfully");
-
-            return Ok(new
-            {
-                message = "Spotify track matching completed",
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error triggering Spotify track matching");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
-    }
-
-    /// <summary>
     /// Clear Spotify playlist cache to force re-matching.
     /// </summary>
     [HttpPost("spotify/clear-cache")]

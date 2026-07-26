@@ -12,6 +12,16 @@ Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compa
 - The default Compose stack contains PostgreSQL and Allstarr. Optional upstream services are enabled explicitly through `allstarr.sh`.
 - Extensions are installed from administrator-approved registries. Allstarr does not ship a bundled extension registry or third-party extension packages.
 
+## State-ownership matrix
+
+| Owner | Authoritative state | Allowed payloads and limits | Never owns |
+| --- | --- | --- | --- |
+| PostgreSQL | Accounts and encrypted secret references; tenant runtime settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches, overrides and provider routes; jobs, schedules, attempts and outbox; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence, managed-file and cache metadata | Durable business and lifecycle records with tenant/user scope, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
+| Filesystem | Managed audio and artwork; target playlist files; kept lyrics sidecars; installed extension package payloads; the encryption key ring; verified backup artifacts and bounded temporary transfer archives | Rebuildable media cache with bounded size/TTL; atomic staging files beside an allowed final payload | Accounts, sessions, settings, mappings, accepted decisions, playlist membership/order, sync timestamps, health, jobs or events |
+| Environment / deployment secrets | Process-start bootstrap, security policy and deployment topology: database connection/password-file location, backend selection/endpoints, mounted paths, bind/trust policy, optional service profiles and initial defaults | Read once into startup configuration; secret values may come from mounted secret files | WebUI mutations, per-user credentials, live playlist configuration or any restart-reconciled business state |
+
+The database row is authoritative whenever a filesystem payload has lifecycle metadata. Deleting a cache payload may cause a rebuild; deleting a durable row may not be repaired from cache. Legacy `.env` input is accepted only through the explicit preview/apply migration boundary and is never reread as live application state.
+
 ## Process layout
 
 ```text
@@ -61,9 +71,7 @@ Built-in and extension capabilities meet at `ProviderRegistry`. Extension IDs ma
 
 ## Track identity and matching
 
-`TrackIdentityService`, backend library indexing, persisted provider routes, and the playlist orchestration layer are the intended shared path. Accepted decisions must be reusable by automatic matching, interactive matching, synchronization, playback, and event projections.
-
-The current tree still contains a Spotify-specific compatibility path in `Core/Matching/PlaylistMatchingCoordinator.cs` and `Services/Spotify/SpotifyPlaylistMatchingAdapter.cs`. It is transitional code. Do not add new behavior to it; the implementation handoff requires moving ownership into the provider-neutral core before deleting the compatibility path.
+`TrackIdentityService`, backend library indexing, persisted provider routes, and the playlist orchestration layer are the shared path. Accepted decisions are reusable by automatic matching, interactive matching, synchronization, playback, and event projections. Playlist refresh and materialization run through durable playlist links and the `playlist.materialize` job; there is no provider-specific matching coordinator.
 
 ## Durable work
 

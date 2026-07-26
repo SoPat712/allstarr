@@ -549,15 +549,6 @@ const API = {
     const params = new URLSearchParams({ playlist: name, spotifyId });
     return requestJson(`/api/admin/mappings/tracks?${params}`, { method: "DELETE" }, "Failed to clear the track match");
   },
-  refreshPlaylists: () => requestJson("/api/admin/playlists/refresh", { method: "POST" }, "Failed to refresh playlists"),
-  refreshPlaylist: (name) =>
-    requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/refresh`, { method: "POST" }, "Failed to refresh playlist"),
-  matchPlaylist: (name) =>
-    requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/match`, { method: "POST" }, "Failed to match playlist"),
-  matchAllPlaylists: () =>
-    requestJson("/api/admin/playlists/match-all", { method: "POST" }, "Failed to match playlists"),
-  clearPlaylistCache: (name) =>
-    requestJson(`/api/admin/playlists/${encodeURIComponent(name)}/clear-cache`, { method: "POST" }, "Failed to clear playlist cache"),
   addPlaylist: (name, spotifyId, localTracksPosition = "first") =>
     requestJson("/api/admin/playlists", jsonBody({ name, spotifyId, localTracksPosition }), "Failed to add playlist"),
   removePlaylist: (name) =>
@@ -1476,7 +1467,8 @@ class AllstarrApp extends LitElement {
       ...this.serviceResults,
       readiness: { ...readiness, rematching: true },
     };
-    const results = await Promise.allSettled(affectedPlaylists.map((name) => API.matchPlaylist(name)));
+    const results = await Promise.allSettled(affectedPlaylists.map((name) =>
+      this.runManagedPlaylistByName(name, false)));
     const matched = results.filter((result) => result.status === "fulfilled").length;
     const failed = results.length - matched;
     this.serviceResults = {
@@ -3328,7 +3320,7 @@ class AllstarrApp extends LitElement {
     return html`
       <section class="view-stack playlist-inventory" aria-label="Playlist workspace">
         ${links.length ? this.renderLinkPlaylists() : nothing}
-        ${imported.length ? this.renderInjectedPlaylists(imported, links.length + imported.length) : nothing}
+        ${imported.length ? html`<div class="panel callout"><strong>${imported.length} legacy playlist definition${imported.length === 1 ? "" : "s"} need a managed link.</strong><p>Choose the source account and media-server target to move each playlist onto durable refresh, matching, and scheduling.</p><button class="primary" @click=${() => this.openPlaylistWizard()}>Add managed playlist</button></div>` : nothing}
         ${links.length && !imported.length ? html`<div class="playlist-page-actions"><span class="chip">${links.length} total</span><button class="primary" @click=${() => this.openPlaylistWizard()}>${icon("plus", 16)} Add playlist</button></div>` : nothing}
         ${!links.length && !imported.length ? html`<div class="panel empty"><strong>No playlists yet.</strong><span>Add a playlist to choose a source and media-server target.</span></div>` : nothing}
       </section>
@@ -3733,6 +3725,21 @@ class AllstarrApp extends LitElement {
     this.toast(response?.message || response?.Message || "Playlist run queued");
   }
 
+  async runManagedPlaylistByName(name, refresh = true) {
+    const link = this.playlistLinks.find((item) =>
+      String(item.name || item.Name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
+    const id = link?.id || link?.Id;
+    if (!id) throw new Error(`${name} must be added as a managed playlist before it can run.`);
+    if (refresh) await API.refreshPlaylistLink(id);
+    return API.runPlaylistLink(id);
+  }
+
+  async runAllManagedPlaylists() {
+    const ids = this.playlistLinks.map((item) => item.id || item.Id).filter(Boolean);
+    await Promise.all(ids.map((id) => API.runPlaylistLink(id)));
+    await this.loadPlaylistLinks();
+  }
+
   async deletePlaylistLink(link) {
     const id = link.id || link.Id;
     const name = link.name || link.Name || "this playlist";
@@ -3876,14 +3883,12 @@ class AllstarrApp extends LitElement {
           const names = selected.size ? [...selected] : playlists.map((item) => item.name);
           if (selected.size) {
             await Promise.all(names.map(async (name) => {
-              await API.refreshPlaylist(name);
-              await API.matchPlaylist(name);
+              await this.runManagedPlaylistByName(name);
             }));
             await this.loadPlaylists(true);
             this.toast(`Refreshed and rematched ${names.length} ${names.length === 1 ? "playlist" : "playlists"}`);
           } else {
-            await API.refreshPlaylists();
-            await API.matchAllPlaylists();
+            await this.runAllManagedPlaylists();
             await this.loadPlaylists(true);
             this.toast("Playlist rematching queued. Progress appears in the operation center.");
           }
@@ -3965,7 +3970,7 @@ class AllstarrApp extends LitElement {
                 <div class="coverage-meta"><span class="status-chip ${status}">${titleCase(status)}</span><small>${matched}/${trackCount}</small></div>
               </td>
               <td data-label="Last sync">${playlist.lastSyncAt ? formatRelativeTime(playlist.lastSyncAt) : "Not synced yet"}</td>
-              <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.syncInjectedPlaylist(playlist.name)}>Sync now</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button @click=${async () => { await API.refreshPlaylist(playlist.name); this.toast("Source refresh requested"); }}>Refresh source</button><button @click=${async () => { await API.matchPlaylist(playlist.name); this.toast("Rematching requested"); }}>Rematch</button><button @click=${async () => { await API.clearPlaylistCache(playlist.name); this.toast("Cache cleared"); }}>Clear cache</button><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove</button></div></details></div></td>
+              <td class="actions-cell" data-label="Actions"><div class="playlist-row-actions"><button class="primary compact" @click=${() => this.openPlaylistWizard()}>Add managed link</button><details class="action-menu playlist-action-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}><summary class="icon-button" aria-label="More actions for ${playlist.name}">${icon("more")}</summary><div><button class="danger-text" @click=${async () => { if (!window.confirm(`Remove ${playlist.name}?`)) return; await API.removePlaylist(playlist.name); await this.loadPlaylists(true); this.toast("Playlist removed"); }}>Remove legacy definition</button></div></details></div></td>
             </tr>`;
           }) : html`<tr><td colspan="9"><div class="empty">No playlists match these filters.</div></td></tr>`}
             </tbody>
@@ -3992,8 +3997,7 @@ class AllstarrApp extends LitElement {
   }
 
   async syncInjectedPlaylist(name) {
-    await API.refreshPlaylist(name);
-    await API.matchPlaylist(name);
+    await this.runManagedPlaylistByName(name);
     this.toast(`Sync started for ${name}`);
   }
 
@@ -4124,12 +4128,12 @@ class AllstarrApp extends LitElement {
                   await this.reloadInjectedPlaylistDetails();
                 }}>${icon("refresh", 15)}<span>Sync now</span></button>
                 <button role="menuitem" @click=${async () => {
-                  await API.matchPlaylist(this.selectedInjectedPlaylist);
+                  await this.runManagedPlaylistByName(this.selectedInjectedPlaylist, false);
                   await this.reloadInjectedPlaylistDetails();
                   this.toast("Rematching requested");
                 }}>${icon("search", 15)}<span>Rematch</span></button>
                 <button role="menuitem" @click=${async () => {
-                  await API.refreshPlaylist(this.selectedInjectedPlaylist);
+                  await this.runManagedPlaylistByName(this.selectedInjectedPlaylist);
                   await this.reloadInjectedPlaylistDetails();
                   this.toast("Source refresh requested");
                 }}>${icon("download", 15)}<span>Refresh source</span></button>
@@ -4546,12 +4550,12 @@ class AllstarrApp extends LitElement {
     this.injectedTrackMenuId = "";
     try {
       await API.clearInjectedTrackMapping(this.selectedInjectedPlaylist, track.spotifyId);
-      if (rematch) await API.matchPlaylist(this.selectedInjectedPlaylist);
+      if (rematch && track.externalSnapshotId) await API.rematchMapping(track.externalSnapshotId);
       await this.reloadInjectedPlaylistDetails();
       this.toast(rematch ? "Track rematched" : "Track match cleared");
     } catch (error) {
       if (rematch && error.status === 404) {
-        await API.matchPlaylist(this.selectedInjectedPlaylist);
+        if (track.externalSnapshotId) await API.rematchMapping(track.externalSnapshotId);
         await this.reloadInjectedPlaylistDetails();
         this.toast("Track rematched");
         return;
@@ -6660,7 +6664,7 @@ class AllstarrApp extends LitElement {
         <div class="empty">
           <strong>No background jobs have been enqueued yet.</strong>
           <p class="muted">This list covers background work that survives restarts and keeps its history.</p>
-          <p class="muted">Imported legacy playlists use the earlier scheduler and appear under <a href="#/library/playlists">Library &gt; Playlists</a>; that older work is not recorded here yet.</p>
+          <p class="muted">Imported legacy playlist definitions are not scheduled. Add them as managed links under <a href="#/library/playlists">Library &gt; Playlists</a> to run durable refresh and matching jobs.</p>
           <p class="muted">Managed playlist syncs, library actions, recommendations, and other background operations will appear here after they run.</p>
         </div>
       `;

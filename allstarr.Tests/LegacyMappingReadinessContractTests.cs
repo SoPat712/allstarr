@@ -27,15 +27,16 @@ public sealed class LegacyMappingReadinessContractTests
     }
 
     [Fact]
-    public void LegacyPlaylistSources_AreProjectedIntoTheDurableIdentityGraph()
+    public void PlaylistSources_AreProjectedIntoTheDurableIdentityGraph()
     {
-        var coordinator = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Core", "Matching", "PlaylistMatchingCoordinator.cs"));
+        var orchestration = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Playlists", "PlaylistOrchestrationService.cs"));
         var service = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"));
 
-        Assert.Contains("IPlaylistMatchingCoordinator", coordinator, StringComparison.Ordinal);
-        Assert.Contains("PlaylistMatchingProgress", coordinator, StringComparison.Ordinal);
+        Assert.Contains("TrackMatchDecisionEngine", orchestration, StringComparison.Ordinal);
+        Assert.Contains("ITrackMatchRepository", orchestration, StringComparison.Ordinal);
+        Assert.Contains("PlaylistMaterializationJobHandler", orchestration, StringComparison.Ordinal);
         Assert.Contains("PersistAutomatedTrackMatchCommand", service, StringComparison.Ordinal);
         Assert.Contains("TrackMatchRecord", service, StringComparison.Ordinal);
     }

@@ -683,7 +683,7 @@ public sealed class PostgresStorageIntegrationTests
             new JobPayloadPolicy(jobOptions),
             clock);
         var enqueued = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-            "playlist.match-all",
+            "playlist.materialize",
             "postgres-cache-loss",
             new { generation = 1 },
             tenantId,

@@ -41,7 +41,8 @@ public sealed class OperationalNoiseRegressionTests
 
         Assert.DoesNotContain("SpotifyMissingTracksFetcher", program, StringComparison.Ordinal);
         Assert.DoesNotContain("spotify/sync", controller, StringComparison.Ordinal);
-        Assert.Contains("matchingService.TriggerMatchingAsync(HttpContext.RequestAborted)", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("IPlaylistMatchingCoordinator", controller, StringComparison.Ordinal);
+        Assert.Contains("AddPlaylistOrchestration()", program, StringComparison.Ordinal);
         Assert.DoesNotContain("BindingFlags.NonPublic", controller, StringComparison.Ordinal);
         Assert.Contains("\"extension.runtime.error\"", extensionManager, StringComparison.Ordinal);
         Assert.Contains("_extensionId", extensionManager, StringComparison.Ordinal);
