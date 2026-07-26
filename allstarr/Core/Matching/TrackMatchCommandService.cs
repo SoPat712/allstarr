@@ -318,6 +318,8 @@ public sealed class TrackMatchCommandService(
     {
         var actor = context.RequireActor();
         if (input.DecisionVersion <= 0 ||
+            input.SourceSnapshotVersion <= 0 ||
+            string.IsNullOrWhiteSpace(input.MatcherVersion) ||
             input.Confidence is < 0 or > 1 ||
             input.Threshold is < 0 or > 1 ||
             string.IsNullOrWhiteSpace(input.PolicyVersion))
@@ -379,6 +381,9 @@ public sealed class TrackMatchCommandService(
             Confidence = input.Confidence,
             Threshold = input.Threshold,
             DecisionVersion = input.DecisionVersion,
+            SourceSnapshotVersion = input.SourceSnapshotVersion,
+            LibraryIndexRevision = input.LibraryIndexRevision,
+            MatcherVersion = input.MatcherVersion.Trim(),
             PolicyVersion = input.PolicyVersion.Trim(),
             CandidateResultsJson = input.CandidateResultsJson,
             ReasonsJson = input.ReasonsJson,
@@ -980,6 +985,8 @@ public sealed class TrackMatchCommandService(
                             Confidence = 0,
                             Threshold = 0.88,
                             DecisionVersion = 1,
+                            SourceSnapshotVersion = snapshot.SnapshotVersion,
+                            MatcherVersion = "unscored",
                             PolicyVersion = "source-seed-v1",
                             CandidateResultsJson = "[]",
                             ReasonsJson = JsonSerializer.Serialize(new[]
@@ -1112,6 +1119,8 @@ public sealed class TrackMatchCommandService(
                     item.BackendInstanceId == snapshot.BackendInstanceId)
                 .ToArray();
             var candidates = new TrackMatchCandidateIndex(scopedTracks.Select(ToLocalCandidate));
+            var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(
+                scopedTracks.Select(ToLocalCandidate));
             var scope = new TrackMatchScope(
                 snapshot.TenantId,
                 snapshot.OwnerUserId,
@@ -1148,6 +1157,9 @@ public sealed class TrackMatchCommandService(
             var unchanged = latest?.State == state &&
                             latest.LibraryTrackId == selected?.Id &&
                             Math.Abs(latest.Confidence - decision.Confidence) < 0.0001 &&
+                            latest.SourceSnapshotVersion == snapshot.SnapshotVersion &&
+                            latest.LibraryIndexRevision == libraryIndexRevision &&
+                            latest.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion &&
                             latest.PolicyVersion == "automatic-provider-neutral-v2";
             if (!unchanged)
             {
@@ -1164,6 +1176,9 @@ public sealed class TrackMatchCommandService(
                     Confidence = decision.Confidence,
                     Threshold = decision.AcceptThreshold,
                     DecisionVersion = (latest?.DecisionVersion ?? 0) + 1,
+                    SourceSnapshotVersion = snapshot.SnapshotVersion,
+                    LibraryIndexRevision = libraryIndexRevision,
+                    MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
                     PolicyVersion = "automatic-provider-neutral-v2",
                     CandidateResultsJson = JsonSerializer.Serialize(decision.Candidates),
                     ReasonsJson = JsonSerializer.Serialize(decision.Reasons),
@@ -1392,6 +1407,8 @@ public sealed class TrackMatchCommandService(
                 Confidence = command.Confidence,
                 Threshold = 0.88,
                 DecisionVersion = (latest?.DecisionVersion ?? 0) + 1,
+                SourceSnapshotVersion = snapshot.SnapshotVersion,
+                MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
                 PolicyVersion = "automatic-provider-neutral-v1",
                 CandidateResultsJson = "[]",
                 ReasonsJson = JsonSerializer.Serialize(new[]
@@ -1468,17 +1485,6 @@ public sealed class TrackMatchCommandService(
         if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
             return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
 
-        var activeOverrides = await db.ManualTrackOverrides
-            .Where(item => item.TenantId == actor.TenantId &&
-                           item.ExternalSnapshotId == snapshot.Id &&
-                           item.RevokedAt == null)
-            .ToListAsync(cancellationToken);
-        foreach (var activeOverride in activeOverrides)
-        {
-            activeOverride.RevokedAt = DateTimeOffset.UtcNow;
-            activeOverride.Revision++;
-        }
-
         var source = snapshot.ProviderTrackIdentityId.HasValue
             ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(
                 item => item.Id == snapshot.ProviderTrackIdentityId.Value &&
@@ -1512,6 +1518,8 @@ public sealed class TrackMatchCommandService(
             null);
         var localCandidates = new TrackMatchCandidateIndex(candidates.Select(ToLocalCandidate))
             .Select(sourceTrack);
+        var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(
+            candidates.Select(ToLocalCandidate));
         var scope = new TrackMatchScope(
             actor.TenantId,
             snapshot.OwnerUserId,
@@ -1538,6 +1546,9 @@ public sealed class TrackMatchCommandService(
             Confidence = decision.Confidence,
             Threshold = 0.88,
             DecisionVersion = latestVersion + 1,
+            SourceSnapshotVersion = snapshot.SnapshotVersion,
+            LibraryIndexRevision = libraryIndexRevision,
+            MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
             PolicyVersion = "manual-rematch-v2",
             CandidateResultsJson = JsonSerializer.Serialize(decision.Candidates),
             ReasonsJson = JsonSerializer.Serialize(decision.Reasons),
@@ -1613,6 +1624,8 @@ public sealed class TrackMatchCommandService(
             Confidence = 0,
             Threshold = latest?.Threshold ?? 0.88,
             DecisionVersion = (latest?.DecisionVersion ?? 0) + 1,
+            SourceSnapshotVersion = snapshot.SnapshotVersion,
+            MatcherVersion = "manual",
             PolicyVersion = "manual-clear-v1",
             CandidateResultsJson = "[]",
             ReasonsJson = JsonSerializer.Serialize(new[] { "Manual match cleared" }),
@@ -1812,6 +1825,8 @@ public sealed class TrackMatchCommandService(
                 Confidence = 1,
                 Threshold = 1,
                 DecisionVersion = decisionVersion,
+                SourceSnapshotVersion = snapshot.SnapshotVersion,
+                MatcherVersion = "manual",
                 PolicyVersion = "manual-provider-route-v1",
                 CandidateResultsJson = "[]",
                 ReasonsJson = JsonSerializer.Serialize(new[] { $"Manually selected {providerId} playback route" }),
@@ -1840,6 +1855,9 @@ public sealed class TrackMatchCommandService(
         record.State == input.State &&
         record.LibraryTrackId == input.LibraryTrackId &&
         record.CanonicalRecordingId == input.CanonicalRecordingId &&
+        record.SourceSnapshotVersion == input.SourceSnapshotVersion &&
+        record.LibraryIndexRevision == input.LibraryIndexRevision &&
+        record.MatcherVersion == input.MatcherVersion.Trim() &&
         record.PolicyVersion == input.PolicyVersion.Trim() &&
         record.Confidence == input.Confidence &&
         record.Threshold == input.Threshold &&

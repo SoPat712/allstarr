@@ -482,6 +482,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         // Optimization: Map candidates once outside the loop instead of doing it N times
         var mappedCandidates = candidates.Select(ToCandidate).ToArray();
         var candidateIndex = new TrackMatchCandidateIndex(mappedCandidates);
+        var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(mappedCandidates);
         var candidateById = candidates.ToDictionary(item => item.Id);
 
         var actor = execution.RequireActor();
@@ -506,7 +507,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             var external = externals[entry.ExternalMetadataSnapshotId];
 
-            if (!storedByExternalId.TryGetValue(external.Id, out var stored))
+            storedByExternalId.TryGetValue(external.Id, out var stored);
+            if (stored == null ||
+                stored.SourceSnapshotVersion != external.SnapshotVersion ||
+                stored.LibraryIndexRevision != libraryIndexRevision ||
+                stored.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion ||
+                stored.PolicyVersion != link.PolicyVersion)
             {
                 using var payload = JsonDocument.Parse(external.PayloadJson);
                 var root = payload.RootElement;
@@ -538,7 +544,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                         ToStorageState(match.State),
                         match.Confidence,
                         .88,
-                        match.PolicyVersion,
+                        (stored?.DecisionVersion ?? 0) + 1,
+                        external.SnapshotVersion,
+                        libraryIndexRevision,
+                        TrackMatchDecisionEngine.AlgorithmVersion,
                         link.PolicyVersion,
                         JsonSerializer.Serialize(match.Candidates),
                         JsonSerializer.Serialize(match.Reasons),

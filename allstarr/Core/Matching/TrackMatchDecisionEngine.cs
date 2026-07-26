@@ -1,3 +1,7 @@
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using allstarr.Services.Common;
 using System.Text.RegularExpressions;
 
@@ -110,12 +114,35 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
+    public const string AlgorithmVersion = "normalized-v3";
+
     private readonly TrackMatchPolicy _policy;
 
     public TrackMatchDecisionEngine(TrackMatchPolicy? policy = null)
     {
         _policy = policy ?? new TrackMatchPolicy();
         _policy.Validate();
+    }
+
+    public static long LibraryIndexRevision(IEnumerable<LocalTrackMatchCandidate> candidates)
+    {
+        var json = JsonSerializer.Serialize(candidates
+            .OrderBy(candidate => candidate.LibraryTrackId)
+            .Select(candidate => new
+            {
+                candidate.LibraryTrackId,
+                candidate.CanonicalRecordingId,
+                candidate.Title,
+                candidate.Artist,
+                candidate.Album,
+                candidate.AlbumArtist,
+                candidate.DurationSeconds,
+                candidate.Isrc,
+                candidate.MusicBrainzRecordingId,
+                candidate.IsExplicit,
+                ProviderTrackIds = candidate.ProviderTrackIds?.OrderBy(item => item.Key)
+            }));
+        return BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 
     public TrackMatchDecision Decide(

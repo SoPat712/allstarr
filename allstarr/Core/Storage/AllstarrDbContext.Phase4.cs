@@ -95,6 +95,7 @@ public sealed partial class AllstarrDbContext
             entity.Property(item => item.Id).ValueGeneratedNever();
             Required(entity.Property(item => item.LibraryScopeId), 300);
             entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
+            Required(entity.Property(item => item.MatcherVersion), 100);
             Required(entity.Property(item => item.PolicyVersion), 100);
             Required(entity.Property(item => item.CandidateResultsJson));
             Required(entity.Property(item => item.ReasonsJson));

@@ -76,6 +76,9 @@ public sealed class TrackMatchRecord
     public double Confidence { get; set; }
     public double Threshold { get; set; }
     public int DecisionVersion { get; set; }
+    public int SourceSnapshotVersion { get; set; }
+    public long LibraryIndexRevision { get; set; }
+    public string MatcherVersion { get; set; } = "legacy";
     public string PolicyVersion { get; set; } = string.Empty;
     public string CandidateResultsJson { get; set; } = "[]";
     public string ReasonsJson { get; set; } = "[]";

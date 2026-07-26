@@ -20,6 +20,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     private FakeSource _source = null!;
     private FakeTarget _target = null!;
     private PlaylistOrchestrationService _service = null!;
+    private TrackMatchCommandService _trackMatches = null!;
     private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
@@ -38,13 +39,13 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         _target = new FakeTarget();
         var clock = new Clock(_now);
         var accountResolver = new ProviderAccountResolver(_factory, new ProviderPolicyOptions());
-        var trackMatches = new TrackMatchCommandService(
+        _trackMatches = new TrackMatchCommandService(
             _factory,
             new TrackMatchDecisionEngine(),
             accountResolver,
             clock);
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
-            new TrackMatchDecisionEngine(), trackMatches, clock);
+            new TrackMatchDecisionEngine(), _trackMatches, clock);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         _identity = Guid.CreateVersion7(); _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
@@ -119,6 +120,82 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(PlaylistPreviewEntryStatus.Included, result.Plan.Entries[0].Status);
         Assert.Equal(PlaylistPreviewEntryStatus.Rejected, result.Plan.Entries[1].Status);
         Assert.Equal(0, _target.TotalCalls);
+    }
+
+    [Fact]
+    public async Task Stale_decisions_rescore_and_forced_rematch_preserves_manual_override()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("revision-freshness", Entry(0, "entry-0", "source-1", "One"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        Guid externalId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            externalId = await db.PlaylistSourceEntries
+                .Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
+                .Select(item => item.ExternalMetadataSnapshotId)
+                .SingleAsync();
+            db.ManualTrackOverrides.Add(Override(externalId, ManualOverrideDecision.Pin, _trackTwo));
+            await db.SaveChangesAsync();
+        }
+
+        var unchanged = await _service.RunAsync(Context(), new(_link, 1, refresh.SnapshotId));
+        Assert.Equal("local-2", Assert.Single(unchanged.Plan.OrderedBackendItemIds));
+        Assert.Equal(1, await DecisionCount());
+
+        await MakeLatestDecisionStale(match => match.MatcherVersion = "retired");
+        await _service.RunAsync(Context(), new(_link, 2, refresh.SnapshotId));
+        await MakeLatestDecisionStale(match => match.SourceSnapshotVersion = 0);
+        await _service.RunAsync(Context(), new(_link, 3, refresh.SnapshotId));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.PolicyVersion = "policy-v2";
+            await db.SaveChangesAsync();
+        }
+        await _service.RunAsync(Context(), new(_link, 4, refresh.SnapshotId));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var local = await db.LibraryTracks.SingleAsync(item => item.Id == _trackOne);
+            local.Title = "One changed";
+            await db.SaveChangesAsync();
+        }
+        await _service.RunAsync(Context(), new(_link, 5, refresh.SnapshotId));
+
+        var actor = new TrackMatchActor(_tenant, _user, false);
+        var rematch = await _trackMatches.RematchSnapshotAsync(
+            actor, externalId, "forced-rematch");
+
+        Assert.True(rematch.Succeeded);
+        Assert.Equal(6, rematch.DecisionVersion);
+        await AssertActiveOverride(ManualOverrideDecision.Pin);
+
+        var rejected = await _trackMatches.ResolveSnapshotAsync(
+            actor, externalId, new ResolveTrackMatchCommand("reject"), "reject");
+        Assert.True(rejected.Succeeded);
+        var rejectedRematch = await _trackMatches.RematchSnapshotAsync(
+            actor, externalId, "forced-rematch-rejected");
+
+        Assert.True(rejectedRematch.Succeeded);
+        Assert.Equal(7, rejectedRematch.DecisionVersion);
+        await AssertActiveOverride(ManualOverrideDecision.Reject);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(7, await verify.TrackMatches.CountAsync(item => item.ExternalSnapshotId == externalId));
+            var latest = await verify.TrackMatches.Where(item => item.ExternalSnapshotId == externalId)
+                .OrderByDescending(item => item.DecisionVersion).FirstAsync();
+            Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, latest.MatcherVersion);
+            Assert.Equal(1, latest.SourceSnapshotVersion);
+            Assert.NotEqual(0, latest.LibraryIndexRevision);
+        }
+
+        async Task AssertActiveOverride(ManualOverrideDecision decision)
+        {
+            await using var db = await _factory.CreateDbContextAsync();
+            var active = await db.ManualTrackOverrides.Where(item =>
+                item.ExternalSnapshotId == externalId && item.RevokedAt == null).ToListAsync();
+            Assert.Equal(decision, Assert.Single(active).Decision);
+        }
     }
 
     [Fact]
@@ -310,6 +387,20 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         var link = await db.PlaylistLinks.SingleAsync();
         if (mode.HasValue) link.Mode = mode.Value;
         if (materialization.HasValue) link.MaterializationMode = materialization.Value;
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<int> DecisionCount()
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        return await db.TrackMatches.CountAsync();
+    }
+
+    private async Task MakeLatestDecisionStale(Action<TrackMatchRecord> change)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var match = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        change(match);
         await db.SaveChangesAsync();
     }
 

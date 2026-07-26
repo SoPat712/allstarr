@@ -4,6 +4,21 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests
 {
+    [Fact]
+    public void LibraryIndexRevision_IsStableAndChangesWithMatchableMetadata()
+    {
+        var scope = Scope();
+        var candidate = Candidate(scope);
+
+        var first = TrackMatchDecisionEngine.LibraryIndexRevision([candidate]);
+        var reordered = TrackMatchDecisionEngine.LibraryIndexRevision([candidate]);
+        var changed = TrackMatchDecisionEngine.LibraryIndexRevision(
+            [candidate with { Title = "Changed" }]);
+
+        Assert.Equal(first, reordered);
+        Assert.NotEqual(first, changed);
+    }
+
     [Theory]
     [InlineData("USRC17607839", null, "US-RC1-76-07839", null, "isrc_exact")]
     [InlineData(null, "f4adcc1d-32e6-4f80-b9d5-abc1c21f61c8", null, "F4ADCC1D-32E6-4F80-B9D5-ABC1C21F61C8", "musicbrainz_recording_id_exact")]

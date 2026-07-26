@@ -48,7 +48,10 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         var duplicate = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-1"));
         var second = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-2"));
         Assert.Equal(first.Id, duplicate.Id);
-        var decisionInput = new MatchDecisionInput(first.Id, _localTrack, null, TrackMatchState.Accepted, .95, .8, 1, "policy-v1", "[]", "[\"exact\"]", "[]");
+        var decisionInput = new MatchDecisionInput(
+            first.Id, _localTrack, null, TrackMatchState.Accepted, .95, .8, 1,
+            first.SnapshotVersion, 1, TrackMatchDecisionEngine.AlgorithmVersion,
+            "policy-v1", "[]", "[\"exact\"]", "[]");
         var decision = await _matches.RecordDecisionAsync(context, decisionInput);
         var restartedMatches = new TrackMatchCommandService(
             _factory,

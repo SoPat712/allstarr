@@ -16,6 +16,7 @@ public sealed record ExternalSnapshotInput(
 public sealed record MatchDecisionInput(
     Guid ExternalSnapshotId, Guid? LibraryTrackId, Guid? CanonicalRecordingId,
     TrackMatchState State, double Confidence, double Threshold, int DecisionVersion,
+    int SourceSnapshotVersion, long LibraryIndexRevision, string MatcherVersion,
     string PolicyVersion, string CandidateResultsJson, string ReasonsJson, string WarningsJson);
 public sealed record ManualOverrideInput(
     Guid ExternalSnapshotId, string LibraryScopeId, ManualOverrideDecision Decision,
