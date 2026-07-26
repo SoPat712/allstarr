@@ -1,4 +1,5 @@
 using allstarr.Core.Matching;
+using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
 
@@ -45,6 +46,25 @@ public sealed class TrackMatchDecisionEngineTests
         Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
         Assert.Contains(expectedReason, decision.Reasons);
         Assert.Equal(1, decision.SourceSnapshotVersion);
+    }
+
+    [Fact]
+    public void VerifiedProviderIdentity_IsAccepted()
+    {
+        var scope = Scope();
+        var candidate = Candidate(scope) with
+        {
+            ProviderTrackIds = new Dictionary<string, string>
+            {
+                ["spotify"] = "source-track"
+            }
+        };
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope, Source(), [candidate]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Contains("provider_track_id_exact", decision.Reasons);
     }
 
     [Fact]
@@ -217,6 +237,42 @@ public sealed class TrackMatchDecisionEngineTests
         Assert.Equal(TrackMatchReviewState.Rejected, decision.State);
         Assert.Null(decision.SelectedLibraryTrackId);
         Assert.Contains("manual_override_rejected_all", decision.Warnings);
+    }
+
+    [Fact]
+    public void CandidateRejection_SelectsTheNextMatchAndExpiresWithMatcherVersion()
+    {
+        var scope = Scope();
+        var rejected = Candidate(scope) with
+        {
+            ProviderTrackIds = new Dictionary<string, string> { ["spotify"] = "source-track" }
+        };
+        var alternate = Candidate(scope) with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "alternate"
+        };
+        var manual = new ScopedTrackMatchOverride(
+            scope.TenantId,
+            scope.UserId,
+            scope.LibraryScopeId,
+            "spotify",
+            "source-track",
+            null,
+            new HashSet<Guid> { rejected.LibraryTrackId });
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope, Source(), [rejected, alternate], manual);
+        var record = new ManualTrackOverrideRecord
+        {
+            Decision = ManualOverrideDecision.Reject,
+            LibraryTrackId = rejected.LibraryTrackId,
+            MatcherVersion = "retired"
+        };
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(alternate.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.False(TrackMatchOverridePolicy.IsEffectiveRejection(record, null));
     }
 
     [Fact]

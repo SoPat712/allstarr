@@ -123,6 +123,50 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Review_states_are_persisted_without_promoting_suggestions()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        var suggestedId = Guid.CreateVersion7();
+        var ambiguousOneId = Guid.CreateVersion7();
+        var ambiguousTwoId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var suggestedCandidate = Local(suggestedId, "suggested", "unused-1", "Suggestion");
+            suggestedCandidate.ProviderIdsJson = "{}";
+            suggestedCandidate.Album = null;
+            suggestedCandidate.DurationMilliseconds = 999_000;
+            var ambiguousOne = Local(ambiguousOneId, "ambiguous-1", "unused-2", "Ambiguous");
+            var ambiguousTwo = Local(ambiguousTwoId, "ambiguous-2", "unused-3", "Ambiguous");
+            ambiguousOne.ProviderIdsJson = ambiguousTwo.ProviderIdsJson = "{}";
+            db.LibraryTracks.AddRange(suggestedCandidate, ambiguousOne, ambiguousTwo);
+            await db.SaveChangesAsync();
+        }
+        _source.Snapshot = Snapshot(
+            "revision-states",
+            Entry(0, "entry-suggested", "source-suggested", "Suggestion"),
+            Entry(1, "entry-ambiguous", "source-ambiguous", "Ambiguous"),
+            Entry(2, "entry-unresolved", "source-unresolved", "No Candidate"));
+
+        await _service.RefreshAsync(Context(), _link);
+
+        await using var verify = await _factory.CreateDbContextAsync();
+        var snapshots = await verify.ExternalMetadataSnapshots
+            .ToDictionaryAsync(item => item.ExternalIdHash);
+        var decisions = await verify.TrackMatches.ToDictionaryAsync(item => item.ExternalSnapshotId);
+        var suggested = decisions[snapshots[Hash("source-suggested")].Id];
+        var ambiguous = decisions[snapshots[Hash("source-ambiguous")].Id];
+        var unresolved = decisions[snapshots[Hash("source-unresolved")].Id];
+        Assert.Equal(TrackMatchState.Suggested, suggested.State);
+        Assert.Null(suggested.LibraryTrackId);
+        Assert.Equal(suggestedId,
+            TrackMatchOverridePolicy.TopCandidateLibraryTrackId(suggested.CandidateResultsJson));
+        Assert.Equal(TrackMatchState.Ambiguous, ambiguous.State);
+        Assert.Null(ambiguous.LibraryTrackId);
+        Assert.Equal(TrackMatchState.Unresolved, unresolved.State);
+        Assert.Null(unresolved.LibraryTrackId);
+    }
+
+    [Fact]
     public async Task Stale_decisions_rescore_and_forced_rematch_preserves_manual_override()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);

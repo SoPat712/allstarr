@@ -506,6 +506,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         foreach (var entry in entries)
         {
             var external = externals[entry.ExternalMetadataSnapshotId];
+            allManualOverrides.TryGetValue(external.Id, out var manual);
 
             storedByExternalId.TryGetValue(external.Id, out var stored);
             if (stored == null ||
@@ -526,11 +527,25 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null);
 
                 var matchCandidates = candidateIndex.Select(source);
+                var rejectedOverride =
+                    manual?.Decision == ManualOverrideDecision.Reject &&
+                    manual.LibraryTrackId.HasValue &&
+                    manual.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion
+                        ? new ScopedTrackMatchOverride(
+                            link.TenantId,
+                            link.OwnerUserId,
+                            link.LibraryScopeId,
+                            source.ProviderId,
+                            source.ExternalId,
+                            null,
+                            new HashSet<Guid> { manual.LibraryTrackId.Value })
+                        : null;
 
                 var match = _matcher.Decide(
                     new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
                     source,
-                    matchCandidates);
+                    matchCandidates,
+                    rejectedOverride);
 
                 stored = await _trackMatches.RecordDecisionAsync(
                     execution,
@@ -556,17 +571,17 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 storedByExternalId[external.Id] = stored;
             }
 
-            allManualOverrides.TryGetValue(external.Id, out var manual);
+            var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, stored);
 
             var effectiveLibraryTrackId = manual?.Decision == ManualOverrideDecision.Pin
                 ? manual.LibraryTrackId
-                : manual?.Decision == ManualOverrideDecision.Reject
+                : rejected
                     ? null
                     : stored.LibraryTrackId;
             var effectiveState = manual?.Decision switch
             {
                 ManualOverrideDecision.Pin => TrackMatchReviewState.Pinned,
-                ManualOverrideDecision.Reject => TrackMatchReviewState.Rejected,
+                ManualOverrideDecision.Reject when rejected => TrackMatchReviewState.Rejected,
                 _ => ToReviewState(stored.State)
             };
 

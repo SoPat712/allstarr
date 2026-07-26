@@ -99,6 +99,7 @@ public sealed class ManualTrackOverrideRecord
     public ManualOverrideDecision Decision { get; set; }
     public string Reason { get; set; } = string.Empty;
     public int DecisionVersion { get; set; }
+    public string MatcherVersion { get; set; } = "legacy";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
     public long Revision { get; set; }

@@ -114,13 +114,14 @@ public sealed partial class AllstarrDbContext
             entity.ToTable("manual_track_overrides", table =>
             {
                 table.HasCheckConstraint("CK_manual_overrides_version", "\"DecisionVersion\" > 0");
-                table.HasCheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND \"LibraryTrackId\" IS NOT NULL) OR (\"Decision\" = 'Reject' AND \"LibraryTrackId\" IS NULL)");
+                table.HasCheckConstraint("CK_manual_overrides_shape", "(\"Decision\" = 'Pin' AND \"LibraryTrackId\" IS NOT NULL) OR \"Decision\" = 'Reject'");
             });
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
             Required(entity.Property(item => item.LibraryScopeId), 300);
             entity.Property(item => item.Decision).HasConversion<string>().HasMaxLength(32);
             Required(entity.Property(item => item.Reason), 1000);
+            Required(entity.Property(item => item.MatcherVersion), 100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.LibraryScopeId, item.ExternalSnapshotId })
                 .IsUnique().HasFilter("\"RevokedAt\" IS NULL").HasDatabaseName("IX_manual_track_override_active");

@@ -112,9 +112,10 @@ public sealed class PlaylistVirtualizationService(
         {
             overrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
             decisions.TryGetValue(entry.ExternalMetadataSnapshotId, out var decision);
+            var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision);
             var state = manual?.Decision == ManualOverrideDecision.Pin
                 ? TrackMatchState.Pinned
-                : manual?.Decision == ManualOverrideDecision.Reject
+                : rejected
                     ? TrackMatchState.Rejected
                     : decision?.State ?? TrackMatchState.Unresolved;
             var trackId = manual?.Decision == ManualOverrideDecision.Pin

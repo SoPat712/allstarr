@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using System.Text.RegularExpressions;
 
@@ -515,6 +516,45 @@ public sealed class TrackMatchDecisionEngine
         _policy.AmbiguityDelta,
         state is TrackMatchReviewState.Suggested or TrackMatchReviewState.Ambiguous or
             TrackMatchReviewState.Unresolved or TrackMatchReviewState.Rejected);
+}
+
+public static class TrackMatchOverridePolicy
+{
+    public static Guid? TopCandidateLibraryTrackId(string? candidatesJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(candidatesJson ?? "[]");
+            if (document.RootElement.ValueKind != JsonValueKind.Array ||
+                document.RootElement.GetArrayLength() == 0)
+                return null;
+            var candidate = document.RootElement[0];
+            return candidate.TryGetProperty("LibraryTrackId", out var id) &&
+                   id.TryGetGuid(out var value)
+                ? value
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static bool IsEffectiveRejection(
+        ManualTrackOverrideRecord? manual,
+        TrackMatchRecord? decision)
+    {
+        if (manual?.Decision != ManualOverrideDecision.Reject)
+            return false;
+        if (!manual.LibraryTrackId.HasValue)
+            return true;
+        if (manual.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion)
+            return false;
+        return decision == null ||
+               decision.State == TrackMatchState.Rejected ||
+               decision.LibraryTrackId == manual.LibraryTrackId ||
+               TopCandidateLibraryTrackId(decision.CandidateResultsJson) == manual.LibraryTrackId;
+    }
 }
 
 public sealed class TrackMatchCandidateIndex

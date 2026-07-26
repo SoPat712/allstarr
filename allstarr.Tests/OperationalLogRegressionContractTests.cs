@@ -8,7 +8,8 @@ public sealed class OperationalLogRegressionContractTests
         var source = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"));
 
-        Assert.Contains("PersistAutomatedTrackMatchCommand", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("PersistAutomatedTrackMatchCommand", source, StringComparison.Ordinal);
+        Assert.Contains("MatchSourceTracksAsync", source, StringComparison.Ordinal);
         Assert.Contains("TrackMatchRecord", source, StringComparison.Ordinal);
     }
 

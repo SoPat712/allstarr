@@ -37,7 +37,8 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("TrackMatchDecisionEngine", orchestration, StringComparison.Ordinal);
         Assert.Contains("ITrackMatchRepository", orchestration, StringComparison.Ordinal);
         Assert.Contains("PlaylistMaterializationJobHandler", orchestration, StringComparison.Ordinal);
-        Assert.Contains("PersistAutomatedTrackMatchCommand", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("PersistAutomatedTrackMatchCommand", service, StringComparison.Ordinal);
+        Assert.Contains("MatchSourceTracksAsync", service, StringComparison.Ordinal);
         Assert.Contains("TrackMatchRecord", service, StringComparison.Ordinal);
     }
 

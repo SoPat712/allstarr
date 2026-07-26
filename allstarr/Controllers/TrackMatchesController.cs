@@ -449,9 +449,13 @@ public sealed class TrackMatchesController(
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities)
     {
         var state = manual?.Decision == ManualOverrideDecision.Pin ? TrackMatchState.Pinned :
-            manual?.Decision == ManualOverrideDecision.Reject ? TrackMatchState.Rejected :
+            TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision) ? TrackMatchState.Rejected :
             decision?.State ?? (sourceIdentity == null ? TrackMatchState.Unresolved : TrackMatchState.Accepted);
-        var trackId = manual?.LibraryTrackId ?? decision?.LibraryTrackId;
+        var trackId = manual?.Decision == ManualOverrideDecision.Pin
+            ? manual.LibraryTrackId
+            : state == TrackMatchState.Rejected
+                ? null
+                : decision?.LibraryTrackId;
         library.TryGetValue(trackId ?? Guid.Empty, out var track);
         var canonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId ?? track?.CanonicalRecordingId;
         if (track == null && canonicalId.HasValue &&

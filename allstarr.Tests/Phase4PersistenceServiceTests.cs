@@ -67,6 +67,8 @@ public sealed class Phase4PersistenceServiceTests : IAsyncLifetime
         Assert.All(concurrentReads, item => Assert.Equal(decision.Id, item.Id));
         var rejected = await _matches.SetOverrideAsync(context, new ManualOverrideInput(first.Id, "music", ManualOverrideDecision.Reject, null, "wrong edition"));
         Assert.Equal(1, rejected.DecisionVersion);
+        Assert.Equal(_localTrack, rejected.LibraryTrackId);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, rejected.MatcherVersion);
 
         var link = await _playlists.CreateLinkAsync(context, Link());
         Assert.Equal(link.Id, (await _playlists.CreateLinkAsync(context, Link())).Id);

@@ -1,3 +1,4 @@
+using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -211,7 +212,7 @@ public sealed class Phase4DurableModelTests
         Assert.Equal(PlaylistEntryOutcome.Reused, (await context.PlaylistSyncEntryResults.SingleAsync()).Outcome);
         Assert.Equal("/media/Music/Artist/Song.flac", (await context.LibraryTracks.SingleAsync()).FilePath);
 
-        var invalidOverride = new ManualTrackOverrideRecord
+        var targetedOverride = new ManualTrackOverrideRecord
         {
             Id = Guid.NewGuid(),
             TenantId = tenantId,
@@ -222,11 +223,12 @@ public sealed class Phase4DurableModelTests
             Decision = ManualOverrideDecision.Reject,
             Reason = "not this rendition",
             DecisionVersion = 1,
+            MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
             CreatedAt = now
         };
-        context.ManualTrackOverrides.Add(invalidOverride);
-        await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync());
-        context.Entry(invalidOverride).State = EntityState.Detached;
+        context.ManualTrackOverrides.Add(targetedOverride);
+        await context.SaveChangesAsync();
+        Assert.Equal(libraryTrackId, (await context.ManualTrackOverrides.SingleAsync()).LibraryTrackId);
 
         var accepted = await context.TrackMatches.SingleAsync();
         accepted.State = TrackMatchState.Suggested;
