@@ -268,6 +268,24 @@ public sealed class TrackMatchDecisionEngineTests
         Assert.Contains("below_suggestion_threshold", decision.Warnings);
     }
 
+    [Fact]
+    public void LargeLibrary_RetainsOnlyTopReviewCandidates()
+    {
+        var scope = Scope();
+        var candidates = Enumerable.Range(0, 25)
+            .Select(index => Candidate(scope) with
+            {
+                LibraryTrackId = Guid.CreateVersion7(),
+                BackendItemId = $"local-{index}",
+                Title = $"Candidate {index}"
+            })
+            .ToArray();
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), candidates);
+
+        Assert.Equal(20, decision.Candidates.Count);
+    }
+
     private static TrackMatchScope Scope() => new(
         Guid.CreateVersion7(),
         Guid.CreateVersion7(),

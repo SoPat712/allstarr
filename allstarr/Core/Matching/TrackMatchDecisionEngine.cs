@@ -168,6 +168,7 @@ public sealed class TrackMatchDecisionEngine
             .Select(candidate => ScoreCandidate(source, candidate))
             .OrderByDescending(candidate => candidate.Confidence)
             .ThenBy(candidate => candidate.LibraryTrackId)
+            .Take(20)
             .ToList();
         if (scores.Count == 0)
         {
