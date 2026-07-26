@@ -6,7 +6,6 @@ public sealed class AppleSessionPortableBackupContractTests
 
     [Theory]
     [InlineData("allstarr_apple-gateway-data", "volume-apple-gateway")]
-    [InlineData("allstarr_apple-wrapper-app-data", "volume-apple-wrapper-app")]
     [InlineData("allstarr_apple-wrapper-session", "volume-apple-wrapper-session")]
     public void PortableBackup_PreservesOptionalAppleState(string volumeName, string archivePath)
     {

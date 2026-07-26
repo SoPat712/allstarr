@@ -25,7 +25,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
             ConnectionString = _database.ConnectionString
         };
 
-        var exception = Assert.Throws<InvalidOperationException>(options.ParseProvider);
+        var exception = Assert.Throws<InvalidOperationException>(() => options.ParseProvider());
 
         Assert.Contains("Postgres", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Sqlite", exception.Message, StringComparison.OrdinalIgnoreCase);

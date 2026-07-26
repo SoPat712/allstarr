@@ -26,10 +26,9 @@ public sealed class ComposeContractTests
         Assert.Contains("postgres-data:/var/lib/postgresql", compose, StringComparison.Ordinal);
         Assert.Contains("allstarr-state:/app/state", compose, StringComparison.Ordinal);
         Assert.Contains("ghcr.io/sopat712/allstarr:3.1.0-beta.1", compose, StringComparison.Ordinal);
-        Assert.Contains("Providers__MetadataFanoutConcurrency: ${PROVIDER_METADATA_FANOUT_CONCURRENCY:-4}", compose, StringComparison.Ordinal);
-        Assert.Contains("Operations__EventLog__MaximumRows: ${EVENT_LOG_MAXIMUM_ROWS:-250000}", compose, StringComparison.Ordinal);
-        Assert.Contains("Subsonic__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}", compose, StringComparison.Ordinal);
-        Assert.Contains("Jellyfin__EnableExternalPlaylists: ${ENABLE_EXTERNAL_PLAYLISTS:-false}", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROVIDER_METADATA_FANOUT_CONCURRENCY", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("EVENT_LOG_MAXIMUM_ROWS", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("ENABLE_EXTERNAL_PLAYLISTS", compose, StringComparison.Ordinal);
         Assert.DoesNotContain(":latest", compose, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/var/run/docker.sock", compose, StringComparison.Ordinal);
         Assert.DoesNotContain("  gamdl-aio:", compose, StringComparison.Ordinal);
@@ -47,9 +46,9 @@ public sealed class ComposeContractTests
 
         Assert.False(string.IsNullOrWhiteSpace(version));
         Assert.Contains($"ALLSTARR_IMAGE=ghcr.io/sopat712/allstarr:{version}", environment, StringComparison.Ordinal);
-        Assert.Contains("PROVIDER_METADATA_FANOUT_CONCURRENCY=4", environment, StringComparison.Ordinal);
-        Assert.Contains("EVENT_LOG_MAXIMUM_ROWS=250000", environment, StringComparison.Ordinal);
-        Assert.Contains("ENABLE_EXTERNAL_PLAYLISTS=false", environment, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROVIDER_METADATA_FANOUT_CONCURRENCY", environment, StringComparison.Ordinal);
+        Assert.DoesNotContain("EVENT_LOG_MAXIMUM_ROWS", environment, StringComparison.Ordinal);
+        Assert.DoesNotContain("ENABLE_EXTERNAL_PLAYLISTS", environment, StringComparison.Ordinal);
         Assert.DoesNotContain("Link Playlists tab", environment, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -146,7 +145,7 @@ public sealed class ComposeContractTests
         Assert.Contains("./.apple-provider/wrapper-v2", overlay, StringComparison.Ordinal);
         Assert.Contains("WRAPPER_RESTORE_SESSION: \"1\"", overlay, StringComparison.Ordinal);
         Assert.Contains(
-            "apple-wrapper-app-data:/app/rootfs/data/data/com.apple.android.music",
+            "apple-wrapper-session:/app/rootfs/data/data/com.apple.android.music/files",
             overlay,
             StringComparison.Ordinal);
         Assert.Contains("apple-wrapper-session:", overlay, StringComparison.Ordinal);

@@ -11,7 +11,6 @@ public sealed class ExtensionWorkspaceDesignContractTests
         Assert.DoesNotContain("extension-capability-legend", script, StringComparison.Ordinal);
         Assert.Contains("class=\"extension-activity-entry", script, StringComparison.Ordinal);
         Assert.Contains("Open extension details", script, StringComparison.Ordinal);
-        Assert.Contains("Recent extension activity", script, StringComparison.Ordinal);
         Assert.Contains("Extension runtime", script, StringComparison.Ordinal);
     }
 

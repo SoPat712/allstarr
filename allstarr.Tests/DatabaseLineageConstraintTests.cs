@@ -134,23 +134,23 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             var scope = $"{_tenantA:N}:{_userA:N}";
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO managed_file_references
-                    (Id, ManagedFileId, TenantId, OwnerUserId, ScopeKey, ReferenceKey, CreatedAt, ReleasedAt, Revision)
+                    ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
                 VALUES ({first}, {_fileA}, {_tenantA}, {_userA}, {scope}, {"direct:first"}, {now}, NULL, {1})
                 """);
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO managed_file_references
-                    (Id, ManagedFileId, TenantId, OwnerUserId, ScopeKey, ReferenceKey, CreatedAt, ReleasedAt, Revision)
+                    ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
                 VALUES ({second}, {_fileA}, {_tenantA}, {_userA}, {scope}, {"direct:second"}, {now}, NULL, {1})
                 """);
             Assert.Equal(2, await db.ManagedFiles.Where(item => item.Id == _fileA)
                 .Select(item => item.ReferenceCount).SingleAsync());
 
             await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE managed_files SET ReferenceCount={9} WHERE Id={_fileA}
+                UPDATE managed_files SET "ReferenceCount"={9} WHERE "Id"={_fileA}
                 """));
 
             await db.Database.ExecuteSqlInterpolatedAsync($"""
-                UPDATE managed_file_references SET ReleasedAt={DateTimeOffset.UtcNow.UtcTicks}, Revision=Revision+1 WHERE Id={first}
+                UPDATE managed_file_references SET "ReleasedAt"={DateTimeOffset.UtcNow.UtcTicks}, "Revision"="Revision"+1 WHERE "Id"={first}
                 """);
             Assert.Equal(1, await db.ManagedFiles.Where(item => item.Id == _fileA)
                 .Select(item => item.ReferenceCount).SingleAsync());
@@ -159,7 +159,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         await using var crossed = await _factory.CreateDbContextAsync();
         await Assert.ThrowsAsync<PostgresException>(() => crossed.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO managed_file_references
-                (Id, ManagedFileId, TenantId, OwnerUserId, ScopeKey, ReferenceKey, CreatedAt, ReleasedAt, Revision)
+                ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
             VALUES ({Guid.CreateVersion7()}, {_fileA}, {_tenantB}, {_userB}, {$"{_tenantB:N}:{_userB:N}"}, {"direct:crossed"}, {DateTimeOffset.UtcNow.UtcTicks}, NULL, {1})
             """));
     }
@@ -178,11 +178,11 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         await using var db = new AllstarrDbContext(options);
         var migrator = db.Database.GetService<IMigrator>();
         await migrator.MigrateAsync(previous);
-        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO tenants (Id,Slug,Name,CreatedAt) VALUES ({tenant},{"legacy-ref"},{"Legacy refs"},{now})");
-        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO users (Id,TenantId,DisplayName,Status,CreatedAt,UpdatedAt) VALUES ({user},{tenant},{"Legacy user"},{"Active"},{now},{now})");
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO tenants (\"Id\",\"Slug\",\"Name\",\"CreatedAt\") VALUES ({tenant},{"legacy-ref"},{"Legacy refs"},{now})");
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO users (\"Id\",\"TenantId\",\"DisplayName\",\"Status\",\"CreatedAt\",\"UpdatedAt\") VALUES ({user},{tenant},{"Legacy user"},{"Active"},{now},{now})");
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO managed_files
-                (Id,RootId,TargetRootPath,CanonicalPath,ContentSha256,Length,PlacementMethod,TenantId,OwnerUserId,LibraryScopeId,SourceJobId,ScopeKey,ReferenceCount,IsManaged,CreatedAt,RemovedAt,Revision)
+                ("Id","RootId","TargetRootPath","CanonicalPath","ContentSha256","Length","PlacementMethod","TenantId","OwnerUserId","LibraryScopeId","SourceJobId","ScopeKey","ReferenceCount","IsManaged","CreatedAt","RemovedAt","Revision")
             VALUES ({file},{Guid.CreateVersion7()},{"/legacy"},{"/legacy/song.flac"},{new string('a', 64)},{1L},{"Copy"},{tenant},{user},{"music"},NULL,{"tenant:user:music"},{3},{true},{now},NULL,{1L})
             """);
 

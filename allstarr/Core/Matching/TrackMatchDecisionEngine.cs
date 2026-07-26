@@ -355,7 +355,11 @@ public sealed class TrackMatchDecisionEngine
         // authoritative supporting evidence instead of rejecting the candidate
         // because the credit-list lengths differ.
         var asymmetricCreditScore = (candidatePrecision * 0.75) + (sourceCoverage * 0.25);
-        return Math.Round(Math.Max(asymmetricCreditScore, primaryArtist * 0.85), 4);
+        return Math.Round(
+            sourceArtists.Count > 1 && candidateArtists.Count > 1
+                ? asymmetricCreditScore
+                : Math.Max(asymmetricCreditScore, primaryArtist * 0.85),
+            4);
     }
 
     private static List<string> SplitArtists(string? value) =>

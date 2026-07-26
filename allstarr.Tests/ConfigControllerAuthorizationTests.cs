@@ -423,8 +423,10 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         EncryptedSecretStore? secretStore = null)
     {
         var logger = new Mock<ILogger<ConfigController>>();
+        configValues ??= new Dictionary<string, string?>();
+        configValues.TryAdd("Backend:Type", "Jellyfin");
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(configValues ?? new Dictionary<string, string?>())
+            .AddInMemoryCollection(configValues)
             .Build();
 
         var webHostEnvironment = new Mock<IWebHostEnvironment>();

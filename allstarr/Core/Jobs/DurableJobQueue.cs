@@ -280,7 +280,7 @@ public sealed class DurableJobQueue
             {
                 return await ClaimOnceAsync(workerId.Trim(), normalizedTypes, cancellationToken);
             }
-            catch (DbUpdateConcurrencyException) when (retry < 2)
+            catch (Exception exception) when (retry < 2 && PostgresConcurrency.IsRetryable(exception))
             {
             }
         }
@@ -794,4 +794,21 @@ public sealed class DurableJobQueue
             CreatedAt = now,
             UpdatedAt = now
         };
+}
+
+internal static class PostgresConcurrency
+{
+    public static bool IsRetryable(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is DbUpdateConcurrencyException ||
+                current is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.SerializationFailure })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

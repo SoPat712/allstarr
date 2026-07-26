@@ -6700,7 +6700,7 @@ class AllstarrApp extends LitElement {
                                   details.provider && `provider=${details.provider}`,
                                   details.playlist && `playlist=${details.playlist}`,
                                   details.track && `track=${details.track}`,
-                                  Number.isFinite(Number(details.throughputPerSecond)) && `throughput=${Number(details.throughputPerSecond).toFixed(2)} tracks/s`,
+                                  details.throughputPerSecond != null && Number.isFinite(Number(details.throughputPerSecond)) && `throughput=${Number(details.throughputPerSecond).toFixed(2)} tracks/s`,
                                 ].filter(Boolean).join(" · ");
                               }).join("\n");
                               await navigator.clipboard.writeText(text);
@@ -6712,7 +6712,7 @@ class AllstarrApp extends LitElement {
                         <div class="job-live-lines">
                           ${progressEvents.length ? [...progressEvents].reverse().map((event) => {
                             const details = event.details || {};
-                            return html`<div><time>${new Date(event.createdAt || event.CreatedAt).toLocaleTimeString()}</time><span class="job-stage">${titleCase(details.stage || event.action || event.Action)}</span><span><strong>${display(details.message, "Work is continuing.")}</strong>${details.playlist ? html`<small>${display(details.playlist)}${details.track ? ` · ${details.track}` : ""}</small>` : nothing}</span><span class="job-progress-facts">${details.provider ? html`<span class="chip">${providerDisplayName(details.provider, this.schema?.providers)}</span>` : nothing}${Number.isFinite(Number(details.throughputPerSecond)) ? html`<span class="chip">${Number(details.throughputPerSecond).toFixed(1)} tracks/s</span>` : nothing}</span></div>`;
+                            return html`<div><time>${new Date(event.createdAt || event.CreatedAt).toLocaleTimeString()}</time><span class="job-stage">${titleCase(details.stage || event.action || event.Action)}</span><span><strong>${display(details.message, "Work is continuing.")}</strong>${details.playlist ? html`<small>${display(details.playlist)}${details.track ? ` · ${details.track}` : ""}</small>` : nothing}</span><span class="job-progress-facts">${details.provider ? html`<span class="chip">${providerDisplayName(details.provider, this.schema?.providers)}</span>` : nothing}${details.throughputPerSecond != null && Number.isFinite(Number(details.throughputPerSecond)) ? html`<span class="chip">${Number(details.throughputPerSecond).toFixed(1)} tracks/s</span>` : nothing}</span></div>`;
                           }) : html`<div><time>--:--:--</time><span>Waiting for the worker to report its current stage.</span></div>`}
                         </div>
                       </section>

@@ -25,6 +25,8 @@
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
         <!-- Keep the OpenAPI object model on the current compatible 2.x security line used by Swashbuckle. -->
         <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.9" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.9" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.9">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

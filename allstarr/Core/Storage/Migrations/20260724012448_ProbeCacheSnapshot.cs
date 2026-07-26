@@ -14,29 +14,47 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<bool>(
-                name: "Enabled",
-                table: "playlist_links",
-                type: "boolean",
-                nullable: false,
-                defaultValue: true,
-                oldClrType: typeof(int),
-                oldType: "integer",
-                oldDefaultValue: 1);
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'playlist_links'
+                          AND column_name = 'Enabled'
+                          AND data_type = 'integer'
+                    ) THEN
+                        ALTER TABLE playlist_links
+                            ALTER COLUMN "Enabled" DROP DEFAULT,
+                            ALTER COLUMN "Enabled" TYPE boolean USING ("Enabled" <> 0),
+                            ALTER COLUMN "Enabled" SET DEFAULT TRUE;
+                    END IF;
+                END $$;
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<int>(
-                name: "Enabled",
-                table: "playlist_links",
-                type: "integer",
-                nullable: false,
-                defaultValue: 1,
-                oldClrType: typeof(bool),
-                oldType: "boolean",
-                oldDefaultValue: true);
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'playlist_links'
+                          AND column_name = 'Enabled'
+                          AND data_type = 'boolean'
+                    ) THEN
+                        ALTER TABLE playlist_links
+                            ALTER COLUMN "Enabled" DROP DEFAULT,
+                            ALTER COLUMN "Enabled" TYPE integer USING (CASE WHEN "Enabled" THEN 1 ELSE 0 END),
+                            ALTER COLUMN "Enabled" SET DEFAULT 1;
+                    END IF;
+                END $$;
+                """);
         }
     }
 }

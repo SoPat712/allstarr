@@ -1878,7 +1878,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
 
         var exception = await Assert.ThrowsAsync<BackupVerificationException>(() =>
             DurableStateTransferService.ImportAsync(
-                artifact with { SourceProvider = "Postgres" },
+                artifact with { SourceProvider = "Other" },
                 Factory($"postgres-fixture:{Path.Combine(_root, "metadata-target.db")}"),
                 targetConfirmedEmpty: true));
 

@@ -14,6 +14,10 @@ namespace allstarr.Tests;
 
 public sealed class SidecarReadinessTests : IAsyncLifetime
 {
+    private readonly string _root = Path.Combine(
+        Path.GetTempPath(),
+        "allstarr-sidecar-readiness",
+        Guid.NewGuid().ToString("N"));
     private PostgresTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private DurableStorageState _storageState = null!;
@@ -22,6 +26,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        Directory.CreateDirectory(_root);
         _database = await PostgresTestDatabase.CreateAsync();
         var storage = new DurableStorageOptions
         {

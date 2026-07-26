@@ -428,7 +428,7 @@ public sealed class WebUiResponsiveContractTests
 
         Assert.Contains("/api/admin/playlist-links", script, StringComparison.Ordinal);
         Assert.Contains("Provider account", script, StringComparison.Ordinal);
-        Assert.Contains("Navidrome / Subsonic", script, StringComparison.Ordinal);
+        Assert.Contains(">Subsonic</option>", script, StringComparison.Ordinal);
         Assert.Contains("value=\"virtual\"", script, StringComparison.Ordinal);
         Assert.Contains("value=\"materialized\"", script, StringComparison.Ordinal);
         Assert.Contains("value=\"hybrid\"", script, StringComparison.Ordinal);

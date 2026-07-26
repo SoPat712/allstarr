@@ -59,33 +59,16 @@ namespace allstarr.Core.Storage.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "BitDepth",
-                table: "provider_download_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "Bitrate",
-                table: "provider_download_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "Channels",
-                table: "provider_download_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "Codec",
-                table: "provider_download_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "Container",
-                table: "provider_download_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "MimeType",
-                table: "provider_download_artifacts");
-
-            migrationBuilder.DropColumn(
-                name: "SampleRate",
-                table: "provider_download_artifacts");
+            migrationBuilder.Sql("""
+                ALTER TABLE provider_download_artifacts
+                    DROP COLUMN IF EXISTS "BitDepth",
+                    DROP COLUMN IF EXISTS "Bitrate",
+                    DROP COLUMN IF EXISTS "Channels",
+                    DROP COLUMN IF EXISTS "Codec",
+                    DROP COLUMN IF EXISTS "Container",
+                    DROP COLUMN IF EXISTS "MimeType",
+                    DROP COLUMN IF EXISTS "SampleRate";
+                """);
         }
     }
 }

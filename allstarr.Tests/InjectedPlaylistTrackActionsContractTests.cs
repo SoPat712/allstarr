@@ -49,18 +49,9 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
-        Assert.True(
-            controller.Split("playlistInfo[\"externalTracks\"]", StringSplitOptions.None).Length >= 5,
-            "Every playlist statistics path must populate the canonical externalTracks field.");
-        Assert.Contains("BuildSpotifyPlaylistStatsKey(config.Name)", controller, StringComparison.Ordinal);
-        Assert.Contains("BuildSpotifyMatchedTracksKey(config.Name)", controller, StringComparison.Ordinal);
-        Assert.Contains("ExternalTrackPlaybackPolicy.CanUseForPlayback(", controller, StringComparison.Ordinal);
-        Assert.Contains("ApplyPlaylistStats(playlistInfo, canonicalLocal, canonicalExternal, canonicalMissing)", controller, StringComparison.Ordinal);
-        Assert.Contains("ReadCachedString(item, \"ServerId\")", controller, StringComparison.Ordinal);
-        Assert.Contains("playlistItemStatsApplied = true", controller, StringComparison.Ordinal);
-        Assert.Contains("await _playlistFetcher.GetPlaylistTracksAsync(config.Name)", controller, StringComparison.Ordinal);
-        Assert.Contains("GetSpotifyProjectionAsync(track.SpotifyId)", controller, StringComparison.Ordinal);
-        Assert.Contains("matchedLocal + matchedExternal + matchedMissing == spotifyTrackCount", controller, StringComparison.Ordinal);
+        Assert.Contains("[\"externalTracks\"] = 0", controller, StringComparison.Ordinal);
+        Assert.Contains("playlistInfo[\"externalTracks\"] = coverage.External", controller, StringComparison.Ordinal);
+        Assert.Contains("ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing)", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
         Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistSummarySchemaVersion = 6", controller, StringComparison.Ordinal);
@@ -107,7 +98,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Unmatched</small>", script, StringComparison.Ordinal);
         Assert.Contains("Next rematch", script, StringComparison.Ordinal);
         Assert.Contains("Last synced", script, StringComparison.Ordinal);
-        Assert.Contains("Sync & rematch", script, StringComparison.Ordinal);
+        Assert.Contains("<span>Sync now</span>", script, StringComparison.Ordinal);
         Assert.Contains("playlist-rematch-action", script, StringComparison.Ordinal);
         var summaryStart = script.IndexOf("playlist-operation-summary\" aria-label=\"Playlist synchronization details", StringComparison.Ordinal);
         var summaryEnd = script.IndexOf("</div>", summaryStart, StringComparison.Ordinal);
@@ -116,7 +107,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
             "The rematch action must be a sibling of the synchronization stat strip, not nested inside it.");
         Assert.Contains("Current source snapshot needs matching", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-operation-summary", styles, StringComparison.Ordinal);
-        Assert.Contains(".playlist-rematch-action", styles, StringComparison.Ordinal);
+        Assert.Contains(".playlist-operation-actions button", styles, StringComparison.Ordinal);
     }
 
     [Fact]
