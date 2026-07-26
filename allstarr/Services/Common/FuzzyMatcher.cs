@@ -14,11 +14,14 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*from\s+[""']?[^""']+[""']?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*(remix|remaster|radio edit|single version|album version|extended|original mix|bonus track|bonus|deluxe edition)[^\-]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus track|bonus|deluxe edition)[^\-]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex VersionDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(](remix|remaster|live|acoustic|radio edit|single version|album version|extended(?: mix)?|original mix|bonus(?: track)?|deluxe(?: edition)?|explicit|clean|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(]((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus(?: track)?|deluxe(?: edition)?|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|remix|radio edit|extended(?: mix)?|original mix|clean|explicit)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex SemanticVersionRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[^\w\s]")]
     private static partial System.Text.RegularExpressions.Regex PunctuationRegex();
@@ -28,8 +31,8 @@ public static partial class FuzzyMatcher
 
     /// <summary>
     /// STEP 1: Strips common decorators from track titles to improve matching.
-    /// Removes: (feat. X), (with Y), (ft. Z), - From "Album", [Remix],
-    /// and trailing version labels such as - Bonus or - Deluxe Edition.
+    /// Removes featured credits, source-album labels, remasters, and non-semantic
+    /// release labels while retaining live, acoustic, remix, clean, and explicit evidence.
     /// This MUST be done first to avoid systematic noise in matching.
     /// </summary>
     public static string StripDecorators(string title)
@@ -214,7 +217,7 @@ public static partial class FuzzyMatcher
     /// Normalizes a string for matching by lowercasing, stripping accents, converting
     /// punctuation to spaces/removing it, and cleaning extra whitespace.
     /// </summary>
-    private static string NormalizeForMatching(string text)
+    public static string NormalizeForMatching(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -232,6 +235,13 @@ public static partial class FuzzyMatcher
 
         return normalized;
     }
+
+    public static IReadOnlySet<string> SemanticVersionTags(string? title) =>
+        string.IsNullOrWhiteSpace(title)
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : SemanticVersionRegex().Matches(RemoveDiacritics(title).ToLowerInvariant())
+                .Select(match => WhitespaceRegex().Replace(match.Value, " ").Trim())
+                .ToHashSet(StringComparer.Ordinal);
 
     /// <summary>
     /// Removes diacritics (accents) from characters.

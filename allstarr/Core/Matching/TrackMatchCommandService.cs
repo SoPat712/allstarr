@@ -1108,9 +1108,10 @@ public sealed class TrackMatchCommandService(
                 .Where(item =>
                     item.TenantId == snapshot.TenantId &&
                     item.OwnerUserId == snapshot.OwnerUserId &&
-                    item.LibraryScopeId == snapshot.LibraryScopeId)
+                    item.LibraryScopeId == snapshot.LibraryScopeId &&
+                    item.BackendInstanceId == snapshot.BackendInstanceId)
                 .ToArray();
-            var candidates = scopedTracks.Select(ToLocalCandidate).ToArray();
+            var candidates = new TrackMatchCandidateIndex(scopedTracks.Select(ToLocalCandidate));
             var scope = new TrackMatchScope(
                 snapshot.TenantId,
                 snapshot.OwnerUserId,
@@ -1133,7 +1134,7 @@ public sealed class TrackMatchCommandService(
                 seed.Isrc,
                 null,
                 null);
-            var decision = decisionEngine.Decide(scope, source, candidates);
+            var decision = decisionEngine.Decide(scope, source, candidates.Select(source));
             var selected = decision.SelectedLibraryTrackId is { } selectedId
                 ? scopedTracks.Single(item => item.Id == selectedId)
                 : null;
@@ -1488,7 +1489,8 @@ public sealed class TrackMatchCommandService(
             .Where(item =>
                 item.TenantId == actor.TenantId &&
                 item.OwnerUserId == snapshot.OwnerUserId &&
-                item.LibraryScopeId == snapshot.LibraryScopeId)
+                item.LibraryScopeId == snapshot.LibraryScopeId &&
+                item.BackendInstanceId == snapshot.BackendInstanceId)
             .ToListAsync(cancellationToken);
         var latestVersion = await db.TrackMatches
             .Where(item => item.TenantId == actor.TenantId &&
@@ -1503,16 +1505,17 @@ public sealed class TrackMatchCommandService(
             payload.Title ?? "Unknown",
             payload.Artist ?? "Unknown",
             payload.Album,
-            null,
+            payload.AlbumArtist,
             ReadDurationSeconds(snapshot.PayloadJson),
             payload.Isrc,
             null,
             null);
-        var localCandidates = candidates.Select(ToLocalCandidate).ToArray();
+        var localCandidates = new TrackMatchCandidateIndex(candidates.Select(ToLocalCandidate))
+            .Select(sourceTrack);
         var scope = new TrackMatchScope(
             actor.TenantId,
             snapshot.OwnerUserId,
-            candidates.FirstOrDefault()?.BackendInstanceId ?? "unknown",
+            snapshot.BackendInstanceId,
             snapshot.LibraryScopeId,
             snapshot.ProviderAccountId,
             2,
@@ -1865,16 +1868,26 @@ public sealed class TrackMatchCommandService(
             throw new ArgumentException("A normalized SHA-256 value is required.", name);
     }
 
-    private static (string? Title, string? Artist, string? Album, string? Isrc) ReadMetadata(string json)
+    private static (string? Title, string? Artist, string? Album, string? AlbumArtist, string? Isrc) ReadMetadata(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            var artists = root.TryGetProperty("Artists", out var artistValues) &&
+                          artistValues.ValueKind == JsonValueKind.Array
+                ? artistValues.EnumerateArray()
+                    .Select(item => item.GetString())
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .ToArray()
+                : [];
             return (
                 ReadString(root, "title", "Title", "name", "Name"),
-                ReadString(root, "artist", "Artist", "primaryArtist", "PrimaryArtist"),
+                artists.Length > 0
+                    ? string.Join(", ", artists)
+                    : ReadString(root, "artist", "Artist", "primaryArtist", "PrimaryArtist"),
                 ReadString(root, "album", "Album"),
+                ReadString(root, "albumArtist", "AlbumArtist"),
                 ReadString(root, "isrc", "Isrc", "ISRC"));
         }
         catch (JsonException)

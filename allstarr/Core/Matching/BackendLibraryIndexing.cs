@@ -98,7 +98,7 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                 var imageTag = item.TryGetProperty("ImageTags", out var tags) ? Text(tags, "Primary") : null;
                 try
                 {
-                    await Index.UpsertAsync(context, new(request.LibraryScopeId, id, path, title, artists[0]!, Text(item, "Album"),
+                    await Index.UpsertAsync(context, new(request.LibraryScopeId, id, path, title, string.Join(", ", artists), Text(item, "Album"),
                         Text(item, "AlbumArtist"), duration, Get(providers, "isrc"), Get(providers, "musicbrainztrack"),
                         Get(providers, "musicbrainzalbum"), Get(providers, "musicbrainzartist"), providers, null, null,
                         imageTag == null ? null : $"jellyfin-cover:{id}:{imageTag}", modified.Value), cancellationToken);

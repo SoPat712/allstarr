@@ -258,6 +258,12 @@ public sealed class TrackMatchDecisionEngine
                          (artist * 0.30) +
                          (Math.Max(album, albumArtist) * 0.12) +
                          (duration * 0.16);
+        if (!FuzzyMatcher.SemanticVersionTags(source.Title)
+                .SetEquals(FuzzyMatcher.SemanticVersionTags(candidate.Title)))
+        {
+            confidence = Math.Max(0, confidence - 0.18);
+            warnings.Add("semantic_version_mismatch");
+        }
         if (source.IsExplicit.HasValue &&
             candidate.IsExplicit.HasValue &&
             source.IsExplicit != candidate.IsExplicit)
@@ -482,4 +488,92 @@ public sealed class TrackMatchDecisionEngine
         _policy.AmbiguityDelta,
         state is TrackMatchReviewState.Suggested or TrackMatchReviewState.Ambiguous or
             TrackMatchReviewState.Unresolved or TrackMatchReviewState.Rejected);
+}
+
+public sealed class TrackMatchCandidateIndex
+{
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byIsrc;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byMatchKey;
+
+    public TrackMatchCandidateIndex(IEnumerable<LocalTrackMatchCandidate> candidates)
+    {
+        var items = candidates.ToArray();
+        _byIsrc = items
+            .Where(item => NormalizeIsrc(item.Isrc) != null)
+            .GroupBy(item => NormalizeIsrc(item.Isrc)!, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<LocalTrackMatchCandidate>)group.ToArray(),
+                StringComparer.Ordinal);
+        _byMatchKey = items
+            .SelectMany(candidate => BuildMatchKeys(candidate.Title, candidate.Artist)
+                .Select(key => new { Key = key, Candidate = candidate }))
+            .GroupBy(item => item.Key, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<LocalTrackMatchCandidate>)group
+                    .Select(item => item.Candidate)
+                    .DistinctBy(item => item.LibraryTrackId)
+                    .ToArray(),
+                StringComparer.Ordinal);
+    }
+
+    public IReadOnlyList<LocalTrackMatchCandidate> Select(ExternalTrackMatchSnapshot source)
+    {
+        var isrc = NormalizeIsrc(source.Isrc);
+        if (isrc != null && _byIsrc.TryGetValue(isrc, out var isrcCandidates))
+            return isrcCandidates;
+
+        var keys = BuildMatchKeys(source.Title, source.Artist).ToArray();
+        if (keys.Length == 0) return [];
+        var exactPair = keys.FirstOrDefault(key => key.StartsWith("title-artist:", StringComparison.Ordinal));
+        if (exactPair != null && _byMatchKey.TryGetValue(exactPair, out var pairCandidates))
+            return pairCandidates;
+        var exactTitle = keys.FirstOrDefault(key => key.StartsWith("title:", StringComparison.Ordinal));
+        if (exactTitle != null && _byMatchKey.TryGetValue(exactTitle, out var titleCandidates))
+            return titleCandidates;
+
+        var selected = new Dictionary<Guid, LocalTrackMatchCandidate>();
+        foreach (var prefix in new[] { "token-pair:", "title-token:" })
+        {
+            foreach (var key in keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                if (!_byMatchKey.TryGetValue(key, out var candidates)) continue;
+                foreach (var candidate in candidates)
+                {
+                    selected.TryAdd(candidate.LibraryTrackId, candidate);
+                    if (selected.Count >= 300) return selected.Values.ToArray();
+                }
+            }
+        }
+        return selected.Values.ToArray();
+    }
+
+    private static IEnumerable<string> BuildMatchKeys(string? titleValue, string? artistValue)
+    {
+        var title = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(titleValue ?? string.Empty));
+        var artist = FuzzyMatcher.NormalizeForMatching(artistValue ?? string.Empty);
+        if (title.Length == 0) yield break;
+        yield return $"title:{title}";
+        if (artist.Length > 0) yield return $"title-artist:{title}|{artist}";
+
+        var titleTokens = title.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(IsMeaningfulToken).Distinct(StringComparer.Ordinal).Take(8).ToArray();
+        var artistTokens = artist.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(IsMeaningfulToken).Distinct(StringComparer.Ordinal).Take(4).ToArray();
+        foreach (var token in titleTokens) yield return $"title-token:{token}";
+        foreach (var titleToken in titleTokens)
+            foreach (var artistToken in artistTokens)
+                yield return $"token-pair:{titleToken}|{artistToken}";
+    }
+
+    private static string? NormalizeIsrc(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = value.Replace("-", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
+        return normalized.Length == 12 && normalized.All(char.IsLetterOrDigit) ? normalized : null;
+    }
+
+    private static bool IsMeaningfulToken(string token) => token.Length >= 3 && token is not
+        ("the" or "and" or "feat" or "with" or "from" or "remaster" or "remastered" or "version" or "edit" or "mix");
 }

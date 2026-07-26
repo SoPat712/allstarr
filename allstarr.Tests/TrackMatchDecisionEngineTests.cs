@@ -86,6 +86,82 @@ public sealed class TrackMatchDecisionEngineTests
     }
 
     [Fact]
+    public void FullArtistCreditsAndAlbumBreakCompilationTie()
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Hit 'Em Up - Single Version",
+            Artist = "2Pac, Outlawz",
+            Album = "Greatest Hits",
+            AlbumArtist = null,
+            DurationSeconds = 313
+        };
+        var preferred = Candidate(scope) with
+        {
+            Title = "Hit ’Em Up",
+            Artist = "2Pac, The Outlawz",
+            Album = "Greatest Hits",
+            AlbumArtist = "2Pac",
+            DurationSeconds = 313
+        };
+        var compilation = preferred with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "compilation",
+            Artist = "2Pac",
+            Album = "Death Row: Greatest Hits",
+            AlbumArtist = "Various Artists"
+        };
+        var candidates = new TrackMatchCandidateIndex([preferred, compilation]).Select(source);
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, candidates);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(preferred.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.True(decision.Candidates[0].Confidence - decision.Candidates[1].Confidence > decision.AmbiguityDelta);
+    }
+
+    [Theory]
+    [InlineData("A Song (Live)", "A Song")]
+    [InlineData("A Song", "A Song (Acoustic)")]
+    [InlineData("A Song (Remix)", "A Song")]
+    [InlineData("A Song (Clean)", "A Song (Explicit)")]
+    public void SemanticVersionsRemainNegativeEvidence(string sourceTitle, string candidateTitle)
+    {
+        var scope = Scope();
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with { Title = sourceTitle },
+            [Candidate(scope) with { Title = candidateTitle }]);
+
+        Assert.NotEqual(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Contains("semantic_version_mismatch", Assert.Single(decision.Candidates).Warnings);
+    }
+
+    [Fact]
+    public void CandidateIndexNormalizesUnicodeCreditsAndReleaseDecorators()
+    {
+        var scope = Scope();
+        var candidate = Candidate(scope) with
+        {
+            Title = "Beyonce's Song",
+            Artist = "Artist, Guest"
+        };
+        var source = Source() with
+        {
+            Title = "Beyoncé’s Song - 2004 Remaster",
+            Artist = "Ártist feat. Guest"
+        };
+
+        var selected = new TrackMatchCandidateIndex([candidate]).Select(source);
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, selected);
+
+        Assert.Same(candidate, Assert.Single(selected));
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+    }
+
+    [Fact]
     public void ScopedManualPinWinsButCannotCrossTenantOrInvisibleLibrary()
     {
         var scope = Scope();

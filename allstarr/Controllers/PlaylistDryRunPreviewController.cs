@@ -171,6 +171,7 @@ public sealed class PlaylistDryRunPreviewController(
                 execution,
                 request.LibraryScopeId.Trim(),
                 deadline.Token);
+            var candidateIndex = new TrackMatchCandidateIndex(candidates);
             var candidateById = candidates.ToDictionary(item => item.LibraryTrackId);
             var enabledProviderIds = (await db.ProviderAccounts.AsNoTracking()
                     .Where(item => item.Enabled &&
@@ -210,7 +211,7 @@ public sealed class PlaylistDryRunPreviewController(
                 SourceSnapshotVersion: 1);
             var decisions = snapshot.Entries.Select(entry =>
                 {
-                    var local = Decide(entry, account.ProviderId, scope, candidates, matcher);
+                    var local = Decide(entry, account.ProviderId, scope, candidateIndex, matcher);
                     var providerMatches = entry.CanonicalRecordingId.HasValue &&
                                           playableByCanonical.TryGetValue(entry.CanonicalRecordingId.Value, out var routes)
                         ? routes
@@ -322,7 +323,7 @@ public sealed class PlaylistDryRunPreviewController(
         CollectedPlaylistSourceEntry entry,
         string providerId,
         TrackMatchScope scope,
-        IReadOnlyList<LocalTrackMatchCandidate> candidates,
+        TrackMatchCandidateIndex candidates,
         TrackMatchDecisionEngine matcher)
     {
         if (string.IsNullOrWhiteSpace(entry.Title) || entry.Artists.Count == 0)
@@ -342,14 +343,14 @@ public sealed class PlaylistDryRunPreviewController(
             providerId,
             entry.ProviderTrackIdHash,
             entry.Title,
-            entry.Artists[0],
+            string.Join(", ", entry.Artists),
             entry.Album,
             null,
             entry.Duration.HasValue ? checked((int)Math.Round(entry.Duration.Value.TotalSeconds)) : null,
             entry.Isrc,
             null,
             entry.IsExplicit);
-        return new(entry, matcher.Decide(scope, source, candidates));
+        return new(entry, matcher.Decide(scope, source, candidates.Select(source)));
     }
 
     private bool TryGetAdministrator(out AdminAuthSession session, out IActionResult? error)

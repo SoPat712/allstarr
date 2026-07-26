@@ -106,7 +106,7 @@ public class FuzzyMatcherTests
 
     [Theory]
     [InlineData("Heebiejeebies - Bonus", "Heebiejeebies")]
-    [InlineData("Homemade Dynamite (Feat. Khalid, Post Malone & SZA) - REMIX", "Homemade Dynamite")]
+    [InlineData("Homemade Dynamite (Feat. Khalid, Post Malone & SZA) - REMIX", "Homemade Dynamite (REMIX)")]
     [InlineData("Song Title - Bonus Track", "Song Title")]
     [InlineData("Song Title - Deluxe Edition", "Song Title")]
     [InlineData("Song Title (Deluxe Edition)", "Song Title")]

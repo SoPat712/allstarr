@@ -19,7 +19,7 @@ public sealed class BackendLibraryIndexingTests
     {
         var handler = new RecordingHandler("""
             {"Items":[
-              {"Id":"song-1","Name":"First","Path":"/music/Artist/First.flac","Artists":["Artist"],"Album":"Album","AlbumArtist":"Artist","RunTimeTicks":1800000000,"DateModified":"2026-07-12T01:00:00Z","ProviderIds":{"Isrc":"USABC1234567","MusicBrainzTrack":"31e68c1d-31f9-432c-a3a4-13aef4a53833"},"ImageTags":{"Primary":"cover-v1"}},
+              {"Id":"song-1","Name":"First","Path":"/music/Artist/First.flac","Artists":["Artist","Featured Artist"],"Album":"Album","AlbumArtist":"Artist","RunTimeTicks":1800000000,"DateModified":"2026-07-12T01:00:00Z","ProviderIds":{"Isrc":"USABC1234567","MusicBrainzTrack":"31e68c1d-31f9-432c-a3a4-13aef4a53833"},"ImageTags":{"Primary":"cover-v1"}},
               {"Id":"song-2","Name":"Pathless","Artists":["Artist"],"DateModified":"2026-07-12T01:00:00Z"}
             ],"TotalRecordCount":2}
             """);
@@ -35,6 +35,7 @@ public sealed class BackendLibraryIndexingTests
         Assert.Equal(new LibraryCatalogScanResult(2, 1, 1, 0, 1), result);
         var track = Assert.Single(index.Inputs);
         Assert.Equal("/music/Artist/First.flac", track.FilePath);
+        Assert.Equal("Artist, Featured Artist", track.Artist);
         Assert.Equal("USABC1234567", track.Isrc);
         Assert.Equal("jellyfin-cover:song-1:cover-v1", track.CoverArtReference);
         Assert.Equal("ephemeral-key", handler.LastRequest!.Headers.GetValues("X-Emby-Token").Single());
