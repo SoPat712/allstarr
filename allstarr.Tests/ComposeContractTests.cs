@@ -121,13 +121,21 @@ public sealed class ComposeContractTests
             startInfo.ArgumentList.Add(profile);
         }
         startInfo.ArgumentList.Add("config");
-        startInfo.ArgumentList.Add("--quiet");
+        startInfo.ArgumentList.Add("--services");
         using var process = Process.Start(startInfo)
                             ?? throw new InvalidOperationException("Could not start Docker Compose validation.");
         process.WaitForExit();
         var error = process.StandardError.ReadToEnd();
+        var services = process.StandardOutput.ReadToEnd()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var expected = new HashSet<string>(["allstarr", "postgres"], StringComparer.Ordinal);
+        if (profiles.Contains("spotify-lyrics")) expected.Add("spotify-lyrics");
+        if (profiles.Contains("apple")) expected.UnionWith(["apple-gateway", "apple-wrapper"]);
 
         Assert.True(process.ExitCode == 0, error);
+        Assert.True(expected.SetEquals(services),
+            $"Expected [{string.Join(", ", expected)}], got [{string.Join(", ", services)}].");
     }
 
     [Fact]
@@ -144,6 +152,7 @@ public sealed class ComposeContractTests
         Assert.Contains("git pull --ff-only", controller, StringComparison.Ordinal);
         Assert.Contains("tracked source files have local changes", controller, StringComparison.Ordinal);
         Assert.Contains("prepare-apple) prepare_apple \"$@\" ;;", controller, StringComparison.Ordinal);
+        Assert.Contains("up -d --remove-orphans --wait --wait-timeout 180", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("docker-compose.dev.yml", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("docker-compose.aio.yml", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("docker-compose.apple.yml", controller, StringComparison.Ordinal);

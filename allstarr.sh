@@ -43,6 +43,10 @@ compose_args() {
   done < <(profiles)
 }
 
+start_stack() {
+  docker compose "${COMPOSE[@]}" up -d --remove-orphans --wait --wait-timeout 180
+}
+
 remember_profile() {
   local wanted="$1" temporary
   [[ "$wanted" == spotify ]] && wanted=spotify-lyrics
@@ -179,7 +183,7 @@ up() {
   if [[ "$(deployment_mode)" == source ]]; then
     docker compose "${COMPOSE[@]}" build allstarr
   fi
-  docker compose "${COMPOSE[@]}" up -d --remove-orphans
+  start_stack
   docker compose "${COMPOSE[@]}" ps
 }
 
@@ -206,7 +210,7 @@ update() {
   elif profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" build apple-gateway
   fi
-  docker compose "${COMPOSE[@]}" up -d --remove-orphans
+  start_stack
   docker compose "${COMPOSE[@]}" ps
 }
 
@@ -271,7 +275,7 @@ backup_state() {
   result=$?
   set -e
   if [[ "$restart_after" == true && -n "$was_running" ]]; then
-    docker compose "${COMPOSE[@]}" up -d --remove-orphans
+    start_stack
   fi
   [[ $result -eq 0 ]] || die "state export failed; the stopped services were left unchanged"
   echo "Portable upgrade export created: $archive"
@@ -364,7 +368,7 @@ EOF
 
   if [[ -n "$was_running" ]]; then
     compose_args
-    docker compose "${COMPOSE[@]}" up -d --remove-orphans
+    start_stack
   fi
   echo "Restore complete. A rollback backup of the replaced installation is in: $rollback_dir"
   rm -rf "$staging"
