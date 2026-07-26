@@ -120,10 +120,7 @@
     background: var(--surface-control-hover);
 }
 
-.subnav a.active,
-.settings-tabs a.active,
-.library-tabs > a.active,
-.workspace-tabs > button.active {
+.subnav a.active {
     color: var(--text-primary);
     background: var(--accent-soft);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);

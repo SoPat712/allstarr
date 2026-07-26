@@ -806,6 +806,8 @@ const BOOT_MESSAGES = Object.freeze([
   "Counting beats, not sheep",
   "Preparing your music control center",
 ]);
+const BOOT_MESSAGE_MS = 4500;
+const BOOT_MINIMUM_MS = 1000;
 
 class AllstarrApp extends LitElement {
   static properties = {
@@ -1237,6 +1239,7 @@ class AllstarrApp extends LitElement {
 
   async bootstrap() {
     const attempt = ++this.bootstrapAttempt;
+    const bootStartedAt = performance.now();
     this.loading = true;
     this.bootError = "";
     this.startSignalBoot();
@@ -1295,8 +1298,12 @@ class AllstarrApp extends LitElement {
       this.bootError = error?.message || "Allstarr could not finish loading.";
     } finally {
       if (attempt === this.bootstrapAttempt) {
-        this.stopSignalBoot();
-        this.loading = false;
+        const remaining = BOOT_MINIMUM_MS - (performance.now() - bootStartedAt);
+        if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, remaining));
+        if (attempt === this.bootstrapAttempt) {
+          this.stopSignalBoot();
+          this.loading = false;
+        }
       }
     }
   }
@@ -1306,7 +1313,7 @@ class AllstarrApp extends LitElement {
     this.bootMessageIndex = 0;
     this.bootMessageTimer = window.setInterval(() => {
       this.bootMessageIndex = (this.bootMessageIndex + 1) % BOOT_MESSAGES.length;
-    }, 1400);
+    }, BOOT_MESSAGE_MS);
   }
 
   stopSignalBoot() {
