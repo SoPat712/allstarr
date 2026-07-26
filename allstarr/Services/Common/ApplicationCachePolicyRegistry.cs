@@ -65,6 +65,7 @@ public static class ApplicationCachePolicyRegistry
             return ApplicationCacheCategory.DerivedProjection;
         if (StartsWithAny(
                 key,
+                "media:descriptor:",
                 "musicbrainz:",
                 "genre:",
                 "playback:metadata:"))

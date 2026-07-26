@@ -9,7 +9,9 @@ using Moq;
 using allstarr.Controllers;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using allstarr.Core.Identity;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
 
@@ -275,6 +277,47 @@ public class AdminAuthControllerTests
     }
 
     [Fact]
+    public async Task GetCurrentUserAvatar_UsesTheScopedMediaAssetCache()
+    {
+        var requests = 0;
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requests);
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3, 4])
+            };
+            response.Content.Headers.ContentType = new("image/png");
+            response.Headers.ETag = new("\"avatar-v1\"");
+            return Task.FromResult(response);
+        });
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
+            userId: "user-42",
+            userName: "alice",
+            isAdministrator: true,
+            jellyfinAccessToken: "token",
+            jellyfinServerId: "server",
+            tenantId: Guid.CreateVersion7(),
+            allstarrUserId: Guid.CreateVersion7());
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Cookie =
+            $"{AdminAuthSessionService.SessionCookieName}={session.SessionId}";
+        var controller = CreateController(handler, sessionService, httpContext);
+
+        var first = Assert.IsType<FileContentResult>(
+            await controller.GetCurrentUserAvatar(CancellationToken.None));
+        var second = Assert.IsType<FileContentResult>(
+            await controller.GetCurrentUserAvatar(CancellationToken.None));
+
+        Assert.Equal(1, requests);
+        Assert.Equal(first.FileContents, second.FileContents);
+        Assert.Equal("image/png", second.ContentType);
+        Assert.Equal("private, max-age=300", httpContext.Response.Headers.CacheControl);
+        Assert.Equal("Cookie", httpContext.Response.Headers.Vary);
+    }
+
+    [Fact]
     public async Task GetCurrentSession_WithLegacyCookie_MigratesToV3Cookie()
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
@@ -328,6 +371,9 @@ public class AdminAuthControllerTests
             httpClientFactory.Object,
             sessionService,
             logger.Object,
+            new MediaAssetResolver(
+                new TestMemoryApplicationCache(),
+                NullLogger<MediaAssetResolver>.Instance),
             identityResolver: null,
             providerAccountManagementOptions: new ProviderAccountManagementOptions
             {

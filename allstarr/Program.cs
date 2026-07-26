@@ -370,6 +370,7 @@ builder.Services.AddSingleton<FileMediaApplicationCache>();
 builder.Services.AddSingleton<HybridApplicationCache>();
 builder.Services.AddSingleton<IApplicationCache>(sp =>
     sp.GetRequiredService<HybridApplicationCache>());
+builder.Services.AddSingleton<IMediaAssetResolver, MediaAssetResolver>();
 builder.Services.AddHostedService<DatabaseApplicationCacheCleanupService>();
 builder.Services.AddHostedService<FileMediaApplicationCacheCleanupService>();
 builder.Services.AddSingleton<PlaylistPlayableSearchService>();

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -85,6 +86,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
         Func<HttpRequestMessage, HttpResponseMessage> responder)
     {
         var client = new HttpClient(new StubHttpMessageHandler(responder));
+        var cache = new TestMemoryApplicationCache();
         return new JellyfinPlaybackMetadataResolver(
             new StubHttpClientFactory(client),
             Options.Create(new JellyfinSettings
@@ -93,7 +95,8 @@ public sealed class JellyfinPlaybackMetadataResolverTests
                 ApiKey = "server-api-key",
                 UserId = "user-1"
             }),
-            new TestMemoryApplicationCache(),
+            cache,
+            new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance),
             NullLogger<JellyfinPlaybackMetadataResolver>.Instance);
     }
 

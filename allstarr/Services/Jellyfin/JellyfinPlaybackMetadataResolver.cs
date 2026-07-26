@@ -16,16 +16,19 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinPlaybackMetadataResolver> _logger;
     private readonly IApplicationCache _cache;
+    private readonly IMediaAssetResolver _mediaAssets;
 
     public JellyfinPlaybackMetadataResolver(
         IHttpClientFactory httpClientFactory,
         IOptions<JellyfinSettings> settings,
         IApplicationCache cache,
+        IMediaAssetResolver mediaAssets,
         ILogger<JellyfinPlaybackMetadataResolver> logger)
     {
         _httpClient = httpClientFactory.CreateClient(JellyfinProxyService.HttpClientName);
         _settings = settings.Value;
         _cache = cache;
+        _mediaAssets = mediaAssets;
         _logger = logger;
     }
 
@@ -88,43 +91,27 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             return null;
         }
 
-        var cacheKey = CacheKeyBuilder.BuildPlaybackArtworkKey("jellyfin", itemId);
-        var cached = await _cache.GetAsync<ArtworkCacheEntry>(cacheKey);
-        if (cached != null) return cached.Artwork;
-
-        PlaybackArtwork? artwork = null;
-        try
-        {
-            using var request = CreateRequest(BuildArtworkUri(itemId), "image/*");
-            using var response = await _httpClient.SendAsync(request, cancellationToken);
-            var contentType = response.Content.Headers.ContentType?.MediaType;
-            var contentLength = response.Content.Headers.ContentLength;
-
-            if (response.IsSuccessStatusCode &&
-                contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true &&
-                (!contentLength.HasValue || contentLength.Value <= MaximumArtworkBytes))
+        var asset = await _mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                null, null, null, "jellyfin", "track", itemId, _settings.Url, Width: 96),
+            async token =>
             {
-                var content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-                if (content.Length <= MaximumArtworkBytes)
-                {
-                    artwork = new PlaybackArtwork(content, contentType);
-                }
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Unable to resolve Jellyfin playback artwork for item {ItemId}", itemId);
-        }
-
-        await _cache.SetAsync(
-            cacheKey,
-            new ArtworkCacheEntry(artwork),
-            artwork == null ? FailureCacheDuration : MetadataCacheDuration);
-        return artwork;
+                using var request = CreateRequest(BuildArtworkUri(itemId), "image/*");
+                using var response = await _httpClient.SendAsync(request, token);
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                if (!response.IsSuccessStatusCode ||
+                    contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
+                    response.Content.Headers.ContentLength > MaximumArtworkBytes)
+                    return null;
+                return new MediaAssetSource(
+                    await response.Content.ReadAsByteArrayAsync(token),
+                    contentType,
+                    response.Headers.ETag?.Tag,
+                    response.Content.Headers.LastModified);
+            },
+            MaximumArtworkBytes,
+            cancellationToken);
+        return asset == null ? null : new PlaybackArtwork(asset.Bytes, asset.ContentType);
     }
 
     public static PlaybackTrackMetadata ParseMetadata(JsonElement root, string itemId)
@@ -209,5 +196,4 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
 
     private sealed record MetadataCacheEntry(PlaybackTrackMetadata? Metadata);
 
-    private sealed record ArtworkCacheEntry(PlaybackArtwork? Artwork);
 }

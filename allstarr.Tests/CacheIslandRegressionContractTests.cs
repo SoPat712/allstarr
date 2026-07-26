@@ -33,7 +33,7 @@ public sealed class CacheIslandRegressionContractTests
     }
 
     [Fact]
-    public void PlaybackMetadataResolvers_UseSharedBoundedCache()
+    public void PlaybackMetadataAndArtwork_UseSharedBoundedCaches()
     {
         var external = File.ReadAllText(Path.Combine(
             _repositoryRoot,
@@ -53,7 +53,8 @@ public sealed class CacheIslandRegressionContractTests
         Assert.DoesNotContain("ConcurrentDictionary", external, StringComparison.Ordinal);
         Assert.Contains("IApplicationCache cache", jellyfin, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", jellyfin, StringComparison.Ordinal);
-        Assert.Contains("BuildPlaybackArtworkKey", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("IMediaAssetResolver mediaAssets", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("MediaAssetIdentity", jellyfin, StringComparison.Ordinal);
         Assert.DoesNotContain("ConcurrentDictionary", jellyfin, StringComparison.Ordinal);
     }
 

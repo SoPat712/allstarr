@@ -14,9 +14,6 @@ public static class CacheKeyBuilder
     public static string BuildPlaybackMetadataKey(string provider, string itemId) =>
         $"playback:metadata:{Normalize(provider)}:{Normalize(itemId)}";
 
-    public static string BuildPlaybackArtworkKey(string provider, string itemId) =>
-        $"artwork:playback:{Normalize(provider)}:{Normalize(itemId)}";
-
     public static string BuildJellyfinItemTypeKey(string itemId) =>
         $"jellyfin:item-type:{Normalize(itemId)}";
 
@@ -35,6 +32,24 @@ public static class CacheKeyBuilder
         string playlistId,
         string? revision) =>
         $"playlist:artwork-descriptor:{Normalize(provider)}:{Normalize(playlistId)}:{Normalize(revision)}";
+
+    public static string BuildMediaAssetDescriptorKey(MediaAssetIdentity identity)
+    {
+        var scope = string.Join('\u001f',
+            identity.TenantId?.ToString("N"),
+            identity.UserId?.ToString("N"),
+            identity.ProviderAccountId?.ToString("N"),
+            Normalize(identity.ProviderId),
+            Normalize(identity.ResourceKind),
+            identity.ResourceId.Trim(),
+            identity.Revision?.Trim(),
+            identity.Width,
+            identity.Height);
+        return $"media:descriptor:v1:{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(scope)))}";
+    }
+
+    public static string BuildMediaAssetPayloadKey(string sha256) =>
+        $"artwork:payload:v1:{sha256}";
 
     #region Search Keys
 

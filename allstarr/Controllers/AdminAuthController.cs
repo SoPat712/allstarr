@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using allstarr.Filters;
 using allstarr.Models.Settings;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using allstarr.Core.Identity;
 
 namespace allstarr.Controllers;
@@ -22,6 +23,7 @@ public class AdminAuthController : ControllerBase
     private readonly ILogger<AdminAuthController> _logger;
     private readonly BackendIdentityResolver? _identityResolver;
     private readonly ProviderAccountManagementMode _providerAccountManagementMode;
+    private readonly IMediaAssetResolver _mediaAssets;
 
     public AdminAuthController(
         IOptions<JellyfinSettings> jellyfinSettings,
@@ -30,6 +32,7 @@ public class AdminAuthController : ControllerBase
         IHttpClientFactory httpClientFactory,
         AdminAuthSessionService sessionService,
         ILogger<AdminAuthController> logger,
+        IMediaAssetResolver mediaAssets,
         BackendIdentityResolver? identityResolver = null,
         ProviderAccountManagementOptions? providerAccountManagementOptions = null)
     {
@@ -44,6 +47,7 @@ public class AdminAuthController : ControllerBase
         _httpClient = httpClientFactory.CreateClient();
         _sessionService = sessionService;
         _logger = logger;
+        _mediaAssets = mediaAssets;
         _identityResolver = identityResolver;
         _providerAccountManagementMode = (providerAccountManagementOptions ?? new())
             .ParseManagementMode();
@@ -238,25 +242,40 @@ public class AdminAuthController : ControllerBase
             return NotFound();
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Get,
-            $"{_jellyfinSettings.Url.TrimEnd('/')}/Users/{Uri.EscapeDataString(session.UserId)}/Images/Primary?width=96&quality=90");
-        request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
-        var contentType = response.Content.Headers.ContentType?.MediaType;
-        if (!response.IsSuccessStatusCode || contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true)
-        {
-            return NotFound();
-        }
+        var asset = await _mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                session.TenantId,
+                session.AllstarrUserId,
+                null,
+                "jellyfin",
+                "user-avatar",
+                session.UserId,
+                session.JellyfinServerId,
+                Width: 96),
+            async token =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"{_jellyfinSettings.Url.TrimEnd('/')}/Users/{Uri.EscapeDataString(session.UserId)}/Images/Primary?width=96&quality=90");
+                request.Headers.TryAddWithoutValidation("X-Emby-Token", session.JellyfinAccessToken);
+                using var response = await _httpClient.SendAsync(request, token);
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                if (!response.IsSuccessStatusCode ||
+                    contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true)
+                    return null;
+                var bytes = await response.Content.ReadAsByteArrayAsync(token);
+                return new MediaAssetSource(
+                    bytes,
+                    contentType,
+                    response.Headers.ETag?.Tag,
+                    response.Content.Headers.LastModified);
+            },
+            5 * 1024 * 1024,
+            cancellationToken);
+        if (asset == null) return NotFound();
 
-        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        if (bytes.Length is <= 0 or > 5 * 1024 * 1024)
-        {
-            return NotFound();
-        }
-
-        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.CacheControl = "private, max-age=300";
         Response.Headers.Vary = "Cookie";
-        return File(bytes, contentType);
+        return File(asset.Bytes, asset.ContentType);
     }
 
     [HttpPost("logout")]
