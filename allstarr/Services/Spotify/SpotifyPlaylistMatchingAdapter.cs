@@ -168,7 +168,7 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error matching tracks for playlist {Playlist}: {Error}", playlist.Name, ex.Message);
+            _logger.LogError(ex, "Error matching tracks for playlist {Playlist} ({Parameter})", playlist.Name, (ex as ArgumentException)?.ParamName ?? "unknown");
             throw;
         }
 
@@ -263,7 +263,7 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error matching tracks for playlist {Playlist}: {Error}", playlist.Name, ex.Message);
+            _logger.LogError(ex, "Error matching tracks for playlist {Playlist} ({Parameter})", playlist.Name, (ex as ArgumentException)?.ParamName ?? "unknown");
             throw;
         }
     }
@@ -496,7 +496,7 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             catch (Exception ex)
             {
                 failed.Add(playlist.Name);
-                _logger.LogError(ex, "Error matching tracks for playlist {Playlist}: {Error}", playlist.Name, ex.Message);
+                _logger.LogError(ex, "Error matching tracks for playlist {Playlist} ({Parameter})", playlist.Name, (ex as ArgumentException)?.ParamName ?? "unknown");
                 if (progress != null)
                 {
                     await progress(
