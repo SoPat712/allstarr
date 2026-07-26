@@ -276,6 +276,8 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("class=\"overview-grid\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"source-metrics\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"toast-stack operation-center\"", script, StringComparison.Ordinal);
+        Assert.Contains("await this.loadJobs();", script, StringComparison.Ordinal);
+        Assert.Contains("if (active) {", script, StringComparison.Ordinal);
         Assert.Contains("--progress-scale:${progress / 100}", script, StringComparison.Ordinal);
         Assert.Contains("[HttpGet(\"provider-summaries\")]", controller, StringComparison.Ordinal);
         Assert.Contains("[HttpGet(\"activity\")]", controller, StringComparison.Ordinal);

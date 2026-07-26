@@ -1541,6 +1541,7 @@ class AllstarrApp extends LitElement {
 
     const [zone, sub] = routeParts(this.route);
     try {
+      await this.loadJobs();
       if (zone === "library") {
         if (!sub || ["playlists", "link", "injected", "external"].includes(sub)) {
           await Promise.all([this.loadPlaylistLinks(), this.loadPlaylists()]);
@@ -1572,12 +1573,11 @@ class AllstarrApp extends LitElement {
           await this.loadProviderAccounts();
         }
       } else if (zone === "activity") {
-        await Promise.all([this.loadDashboardPresentation(), this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadJobs(), this.loadProviderAccounts()]);
+        await Promise.all([this.loadDashboardPresentation(), this.loadEndpointUsage(), this.loadScrobbling(), this.loadQueue(), this.loadProviderAccounts()]);
       } else if (zone === "home" || !zone) {
         await Promise.all([
           this.loadProviderAccounts(),
           this.loadPlaylists(),
-          this.loadJobs(),
           this.loadDashboardPresentation(),
         ]);
       }
@@ -2025,7 +2025,7 @@ class AllstarrApp extends LitElement {
     clearTimeout(this.jobPollTimer);
     const active = this.jobs.some((job) =>
       !["Succeeded", "Failed", "Cancelled"].includes(job.state || job.State));
-    if (active && ["activity", "home"].includes(routeParts(this.route)[0] || "home")) {
+    if (active) {
       this.jobPollTimer = window.setTimeout(() => {
         this.loadJobs().catch(() => {});
       }, 3000);
