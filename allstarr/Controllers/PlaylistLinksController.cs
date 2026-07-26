@@ -996,6 +996,15 @@ public sealed class PlaylistLinksController(
         revision = value.Revision,
         lastRunAt = run?.CompletedAt ?? run?.StartedAt,
         lastRunState = run?.State.ToString().ToLowerInvariant(),
+        materializationVerification = run?.VerificationCode == null ? null : new
+        {
+            code = run.VerificationCode,
+            plannedTrackCount = run.PlannedTargetTrackCount,
+            plannedDurationMs = run.PlannedTargetDurationMilliseconds,
+            reportedTrackCount = run.VerifiedTargetTrackCount,
+            reportedDurationMs = run.VerifiedTargetDurationMilliseconds,
+            verifiedAt = run.VerifiedAt
+        },
         trackCount = metrics.Total,
         matchedCount = metrics.Matched,
         unmatchedCount = metrics.Unresolved,

@@ -137,7 +137,8 @@ public class PlaylistController : ControllerBase
                 ["artworkUrl"] = DurableArtworkUrl(durable),
                 ["providerBreakdown"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
                 ["sourceProvider"] = durable?.SourceProviderId ?? "spotify",
-                ["durationMs"] = durable?.DurationMilliseconds
+                ["durationMs"] = durable?.DurationMilliseconds,
+                ["materializationVerification"] = MaterializationVerification(durable)
             };
 
             try
@@ -481,6 +482,7 @@ public class PlaylistController : ControllerBase
             lastSuccessfulSyncAt = playlist.CompletedAt,
             nextSyncAt = GetNextScheduledOccurrence(syncSchedule),
             syncState = playlist.SyncState?.ToString().ToLowerInvariant(),
+            materializationVerification = MaterializationVerification(playlist),
             matchStatus = matched == playlist.Entries.Count
                 ? "ready"
                 : matched == 0
@@ -489,6 +491,17 @@ public class PlaylistController : ControllerBase
             tracks
         });
     }
+
+    private static object? MaterializationVerification(DurablePlaylistProjection? playlist) =>
+        playlist?.VerificationCode == null ? null : new
+        {
+            code = playlist.VerificationCode,
+            plannedTrackCount = playlist.PlannedTargetTrackCount,
+            plannedDurationMs = playlist.PlannedTargetDurationMilliseconds,
+            reportedTrackCount = playlist.VerifiedTargetTrackCount,
+            reportedDurationMs = playlist.VerifiedTargetDurationMilliseconds,
+            verifiedAt = playlist.VerifiedAt
+        };
 
     private static DateTime? GetNextScheduledOccurrence(string? syncSchedule)
     {

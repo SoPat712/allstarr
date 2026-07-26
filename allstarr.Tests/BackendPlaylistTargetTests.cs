@@ -52,6 +52,8 @@ public sealed class BackendPlaylistTargetTests
         Assert.True(result.IsSuccess);
         Assert.True(result.Value!.Changed);
         Assert.Equal(["a", "b", "c", "manual"], result.Value.Snapshot.Members.Select(member => member.BackendItemId));
+        Assert.Equal(4, result.Value.Snapshot.ReportedTrackCount);
+        Assert.Equal(720_000, result.Value.Snapshot.DurationMilliseconds);
         Assert.Equal("Road Mix", result.Value.Snapshot.Name);
         Assert.Equal("Local matches", result.Value.Snapshot.Description);
         Assert.True(backend.ArtworkWritten);
@@ -157,6 +159,8 @@ public sealed class BackendPlaylistTargetTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(["a", "b", "c", "manual"], result.Value!.Snapshot.Members.Select(member => member.BackendItemId));
+        Assert.Equal(4, result.Value.Snapshot.ReportedTrackCount);
+        Assert.Equal(720_000, result.Value.Snapshot.DurationMilliseconds);
         Assert.Equal(["description", "artwork"], result.Value.UnsupportedMetadataFields);
         Assert.All(backend.Requests, requestRecord =>
         {
@@ -269,7 +273,16 @@ public sealed class BackendPlaylistTargetTests
             if (request.Method == HttpMethod.Get && path.StartsWith("Playlists/", StringComparison.Ordinal) && path.EndsWith("/Items", StringComparison.Ordinal))
             {
                 var id = path.Split('/')[1];
-                return Json(new { Items = Playlists[id].Members.Select(item => new { Id = item, PlaylistItemId = $"entry-{item}" }).ToArray() });
+                return Json(new
+                {
+                    Items = Playlists[id].Members.Select(item => new
+                    {
+                        Id = item,
+                        PlaylistItemId = $"entry-{item}",
+                        RunTimeTicks = 180_000L * TimeSpan.TicksPerMillisecond
+                    }).ToArray(),
+                    TotalRecordCount = Playlists[id].Members.Count
+                });
             }
             if (request.Method == HttpMethod.Post && path == "Playlists")
             {
@@ -361,7 +374,19 @@ public sealed class BackendPlaylistTargetTests
             {
                 var id = parameters["id"].Single();
                 var state = Playlists[id];
-                return Json(new { status = "ok", playlist = new { id, name = state.Name, changed = $"r{state.Revision}", entry = state.Members.Select(item => new { id = item }).ToArray() } });
+                return Json(new
+                {
+                    status = "ok",
+                    playlist = new
+                    {
+                        id,
+                        name = state.Name,
+                        changed = $"r{state.Revision}",
+                        songCount = state.Members.Count,
+                        duration = state.Members.Count * 180,
+                        entry = state.Members.Select(item => new { id = item, duration = 180 }).ToArray()
+                    }
+                });
             }
             if (endpoint == "createPlaylist")
             {
@@ -383,7 +408,14 @@ public sealed class BackendPlaylistTargetTests
             return new(HttpStatusCode.NotFound);
         }
 
-        private static object Summary(string id, PlaylistState state) => new { id, name = state.Name, changed = $"r{state.Revision}" };
+        private static object Summary(string id, PlaylistState state) => new
+        {
+            id,
+            name = state.Name,
+            changed = $"r{state.Revision}",
+            songCount = state.Members.Count,
+            duration = state.Members.Count * 180
+        };
         private static HttpResponseMessage Json(object response) => new(HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new Dictionary<string, object> { ["subsonic-response"] = response }), Encoding.UTF8, "application/json")

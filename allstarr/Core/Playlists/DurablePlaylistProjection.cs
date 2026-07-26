@@ -35,7 +35,13 @@ public sealed record DurablePlaylistProjection(
     DateTimeOffset RetrievedAt,
     DateTimeOffset? CompletedAt,
     PlaylistSyncState? SyncState,
-    IReadOnlyList<DurablePlaylistEntryProjection> Entries)
+    IReadOnlyList<DurablePlaylistEntryProjection> Entries,
+    int? PlannedTargetTrackCount = null,
+    long? PlannedTargetDurationMilliseconds = null,
+    int? VerifiedTargetTrackCount = null,
+    long? VerifiedTargetDurationMilliseconds = null,
+    string? VerificationCode = null,
+    DateTimeOffset? VerifiedAt = null)
 {
     public int TotalCount => Entries.Count;
     public int LocalCount => Entries.Count(item => item.BackendItemId != null);
@@ -137,7 +143,13 @@ public sealed class DurablePlaylistProjectionReader(
                         : null,
                     overrides,
                     library))
-                .ToArray());
+                .ToArray(),
+            run?.PlannedTargetTrackCount,
+            run?.PlannedTargetDurationMilliseconds,
+            run?.VerifiedTargetTrackCount,
+            run?.VerifiedTargetDurationMilliseconds,
+            run?.VerificationCode,
+            run?.VerifiedAt);
     }
 
     private static DurablePlaylistEntryProjection ProjectEntry(

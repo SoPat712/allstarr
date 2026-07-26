@@ -206,6 +206,12 @@ public sealed class PlaylistSyncRunRecord
     public string? TargetRevisionBefore { get; set; }
     public string? TargetRevisionAfter { get; set; }
     public string? ConflictCode { get; set; }
+    public int? PlannedTargetTrackCount { get; set; }
+    public long? PlannedTargetDurationMilliseconds { get; set; }
+    public int? VerifiedTargetTrackCount { get; set; }
+    public long? VerifiedTargetDurationMilliseconds { get; set; }
+    public string? VerificationCode { get; set; }
+    public DateTimeOffset? VerifiedAt { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public long Revision { get; set; }

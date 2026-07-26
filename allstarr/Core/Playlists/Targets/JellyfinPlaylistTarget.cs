@@ -134,7 +134,9 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     {
         var metadataResponse = await SendAsync(context, HttpMethod.Get, $"Users/{Escape(context.VerifiedPrincipalId)}/Items/{Escape(backendPlaylistId)}", null, cancellationToken);
         if (!metadataResponse.IsSuccess) return ConvertFailure<BackendPlaylistSnapshot>(metadataResponse);
-        var membersResponse = await SendAsync(context, HttpMethod.Get, $"Playlists/{Escape(backendPlaylistId)}/Items?UserId={Escape(context.VerifiedPrincipalId)}", null, cancellationToken);
+        var membersResponse = await SendAsync(context, HttpMethod.Get,
+            $"Playlists/{Escape(backendPlaylistId)}/Items?UserId={Escape(context.VerifiedPrincipalId)}&Fields=RunTimeTicks",
+            null, cancellationToken);
         if (!membersResponse.IsSuccess) return ConvertFailure<BackendPlaylistSnapshot>(membersResponse);
 
         using var metadata = JsonDocument.Parse(metadataResponse.Body!);
@@ -143,14 +145,26 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         var memberList = members.RootElement.GetPropertyOrDefault("Items").EnumerateArrayOrEmpty()
             .Select(item => new BackendPlaylistMember(
                 item.StringOrNull("Id") ?? throw new JsonException("Jellyfin playlist member has no Id."),
-                item.StringOrNull("PlaylistItemId")))
+                item.StringOrNull("PlaylistItemId"),
+                MillisecondsFromTicks(item.Int64OrNull("RunTimeTicks"))))
             .ToArray();
         var name = root.StringOrNull("Name") ?? backendPlaylistId;
         var description = root.StringOrNull("Overview");
         var artwork = root.GetPropertyOrDefault("ImageTags").StringOrNull("Primary");
+        var reportedCount = members.RootElement.Int64OrNull("TotalRecordCount") is { } count &&
+                            count is >= 0 and <= int.MaxValue
+            ? (int)count
+            : memberList.Length;
+        var duration = MillisecondsFromTicks(root.Int64OrNull("RunTimeTicks")) ??
+                       (memberList.Length == 0
+                           ? 0
+                           : memberList.All(item => item.DurationMilliseconds.HasValue)
+                               ? memberList.Sum(item => item.DurationMilliseconds!.Value)
+                               : null);
         var fingerprint = BackendPlaylistSnapshot.ComputeFingerprint(backendPlaylistId, name, memberList, description, artwork);
         return new(BackendPlaylistTargetStatus.Success,
-            new(backendPlaylistId, name, memberList, fingerprint, null, description, artwork),
+            new(backendPlaylistId, name, memberList, fingerprint, null, description, artwork,
+                reportedCount, duration),
             membersResponse.Status);
     }
 
@@ -319,6 +333,9 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         request.ExpectedFingerprint != null && request.ExpectedFingerprint != current.Fingerprint ||
         request.ExpectedRevision != null && request.ExpectedRevision != current.NativeRevision;
 
+    private static long? MillisecondsFromTicks(long? ticks) =>
+        ticks > 0 ? ticks / TimeSpan.TicksPerMillisecond : null;
+
     private static IReadOnlyList<string> BuildFinalOrder(
         BackendPlaylistSnapshot current,
         BackendPlaylistWriteRequest request)
@@ -384,6 +401,13 @@ internal static class PlaylistTargetJsonExtensions
     public static string? StringOrNull(this JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
+            : null;
+
+    public static long? Int64OrNull(this JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object &&
+        element.TryGetProperty(name, out var value) &&
+        value.TryGetInt64(out var number)
+            ? number
             : null;
 
     public static IEnumerable<JsonElement> EnumerateArrayOrEmpty(this JsonElement element) =>

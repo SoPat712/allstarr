@@ -147,11 +147,24 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         var artwork = playlist.StringOrNull("coverArt");
         var revision = playlist.StringOrNull("changed");
         var members = playlist.GetPropertyOrDefault("entry").EnumerateArrayOrEmpty()
-            .Select(entry => new BackendPlaylistMember(entry.StringOrNull("id") ?? throw new JsonException("Subsonic playlist entry has no id.")))
+            .Select(entry => new BackendPlaylistMember(
+                entry.StringOrNull("id") ?? throw new JsonException("Subsonic playlist entry has no id."),
+                durationMilliseconds: MillisecondsFromSeconds(entry.Int64OrNull("duration"))))
             .ToArray();
+        var reportedCount = playlist.Int64OrNull("songCount") is { } count &&
+                            count is >= 0 and <= int.MaxValue
+            ? (int)count
+            : members.Length;
+        var duration = MillisecondsFromSeconds(playlist.Int64OrNull("duration")) ??
+                       (members.Length == 0
+                           ? 0
+                           : members.All(item => item.DurationMilliseconds.HasValue)
+                               ? members.Sum(item => item.DurationMilliseconds!.Value)
+                               : null);
         var fingerprint = BackendPlaylistSnapshot.ComputeFingerprint(id, name, members, description, artwork);
         return new(BackendPlaylistTargetStatus.Success,
-            new(id, name, members, fingerprint, revision, description, artwork),
+            new(id, name, members, fingerprint, revision, description, artwork,
+                reportedCount, duration),
             response.Status);
     }
 
@@ -293,6 +306,9 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
     private static bool Conflicts(BackendPlaylistWriteRequest request, BackendPlaylistSnapshot current) =>
         request.ExpectedFingerprint != null && request.ExpectedFingerprint != current.Fingerprint ||
         request.ExpectedRevision != null && request.ExpectedRevision != current.NativeRevision;
+
+    private static long? MillisecondsFromSeconds(long? seconds) =>
+        seconds > 0 && seconds <= long.MaxValue / 1000 ? seconds * 1000 : null;
 
     private static IReadOnlyList<string> BuildFinalOrder(
         BackendPlaylistSnapshot current,

@@ -65,16 +65,23 @@ public sealed record BackendPlaylistTargetContext
 
 public sealed record BackendPlaylistMember
 {
-    public BackendPlaylistMember(string backendItemId, string? entryId = null)
+    public BackendPlaylistMember(
+        string backendItemId,
+        string? entryId = null,
+        long? durationMilliseconds = null)
     {
         BackendItemId = string.IsNullOrWhiteSpace(backendItemId)
             ? throw new ArgumentException("A backend item ID is required.", nameof(backendItemId))
             : backendItemId;
+        if (durationMilliseconds is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(durationMilliseconds));
         EntryId = entryId;
+        DurationMilliseconds = durationMilliseconds;
     }
 
     public string BackendItemId { get; }
     public string? EntryId { get; }
+    public long? DurationMilliseconds { get; }
 }
 
 /// <summary>
@@ -103,7 +110,9 @@ public sealed record BackendPlaylistSnapshot(
     string Fingerprint,
     string? NativeRevision = null,
     string? Description = null,
-    string? ArtworkReference = null)
+    string? ArtworkReference = null,
+    int? ReportedTrackCount = null,
+    long? DurationMilliseconds = null)
 {
     public static string ComputeFingerprint(
         string playlistId,

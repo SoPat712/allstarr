@@ -294,9 +294,17 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 UnsupportedMetadataFields = write.Value.UnsupportedMetadataFields
                     .Concat([artworkIssue]).Distinct(StringComparer.Ordinal).ToArray()
             };
+        var verificationRead = await target.ReadAsync(
+            targetContext, receipt.Snapshot.BackendPlaylistId, cancellationToken);
+        var verificationError = verificationRead.IsSuccess && verificationRead.Value != null
+            ? null
+            : verificationRead.ErrorCode ?? verificationRead.Status.ToString().ToLowerInvariant();
+        if (verificationRead.IsSuccess && verificationRead.Value != null)
+            receipt = receipt with { Snapshot = verificationRead.Value };
 
         return await PersistSuccessAsync(
-            execution, request, link, snapshot, plan, decisionIds, before, receipt, cancellationToken);
+            execution, request, link, snapshot, plan, decisionIds, before, receipt,
+            verificationError, cancellationToken);
     }
 
     public async Task<PlaylistRefreshResult> RefreshAsync(
@@ -749,24 +757,39 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         ProtocolExecutionContext execution, PlaylistOrchestrationRequest request, PlaylistLinkRecord link,
         PlaylistSourceSnapshotRecord snapshot, PlaylistMaterializationPlan plan,
         IReadOnlyDictionary<Guid, Guid?> decisionIds, BackendPlaylistSnapshot? before,
-        BackendPlaylistWriteReceipt receipt, CancellationToken cancellationToken)
+        BackendPlaylistWriteReceipt receipt, string? verificationError,
+        CancellationToken cancellationToken)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var existing = await db.PlaylistSyncRuns.AsNoTracking().SingleOrDefaultAsync(item => item.TenantId == link.TenantId &&
             item.PlaylistLinkId == link.Id && item.IdempotencyKey == plan.IdempotencyKey, cancellationToken);
         if (existing != null) return new(plan, existing.Id, existing.State, true, true, existing.ConflictCode);
-        var state = plan.HasSkips || receipt.UnsupportedMetadataFields.Count > 0
-            ? PlaylistSyncState.PartiallySucceeded : PlaylistSyncState.Succeeded;
+        var memberships = await db.PlaylistTargetMemberships
+            .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
+            .ToListAsync(cancellationToken);
+        var verification = await VerifyMaterializationAsync(
+            db, link, plan, before, receipt.Snapshot, memberships, verificationError,
+            cancellationToken);
+        var state = plan.HasSkips ||
+                    receipt.UnsupportedMetadataFields.Count > 0 ||
+                    verification.Code != "verified"
+            ? PlaylistSyncState.PartiallySucceeded
+            : PlaylistSyncState.Succeeded;
         var metadataIssue = receipt.UnsupportedMetadataFields.Count == 0
             ? null
             : string.Join(',', receipt.UnsupportedMetadataFields.Order(StringComparer.Ordinal));
         var run = NewRun(request, link, snapshot, plan, state, before?.Fingerprint,
             receipt.Snapshot.Fingerprint, metadataIssue);
+        run.PlannedTargetTrackCount = verification.PlannedTrackCount;
+        run.PlannedTargetDurationMilliseconds = verification.PlannedDurationMilliseconds;
+        run.VerifiedTargetTrackCount = verification.VerifiedTrackCount;
+        run.VerifiedTargetDurationMilliseconds = verification.VerifiedDurationMilliseconds;
+        run.VerificationCode = verification.Code;
+        run.VerifiedAt = _clock.UtcNow;
         db.PlaylistSyncRuns.Add(run);
         db.PlaylistSyncEntryResults.AddRange(ToRunEntries(link.TenantId, run.Id, plan, decisionIds));
         var included = plan.Entries.Where(item => item.Status == PlaylistPreviewEntryStatus.Included && item.LibraryTrackId.HasValue).ToArray();
-        var memberships = await db.PlaylistTargetMemberships.Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id).ToListAsync(cancellationToken);
         var membershipByLibraryTrack = memberships.ToDictionary(item => item.LibraryTrackId);
         var includedLibraryTrackIds = included.Select(item => item.LibraryTrackId!.Value).ToHashSet();
         foreach (var entry in included)
@@ -795,8 +818,97 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.TenantId == link.TenantId, cancellationToken);
         trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
-        return new(plan, run.Id, state, true, false, metadataIssue);
+        return new(plan, run.Id, state, true, false,
+            verification.Code == "verified" ? metadataIssue : verification.Code);
     }
+
+    private static async Task<MaterializationVerification> VerifyMaterializationAsync(
+        AllstarrDbContext db,
+        PlaylistLinkRecord link,
+        PlaylistMaterializationPlan plan,
+        BackendPlaylistSnapshot? before,
+        BackendPlaylistSnapshot after,
+        IReadOnlyCollection<PlaylistTargetMembershipRecord> memberships,
+        string? verificationError,
+        CancellationToken cancellationToken)
+    {
+        var planned = plan.OrderedBackendItemIds.ToHashSet(StringComparer.Ordinal);
+        var syncOwned = memberships
+            .Where(item => item.Active)
+            .Select(item => item.TargetEntryId)
+            .ToHashSet(StringComparer.Ordinal);
+        var expectedIds = plan.OrderedBackendItemIds
+            .Concat((before?.Members ?? [])
+                .Select(item => item.BackendItemId)
+                .Where(item => !planned.Contains(item))
+                .Where(item => !link.MirrorStaleEntries || !syncOwned.Contains(item)))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var durations = await db.LibraryTracks.AsNoTracking()
+            .Where(item =>
+                item.TenantId == link.TenantId &&
+                item.OwnerUserId == link.OwnerUserId &&
+                item.LibraryScopeId == link.LibraryScopeId &&
+                item.BackendInstanceId == link.TargetBackendInstanceId &&
+                expectedIds.Contains(item.BackendItemId))
+            .Select(item => new { item.BackendItemId, item.DurationMilliseconds })
+            .ToListAsync(cancellationToken);
+        var indexedDurations = durations
+            .GroupBy(item => item.BackendItemId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().DurationMilliseconds,
+                StringComparer.Ordinal);
+        var priorDurations = (before?.Members ?? [])
+            .Where(item => item.DurationMilliseconds.HasValue)
+            .GroupBy(item => item.BackendItemId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().DurationMilliseconds,
+                StringComparer.Ordinal);
+        var expectedDurationParts = expectedIds.Select(item =>
+            indexedDurations.GetValueOrDefault(item) ??
+            priorDurations.GetValueOrDefault(item)).ToArray();
+        var plannedDuration = expectedIds.Length == 0
+            ? 0
+            : expectedDurationParts.All(item => item.HasValue)
+                ? expectedDurationParts.Sum(item => item!.Value)
+                : (long?)null;
+        var verifiedCount = after.ReportedTrackCount is >= 0
+            ? after.ReportedTrackCount.Value
+            : after.Members.Count;
+        var verifiedDuration = after.DurationMilliseconds is >= 0
+            ? after.DurationMilliseconds
+            : after.Members.Count == 0
+                ? 0
+                : after.Members.All(item => item.DurationMilliseconds.HasValue)
+                    ? after.Members.Sum(item => item.DurationMilliseconds!.Value)
+                    : null;
+        if (verificationError != null)
+        {
+            var readErrorCode = $"verification_read_{verificationError}";
+            return new(expectedIds.Length, plannedDuration, null, null,
+                readErrorCode[..Math.Min(100, readErrorCode.Length)]);
+        }
+        var countMismatch = expectedIds.Length != verifiedCount;
+        var durationUnavailable = !plannedDuration.HasValue || !verifiedDuration.HasValue;
+        var durationMismatch = !durationUnavailable &&
+                               Math.Abs(plannedDuration!.Value - verifiedDuration!.Value) >
+                               Math.Max(1000L, expectedIds.LongLength * 1000L);
+        var code = (countMismatch, durationUnavailable, durationMismatch) switch
+        {
+            (false, false, false) => "verified",
+            (true, true, _) => "count_mismatch_duration_unavailable",
+            (false, true, _) => "duration_unavailable",
+            (true, false, true) => "count_and_duration_mismatch",
+            (true, false, false) => "count_mismatch",
+            _ => "duration_mismatch"
+        };
+        return new(expectedIds.Length, plannedDuration, verifiedCount, verifiedDuration, code);
+    }
+
+    private sealed record MaterializationVerification(
+        int PlannedTrackCount,
+        long? PlannedDurationMilliseconds,
+        int? VerifiedTrackCount,
+        long? VerifiedDurationMilliseconds,
+        string Code);
 
     private async Task<PlaylistOrchestrationResult> RecordFailureAsync(
         ProtocolExecutionContext execution, PlaylistOrchestrationRequest request, PlaylistLinkRecord link,

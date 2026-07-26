@@ -344,6 +344,72 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(3, await db.PlaylistSyncEntryResults.CountAsync());
         Assert.Equal(2, await db.PlaylistTargetMemberships.CountAsync(item => item.Active));
         Assert.Equal("target-created", (await db.PlaylistLinks.SingleAsync()).TargetPlaylistId);
+        var run = await db.PlaylistSyncRuns.SingleAsync();
+        Assert.Equal(2, run.PlannedTargetTrackCount);
+        Assert.Equal(360_000, run.PlannedTargetDurationMilliseconds);
+        Assert.Equal(2, run.VerifiedTargetTrackCount);
+        Assert.Equal(360_000, run.VerifiedTargetDurationMilliseconds);
+        Assert.Equal("verified", run.VerificationCode);
+        Assert.Equal(_now, run.VerifiedAt);
+    }
+
+    [Fact]
+    public async Task Materialization_count_drift_is_persisted_and_actionable()
+    {
+        _target.ReportedTrackCountAdjustment = 1;
+        _source.Snapshot = Snapshot(
+            "revision-drift",
+            Entry(0, "entry-drift", "source-1", "One"));
+
+        var result = await _service.RunAsync(Context(), new(_link, 8));
+
+        Assert.Equal(PlaylistSyncState.PartiallySucceeded, result.State);
+        Assert.Equal("count_mismatch", result.ErrorCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        var run = await db.PlaylistSyncRuns.SingleAsync();
+        Assert.Equal(1, run.PlannedTargetTrackCount);
+        Assert.Equal(2, run.VerifiedTargetTrackCount);
+        Assert.Equal("count_mismatch", run.VerificationCode);
+    }
+
+    [Fact]
+    public async Task Materialization_duration_drift_is_persisted_and_actionable()
+    {
+        _target.ReportedDurationAdjustmentMilliseconds = 5_000;
+        _source.Snapshot = Snapshot(
+            "revision-duration-drift",
+            Entry(0, "entry-duration-drift", "source-1", "One"));
+
+        var result = await _service.RunAsync(Context(), new(_link, 9));
+
+        Assert.Equal(PlaylistSyncState.PartiallySucceeded, result.State);
+        Assert.Equal("duration_mismatch", result.ErrorCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        var run = await db.PlaylistSyncRuns.SingleAsync();
+        Assert.Equal(180_000, run.PlannedTargetDurationMilliseconds);
+        Assert.Equal(185_000, run.VerifiedTargetDurationMilliseconds);
+        Assert.Equal("duration_mismatch", run.VerificationCode);
+    }
+
+    [Fact]
+    public async Task Materialization_verification_read_failure_is_persisted_without_hiding_the_write()
+    {
+        _target.ReadStatus = BackendPlaylistTargetStatus.BackendFailure;
+        _target.ErrorCode = "verification_unavailable";
+        _source.Snapshot = Snapshot(
+            "revision-verification-read",
+            Entry(0, "entry-verification-read", "source-1", "One"));
+
+        var result = await _service.RunAsync(Context(), new(_link, 10));
+
+        Assert.True(result.BackendWriteAttempted);
+        Assert.Equal(PlaylistSyncState.PartiallySucceeded, result.State);
+        Assert.Equal("verification_read_verification_unavailable", result.ErrorCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        var run = await db.PlaylistSyncRuns.SingleAsync();
+        Assert.Equal("verification_read_verification_unavailable", run.VerificationCode);
+        Assert.Null(run.VerifiedTargetTrackCount);
+        Assert.Null(run.VerifiedTargetDurationMilliseconds);
     }
 
     [Fact]
@@ -447,6 +513,12 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(380000, projection.DurationMilliseconds);
         Assert.Equal(PlaylistSyncState.PartiallySucceeded, projection.SyncState);
         Assert.Equal(_now, projection.CompletedAt);
+        Assert.Equal(2, projection.PlannedTargetTrackCount);
+        Assert.Equal(380_000, projection.PlannedTargetDurationMilliseconds);
+        Assert.Equal(2, projection.VerifiedTargetTrackCount);
+        Assert.Equal(360_000, projection.VerifiedTargetDurationMilliseconds);
+        Assert.Equal("duration_mismatch", projection.VerificationCode);
+        Assert.Equal(_now, projection.VerifiedAt);
         Assert.All(projection.Entries, item =>
         {
             Assert.NotNull(item.BackendItemId);
@@ -732,7 +804,10 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         public int ReadCalls { get; private set; }
         public int WriteCalls { get; private set; }
         public int TotalCalls => FindCalls + ReadCalls + WriteCalls;
+        public int ReportedTrackCountAdjustment { get; set; }
+        public long ReportedDurationAdjustmentMilliseconds { get; set; }
         public BackendPlaylistWriteRequest? LastWrite { get; private set; }
+        private BackendPlaylistSnapshot? LastSnapshot { get; set; }
         public List<BackendPlaylistTargetContext> Contexts { get; } = [];
         public Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(BackendPlaylistTargetContext context, string? query, int limit, CancellationToken cancellationToken) =>
             Task.FromResult(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>(BackendPlaylistTargetStatus.Success, []));
@@ -746,21 +821,35 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot>> ReadAsync(BackendPlaylistTargetContext context, string backendPlaylistId, CancellationToken cancellationToken)
         {
             ReadCalls++; Contexts.Add(context);
-            var snapshot = ReadStatus == BackendPlaylistTargetStatus.Success ? Backend(backendPlaylistId) : null;
+            var snapshot = ReadStatus == BackendPlaylistTargetStatus.Success
+                ? LastSnapshot is { } last && last.BackendPlaylistId == backendPlaylistId
+                    ? last
+                    : Backend(backendPlaylistId)
+                : null;
             return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(ReadStatus, snapshot, ErrorCode: ErrorCode));
         }
         public Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
         {
             WriteCalls++; Contexts.Add(context); LastWrite = request;
-            var receipt = WriteStatus == BackendPlaylistTargetStatus.Success
-                ? new BackendPlaylistWriteReceipt(Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds), true, [])
+            LastSnapshot = WriteStatus == BackendPlaylistTargetStatus.Success
+                ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds)
                 : null;
+            var receipt = LastSnapshot == null
+                ? null
+                : new BackendPlaylistWriteReceipt(LastSnapshot, true, []);
             return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>(WriteStatus, receipt, ErrorCode: ErrorCode));
         }
-        private static BackendPlaylistSnapshot Backend(string id, IEnumerable<string>? members = null)
+        private BackendPlaylistSnapshot Backend(string id, IEnumerable<string>? members = null)
         {
-            var values = (members ?? []).Select(item => new BackendPlaylistMember(item, item)).ToArray();
-            return new(id, "Provider Mix", values, BackendPlaylistSnapshot.ComputeFingerprint(id, "Provider Mix", values), "native-1");
+            var values = (members ?? [])
+                .Select(item => new BackendPlaylistMember(item, item, 180_000))
+                .ToArray();
+            return new(id, "Provider Mix", values,
+                BackendPlaylistSnapshot.ComputeFingerprint(id, "Provider Mix", values),
+                "native-1",
+                ReportedTrackCount: values.Length + ReportedTrackCountAdjustment,
+                DurationMilliseconds: values.LongLength * 180_000 +
+                                      ReportedDurationAdjustmentMilliseconds);
         }
     }
 }

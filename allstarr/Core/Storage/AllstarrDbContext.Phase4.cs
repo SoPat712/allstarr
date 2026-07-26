@@ -231,7 +231,16 @@ public sealed partial class AllstarrDbContext
 
         modelBuilder.Entity<PlaylistSyncRunRecord>(entity =>
         {
-            entity.ToTable("playlist_sync_runs", table => table.HasCheckConstraint("CK_playlist_sync_generation", "\"Generation\" > 0"));
+            entity.ToTable("playlist_sync_runs", table =>
+            {
+                table.HasCheckConstraint("CK_playlist_sync_generation", "\"Generation\" > 0");
+                table.HasCheckConstraint("CK_playlist_sync_verification_counts",
+                    "(\"PlannedTargetTrackCount\" IS NULL OR \"PlannedTargetTrackCount\" >= 0) AND " +
+                    "(\"VerifiedTargetTrackCount\" IS NULL OR \"VerifiedTargetTrackCount\" >= 0)");
+                table.HasCheckConstraint("CK_playlist_sync_verification_durations",
+                    "(\"PlannedTargetDurationMilliseconds\" IS NULL OR \"PlannedTargetDurationMilliseconds\" >= 0) AND " +
+                    "(\"VerifiedTargetDurationMilliseconds\" IS NULL OR \"VerifiedTargetDurationMilliseconds\" >= 0)");
+            });
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.TenantId, item.Id });
             entity.Property(item => item.Id).ValueGeneratedNever();
@@ -242,6 +251,7 @@ public sealed partial class AllstarrDbContext
             entity.Property(item => item.TargetRevisionBefore).HasMaxLength(500);
             entity.Property(item => item.TargetRevisionAfter).HasMaxLength(500);
             entity.Property(item => item.ConflictCode).HasMaxLength(100);
+            entity.Property(item => item.VerificationCode).HasMaxLength(100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.TenantId, item.PlaylistLinkId, item.IdempotencyKey }).IsUnique();
             TenantUser(entity, item => new { item.TenantId, item.OwnerUserId });
