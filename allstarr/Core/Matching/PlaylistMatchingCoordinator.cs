@@ -120,22 +120,6 @@ public sealed class PlaylistMatchingCoordinator(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-        foreach (var adapter in _adapters.Where(item => item.Enabled))
-        {
-            try
-            {
-                await adapter.TriggerMatchingAsync(stoppingToken);
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(
-                    exception,
-                    "Initial playlist matching failed for adapter {ProviderId}",
-                    adapter.ProviderId);
-            }
-        }
-
         while (!stoppingToken.IsCancellationRequested)
         {
             var now = DateTime.UtcNow;
