@@ -34,7 +34,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
-    private const int PlaylistSummarySchemaVersion = 6;
+    private const int PlaylistSummarySchemaVersion = 7;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -143,7 +143,7 @@ public class PlaylistController : ControllerBase
 
             try
             {
-                var sourceTracks = await _playlistFetcher.GetPlaylistTracksAsync(config.Name);
+                var sourceTracks = await GetSourcePlaylistTracksAsync(config.Name);
                 var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(config.Name);
                 playlistInfo["trackCount"] = sourceTracks.Count;
                 playlistInfo["artworkUrl"] = playlistMetadata?.ImageUrl ?? sourceTracks.FirstOrDefault()?.AlbumArtUrl;
@@ -196,6 +196,26 @@ public class PlaylistController : ControllerBase
         int External,
         int Missing,
         Dictionary<string, int> ProviderBreakdown);
+
+    private async Task<List<SpotifyPlaylistTrack>> GetSourcePlaylistTracksAsync(string playlistName)
+    {
+        var tracks = await _playlistFetcher.GetPlaylistTracksAsync(playlistName);
+        if (tracks.Count > 0)
+        {
+            return tracks;
+        }
+
+        var retained = await _cache.GetAsync<List<MissingTrack>>(
+            CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlistName));
+        return retained?.Select((track, position) => new SpotifyPlaylistTrack
+        {
+            SpotifyId = track.SpotifyId,
+            Position = position,
+            Title = track.Title,
+            Album = track.Album,
+            Artists = track.Artists
+        }).ToList() ?? [];
+    }
 
     private async Task<PlaylistCoverage> ResolveCanonicalPlaylistCoverageAsync(
         string playlistName,
@@ -683,7 +703,7 @@ public class PlaylistController : ControllerBase
             item.Name.Equals(decodedName, StringComparison.OrdinalIgnoreCase));
 
         // Get Spotify tracks
-        var spotifyTracks = await _playlistFetcher.GetPlaylistTracksAsync(decodedName);
+        var spotifyTracks = await GetSourcePlaylistTracksAsync(decodedName);
 
         var tracksWithStatus = new List<object>();
         var matchedTrackCount = 0;

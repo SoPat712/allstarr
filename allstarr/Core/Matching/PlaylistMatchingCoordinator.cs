@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Jobs;
+using allstarr.Services.Common;
 using Cronos;
 
 namespace allstarr.Core.Matching;
@@ -174,7 +175,9 @@ public sealed class PlaylistMatchingCoordinator(
 
 public sealed record PlaylistMatchAllJobPayload(long Generation);
 
-public sealed class PlaylistMatchAllJobHandler(IPlaylistMatchingCoordinator matching)
+public sealed class PlaylistMatchAllJobHandler(
+    IPlaylistMatchingCoordinator matching,
+    IApplicationCache cache)
     : IDurableJobHandler
 {
     public string JobType => "playlist.match-all";
@@ -221,6 +224,7 @@ public sealed class PlaylistMatchAllJobHandler(IPlaylistMatchingCoordinator matc
                     token);
             },
             cancellationToken);
+        await cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
         await context.ReportProgressAsync(
             new DurableJobProgressUpdate(
                 "completed",

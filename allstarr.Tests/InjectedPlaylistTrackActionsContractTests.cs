@@ -54,13 +54,18 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing)", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
         Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
-        Assert.Contains("PlaylistSummarySchemaVersion = 6", controller, StringComparison.Ordinal);
+        Assert.Contains("PlaylistSummarySchemaVersion = 7", controller, StringComparison.Ordinal);
+        Assert.Equal(2, Count(controller, "GetSourcePlaylistTracksAsync(") - 1);
+        Assert.Contains("BuildSpotifyMissingTracksKey(playlistName)", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistCoverageMath.Normalize(", controller, StringComparison.Ordinal);
         Assert.Contains("[\"providerBreakdown\"]", controller, StringComparison.Ordinal);
         Assert.Contains("class=\"playlist-coverage\"", script, StringComparison.Ordinal);
         Assert.Contains("providerCoverageColor(", script, StringComparison.Ordinal);
         Assert.Contains("Math.min(trackCount, Math.max(0", script, StringComparison.Ordinal);
     }
+
+    private static int Count(string source, string value) =>
+        source.Split(value, StringSplitOptions.None).Length - 1;
 
     [Fact]
     public void PlaylistDetails_UseMaterializedOrderAndReturnAuthoritativeCounts()
