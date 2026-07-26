@@ -113,16 +113,6 @@ public partial class JellyfinController
     {
         try
         {
-            // Check cache first (1 hour TTL for playlist images since they can change)
-            var cacheKey = CacheKeyBuilder.BuildPlaylistImageKey(playlistId);
-            var cachedImage = await _cache.GetAsync<byte[]>(cacheKey);
-
-            if (cachedImage != null)
-            {
-                _logger.LogDebug("Serving cached playlist image for {PlaylistId}", playlistId);
-                return File(cachedImage, "image/jpeg");
-            }
-
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
             var playlist = _providerGateway != null
                 ? await _providerGateway.GetPlaylistAsync(
@@ -142,21 +132,9 @@ public partial class JellyfinController
                 return NotFound();
             }
 
-            var coverUri = validatedCoverUri!;
-            var response = await _proxyService.HttpClient.GetAsync(coverUri);
-            if (!response.IsSuccessStatusCode)
-            {
-                return NotFound();
-            }
-
-            var imageBytes = await response.Content.ReadAsByteArrayAsync();
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-
-            // Cache for configurable duration (playlists can change)
-            await _cache.SetAsync(cacheKey, imageBytes, CacheExtensions.PlaylistImagesTTL);
-            _logger.LogDebug("Cached playlist image for {PlaylistId}", playlistId);
-
-            return File(imageBytes, contentType);
+            var asset = await ResolveExternalImageAsync(
+                provider, "playlist", externalId, validatedCoverUri);
+            return asset == null ? NotFound() : File(asset.Bytes, asset.ContentType);
         }
         catch (Exception ex)
         {

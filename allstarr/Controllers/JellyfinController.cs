@@ -37,6 +37,8 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
 public partial class JellyfinController : ControllerBase
 {
+    private const int MaximumArtworkBytes = 10 * 1024 * 1024;
+
     private readonly JellyfinSettings _settings;
     private readonly SpotifyImportSettings _spotifySettings;
     private readonly SpotifyApiSettings _spotifyApiSettings;
@@ -63,6 +65,7 @@ public partial class JellyfinController : ControllerBase
     private readonly ScrobblingHelper? _scrobblingHelper;
     private readonly OdesliService _odesliService;
     private readonly IApplicationCache _cache;
+    private readonly IMediaAssetResolver _mediaAssets;
     private readonly IConfiguration _configuration;
     private readonly ILogger<JellyfinController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
@@ -90,6 +93,7 @@ public partial class JellyfinController : ControllerBase
         JellyfinSessionManager sessionManager,
         OdesliService odesliService,
         IApplicationCache cache,
+        IMediaAssetResolver mediaAssets,
         IConfiguration configuration,
         ILogger<JellyfinController> logger,
         SpotifyLyricsService? spotifyLyricsService = null,
@@ -128,6 +132,7 @@ public partial class JellyfinController : ControllerBase
         _scrobblingHelper = scrobblingHelper;
         _odesliService = odesliService;
         _cache = cache;
+        _mediaAssets = mediaAssets;
         _configuration = configuration;
         _logger = logger;
         _favoriteActions = favoriteActions;
@@ -775,15 +780,6 @@ public partial class JellyfinController : ControllerBase
             return CreateConditionalImageResponse(imageBytes, contentType);
         }
 
-        // Check the shared cache for previously fetched external image.
-        var imageCacheKey = CacheKeyBuilder.BuildExternalImageKey(provider!, type!, externalId!);
-        var cachedImageBytes = await _cache.GetAsync<byte[]>(imageCacheKey);
-        if (cachedImageBytes != null)
-        {
-            _logger.LogDebug("Cache hit for external {Type} image: {Provider}/{ExternalId}", type, provider, externalId);
-            return CreateConditionalImageResponse(cachedImageBytes, DetectImageContentType(cachedImageBytes));
-        }
-
         // Get external cover art URL
         string? coverUrl = type switch
         {
@@ -818,57 +814,72 @@ public partial class JellyfinController : ControllerBase
             return await GetPlaceholderImageAsync();
         }
 
-        var safeCoverUri = validatedCoverUri!;
-
-        // Fetch and return the image using the proxy service's HttpClient
         try
         {
+            var safeCoverUri = validatedCoverUri!;
             _logger.LogDebug("Fetching external image from host {Host}", safeCoverUri.Host);
-
-            var imageBytes = await RetryHelper.RetryWithBackoffAsync(async () =>
-            {
-                var response = await _proxyService.HttpClient.GetAsync(safeCoverUri);
-
-                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ||
-                    response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
-                {
-                    throw new HttpRequestException($"Transient error: {response.StatusCode}", null, response.StatusCode);
-                }
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    _logger.LogWarning("Failed to fetch external image from host {Host}: {StatusCode}",
-                        safeCoverUri.Host, response.StatusCode);
-                    return null;
-                }
-
-                if (response.Content.Headers.ContentLength is > 10 * 1024 * 1024)
-                {
-                    _logger.LogWarning("External image from host {Host} exceeded the size limit", safeCoverUri.Host);
-                    return null;
-                }
-                var bytes = await response.Content.ReadAsByteArrayAsync(HttpContext.RequestAborted);
-                return bytes.Length <= 10 * 1024 * 1024 ? bytes : null;
-            }, _logger, maxRetries: 3, initialDelayMs: 500);
-
-            if (imageBytes == null)
+            var asset = await ResolveExternalImageAsync(
+                provider!, type!, externalId!, safeCoverUri, retryTransientFailures: true);
+            if (asset == null)
             {
                 return await GetPlaceholderImageAsync();
             }
-
-            // Cache the fetched image bytes in the bounded media tier for future requests.
-            await _cache.SetAsync(imageCacheKey, imageBytes, CacheExtensions.ProxyImagesTTL);
-
-            _logger.LogDebug("Successfully fetched and cached external image from host {Host}, size: {Size} bytes",
-                safeCoverUri.Host, imageBytes.Length);
-            return CreateConditionalImageResponse(imageBytes, DetectImageContentType(imageBytes));
+            return CreateConditionalImageResponse(asset.Bytes, asset.ContentType);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch cover art from host {Host}", safeCoverUri.Host);
+            _logger.LogError(ex, "Failed to fetch cover art for {Provider}/{ExternalId}", provider, externalId);
             // Return placeholder on exception
             return await GetPlaceholderImageAsync();
         }
+    }
+
+    private async Task<ResolvedMediaAsset?> ResolveExternalImageAsync(
+        string provider,
+        string resourceKind,
+        string resourceId,
+        Uri coverUri,
+        bool retryTransientFailures = false)
+    {
+        var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
+        return await _mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                actor?.TenantId,
+                actor?.EffectiveUserId,
+                null,
+                provider,
+                resourceKind,
+                resourceId),
+            async token =>
+            {
+                async Task<MediaAssetSource?> Fetch()
+                {
+                    using var response = await _proxyService.HttpClient.GetAsync(coverUri, token);
+                    if (response.StatusCode is System.Net.HttpStatusCode.TooManyRequests or
+                        System.Net.HttpStatusCode.ServiceUnavailable)
+                        throw new HttpRequestException(
+                            $"Transient error: {response.StatusCode}", null, response.StatusCode);
+                    var contentType = response.Content.Headers.ContentType?.MediaType;
+                    if (!response.IsSuccessStatusCode ||
+                        response.Content.Headers.ContentLength > MaximumArtworkBytes ||
+                        contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == false)
+                        return null;
+                    await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, token);
+                    var bytes = await response.Content.ReadAsByteArrayAsync(token);
+                    return new MediaAssetSource(
+                        bytes,
+                        contentType ?? DetectImageContentType(bytes),
+                        response.Headers.ETag?.Tag,
+                        response.Content.Headers.LastModified);
+                }
+
+                return retryTransientFailures
+                    ? await RetryHelper.RetryWithBackoffAsync(
+                        Fetch, _logger, maxRetries: 3, initialDelayMs: 500)
+                    : await Fetch();
+            },
+            MaximumArtworkBytes,
+            HttpContext.RequestAborted);
     }
 
     private static string DetectImageContentType(ReadOnlySpan<byte> bytes)

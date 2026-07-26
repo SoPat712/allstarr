@@ -102,6 +102,7 @@ public sealed class DiagnosticsControllerTests : IDisposable
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             NullLogger<JellyfinProxyService>.Instance,
             cache,
+            new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance),
             new ConfigurationBuilder().Build());
         var services = new ServiceCollection()
             .AddSingleton(proxy)

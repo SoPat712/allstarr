@@ -4,6 +4,7 @@ public sealed class MediaCacheKeyNamespaceContractTests
 {
     private static readonly string[] ProductionConsumers =
     [
+        Path.Combine("allstarr", "Controllers", "JellyfinController.cs"),
         Path.Combine("allstarr", "Controllers", "JellyfinController.PlaylistHandler.cs"),
         Path.Combine("allstarr", "Controllers", "SubSonicController.cs"),
         Path.Combine("allstarr", "Services", "Jellyfin", "JellyfinProxyService.cs")
@@ -19,10 +20,7 @@ public sealed class MediaCacheKeyNamespaceContractTests
         Assert.DoesNotContain(sources, source => source.Contains("$\"playlist:image:", StringComparison.Ordinal));
         Assert.DoesNotContain(sources, source => source.Contains("$\"image:", StringComparison.Ordinal));
         Assert.Contains(sources, source => source.Contains(
-            "CacheKeyBuilder.BuildPlaylistImageKey",
-            StringComparison.Ordinal));
-        Assert.Contains(sources, source => source.Contains(
-            "CacheKeyBuilder.BuildJellyfinImageKey",
+            "MediaAssetIdentity",
             StringComparison.Ordinal));
     }
 
@@ -32,7 +30,6 @@ public sealed class MediaCacheKeyNamespaceContractTests
         var builder = File.ReadAllText(
             FindRepositoryFile(Path.Combine("allstarr", "Services", "Common", "CacheKeyBuilder.cs")));
 
-        Assert.Contains("bounded disk-backed media tier", builder, StringComparison.Ordinal);
         Assert.DoesNotContain("Images are cached as byte[] in Redis", builder, StringComparison.Ordinal);
     }
 

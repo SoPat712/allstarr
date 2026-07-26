@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using System.Net;
 using System.Net.Http.Headers;
@@ -26,6 +27,7 @@ public class JellyfinProxyService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<JellyfinProxyService> _logger;
     private readonly IApplicationCache _cache;
+    private readonly IMediaAssetResolver _mediaAssets;
     private readonly IConfiguration _configuration;
     private string? _cachedMusicLibraryId;
     private bool _libraryIdDetected = false;
@@ -39,6 +41,7 @@ public class JellyfinProxyService
         IHttpContextAccessor httpContextAccessor,
         ILogger<JellyfinProxyService> logger,
         IApplicationCache cache,
+        IMediaAssetResolver mediaAssets,
         IConfiguration configuration)
     {
         _httpClient = httpClientFactory.CreateClient(HttpClientName);
@@ -46,6 +49,7 @@ public class JellyfinProxyService
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
         _cache = cache;
+        _mediaAssets = mediaAssets;
         _configuration = configuration;
     }
 
@@ -983,26 +987,6 @@ public class JellyfinProxyService
         string? imageTag = null,
         IHeaderDictionary? clientHeaders = null)
     {
-        var cacheKey = CacheKeyBuilder.BuildJellyfinImageKey(
-            itemId,
-            imageType,
-            maxWidth,
-            maxHeight,
-            imageTag);
-
-        // Try cache first
-        var cached = await _cache.GetStringAsync(cacheKey);
-        if (!string.IsNullOrEmpty(cached))
-        {
-            var parts = cached.Split('|', 2);
-            if (parts.Length == 2)
-            {
-                var body = Convert.FromBase64String(parts[0]);
-                var contentType = parts[1];
-                return (body, contentType);
-            }
-        }
-
         var queryParams = new Dictionary<string, string>();
 
         if (maxWidth.HasValue)
@@ -1021,17 +1005,30 @@ public class JellyfinProxyService
             queryParams["tag"] = imageTag;
         }
 
-        var result = await GetBytesSafeAsync(
-            $"Items/{itemId}/Images/{imageType}", queryParams, clientHeaders);
-
-        // Cache for 7 days if successful
-        if (result.Success && result.Body != null)
-        {
-            var cacheValue = $"{Convert.ToBase64String(result.Body)}|{result.ContentType}";
-            await _cache.SetStringAsync(cacheKey, cacheValue, CacheExtensions.ProxyImagesTTL);
-        }
-
-        return (result.Body, result.ContentType);
+        var execution = _httpContextAccessor.HttpContext?.GetProtocolExecutionContext();
+        var actor = execution?.Actor;
+        var asset = await _mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                actor?.TenantId,
+                actor?.EffectiveUserId,
+                null,
+                "jellyfin",
+                imageType,
+                itemId,
+                $"{_settings.Url}|{imageTag}",
+                maxWidth,
+                maxHeight),
+            async _ =>
+            {
+                var result = await GetBytesSafeAsync(
+                    $"Items/{itemId}/Images/{imageType}", queryParams, clientHeaders);
+                return result.Success && result.Body != null && result.ContentType != null
+                    ? new MediaAssetSource(result.Body, result.ContentType)
+                    : null;
+            },
+            10 * 1024 * 1024,
+            _httpContextAccessor.HttpContext?.RequestAborted ?? CancellationToken.None);
+        return (asset?.Bytes, asset?.ContentType);
     }
 
     /// <summary>

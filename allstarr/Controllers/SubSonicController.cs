@@ -27,6 +27,8 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
 public class SubsonicController : ControllerBase
 {
+    private const int MaximumArtworkBytes = 10 * 1024 * 1024;
+
     private readonly SubsonicSettings _subsonicSettings;
     private readonly IMusicMetadataService _metadataService;
     private readonly ILocalLibraryService _localLibraryService;
@@ -41,6 +43,7 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicScrobbleProtocolAdapter _scrobbleProtocolAdapter;
     private readonly SubsonicVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly IApplicationCache _cache;
+    private readonly IMediaAssetResolver _mediaAssets;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
     private readonly IPlaybackSignalPipeline? _playbackSignals;
@@ -62,6 +65,7 @@ public class SubsonicController : ControllerBase
         SubsonicScrobbleProtocolAdapter scrobbleProtocolAdapter,
         SubsonicVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
         IApplicationCache cache,
+        IMediaAssetResolver mediaAssets,
         ILogger<SubsonicController> logger,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
@@ -82,6 +86,7 @@ public class SubsonicController : ControllerBase
         _scrobbleProtocolAdapter = scrobbleProtocolAdapter;
         _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
         _cache = cache;
+        _mediaAssets = mediaAssets;
         _logger = logger;
         _favoriteActions = favoriteActions;
         _playbackSignals = playbackSignals;
@@ -741,16 +746,6 @@ public class SubsonicController : ControllerBase
         {
             try
             {
-                // Check cache first (1 hour TTL for playlist images since they can change)
-                var cacheKey = CacheKeyBuilder.BuildPlaylistImageKey(id);
-                var cachedImage = await _cache.GetAsync<byte[]>(cacheKey);
-
-                if (cachedImage != null)
-                {
-                    _logger.LogDebug("Serving cached playlist cover art for {Id}", id);
-                    return File(cachedImage, "image/jpeg");
-                }
-
                 var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
                 var playlist = _providerGateway != null
                     ? await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId)
@@ -761,21 +756,9 @@ public class SubsonicController : ControllerBase
                     return NotFound();
                 }
 
-                // Download and return the cover image
-                var imageResponse = await new HttpClient().GetAsync(playlist.CoverUrl);
-                if (!imageResponse.IsSuccessStatusCode)
-                {
-                    return NotFound();
-                }
-
-                var imageBytes = await imageResponse.Content.ReadAsByteArrayAsync();
-                var contentType = imageResponse.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-
-                // Cache for configurable duration (playlists can change)
-                await _cache.SetAsync(cacheKey, imageBytes, CacheExtensions.PlaylistImagesTTL);
-                _logger.LogDebug("Cached playlist cover art for {Id}", id);
-
-                return File(imageBytes, contentType);
+                var asset = await ResolveExternalImageAsync(
+                    provider, "playlist", externalId, playlist.CoverUrl);
+                return asset == null ? NotFound() : File(asset.Bytes, asset.ContentType);
             }
             catch (Exception ex)
             {
@@ -847,17 +830,57 @@ public class SubsonicController : ControllerBase
 
         if (coverUrl != null)
         {
-            using var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(coverUrl);
-            if (response.IsSuccessStatusCode)
-            {
-                var imageBytes = await response.Content.ReadAsByteArrayAsync();
-                var contentType = response.Content.Headers.ContentType?.ToString() ?? "image/jpeg";
-                return File(imageBytes, contentType);
-            }
+            var asset = await ResolveExternalImageAsync(
+                coverProvider!, type ?? "song", coverExternalId!, coverUrl);
+            if (asset != null)
+                return File(asset.Bytes, asset.ContentType);
         }
 
         return NotFound();
+    }
+
+    private async Task<ResolvedMediaAsset?> ResolveExternalImageAsync(
+        string provider,
+        string resourceKind,
+        string resourceId,
+        string coverUrl)
+    {
+        if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                coverUrl, out var coverUri, out var validationReason) || coverUri == null)
+        {
+            _logger.LogWarning(
+                "Blocked external image URL for {Provider}/{ResourceId}: {Reason}",
+                provider, resourceId, validationReason);
+            return null;
+        }
+
+        var actor = CurrentProtocolContext.Actor;
+        return await _mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                actor?.TenantId,
+                actor?.EffectiveUserId,
+                null,
+                provider,
+                resourceKind,
+                resourceId),
+            async token =>
+            {
+                using var response = await _proxyService.HttpClient.GetAsync(coverUri, token);
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                if (!response.IsSuccessStatusCode ||
+                    response.Content.Headers.ContentLength > MaximumArtworkBytes ||
+                    contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == false)
+                    return null;
+                await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, token);
+                var bytes = await response.Content.ReadAsByteArrayAsync(token);
+                return new MediaAssetSource(
+                    bytes,
+                    contentType ?? "image/jpeg",
+                    response.Headers.ETag?.Tag,
+                    response.Content.Headers.LastModified);
+            },
+            MaximumArtworkBytes,
+            HttpContext.RequestAborted);
     }
 
     #region Helper Methods

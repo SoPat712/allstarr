@@ -58,6 +58,9 @@ public class JellyfinProxyServiceTests
             httpContextAccessor,
             mockLogger.Object,
             _cache,
+            new MediaAssetResolver(
+                _cache,
+                new Mock<ILogger<MediaAssetResolver>>().Object),
             new ConfigurationBuilder().Build());
     }
 
@@ -109,6 +112,9 @@ public class JellyfinProxyServiceTests
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             new CollectingLogger<JellyfinProxyService>(messages),
             _cache,
+            new MediaAssetResolver(
+                _cache,
+                new Mock<ILogger<MediaAssetResolver>>().Object),
             new ConfigurationBuilder().Build());
 
         var (_, statusCode) = await service.PostJsonAsync(
@@ -693,6 +699,9 @@ public class JellyfinProxyServiceTests
             httpContextAccessor,
             mockLogger.Object,
             cache,
+            new MediaAssetResolver(
+                cache,
+                new Mock<ILogger<MediaAssetResolver>>().Object),
             new ConfigurationBuilder().Build());
 
         // Act

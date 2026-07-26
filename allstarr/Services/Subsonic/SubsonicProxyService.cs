@@ -17,6 +17,8 @@ public class SubsonicProxyService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
 
+    public HttpClient HttpClient => _httpClient;
+
     public SubsonicProxyService(
         IHttpClientFactory httpClientFactory,
         Microsoft.Extensions.Options.IOptions<SubsonicSettings> subsonicSettings,

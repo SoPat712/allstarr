@@ -128,31 +128,9 @@ public static class CacheKeyBuilder
 
     #region Image Keys
 
-    public static string BuildPlaylistImageKey(string playlistId)
-    {
-        return $"playlist:image:{playlistId}";
-    }
+    public static string BuildMediaDescriptorPattern() => "media:descriptor:*";
 
-    public static string BuildJellyfinImageKey(
-        string itemId,
-        string imageType,
-        int? maxWidth,
-        int? maxHeight,
-        string? imageTag)
-    {
-        return $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}:{imageTag}";
-    }
-
-    public static string BuildImagePattern() => "image:*";
-
-    /// <summary>
-    /// Builds a cache key for external album/song/artist cover art images.
-    /// Images are cached in the bounded disk-backed media tier.
-    /// </summary>
-    public static string BuildExternalImageKey(string provider, string type, string externalId)
-    {
-        return $"image:{provider}:{type}:{externalId}";
-    }
+    public static string BuildMediaPayloadPattern() => "artwork:payload:*";
 
     #endregion
 

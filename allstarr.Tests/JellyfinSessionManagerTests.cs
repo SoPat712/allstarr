@@ -189,6 +189,7 @@ public class JellyfinSessionManagerTests
             httpContextAccessor,
             NullLogger<JellyfinProxyService>.Instance,
             cache,
+            new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance),
             new ConfigurationBuilder().Build());
     }
 

@@ -393,9 +393,10 @@ public class ConfigController : ControllerBase
             await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildSearchPattern());
         clearedCacheEntries += searchKeysDeleted;
 
-        // Clear all image cache keys (pattern-based deletion)
+        // Clear all media descriptor and content-addressed payload keys.
         var imageKeysDeleted =
-            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildImagePattern());
+            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildMediaDescriptorPattern()) +
+            await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildMediaPayloadPattern());
         clearedCacheEntries += imageKeysDeleted;
 
         _logger.LogInformation("Cache cleared: {Entries} derived entries (including {SearchKeys} search keys, {ImageKeys} image keys)",
