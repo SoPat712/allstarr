@@ -91,7 +91,7 @@ public sealed class SpotifyPathfinderPlaylistClient
             }
 
             var rawItems = Array(library, "items");
-            var playlistEntries = new List<(JsonElement Playlist, string Id)>(rawItems.Count);
+            var playlistEntries = new List<LibraryPlaylistEntry>(rawItems.Count);
             foreach (var rawItem in rawItems)
                 CollectPlaylistEntries(rawItem, playlistEntries);
 
@@ -99,12 +99,14 @@ public sealed class SpotifyPathfinderPlaylistClient
             var seenIds = new HashSet<string>(StringComparer.Ordinal);
             for (var index = 0; index < playlistEntries.Count; index++)
             {
-                var (playlist, playlistId) = playlistEntries[index];
+                var entry = playlistEntries[index];
+                var playlist = entry.Playlist;
+                var playlistId = entry.Id;
                 if (!seenIds.Add(playlistId))
                     continue;
                 try
                 {
-                    if (MapSummary(playlist, playlistId) is { } summary)
+                    if (MapSummary(playlist, playlistId, entry.Wrapper, entry.Entry) is { } summary)
                     {
                         summaries.Add(summary);
                         if (ArtworkUri(playlist) is { } artwork)
@@ -345,7 +347,11 @@ public sealed class SpotifyPathfinderPlaylistClient
             : new ProviderError(ProviderErrorKind.PermanentFailure);
     }
 
-    private ProviderPlaylistSummary? MapSummary(JsonElement value, string id)
+    private ProviderPlaylistSummary? MapSummary(
+        JsonElement value,
+        string id,
+        JsonElement wrapper = default,
+        JsonElement entry = default)
     {
         var name = ContractText(Text(value, "name"), 500);
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
@@ -358,11 +364,9 @@ public sealed class SpotifyPathfinderPlaylistClient
         var ownerName = ContractText(
             String(ownerData, "name") ?? String(ownerData, "username"),
             300);
-        var trackCount = Integer(value, "totalCount") ??
-                         (TryPath(value, out var content, "content")
-                             ? Integer(content, "totalCount")
-                             : null) ??
-                         AttributeInteger(value, "core:item_count");
+        var trackCount = PlaylistItemCount(value) ??
+                         PlaylistItemCount(wrapper) ??
+                         PlaylistItemCount(entry);
         var revision = ContractText(String(value, "revisionId"), 300) ??
                        $"pathfinder:{ProviderPlaylistSnapshotCollector.HashResource(resource)}:{trackCount ?? -1}";
         var summary = new ProviderPlaylistSummary(
@@ -479,16 +483,16 @@ public sealed class SpotifyPathfinderPlaylistClient
 
     private static void CollectPlaylistEntries(
         JsonElement value,
-        List<(JsonElement Playlist, string Id)> entries,
+        List<LibraryPlaylistEntry> entries,
         int depth = 0)
     {
         const int maximumDepth = 16;
         if (depth > maximumDepth)
             return;
 
-        if (TryPlaylistEntry(value, out _, out var playlist, out var playlistId))
+        if (TryPlaylistEntry(value, out var wrapper, out var playlist, out var playlistId))
         {
-            entries.Add((playlist, playlistId));
+            entries.Add(new(playlist, wrapper, value, playlistId));
             return;
         }
 
@@ -605,6 +609,13 @@ public sealed class SpotifyPathfinderPlaylistClient
         return null;
     }
 
+    private static int? PlaylistItemCount(JsonElement value) =>
+        Integer(value, "totalCount") ??
+        (TryPath(value, out var content, "content")
+            ? Integer(content, "totalCount")
+            : null) ??
+        AttributeInteger(value, "core:item_count");
+
     private static bool TryOffset(string? cursor, out int offset)
     {
         if (cursor == null)
@@ -691,6 +702,11 @@ public sealed class SpotifyPathfinderPlaylistClient
 
     private sealed record PathfinderResponse(ProviderOutcome<byte[]> Outcome, byte[]? Body);
     private sealed record ArtworkCacheEntry(string Uri);
+    private sealed record LibraryPlaylistEntry(
+        JsonElement Playlist,
+        JsonElement Wrapper,
+        JsonElement Entry,
+        string Id);
     internal sealed record PathfinderOperationDefinition(
         string OperationName,
         string Sha256Hash,

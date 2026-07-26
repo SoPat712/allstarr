@@ -81,7 +81,6 @@ public sealed class SpotifyPathfinderFixtureTests
                         name = "Fixture owner"
                     }
                 },
-                totalCount = "42",
                 revisionId = "fixture-revision",
                 visuals = new
                 {
@@ -123,6 +122,10 @@ public sealed class SpotifyPathfinderFixtureTests
                                                 {
                                                     item = new
                                                     {
+                                                        attributes = new[]
+                                                        {
+                                                            new { key = "core:item_count", value = "42" }
+                                                        },
                                                         data = playlist
                                                     }
                                                 }
