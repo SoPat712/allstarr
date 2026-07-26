@@ -19,7 +19,6 @@ public class JellyfinAdminController : ControllerBase
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly HttpClient _jellyfinHttpClient;
     private readonly AdminHelperService _helperService;
-    private readonly IApplicationCache _cache;
     private readonly IConfiguration _configuration;
     private readonly SpotifyImportSettings _spotifyImportSettings;
 
@@ -28,7 +27,6 @@ public class JellyfinAdminController : ControllerBase
         IOptions<JellyfinSettings> jellyfinSettings,
         IHttpClientFactory httpClientFactory,
         AdminHelperService helperService,
-        IApplicationCache cache,
         IConfiguration configuration,
         IOptions<SpotifyImportSettings> spotifyImportSettings)
     {
@@ -36,7 +34,6 @@ public class JellyfinAdminController : ControllerBase
         _jellyfinSettings = jellyfinSettings.Value;
         _jellyfinHttpClient = httpClientFactory.CreateClient();
         _helperService = helperService;
-        _cache = cache;
         _configuration = configuration;
         _spotifyImportSettings = spotifyImportSettings.Value;
     }

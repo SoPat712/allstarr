@@ -29,7 +29,6 @@ public class DiagnosticsController : ControllerBase
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly SquidWTFSettings _squidWtfSettings;
-    private readonly IApplicationCache _cache;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly List<string> _squidWtfApiUrls;
     private readonly DurableStorageState _storageState;
@@ -49,7 +48,6 @@ public class DiagnosticsController : ControllerBase
         IOptions<SquidWTFSettings> squidWtfSettings,
         SpotifySessionCookieService spotifySessionCookieService,
         SquidWtfEndpointCatalog squidWtfEndpointCatalog,
-        IApplicationCache cache,
         DurableStorageState storageState,
         ISafeJsonProxyClient safeJsonProxyClient,
         BackendSelectionAuthority? backendSelection = null)
@@ -63,7 +61,6 @@ public class DiagnosticsController : ControllerBase
         _qobuzSettings = qobuzSettings.Value;
         _squidWtfSettings = squidWtfSettings.Value;
         _spotifySessionCookieService = spotifySessionCookieService;
-        _cache = cache;
         _squidWtfApiUrls = squidWtfEndpointCatalog.ApiUrls;
         _storageState = storageState;
         _safeJsonProxyClient = safeJsonProxyClient;
@@ -393,67 +390,25 @@ public class DiagnosticsController : ControllerBase
     }
 
     [HttpGet("playlist-readiness")]
-    public async Task<IActionResult> ProbePlaylistReadiness()
+    public IActionResult ProbePlaylistReadiness()
     {
         var configured = _spotifyImportSettings.Playlists
             .Where(playlist => !string.IsNullOrWhiteSpace(playlist.Name))
             .ToList();
-        var sourcePlaylists = 0;
-        var renderedPlaylists = 0;
-        var sourceTracks = 0;
-        var playableItems = 0;
-        var unavailableItems = 0;
-        var affectedPlaylists = new List<string>();
-
-        foreach (var playlist in configured)
-        {
-            var source = await _cache.GetAsync<SpotifyPlaylist>(
-                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name));
-            if (source?.Tracks.Count > 0)
-            {
-                sourcePlaylists++;
-                sourceTracks += source.Tracks.Count;
-            }
-
-            var items = await _cache.GetAsync<List<Dictionary<string, object?>>>(
-                CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name));
-            if (items is not { Count: > 0 })
-            {
-                continue;
-            }
-
-            renderedPlaylists++;
-            playableItems += InjectedPlaylistItemHelper.RemoveUnavailableExternalItems(items).Count;
-            var unavailableInPlaylist = items.Count(item =>
-                InjectedPlaylistItemHelper.LooksLikeUnavailableExternalItem(item));
-            unavailableItems += unavailableInPlaylist;
-            if (unavailableInPlaylist > 0)
-            {
-                affectedPlaylists.Add(playlist.Name);
-            }
-        }
 
         var providerStatus = HttpContext.RequestServices.GetService<ProviderStatusManager>()?
             .GetStatus("spotify", ProviderCapabilities.Playlist);
         var sourceReady = providerStatus?.IsReady == true;
-        var cachedFallbackAvailable = sourcePlaylists > 0 && playableItems > 0;
-        var success = configured.Count == 0 ||
-                      (unavailableItems == 0 && (sourceReady || cachedFallbackAvailable));
+        var success = configured.Count == 0 || sourceReady;
         var code = configured.Count == 0
             ? "no_playlists_configured"
-            : unavailableItems > 0
-                ? "unavailable_items_cached"
-                : sourceReady
-                    ? "playlist_pipeline_healthy"
-                    : cachedFallbackAvailable
-                        ? "cached_playlists_available"
-                        : "playlist_source_unavailable";
+            : sourceReady
+                ? "playlist_pipeline_healthy"
+                : "playlist_source_unavailable";
         var message = code switch
         {
             "no_playlists_configured" => "No provider playlists are configured yet.",
-            "unavailable_items_cached" => "Some restored playlist entries use providers that cannot currently play them.",
-            "playlist_pipeline_healthy" => "Provider access and cached playlist playback are ready.",
-            "cached_playlists_available" => "Cached playlists remain playable, but reconnect Spotify before they can refresh.",
+            "playlist_pipeline_healthy" => "Provider playlist access is ready.",
             _ => "Reconnect Spotify, then refresh and match the configured playlists."
         };
 
@@ -463,12 +418,12 @@ public class DiagnosticsController : ControllerBase
             code,
             message,
             configuredPlaylists = configured.Count,
-            sourcePlaylists,
-            renderedPlaylists,
-            sourceTracks,
-            playableItems,
-            unavailableItems,
-            affectedPlaylists,
+            sourcePlaylists = 0,
+            renderedPlaylists = 0,
+            sourceTracks = 0,
+            playableItems = 0,
+            unavailableItems = 0,
+            affectedPlaylists = Array.Empty<string>(),
             source = new
             {
                 provider = "spotify",

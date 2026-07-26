@@ -18,10 +18,7 @@ public class PlaylistSyncService
     private readonly IEnumerable<IConcreteDownloadService> _downloadServices;
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
-    private readonly IApplicationCache _cache;
     private readonly ILogger<PlaylistSyncService> _logger;
-
-    private static readonly TimeSpan CacheTTL = TimeSpan.FromMinutes(5);
 
     private readonly string _musicDirectory;
     private readonly string _playlistDirectory;
@@ -31,7 +28,6 @@ public class PlaylistSyncService
         IEnumerable<IConcreteDownloadService> downloadServices,
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,
-        IApplicationCache cache,
         ILogger<PlaylistSyncService> logger)
     {
         // Get Deezer and Qobuz metadata services
@@ -43,7 +39,6 @@ public class PlaylistSyncService
         _downloadServices = downloadServices;
         _configuration = configuration;
         _subsonicSettings = subsonicSettings.Value;
-        _cache = cache;
         _logger = logger;
 
         _musicDirectory = configuration["Library:DownloadPath"] ?? "./downloads";
@@ -67,31 +62,6 @@ public class PlaylistSyncService
             "qobuz" => _qobuzMetadataService,
             _ => null
         };
-    }
-
-    /// <summary>
-    /// Adds a track to the playlist context cache.
-    /// This allows the download service to know which playlist a track belongs to.
-    /// </summary>
-    public async Task AddTrackToPlaylistCacheAsync(string trackId, string playlistId)
-    {
-        await _cache.SetAsync(
-            CacheKeyBuilder.BuildPlaylistTrackContextKey(trackId),
-            playlistId,
-            CacheTTL);
-        _logger.LogDebug(
-            "Added track {TrackId} to playlist context cache with playlistId {PlaylistId}",
-            trackId,
-            playlistId);
-    }
-
-    /// <summary>
-    /// Gets the playlist ID for a given track ID from cache.
-    /// Returns null if not found or expired.
-    /// </summary>
-    public Task<string?> GetPlaylistIdForTrackAsync(string trackId)
-    {
-        return _cache.GetAsync<string>(CacheKeyBuilder.BuildPlaylistTrackContextKey(trackId));
     }
 
     /// <summary>
@@ -158,11 +128,6 @@ public class PlaylistSyncService
                         _logger.LogWarning("Track has no external ID, skipping: {Title}", track.Title);
                         continue;
                     }
-
-                    // Add track to playlist cache BEFORE downloading
-                    // This marks it as part of a full playlist download, so AddTrackToM3UAsync will skip real-time updates
-                    var trackId = $"ext-{provider}-{track.ExternalId}";
-                    await AddTrackToPlaylistCacheAsync(trackId, playlistId);
 
                     _logger.LogInformation("Downloading track '{Artist} - {Title}'", track.Artist, track.Title);
                     var localPath = await downloadService.DownloadSongAsync(provider, track.ExternalId, cancellationToken);

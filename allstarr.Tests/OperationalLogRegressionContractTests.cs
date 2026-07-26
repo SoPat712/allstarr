@@ -71,29 +71,16 @@ public sealed class OperationalLogRegressionContractTests
     }
 
     [Fact]
-    public void PlaylistTrackContext_UsesTheBoundedSharedCacheWithoutAPrivateCleanupLoop()
-    {
-        var source = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Subsonic", "PlaylistSyncService.cs"));
-
-        Assert.Contains("IApplicationCache cache", source, StringComparison.Ordinal);
-        Assert.Contains("BuildPlaylistTrackContextKey", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("ConcurrentDictionary", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("CleanupExpiredCacheEntriesAsync", source, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void ReconstructableGenreAndLyricsCaches_DoNotCreateParallelFileStores()
     {
         var genre = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Services", "Common", "GenreEnrichmentService.cs"));
-        var lyrics = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Lyrics", "LyricsPrefetchService.cs"));
+        var legacyLyricsPrefetch = Path.Combine(
+            FindRepositoryRoot(), "allstarr", "Services", "Lyrics", "LyricsPrefetchService.cs");
 
         Assert.DoesNotContain("GenreDirectory", genre, StringComparison.Ordinal);
         Assert.DoesNotContain("SaveToFileCacheAsync", genre, StringComparison.Ordinal);
-        Assert.DoesNotContain("SaveLyricsToFileAsync", lyrics, StringComparison.Ordinal);
-        Assert.DoesNotContain("WarmCacheFromFilesAsync", lyrics, StringComparison.Ordinal);
+        Assert.False(File.Exists(legacyLyricsPrefetch));
     }
 
     private static string FindRepositoryFile(params string[] parts)
@@ -108,4 +95,7 @@ public sealed class OperationalLogRegressionContractTests
 
         throw new FileNotFoundException($"Could not find repository file: {Path.Combine(parts)}");
     }
+
+    private static string FindRepositoryRoot() =>
+        Path.GetDirectoryName(FindRepositoryFile("allstarr.sln"))!;
 }

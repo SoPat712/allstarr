@@ -281,7 +281,6 @@ public partial class JellyfinController
             if (ShouldProcessSpotifyPlaylistCounts(browseResult, includeItemTypes))
             {
                 _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");
-                browseResult = await UpdateSpotifyPlaylistCounts(browseResult);
             }
 
             var result = JsonSerializer.Deserialize<object>(browseResult.RootElement.GetRawText());

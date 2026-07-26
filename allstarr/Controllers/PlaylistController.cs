@@ -26,7 +26,6 @@ public class PlaylistController : ControllerBase
     private readonly ILogger<PlaylistController> _logger;
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
-    private readonly SpotifyPlaylistFetcher _playlistFetcher;
     private readonly ITrackMatchRepository _trackMatchCommands;
     private readonly IApplicationCache _cache;
     private readonly HttpClient _jellyfinHttpClient;
@@ -39,7 +38,6 @@ public class PlaylistController : ControllerBase
         ILogger<PlaylistController> logger,
         IOptions<JellyfinSettings> jellyfinSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
-        SpotifyPlaylistFetcher playlistFetcher,
         ITrackMatchRepository trackMatchCommands,
         IApplicationCache cache,
         IHttpClientFactory httpClientFactory,
@@ -50,7 +48,6 @@ public class PlaylistController : ControllerBase
         _logger = logger;
         _jellyfinSettings = jellyfinSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
-        _playlistFetcher = playlistFetcher;
         _trackMatchCommands = trackMatchCommands;
         _cache = cache;
         _jellyfinHttpClient = httpClientFactory.CreateClient();
@@ -675,55 +672,6 @@ public class PlaylistController : ControllerBase
         catch (CronFormatException)
         {
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Trigger a manual refresh of all playlists
-    /// </summary>
-    [HttpPost("playlists/refresh")]
-    public async Task<IActionResult> RefreshPlaylists()
-    {
-        _logger.LogInformation("Manual playlist refresh triggered from admin UI");
-        await _playlistFetcher.TriggerFetchAsync();
-
-        // Invalidate playlist summary cache
-        await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
-
-        return Ok(new { message = "Playlist refresh triggered", timestamp = DateTime.UtcNow });
-    }
-
-    /// <summary>
-    /// Refresh a single playlist from Spotify (fetch latest data without re-matching).
-    /// </summary>
-    [HttpPost("playlists/{name}/refresh")]
-    public async Task<IActionResult> RefreshPlaylist(string name)
-    {
-        var decodedName = Uri.UnescapeDataString(name);
-        _logger.LogInformation("Manual refresh triggered for playlist: {Name}", decodedName);
-
-        if (_playlistFetcher == null)
-        {
-            return BadRequest(new { error = "Playlist fetcher is not available" });
-        }
-
-        try
-        {
-            await _playlistFetcher.RefreshPlaylistAsync(decodedName);
-
-            // Invalidate the short-lived derived summary.
-            await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
-
-            return Ok(new
-            {
-                message = $"Refreshed {decodedName} from Spotify (no re-matching)",
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to refresh playlist {Name}", decodedName);
-            return StatusCode(500, new { error = "Failed to refresh playlist" });
         }
     }
 

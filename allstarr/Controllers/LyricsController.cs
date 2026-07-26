@@ -15,20 +15,17 @@ public class LyricsController : ControllerBase
     private readonly ILogger<LyricsController> _logger;
     private readonly IApplicationCache _cache;
     private readonly IManualLyricsMappingStore _mappingStore;
-    private readonly SpotifyPlaylistFetcher _playlistFetcher;
     private readonly IServiceProvider _serviceProvider;
 
     public LyricsController(
         ILogger<LyricsController> logger,
         IApplicationCache cache,
         IManualLyricsMappingStore mappingStore,
-        SpotifyPlaylistFetcher playlistFetcher,
         IServiceProvider serviceProvider)
     {
         _logger = logger;
         _cache = cache;
         _mappingStore = mappingStore;
-        _playlistFetcher = playlistFetcher;
         _serviceProvider = serviceProvider;
     }
 
@@ -215,46 +212,6 @@ public class LyricsController : ControllerBase
         {
             _logger.LogError(ex, "Failed to test Spotify lyrics for track {TrackId}", trackId);
             return StatusCode(500, new { error = "Failed to fetch lyrics" });
-        }
-    }
-
-    /// <summary>
-    /// Prefetch lyrics for a specific playlist
-    /// </summary>
-    [HttpPost("playlists/{name}/prefetch-lyrics")]
-    public async Task<IActionResult> PrefetchPlaylistLyrics(string name)
-    {
-        var decodedName = Uri.UnescapeDataString(name);
-
-        try
-        {
-            var lyricsPrefetchService = _serviceProvider.GetService<allstarr.Services.Lyrics.LyricsPrefetchService>();
-
-            if (lyricsPrefetchService == null)
-            {
-                return StatusCode(500, new { error = "Lyrics prefetch service not available" });
-            }
-
-            _logger.LogInformation("Starting lyrics prefetch for playlist: {Playlist}", decodedName);
-
-            var (fetched, cached, missing) = await lyricsPrefetchService.PrefetchPlaylistLyricsAsync(
-                decodedName,
-                HttpContext.RequestAborted);
-
-            return Ok(new
-            {
-                message = "Lyrics prefetch complete",
-                playlist = decodedName,
-                fetched,
-                cached,
-                missing,
-                total = fetched + cached + missing
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to prefetch lyrics for playlist {Playlist}", decodedName);
-            return StatusCode(500, new { error = "Failed to prefetch lyrics" });
         }
     }
 

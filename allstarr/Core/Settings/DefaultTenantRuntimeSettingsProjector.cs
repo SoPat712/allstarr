@@ -95,8 +95,6 @@ public sealed class DefaultTenantRuntimeSettingsProjector : BackgroundService
         {
             case "Cache:SearchResultsMinutes": _cache.SearchResultsMinutes = (int)value; break;
             case "Cache:PlaylistImagesHours": _cache.PlaylistImagesHours = (int)value; break;
-            case "Cache:SpotifyPlaylistItemsHours": _cache.SpotifyPlaylistItemsHours = (int)value; break;
-            case "Cache:SpotifyMatchedTracksDays": _cache.SpotifyMatchedTracksDays = (int)value; break;
             case "Cache:LyricsDays": _cache.LyricsDays = (int)value; break;
             case "Cache:GenreDays": _cache.GenreDays = (int)value; break;
             case "Cache:MetadataDays": _cache.MetadataDays = (int)value; break;

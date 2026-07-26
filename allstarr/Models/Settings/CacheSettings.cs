@@ -19,19 +19,6 @@ public class CacheSettings
     public int PlaylistImagesHours { get; set; } = 168;
 
     /// <summary>
-    /// Spotify playlist items cache duration in hours.
-    /// Default: 168 hours (1 week, until next cron job)
-    /// </summary>
-    public int SpotifyPlaylistItemsHours { get; set; } = 168;
-
-    /// <summary>
-    /// Spotify matched tracks cache duration in days.
-    /// This is the mapping of Spotify IDs to local/external tracks.
-    /// Default: 30 days
-    /// </summary>
-    public int SpotifyMatchedTracksDays { get; set; } = 30;
-
-    /// <summary>
     /// Lyrics cache duration in days.
     /// Default: 14 days (2 weeks)
     /// </summary>
@@ -84,8 +71,6 @@ public class CacheSettings
     // Helper methods to get TimeSpan values
     public TimeSpan SearchResultsTTL => TimeSpan.FromMinutes(SearchResultsMinutes);
     public TimeSpan PlaylistImagesTTL => TimeSpan.FromHours(PlaylistImagesHours);
-    public TimeSpan SpotifyPlaylistItemsTTL => TimeSpan.FromHours(SpotifyPlaylistItemsHours);
-    public TimeSpan SpotifyMatchedTracksTTL => TimeSpan.FromDays(SpotifyMatchedTracksDays);
     public TimeSpan LyricsTTL => TimeSpan.FromDays(LyricsDays);
     public TimeSpan GenreTTL => TimeSpan.FromDays(GenreDays);
     public TimeSpan MetadataTTL => TimeSpan.FromDays(MetadataDays);

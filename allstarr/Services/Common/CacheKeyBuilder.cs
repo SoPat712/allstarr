@@ -90,65 +90,6 @@ public static class CacheKeyBuilder
         return $"{provider}:artist:{externalId}";
     }
 
-    public static string BuildSongKey(string provider, string externalId)
-    {
-        return $"{provider}:song:{externalId}";
-    }
-
-    #endregion
-
-    #region Spotify Keys
-
-    public static string BuildSpotifyPlaylistKey(string playlistName)
-    {
-        return $"spotify:playlist:{playlistName}";
-    }
-
-    public static string BuildSpotifyPlaylistItemsKey(string playlistName)
-    {
-        return $"spotify:playlist:items:{playlistName}";
-    }
-
-    public static string BuildSpotifyPlaylistOrderedKey(string playlistName)
-    {
-        return $"spotify:playlist:ordered:{playlistName}";
-    }
-
-    public static string BuildSpotifyMatchedTracksKey(string playlistName)
-    {
-        return $"spotify:matched:ordered:{playlistName}";
-    }
-
-    public static string BuildSpotifyLegacyMatchedTracksKey(string playlistName)
-    {
-        return $"spotify:matched:{playlistName}";
-    }
-
-    public static string BuildSpotifyPlaylistStatsKey(string playlistName)
-    {
-        return $"spotify:playlist:stats:{playlistName}";
-    }
-
-    public static string BuildSpotifyPlaylistLastSuccessfulSyncKey(string playlistName)
-    {
-        return $"spotify:playlist:last-successful-sync:{playlistName}";
-    }
-
-    public static string BuildSpotifyPlaylistStatsPattern()
-    {
-        return "spotify:playlist:stats:*";
-    }
-
-    public static string BuildSpotifyGlobalMappingKey(string spotifyId)
-    {
-        return $"spotify:global-map:{spotifyId}";
-    }
-
-    public static string BuildSpotifyGlobalMappingsIndexKey()
-    {
-        return "spotify:global-map:all-ids";
-    }
-
     #endregion
 
     #region Lyrics Keys
@@ -177,11 +118,6 @@ public static class CacheKeyBuilder
         return $"playlist:image:{playlistId}";
     }
 
-    public static string BuildPlaylistTrackContextKey(string trackId)
-    {
-        return $"playlist:track-context:{trackId}";
-    }
-
     public static string BuildJellyfinImageKey(
         string itemId,
         string imageType,
@@ -190,11 +126,6 @@ public static class CacheKeyBuilder
         string? imageTag)
     {
         return $"image:{itemId}:{imageType}:{maxWidth}:{maxHeight}:{imageTag}";
-    }
-
-    public static string BuildJellyfinImagePattern(string itemId)
-    {
-        return $"image:{itemId}:*";
     }
 
     public static string BuildImagePattern() => "image:*";
@@ -220,11 +151,6 @@ public static class CacheKeyBuilder
     public static string BuildGenreEnrichmentKey(string compositeCacheKey)
     {
         return $"genre:{compositeCacheKey}";
-    }
-
-    public static string BuildGenreKey(string genre)
-    {
-        return $"genre:{genre.ToLowerInvariant()}";
     }
 
     #endregion
@@ -263,11 +189,6 @@ public static class CacheKeyBuilder
     public static string BuildOdesliTranslationKey(string sourceUrl, string targetPlatform)
     {
         return $"odesli:translate:v2:{HashOdesliUrl(sourceUrl)}:{targetPlatform.ToLowerInvariant()}";
-    }
-
-    public static string BuildSpotifyPlaylistJellyfinSignatureKey(string playlistName)
-    {
-        return $"spotify:playlist:jellyfin-signature:{playlistName}";
     }
 
     private static string HashOdesliUrl(string value) =>

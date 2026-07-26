@@ -5,15 +5,14 @@ namespace allstarr.Services.Common;
 public enum ApplicationCacheCategory
 {
     SearchResults,
-    PlaylistDiscovery,
+    DerivedProjection,
     CanonicalMetadata,
     ProviderResponse,
     Artwork,
     Lyrics,
     TemporaryAudio,
     NegativeResult,
-    Coordination,
-    LegacyCompatibility
+    Coordination
 }
 
 public enum ApplicationCacheStorageTier
@@ -62,26 +61,13 @@ public static class ApplicationCachePolicyRegistry
             return ApplicationCacheCategory.NegativeResult;
         if (StartsWithAny(key, "playback:signal:", "cts:rotation:"))
             return ApplicationCacheCategory.Coordination;
-        if (StartsWithAny(
-                key,
-                "spotify:matched:",
-                "spotify:manual-map:",
-                "spotify:external-map:",
-                "spotify:global-map:"))
-            return ApplicationCacheCategory.LegacyCompatibility;
-        if (StartsWithAny(
-                key,
-                "playlist:",
-                "spotify:playlist:",
-                "spotify:missing:",
-                "admin:playlists:"))
-            return ApplicationCacheCategory.PlaylistDiscovery;
+        if (key.StartsWith("admin:playlists:", StringComparison.OrdinalIgnoreCase))
+            return ApplicationCacheCategory.DerivedProjection;
         if (StartsWithAny(
                 key,
                 "musicbrainz:",
                 "genre:",
-                "playback:metadata:",
-                "playlist:track-context:"))
+                "playback:metadata:"))
             return ApplicationCacheCategory.CanonicalMetadata;
         if (key.StartsWith("search:", StringComparison.OrdinalIgnoreCase))
             return ApplicationCacheCategory.SearchResults;
@@ -119,10 +105,10 @@ public static class ApplicationCachePolicyRegistry
                 category, "provider-search", ApplicationCacheStorageTier.Metadata,
                 settings.SearchResultsTTL, TimeSpan.Zero, 16 * Megabyte, 10_000,
                 ApplicationCacheWarmingRule.None, "query-or-account-revision"),
-            ApplicationCacheCategory.PlaylistDiscovery => new(
-                category, "playlist-source", ApplicationCacheStorageTier.Metadata,
-                settings.SpotifyPlaylistItemsTTL, TimeSpan.FromMinutes(15), 64 * Megabyte, 20_000,
-                ApplicationCacheWarmingRule.VisibleOrSelected, "playlist-or-account-revision"),
+            ApplicationCacheCategory.DerivedProjection => new(
+                category, "admin-read-model", ApplicationCacheStorageTier.Metadata,
+                TimeSpan.FromMinutes(5), TimeSpan.Zero, 16 * Megabyte, 10_000,
+                ApplicationCacheWarmingRule.VisibleOrSelected, "postgres-revision"),
             ApplicationCacheCategory.CanonicalMetadata => new(
                 category, "canonical-media", ApplicationCacheStorageTier.Metadata,
                 settings.MetadataTTL, TimeSpan.FromHours(12), 96 * Megabyte, 100_000,
@@ -153,10 +139,6 @@ public static class ApplicationCachePolicyRegistry
                 category, "runtime-coordination", ApplicationCacheStorageTier.Metadata,
                 TimeSpan.FromMinutes(5), TimeSpan.Zero, 8 * Megabyte, 20_000,
                 ApplicationCacheWarmingRule.None, "operation-complete-or-expiry"),
-            ApplicationCacheCategory.LegacyCompatibility => new(
-                category, "legacy-playlist-compatibility", ApplicationCacheStorageTier.Metadata,
-                settings.SpotifyMatchedTracksTTL, TimeSpan.Zero, 32 * Megabyte, 20_000,
-                ApplicationCacheWarmingRule.None, "postgres-match-generation"),
             _ => throw new ArgumentOutOfRangeException(nameof(category), category, null)
         };
         var categoryKey = category.ToString();

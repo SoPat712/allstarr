@@ -63,22 +63,6 @@ public class CacheKeyBuilderTests
     }
 
     [Fact]
-    public void SpotifyKeys_ShouldMatchExpectedFormats()
-    {
-        Assert.Equal("spotify:playlist:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistKey("Road Trip"));
-        Assert.Equal("spotify:playlist:items:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistItemsKey("Road Trip"));
-        Assert.Equal("spotify:playlist:ordered:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistOrderedKey("Road Trip"));
-        Assert.Equal(
-            "spotify:playlist:jellyfin-signature:Road Trip",
-            CacheKeyBuilder.BuildSpotifyPlaylistJellyfinSignatureKey("Road Trip"));
-        Assert.Equal("spotify:matched:ordered:Road Trip", CacheKeyBuilder.BuildSpotifyMatchedTracksKey("Road Trip"));
-        Assert.Equal("spotify:matched:Road Trip", CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey("Road Trip"));
-        Assert.Equal("spotify:playlist:stats:Road Trip", CacheKeyBuilder.BuildSpotifyPlaylistStatsKey("Road Trip"));
-        Assert.Equal("spotify:global-map:abc123", CacheKeyBuilder.BuildSpotifyGlobalMappingKey("abc123"));
-        Assert.Equal("spotify:global-map:all-ids", CacheKeyBuilder.BuildSpotifyGlobalMappingsIndexKey());
-    }
-
-    [Fact]
     public void LyricsAndGenreKeys_ShouldMatchExpectedFormats()
     {
         Assert.Equal("lyrics:Artist:Title:Album:240", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));
@@ -87,7 +71,6 @@ public class CacheKeyBuilderTests
 
         Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track", "Artist"));
         Assert.Equal("genre:Track:Artist", CacheKeyBuilder.BuildGenreEnrichmentKey("Track:Artist"));
-        Assert.Equal("genre:rock", CacheKeyBuilder.BuildGenreKey("Rock"));
     }
 
     [Fact]

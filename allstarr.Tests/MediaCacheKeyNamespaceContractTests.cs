@@ -6,8 +6,7 @@ public sealed class MediaCacheKeyNamespaceContractTests
     [
         Path.Combine("allstarr", "Controllers", "JellyfinController.PlaylistHandler.cs"),
         Path.Combine("allstarr", "Controllers", "SubSonicController.cs"),
-        Path.Combine("allstarr", "Services", "Jellyfin", "JellyfinProxyService.cs"),
-        Path.Combine("allstarr", "Services", "Spotify", "SpotifyPlaylistFetcher.cs")
+        Path.Combine("allstarr", "Services", "Jellyfin", "JellyfinProxyService.cs")
     ];
 
     [Fact]
@@ -24,9 +23,6 @@ public sealed class MediaCacheKeyNamespaceContractTests
             StringComparison.Ordinal));
         Assert.Contains(sources, source => source.Contains(
             "CacheKeyBuilder.BuildJellyfinImageKey",
-            StringComparison.Ordinal));
-        Assert.Contains(sources, source => source.Contains(
-            "CacheKeyBuilder.BuildJellyfinImagePattern",
             StringComparison.Ordinal));
     }
 

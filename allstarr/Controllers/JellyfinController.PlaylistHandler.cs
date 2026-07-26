@@ -30,21 +30,6 @@ public partial class JellyfinController
                 ? await _providerGateway.GetPlaylistTracksAsync(protocol, provider, externalId)
                 : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
 
-            // Cache tracks for playlist sync
-            if (_playlistSyncService != null)
-            {
-                foreach (var track in tracks)
-                {
-                    if (!string.IsNullOrEmpty(track.ExternalId))
-                    {
-                        var trackId = $"ext-{provider}-{track.ExternalId}";
-                        await _playlistSyncService.AddTrackToPlaylistCacheAsync(trackId, playlistId);
-                    }
-                }
-
-                _logger.LogDebug("Cached {Count} tracks for playlist {PlaylistId}", tracks.Count, playlistId);
-            }
-
             return _responseBuilder.CreatePlaylistAsAlbumResponse(playlist, tracks);
         }
         catch (Exception ex)
@@ -100,30 +85,6 @@ public partial class JellyfinController
                     TotalRecordCount = items.Count,
                     StartIndex = 0
                 });
-            }
-
-            // Check if this is a Spotify playlist (by ID)
-            _logger.LogDebug("Spotify Import Enabled: {Enabled}, Configured Playlists: {Count}",
-                _spotifySettings.Enabled, _spotifySettings.Playlists.Count);
-
-            if (_spotifySettings.Enabled && _spotifySettings.IsSpotifyPlaylist(playlistId))
-            {
-                // Get playlist info from Jellyfin to get the name for matching missing tracks
-                _logger.LogDebug("Fetching playlist info from Jellyfin for ID: {PlaylistId}", playlistId);
-                var (playlistInfo, _) = await _proxyService.GetJsonAsync($"Items/{playlistId}", null, Request.Headers);
-
-                if (playlistInfo != null && playlistInfo.RootElement.TryGetProperty("Name", out var nameElement))
-                {
-                    var playlistName = nameElement.GetString() ?? "";
-                    _logger.LogInformation(
-                        "Intercepting Spotify playlist: {PlaylistName} (ID: {PlaylistId})",
-                        playlistName, playlistId);
-                    return await GetSpotifyPlaylistTracksAsync(playlistName, playlistId);
-                }
-                else
-                {
-                    _logger.LogWarning("Could not get playlist name from Jellyfin for ID: {PlaylistId}", playlistId);
-                }
             }
 
             // Regular Jellyfin playlist - proxy through

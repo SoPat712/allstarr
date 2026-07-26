@@ -24,18 +24,15 @@ public class SpotifyLyricsService
 {
     private readonly ILogger<SpotifyLyricsService> _logger;
     private readonly SpotifyApiSettings _settings;
-    private readonly IApplicationCache _cache;
     private readonly HttpClient _httpClient;
 
     public SpotifyLyricsService(
         ILogger<SpotifyLyricsService> logger,
         IOptions<SpotifyApiSettings> settings,
-        IApplicationCache cache,
         IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _settings = settings.Value;
-        _cache = cache;
 
         _httpClient = httpClientFactory.CreateClient();
         _httpClient.Timeout = TimeSpan.FromSeconds(10);

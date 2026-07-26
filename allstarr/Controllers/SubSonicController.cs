@@ -40,7 +40,6 @@ public class SubsonicController : ControllerBase
     private readonly SubsonicSearchProtocolAdapter _searchProtocolAdapter;
     private readonly SubsonicScrobbleProtocolAdapter _scrobbleProtocolAdapter;
     private readonly SubsonicVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
-    private readonly PlaylistSyncService? _playlistSyncService;
     private readonly IApplicationCache _cache;
     private readonly ILogger<SubsonicController> _logger;
     private readonly IFavoriteActionPipeline? _favoriteActions;
@@ -64,7 +63,6 @@ public class SubsonicController : ControllerBase
         SubsonicVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
         IApplicationCache cache,
         ILogger<SubsonicController> logger,
-        PlaylistSyncService? playlistSyncService = null,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
         IProtocolProviderGateway? providerGateway = null,
@@ -83,7 +81,6 @@ public class SubsonicController : ControllerBase
         _searchProtocolAdapter = searchProtocolAdapter;
         _scrobbleProtocolAdapter = scrobbleProtocolAdapter;
         _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
-        _playlistSyncService = playlistSyncService;
         _cache = cache;
         _logger = logger;
         _favoriteActions = favoriteActions;
@@ -551,21 +548,6 @@ public class SubsonicController : ControllerBase
                 var tracks = _providerGateway != null
                     ? await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId)
                     : await _metadataService.GetPlaylistTracksAsync(provider, externalId);
-
-                // Add all tracks to playlist cache so when they're played, we know they belong to this playlist
-                if (_playlistSyncService != null)
-                {
-                    foreach (var track in tracks)
-                    {
-                        if (!string.IsNullOrEmpty(track.ExternalId))
-                        {
-                            var trackId = $"ext-{provider}-{track.ExternalId}";
-                            await _playlistSyncService.AddTrackToPlaylistCacheAsync(trackId, id);
-                        }
-                    }
-
-                    _logger.LogDebug("Added {TrackCount} tracks to playlist cache for {PlaylistId}", tracks.Count, id);
-                }
 
                 // Convert to album response (playlist as album)
                 return _responseBuilder.CreatePlaylistAsAlbumResponse(format, playlist, tracks);

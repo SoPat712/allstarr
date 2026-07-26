@@ -23,7 +23,6 @@ public class SpotifyAdminController : ControllerBase
     private readonly SpotifyApiClient _spotifyClient;
     private readonly SpotifyApiClientFactory _spotifyClientFactory;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
-    private readonly IApplicationCache _cache;
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
@@ -33,7 +32,6 @@ public class SpotifyAdminController : ControllerBase
         SpotifyApiClient spotifyClient,
         SpotifyApiClientFactory spotifyClientFactory,
         SpotifySessionCookieService spotifySessionCookieService,
-        IApplicationCache cache,
         IServiceProvider serviceProvider,
         IOptions<SpotifyApiSettings> spotifyApiSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings)
@@ -42,7 +40,6 @@ public class SpotifyAdminController : ControllerBase
         _spotifyClient = spotifyClient;
         _spotifyClientFactory = spotifyClientFactory;
         _spotifySessionCookieService = spotifySessionCookieService;
-        _cache = cache;
         _serviceProvider = serviceProvider;
         _spotifyApiSettings = spotifyApiSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
@@ -183,49 +180,6 @@ public class SpotifyAdminController : ControllerBase
             usingGlobalFallback = status.UsingGlobalFallback,
             cookieSetDate = cookieSetDate?.ToString("o")
         });
-    }
-
-    /// <summary>
-    /// Clear Spotify playlist cache to force re-matching.
-    /// </summary>
-    [HttpPost("spotify/clear-cache")]
-    public async Task<IActionResult> ClearSpotifyCache()
-    {
-        try
-        {
-            var clearedKeys = new List<string>();
-
-            // Clear shared cache entries for all configured playlists.
-            foreach (var playlist in _spotifyImportSettings.Playlists)
-            {
-                var keys = new[]
-                {
-                    CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name),
-                    CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name),
-                    CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name)
-                };
-
-                foreach (var key in keys)
-                {
-                    await _cache.DeleteAsync(key);
-                    clearedKeys.Add(key);
-                }
-            }
-
-            _logger.LogDebug("Cleared Spotify cache for {Count} keys via admin endpoint", clearedKeys.Count);
-
-            return Ok(new
-            {
-                message = "Spotify cache cleared successfully",
-                clearedKeys = clearedKeys,
-                timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error clearing Spotify cache");
-            return StatusCode(500, new { error = "Internal server error" });
-        }
     }
 
 

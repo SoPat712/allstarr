@@ -37,7 +37,6 @@ public class ConfigController : ControllerBase
     private readonly string _envFilePath;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly IApplicationCache _cache;
-    private const string CacheDirectory = "/app/cache/spotify";
 
     public ConfigController(
         ILogger<ConfigController> logger,
@@ -249,8 +248,6 @@ public class ConfigController : ControllerBase
             {
                 searchResultsMinutes = RuntimeInt("Cache:SearchResultsMinutes", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
                 playlistImagesHours = RuntimeInt("Cache:PlaylistImagesHours", _configuration.GetValue<int>("Cache:PlaylistImagesHours", 168)),
-                spotifyPlaylistItemsHours = RuntimeInt("Cache:SpotifyPlaylistItemsHours", _configuration.GetValue<int>("Cache:SpotifyPlaylistItemsHours", 168)),
-                spotifyMatchedTracksDays = RuntimeInt("Cache:SpotifyMatchedTracksDays", _configuration.GetValue<int>("Cache:SpotifyMatchedTracksDays", 30)),
                 lyricsDays = RuntimeInt("Cache:LyricsDays", _configuration.GetValue<int>("Cache:LyricsDays", 14)),
                 genreDays = RuntimeInt("Cache:GenreDays", _configuration.GetValue<int>("Cache:GenreDays", 30)),
                 metadataDays = RuntimeInt("Cache:MetadataDays", _configuration.GetValue<int>("Cache:MetadataDays", 7)),
@@ -389,47 +386,7 @@ public class ConfigController : ControllerBase
     {
         _logger.LogDebug("Cache clear requested from admin UI");
 
-        var clearedFiles = 0;
         var clearedCacheEntries = 0;
-
-        // Clear file cache
-        if (Directory.Exists(CacheDirectory))
-        {
-            foreach (var file in Directory.GetFiles(CacheDirectory, "*.json"))
-            {
-                try
-                {
-                    System.IO.File.Delete(file);
-                    clearedFiles++;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to delete cache file {File}", file);
-                }
-            }
-        }
-
-        // Clear all shared cache entries for Spotify playlists.
-        // This includes matched tracks, ordered tracks, missing tracks, playlist items, etc.
-        foreach (var playlist in _spotifyImportSettings.Playlists)
-        {
-            var keysToDelete = new[]
-            {
-                CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name),
-                CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlist.Name),
-                CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name),
-                CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name)
-            };
-
-            foreach (var key in keysToDelete)
-            {
-                if (await _cache.DeleteAsync(key))
-                {
-                    clearedCacheEntries++;
-                    _logger.LogInformation("Cleared application cache key: {Key}", key);
-                }
-            }
-        }
 
         // Clear all search cache keys (pattern-based deletion)
         var searchKeysDeleted =
@@ -441,13 +398,12 @@ public class ConfigController : ControllerBase
             await _cache.DeleteByPatternAsync(CacheKeyBuilder.BuildImagePattern());
         clearedCacheEntries += imageKeysDeleted;
 
-        _logger.LogInformation("Cache cleared: {Files} files, {Entries} shared entries (including {SearchKeys} search keys, {ImageKeys} image keys)",
-            clearedFiles, clearedCacheEntries, searchKeysDeleted, imageKeysDeleted);
+        _logger.LogInformation("Cache cleared: {Entries} derived entries (including {SearchKeys} search keys, {ImageKeys} image keys)",
+            clearedCacheEntries, searchKeysDeleted, imageKeysDeleted);
 
         return Ok(new
         {
             message = "Cache cleared successfully",
-            filesDeleted = clearedFiles,
             cacheEntriesDeleted = clearedCacheEntries
         });
     }

@@ -55,8 +55,6 @@ public partial class JellyfinController : ControllerBase
     private readonly JellyfinModelMapper _modelMapper;
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
-    private readonly PlaylistSyncService? _playlistSyncService;
-    private readonly SpotifyPlaylistFetcher? _spotifyPlaylistFetcher;
     private readonly SpotifyLyricsService? _spotifyLyricsService;
     private readonly LyricsPlusService? _lyricsPlusService;
     private readonly LrclibService? _lrclibService;
@@ -94,8 +92,6 @@ public partial class JellyfinController : ControllerBase
         IApplicationCache cache,
         IConfiguration configuration,
         ILogger<JellyfinController> logger,
-        PlaylistSyncService? playlistSyncService = null,
-        SpotifyPlaylistFetcher? spotifyPlaylistFetcher = null,
         SpotifyLyricsService? spotifyLyricsService = null,
         LyricsPlusService? lyricsPlusService = null,
         LrclibService? lrclibService = null,
@@ -124,8 +120,6 @@ public partial class JellyfinController : ControllerBase
         _modelMapper = modelMapper;
         _proxyService = proxyService;
         _sessionManager = sessionManager;
-        _playlistSyncService = playlistSyncService;
-        _spotifyPlaylistFetcher = spotifyPlaylistFetcher;
         _spotifyLyricsService = spotifyLyricsService;
         _lyricsPlusService = lyricsPlusService;
         _lrclibService = lrclibService;
@@ -1649,7 +1643,6 @@ public partial class JellyfinController : ControllerBase
             if (ShouldProcessSpotifyPlaylistCounts(result, Request.Query["IncludeItemTypes"].ToString()))
             {
                 _logger.LogDebug("Response has Items property, checking for Spotify playlists to update counts");
-                result = await UpdateSpotifyPlaylistCounts(result);
             }
 
             // Return the raw JSON element directly to avoid deserialization issues with simple types
@@ -1833,79 +1826,16 @@ public partial class JellyfinController : ControllerBase
         return guid.ToString();
     }
 
-    /// <summary>
-    /// Finds the Spotify ID for an external track by searching through all playlist matched tracks caches.
-    /// This allows us to get Spotify lyrics for external tracks that were matched from Spotify playlists.
-    /// </summary>
-    private async Task<string?> FindSpotifyIdForExternalTrackAsync(Song externalSong)
-    {
-        try
+    private Task<string?> FindSpotifyIdForExternalTrackAsync(Song externalSong) =>
+        externalSong.ExternalProvider?.ToLowerInvariant() switch
         {
-            // Get all configured playlists
-            var playlists = _spotifySettings.Playlists;
-
-            // The injected item cache contains the exact playable item plus the
-            // originating Spotify identity. Prefer it because provider priority may
-            // have changed since the older matched-track cache was written.
-            foreach (var playlist in playlists)
-            {
-                var itemsKey = CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist.Name);
-                var items = await _cache.GetAsync<List<Dictionary<string, JsonElement>>>(itemsKey);
-                if (items == null) continue;
-
-                foreach (var item in items)
-                {
-                    if (!item.TryGetValue("Id", out var id) || id.ValueKind != JsonValueKind.String ||
-                        !string.Equals(id.GetString(), externalSong.Id, StringComparison.OrdinalIgnoreCase) ||
-                        !item.TryGetValue("ProviderIds", out var providerIds) ||
-                        providerIds.ValueKind != JsonValueKind.Object ||
-                        !providerIds.TryGetProperty("Spotify", out var spotifyId) ||
-                        spotifyId.ValueKind != JsonValueKind.String ||
-                        string.IsNullOrWhiteSpace(spotifyId.GetString()))
-                    {
-                        continue;
-                    }
-
-                    _logger.LogDebug(
-                        "Found Spotify ID {SpotifyId} for {Provider}/{ExternalId} in injected item cache {Playlist}",
-                        spotifyId.GetString(), externalSong.ExternalProvider, externalSong.ExternalId, playlist.Name);
-                    return spotifyId.GetString();
-                }
-            }
-
-            // Search through each playlist's matched tracks cache as a legacy fallback.
-            foreach (var playlist in playlists)
-            {
-                var cacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name);
-                var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(cacheKey);
-
-                if (matchedTracks == null || matchedTracks.Count == 0)
-                    continue;
-
-                // Look for a match by external ID
-                var match = matchedTracks.FirstOrDefault(t =>
-                    t.MatchedSong != null &&
-                    t.MatchedSong.ExternalProvider == externalSong.ExternalProvider &&
-                    t.MatchedSong.ExternalId == externalSong.ExternalId);
-
-                if (match != null && !string.IsNullOrEmpty(match.SpotifyId))
-                {
-                    _logger.LogDebug("Found Spotify ID {SpotifyId} for {Provider}/{ExternalId} in playlist {Playlist}",
-                        match.SpotifyId, externalSong.ExternalProvider, externalSong.ExternalId, playlist.Name);
-                    return match.SpotifyId;
-                }
-            }
-
-            _logger.LogDebug("No Spotify ID found for external track {Provider}/{ExternalId}",
-                externalSong.ExternalProvider, externalSong.ExternalId);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error finding Spotify ID for external track");
-            return null;
-        }
-    }
+            "squidwtf" => _odesliService.ConvertTidalToSpotifyIdAsync(externalSong.ExternalId!, CancellationToken.None),
+            "deezer" => _odesliService.ConvertUrlToSpotifyIdAsync(
+                $"https://www.deezer.com/track/{externalSong.ExternalId}", CancellationToken.None),
+            "qobuz" => _odesliService.ConvertUrlToSpotifyIdAsync(
+                $"https://www.qobuz.com/us-en/album/-/-/{externalSong.ExternalId}", CancellationToken.None),
+            _ => Task.FromResult<string?>(null)
+        };
 }
 
 // force rebuild Sun Jan 25 13:22:47 EST 2026

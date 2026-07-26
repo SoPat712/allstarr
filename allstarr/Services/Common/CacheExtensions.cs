@@ -51,10 +51,6 @@ public static class CacheExtensions
         Policy(ApplicationCacheCategory.SearchResults).FreshFor;
     public static TimeSpan PlaylistImagesTTL =>
         Policy(ApplicationCacheCategory.Artwork, GetCacheSettings().PlaylistImagesTTL).FreshFor;
-    public static TimeSpan SpotifyPlaylistItemsTTL =>
-        Policy(ApplicationCacheCategory.PlaylistDiscovery).FreshFor;
-    public static TimeSpan SpotifyMatchedTracksTTL =>
-        Policy(ApplicationCacheCategory.LegacyCompatibility).FreshFor;
     public static TimeSpan LyricsTTL =>
         Policy(ApplicationCacheCategory.Lyrics).FreshFor;
     public static TimeSpan GenreTTL =>

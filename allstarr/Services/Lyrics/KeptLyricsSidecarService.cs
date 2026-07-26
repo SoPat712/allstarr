@@ -2,10 +2,7 @@ using System.Text.RegularExpressions;
 using TagLib;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
-using allstarr.Models.Settings;
-using allstarr.Models.Spotify;
 using allstarr.Services.Common;
-using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Lyrics;
 
@@ -16,21 +13,15 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly LyricsOrchestrator _lyricsOrchestrator;
-    private readonly IApplicationCache _cache;
-    private readonly SpotifyImportSettings _spotifySettings;
     private readonly OdesliService _odesliService;
     private readonly ILogger<KeptLyricsSidecarService> _logger;
 
     public KeptLyricsSidecarService(
         LyricsOrchestrator lyricsOrchestrator,
-        IApplicationCache cache,
-        IOptions<SpotifyImportSettings> spotifySettings,
         OdesliService odesliService,
         ILogger<KeptLyricsSidecarService> logger)
     {
         _lyricsOrchestrator = lyricsOrchestrator;
-        _cache = cache;
-        _spotifySettings = spotifySettings.Value;
         _odesliService = odesliService;
         _logger = logger;
     }
@@ -129,12 +120,6 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         string externalId,
         CancellationToken cancellationToken)
     {
-        var spotifyId = await FindSpotifyIdFromMatchedTracksAsync(externalProvider, externalId);
-        if (!string.IsNullOrWhiteSpace(spotifyId))
-        {
-            return spotifyId;
-        }
-
         return externalProvider.ToLowerInvariant() switch
         {
             "squidwtf" => await _odesliService.ConvertTidalToSpotifyIdAsync(externalId, cancellationToken),
@@ -142,32 +127,6 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
             "qobuz" => await _odesliService.ConvertUrlToSpotifyIdAsync($"https://www.qobuz.com/us-en/album/-/-/{externalId}", cancellationToken),
             _ => null
         };
-    }
-
-    private async Task<string?> FindSpotifyIdFromMatchedTracksAsync(string externalProvider, string externalId)
-    {
-        if (_spotifySettings.Playlists == null || _spotifySettings.Playlists.Count == 0)
-        {
-            return null;
-        }
-
-        foreach (var playlist in _spotifySettings.Playlists)
-        {
-            var cacheKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist.Name);
-            var matchedTracks = await _cache.GetAsync<List<MatchedTrack>>(cacheKey);
-
-            var match = matchedTracks?.FirstOrDefault(track =>
-                track.MatchedSong != null &&
-                string.Equals(track.MatchedSong.ExternalProvider, externalProvider, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(track.MatchedSong.ExternalId, externalId, StringComparison.Ordinal));
-
-            if (match != null && !string.IsNullOrWhiteSpace(match.SpotifyId))
-            {
-                return match.SpotifyId;
-            }
-        }
-
-        return null;
     }
 
     private static (string? Provider, string? ExternalId) ParseExternalReferenceFromPath(string audioFilePath)

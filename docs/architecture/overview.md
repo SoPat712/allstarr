@@ -85,6 +85,20 @@ The application cache combines PostgreSQL metadata, a bounded in-process hot tie
 
 Media assets should be resolved through shared cache policy and key namespaces. Provider tokens, credentials, and signed URLs must not appear in keys, logs, or diagnostics.
 
+The complete application-cache key inventory is:
+
+| Key namespace | Rebuildable value | Invalidation |
+| --- | --- | --- |
+| `admin:playlists:summary:*` | Admin read projection | Five-minute TTL and playlist-link/settings changes |
+| `search:*` | Provider search response | Short TTL and provider/account revision |
+| `{provider}:album:*`, `{provider}:artist:*`, `musicbrainz:*`, `genre:*`, `odesli:*` | Provider metadata or translation response | Bounded TTL and provider/account revision |
+| `playback:metadata:*`, `jellyfin:item-type:*` | Backend metadata projection | Bounded TTL and backend/library revision |
+| `lyrics:*`, `lyricsplus:*` | Provider lyrics response | Bounded TTL and provider/track revision |
+| `image:*`, `playlist:image:*`, `artwork:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
+| `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |
+
+Playlist source entries, order, matches, decisions, sync timestamps, sessions, and health never use cache keys. Their read models are rebuilt from PostgreSQL.
+
 ## WebUI
 
 The shipped WebUI is a static Lit application in `allstarr/wwwroot/js/webui.js` with shared CSS in `allstarr/wwwroot/css`.

@@ -16,7 +16,6 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class MappingController(
     ILogger<MappingController> logger,
-    IApplicationCache cache,
     ITrackMatchRepository trackMatchCommands) : ControllerBase
 {
     [HttpDelete("mappings/tracks")]
@@ -52,13 +51,7 @@ public sealed class MappingController(
                 };
             }
 
-            var removed = result.Succeeded;
-            removed |= await cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlist));
-            removed |= await cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyLegacyMatchedTracksKey(playlist));
-            removed |= await cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyPlaylistItemsKey(playlist));
-            removed |= await cache.DeleteAsync(CacheKeyBuilder.BuildSpotifyPlaylistStatsKey(playlist));
-
-            return removed
+            return result.Succeeded
                 ? Ok(new { success = true, message = "Mapping deleted successfully" })
                 : NotFound(new { error = "Mapping not found" });
         }

@@ -576,13 +576,9 @@ builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService, allstarr.Services.Lyrics.KeptLyricsSidecarService>();
 
 // Register Spotify playlist fetcher (uses direct Spotify API when SpotifyApi is enabled)
-builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifyPlaylistFetcher>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Spotify.SpotifyPlaylistFetcher>());
 
 // Register lyrics prefetch service (prefetches lyrics for all playlist tracks)
 // DISABLED - No need to prefetch since Jellyfin and Spotify lyrics are fast
-// builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsPrefetchService>();
-// builder.Services.AddHostedService(sp => sp.GetRequiredService<allstarr.Services.Lyrics.LyricsPrefetchService>());
 
 // Register scrobbling services (Last.fm, ListenBrainz, etc.)
 builder.Services.Configure<allstarr.Models.Settings.ScrobblingSettings>(options =>

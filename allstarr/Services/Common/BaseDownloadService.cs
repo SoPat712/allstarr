@@ -70,22 +70,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
     }
 
     /// <summary>
-    /// Lazy-loaded PlaylistSyncService to avoid circular dependency
-    /// </summary>
-    private PlaylistSyncService? _playlistSyncService;
-    protected PlaylistSyncService? PlaylistSyncService
-    {
-        get
-        {
-            if (_playlistSyncService == null)
-            {
-                _playlistSyncService = _serviceProvider.GetService<PlaylistSyncService>();
-            }
-            return _playlistSyncService;
-        }
-    }
-
-    /// <summary>
     /// Provider name (e.g., "deezer", "qobuz")
     /// </summary>
     protected abstract string ProviderName { get; }
@@ -634,24 +618,6 @@ public abstract class BaseDownloadService : IConcreteDownloadService
 
             // Register BEFORE releasing lock to prevent race conditions (both cache and download modes)
             await LocalLibraryService.RegisterDownloadedSongAsync(song, localPath);
-
-            // Check if this track belongs to a playlist and update M3U
-            if (PlaylistSyncService != null)
-            {
-                try
-                {
-                    var playlistId = await PlaylistSyncService.GetPlaylistIdForTrackAsync(songId);
-                    if (playlistId != null)
-                    {
-                        Logger.LogInformation("Track {SongId} belongs to playlist {PlaylistId}, adding to M3U", songId, playlistId);
-                        await PlaylistSyncService.AddTrackToM3UAsync(playlistId, song, localPath, isFullPlaylistDownload: false);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Failed to update playlist M3U for track {SongId}", songId);
-                }
-            }
 
             // Trigger library scan and album download AFTER releasing lock (download mode only)
             if (!isCache)

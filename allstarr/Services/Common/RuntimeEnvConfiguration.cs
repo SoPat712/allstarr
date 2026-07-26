@@ -116,8 +116,6 @@ public static class RuntimeEnvConfiguration
 
             ["CACHE_SEARCH_RESULTS_MINUTES"] = ["Cache:SearchResultsMinutes"],
             ["CACHE_PLAYLIST_IMAGES_HOURS"] = ["Cache:PlaylistImagesHours"],
-            ["CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS"] = ["Cache:SpotifyPlaylistItemsHours"],
-            ["CACHE_SPOTIFY_MATCHED_TRACKS_DAYS"] = ["Cache:SpotifyMatchedTracksDays"],
             ["CACHE_LYRICS_DAYS"] = ["Cache:LyricsDays"],
             ["CACHE_GENRE_DAYS"] = ["Cache:GenreDays"],
             ["CACHE_METADATA_DAYS"] = ["Cache:MetadataDays"],

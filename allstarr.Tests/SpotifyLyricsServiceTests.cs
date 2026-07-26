@@ -31,11 +31,9 @@ public sealed class SpotifyLyricsServiceTests
             SessionCookie = string.Empty,
             LyricsApiUrl = "http://lyrics-sidecar:8080"
         });
-        var cache = new DisabledApplicationCache();
         var service = new SpotifyLyricsService(
             NullLogger<SpotifyLyricsService>.Instance,
             settings,
-            cache,
             new StubFactory(handler));
 
         var result = await service.GetLyricsByTrackIdAsync("spotify:track:3yII7UwgLF6K5zW3xad3MP");

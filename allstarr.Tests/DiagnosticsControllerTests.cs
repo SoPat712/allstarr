@@ -324,7 +324,6 @@ public sealed class DiagnosticsControllerTests : IDisposable
             Options.Create(new SquidWTFSettings()),
             cookieService,
             new SquidWtfEndpointCatalog(squidWtfApiUrls, []),
-            applicationCache,
             storageState,
             safeProxyClient)
         {
