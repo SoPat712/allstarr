@@ -69,9 +69,9 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             """), Actor());
 
         Assert.True(preview.CanApply);
-        Assert.Equal(3, preview.ImportedSettingCount);
+        Assert.Equal(2, preview.ImportedSettingCount);
         Assert.Equal(2, preview.ProviderAccountCount);
-        Assert.Equal(1, preview.ManualCount);
+        Assert.Equal(2, preview.ManualCount);
         Assert.Equal(64, preview.SourceSha256.Length);
         Assert.Equal(LegacyEnvParser.ParserVersion, preview.ParserVersion);
         Assert.Equal(64, preview.Revision.Length);
@@ -89,8 +89,8 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal("source-id", playlist.SourcePlaylistId);
         Assert.Equal("target-id", playlist.JellyfinTargetPlaylistId);
         var playlistSetting = Assert.Single(preview.Items, item => item.Key == "SPOTIFY_IMPORT_PLAYLISTS");
-        Assert.Equal("SpotifyImport:Playlists", playlistSetting.DurableKey);
-        Assert.Equal("import_if_absent", playlistSetting.Action);
+        Assert.Null(playlistSetting.DurableKey);
+        Assert.Equal("requires_target_selection", playlistSetting.Action);
 
         var json = JsonSerializer.Serialize(preview);
         Assert.DoesNotContain("never-return-this-arl", json, StringComparison.Ordinal);
@@ -103,7 +103,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Apply_RestoresLegacyInjectedPlaylistsAndKeepsDurableHandoffs()
+    public async Task Apply_KeepsAmbiguousLegacyPlaylistsAsReviewHandoffs()
     {
         var service = CreateService();
         var preview = await service.PreviewAsync(Source("""
@@ -112,13 +112,84 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 
         var result = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
 
-        Assert.Equal(1, result.SettingsImported);
+        Assert.Equal(0, result.SettingsImported);
         Assert.Equal(1, result.PlaylistHandoffsPending);
         await using var db = await _factory.CreateDbContextAsync();
-        var setting = Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
-        Assert.Equal("SpotifyImport:Playlists", setting.Key);
-        Assert.Equal("legacy-env-import", setting.Source);
-        Assert.Contains("Discover Weekly", setting.ValueJson, StringComparison.Ordinal);
+        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.PlaylistLinks.ToListAsync());
+        Assert.Empty(await db.JobSchedules.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Apply_ImportsBackendIdentityPlaylistLinkAndDisabledScheduleWhenExplicit()
+    {
+        var service = CreateService();
+        var preview = await service.PreviewAsync(Source("""
+            BACKEND_TYPE=Jellyfin
+            ALLSTARR_BACKEND_INSTANCE_ID=primary
+            JELLYFIN_USER_ID=jellyfin-user-id
+            SPOTIFY_API_SESSION_COOKIE=spotify-cookie
+            MULTI_PROVIDER_PLAYLIST_ORDER=spotify,deezer
+            SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","source-id","target-id","first","0 8 * * *"]]
+            """), Actor());
+
+        Assert.True(preview.CanApply);
+        Assert.Equal(1, preview.BackendIdentityCount);
+        Assert.Equal(1, preview.PlaylistLinkCount);
+        Assert.Equal(1, preview.ScheduleCount);
+        Assert.Equal("import_playlist_link", Assert.Single(preview.PlaylistHandoffs).Action);
+        Assert.Equal("import_backend_identity",
+            Assert.Single(preview.Items, item => item.Key == "JELLYFIN_USER_ID").Action);
+
+        var result = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+
+        Assert.Equal(1, result.BackendIdentitiesCreated);
+        Assert.Equal(1, result.PlaylistLinksCreated);
+        Assert.Equal(1, result.SchedulesCreated);
+        Assert.Equal(1, result.SettingsImported);
+        Assert.Equal(0, result.PlaylistHandoffsPending);
+        await using var db = await _factory.CreateDbContextAsync();
+        var identity = Assert.Single(await db.BackendIdentities.ToListAsync());
+        Assert.Equal("jellyfin", identity.BackendType);
+        Assert.Equal("primary", identity.BackendInstanceId);
+        Assert.Equal("jellyfin-user-id", identity.PrincipalId);
+        var schedule = Assert.Single(await db.JobSchedules.ToListAsync());
+        Assert.False(schedule.Enabled);
+        Assert.Null(schedule.NextRunAt);
+        Assert.Equal("0 8 * * *", schedule.CronExpression);
+        var link = Assert.Single(await db.PlaylistLinks.ToListAsync());
+        Assert.False(link.Enabled);
+        Assert.Equal(schedule.Id, link.ScheduleId);
+        Assert.Equal("source-id", link.SourcePlaylistId);
+        Assert.Equal("target-id", link.TargetPlaylistId);
+        Assert.Equal("jellyfin", link.TargetProtocol);
+        Assert.Equal("primary", link.TargetBackendInstanceId);
+        Assert.Equal("spotify", (await db.ProviderAccounts.SingleAsync()).ProviderId);
+        Assert.Equal("[\"spotify\",\"deezer\"]",
+            (await db.TenantRuntimeSettings.SingleAsync()).ValueJson);
+        using var provenance = JsonDocument.Parse((await db.LegacyEnvImports.SingleAsync()).ProvenanceJson);
+        Assert.Single(provenance.RootElement.GetProperty("backendIdentities").EnumerateArray());
+        Assert.Single(provenance.RootElement.GetProperty("playlistLinks").EnumerateArray());
+        Assert.Single(provenance.RootElement.GetProperty("schedules").EnumerateArray());
+
+        var revised = await service.PreviewAsync(Source("""
+            BACKEND_TYPE=Jellyfin
+            ALLSTARR_BACKEND_INSTANCE_ID=primary
+            JELLYFIN_USER_ID=jellyfin-user-id
+            SPOTIFY_API_SESSION_COOKIE=spotify-cookie
+            MULTI_PROVIDER_PLAYLIST_ORDER=spotify,deezer
+            CACHE_LYRICS_DAYS=31
+            SPOTIFY_IMPORT_PLAYLISTS=[["Discover Weekly","source-id","target-id","first","0 8 * * *"]]
+            """), Actor());
+        Assert.Equal("conflict_existing", Assert.Single(revised.PlaylistHandoffs).Action);
+        Assert.Equal(0, revised.PlaylistLinkCount);
+        var revisedResult = await service.ApplyAsync(
+            revised.PreviewToken, revised.Revision, true, Actor());
+        Assert.Equal(0, revisedResult.PlaylistLinksCreated);
+        Assert.Equal(0, revisedResult.PlaylistHandoffsPending);
+        Assert.Single(await db.PlaylistLinks.ToListAsync());
+        Assert.Single(await db.JobSchedules.ToListAsync());
+        Assert.Equal(2, await db.LegacyEnvImports.CountAsync());
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Cronos;
 
 namespace allstarr.Core.Configuration;
 
@@ -35,7 +36,11 @@ public sealed record LegacyPlaylistHandoff(
     string LocalTracksPosition,
     string SyncSchedule,
     bool HasLegacyOwner,
-    string Action = "requires_target_selection");
+    string Action = "requires_target_selection",
+    string? Reason = null,
+    string? TargetProtocol = null,
+    string? TargetBackendInstanceId = null,
+    string LibraryScopeId = "music");
 
 public sealed record LegacyEnvDocument(
     string SourceSha256,
@@ -276,10 +281,10 @@ public static class LegacyEnvParser
     {
         if (key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase))
         {
-            return new(key, value, line, LegacyEnvDisposition.DurableSetting,
-                "import_if_absent",
-                "Restore the legacy injected playlists and also preserve them for conversion into durable playlist links.",
-                true, "SpotifyImport:Playlists");
+            return new(key, value, line, LegacyEnvDisposition.PlaylistHandoff,
+                "requires_target_selection",
+                "Convert each legacy playlist into a durable playlist link after its account and backend owner are resolved.",
+                true);
         }
 
         if (IgnoredKeys.Contains(key) || key.StartsWith("SPOTIFY_IMPORT_PLAYLIST_", StringComparison.OrdinalIgnoreCase))
@@ -378,15 +383,26 @@ public static class LegacyEnvParser
                                IsLocalTracksPosition(fields[positionIndex].GetString())
                     ? fields[positionIndex].GetString()!.Trim().ToLowerInvariant()
                     : "first";
+                var schedule = fields.Length > scheduleIndex &&
+                               !string.IsNullOrWhiteSpace(fields[scheduleIndex].GetString())
+                    ? fields[scheduleIndex].GetString()!.Trim()
+                    : "0 8 * * *";
+                try
+                {
+                    _ = CronExpression.Parse(schedule, CronFormat.Standard);
+                }
+                catch (CronFormatException)
+                {
+                    throw new LegacyEnvParseException(
+                        $"Legacy Spotify playlist '{name}' has an invalid sync schedule.");
+                }
 
                 result.Add(new LegacyPlaylistHandoff(
                     name.Length <= 200 ? name : name[..200],
                     sourceId!,
                     targetId,
                     position,
-                    fields.Length > scheduleIndex && !string.IsNullOrWhiteSpace(fields[scheduleIndex].GetString())
-                        ? fields[scheduleIndex].GetString()!.Trim()
-                        : "0 8 * * *",
+                    schedule,
                     fields.Length > ownerIndex && !string.IsNullOrWhiteSpace(fields[ownerIndex].GetString())));
                 if (result.Count > 500)
                 {

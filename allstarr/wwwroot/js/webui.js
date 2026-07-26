@@ -1025,6 +1025,7 @@ class AllstarrApp extends LitElement {
     this.priorityDrag = null;
     this.envMigration = { state: "idle", sourceName: "", preview: null, result: null, error: "" };
     this.envMigrationStatus = null;
+    this.envMigrationCompletedOverride = false;
     this.onboardingStatus = null;
     this.onboardingSaving = false;
     this.setupGuideOpen = false;
@@ -7523,6 +7524,11 @@ class AllstarrApp extends LitElement {
     if (fileInput) fileInput.value = "";
   }
 
+  reviseEnvMigration() {
+    this.envMigrationCompletedOverride = true;
+    this.resetEnvMigration();
+  }
+
   async previewEnvMigration(source, sourceName) {
     const isBlob = source instanceof Blob;
     const text = isBlob ? "" : String(source ?? "");
@@ -7641,6 +7647,7 @@ class AllstarrApp extends LitElement {
       });
     }
     for (const playlist of asArray(preview.playlistHandoffs || preview.PlaylistHandoffs)) {
+      const playlistAction = playlist.action || playlist.Action || "requires_target_selection";
       const sourcePlaylistId = playlist.sourcePlaylistId || playlist.SourcePlaylistId;
       const syncSchedule = playlist.syncSchedule || playlist.SyncSchedule || "manual schedule";
       const localTracksPosition = playlist.localTracksPosition || playlist.LocalTracksPosition || "configured order";
@@ -7648,14 +7655,14 @@ class AllstarrApp extends LitElement {
       entries.push({
         key: playlist.name || playlist.Name,
         category: "playlist_ownership_handoffs",
-        action: playlist.action || playlist.Action || "requires_target_selection",
+        action: playlistAction,
         destination: playlist.jellyfinTargetPlaylistId || playlist.JellyfinTargetPlaylistId || "Choose a target and owner",
         displayValue: `${sourcePlaylistId} · ${syncSchedule} · local tracks ${localTracksPosition}`,
-        warning: hasLegacyOwner
+        warning: playlist.reason || playlist.Reason || (hasLegacyOwner
           ? "Map the legacy owner to a current user, then select the destination backend, library, and target playlist."
-          : "Choose an owning user, destination backend, library, and target playlist before scheduling this playlist.",
+          : "Choose an owning user, destination backend, library, and target playlist before scheduling this playlist."),
         sourceLine: playlistSourceLine,
-        handoff: playlist,
+        handoff: String(playlistAction).startsWith("requires_") ? playlist : null,
       });
     }
     for (const conflict of asArray(preview.conflicts || preview.Conflicts)) {
@@ -7691,9 +7698,9 @@ class AllstarrApp extends LitElement {
       unknown: "Unknown keys",
       unknowns: "Unknown keys",
       unsupported: "Unknown keys",
-      playlists: "Playlist ownership handoffs",
-      playlist_handoffs: "Playlist ownership handoffs",
-      playlist_ownership_handoffs: "Playlist ownership handoffs",
+      playlists: "Legacy playlists",
+      playlist_handoffs: "Legacy playlists",
+      playlist_ownership_handoffs: "Legacy playlists",
     })[String(id)] || titleCase(id);
   }
 
@@ -7703,7 +7710,8 @@ class AllstarrApp extends LitElement {
 
   migrationEntryStatusClass(entry) {
     const state = this.migrationEntryState(entry);
-    if (["import", "imported", "import_if_absent", "import_for_current_user", "ready", "durable"].includes(state)) return "configured";
+    if (["import", "imported", "import_if_absent", "import_for_current_user", "import_backend_identity",
+      "import_playlist_link", "import_playlist_links", "ready", "durable"].includes(state)) return "configured";
     if (["skip", "skipped", "unknown", "unsupported"].includes(state)) return "disabled";
     return "warning";
   }
@@ -7793,7 +7801,7 @@ class AllstarrApp extends LitElement {
   }
 
   migrationEntryValue(entry) {
-    if (this.redactionMode && this.migrationEntryIsSensitive(entry)) return "[redacted]";
+    if (this.migrationEntryIsSensitive(entry)) return "[redacted]";
     return display(entry.displayValue ?? entry.DisplayValue ?? entry.previewValue ?? entry.PreviewValue ??
       entry.redactedValue ?? entry.RedactedValue ?? entry.value ?? entry.Value);
   }
@@ -7838,7 +7846,7 @@ class AllstarrApp extends LitElement {
     const durableStatus = this.envMigrationStatus || {};
     const migrationCompleted = Boolean(durableStatus.completed ?? durableStatus.Completed);
     const migrationAppliedAt = durableStatus.lastAppliedAt ?? durableStatus.LastAppliedAt;
-    if (migrationCompleted && migration.state !== "success") {
+    if (migrationCompleted && migration.state !== "success" && !this.envMigrationCompletedOverride) {
       return html`
         <div class="panel env-migration" aria-labelledby="env-migration-title">
           <div class="env-migration-heading">
@@ -7849,6 +7857,7 @@ class AllstarrApp extends LitElement {
             <span class="status-chip configured">Completed</span>
           </div>
           ${migrationAppliedAt ? html`<p class="muted">Applied ${formatDate(migrationAppliedAt)}</p>` : nothing}
+          <button class="ghost" @click=${() => this.reviseEnvMigration()}>Review a revised legacy file</button>
         </div>
       `;
     }
@@ -7866,6 +7875,9 @@ class AllstarrApp extends LitElement {
     const importedSettingCount = preview.importedSettingCount ?? preview.ImportedSettingCount ?? 0;
     const providerAccountCount = preview.providerAccountCount ?? preview.ProviderAccountCount ?? 0;
     const manualCount = preview.manualCount ?? preview.ManualCount ?? 0;
+    const backendIdentityCount = preview.backendIdentityCount ?? preview.BackendIdentityCount ?? 0;
+    const playlistLinkCount = preview.playlistLinkCount ?? preview.PlaylistLinkCount ?? 0;
+    const scheduleCount = preview.scheduleCount ?? preview.ScheduleCount ?? 0;
     const sourceSha256 = preview.sourceSha256 || preview.SourceSha256;
     const parserVersion = preview.parserVersion || preview.ParserVersion;
 
@@ -7903,13 +7915,13 @@ class AllstarrApp extends LitElement {
 
         ${migration.state === "preview" || migration.state === "applying" ? html`
           <div class="env-migration-review">
-            <div class="callout warning"><strong>Review before applying.</strong> Existing settings are not changed until you confirm. ${this.redactionMode ? "Sharing redaction is on, so sensitive values are hidden." : "Sensitive values are visible to you in this short-lived preview. Turn on sharing redaction in the sidebar before taking screenshots."}</div>
+            <div class="callout warning"><strong>Review before applying.</strong> Existing settings are not changed until you confirm. Sensitive values are always redacted; only their destinations and outcomes are shown.</div>
             ${summary ? html`<div class="callout"><strong>Preview summary</strong><p>${display(summary.message || summary.Message || summary)}</p></div>` : nothing}
             <dl class="env-migration-provenance" aria-label="Migration preview provenance">
               <div><dt>Source SHA-256</dt><dd class="mono">${display(sourceSha256)}</dd></div>
               <div><dt>Parser version</dt><dd>${display(parserVersion)}</dd></div>
             </dl>
-            <dl class="env-migration-summary"><div><dt>Durable settings ready</dt><dd>${importedSettingCount}</dd></div><div><dt>Disabled accounts ready</dt><dd>${providerAccountCount}</dd></div><div><dt>Manual follow-ups</dt><dd>${manualCount}</dd></div></dl>
+            <dl class="env-migration-summary"><div><dt>Durable settings ready</dt><dd>${importedSettingCount}</dd></div><div><dt>Disabled accounts ready</dt><dd>${providerAccountCount}</dd></div><div><dt>Backend identities ready</dt><dd>${backendIdentityCount}</dd></div><div><dt>Playlist links ready</dt><dd>${playlistLinkCount}</dd></div><div><dt>Schedules ready</dt><dd>${scheduleCount}</dd></div><div><dt>Manual follow-ups</dt><dd>${manualCount}</dd></div></dl>
             ${warnings.length ? html`<div class="callout warning" role="alert"><strong>Warnings</strong><ul>${warnings.map((warning) => html`<li>${display(warning.message || warning.Message || warning)}</li>`)}</ul></div>` : nothing}
             ${categories.length ? categories.map((category) => {
               const entries = asArray(category.entries || category.Entries || category.items || category.Items);
@@ -7933,7 +7945,7 @@ class AllstarrApp extends LitElement {
             <form class="env-migration-confirm" @submit=${(event) => this.applyEnvMigration(event)}>
               <label class="inline-check">
                 <input name="confirmMigration" type="checkbox" required ?disabled=${migration.state === "applying"}>
-                <span>I reviewed this preview and authorize Allstarr to add the settings marked ready, create the listed shared provider accounts in a disabled state, and create the listed encrypted personal accounts for my signed-in user. Existing durable settings stay unchanged, and existing accounts are never overwritten.</span>
+                <span>I reviewed this preview and authorize Allstarr to add the records marked ready, including disabled shared accounts, my encrypted personal accounts, backend identity, and disabled playlist links and schedules. Existing durable records stay unchanged and are never overwritten.</span>
               </label>
               <button class="primary" type="submit" ?disabled=${migration.state === "applying" || !canApply}>${migration.state === "applying" ? "Applying migration…" : "Apply migration"}</button>
             </form>
@@ -7951,7 +7963,7 @@ class AllstarrApp extends LitElement {
               ${hasDeploymentChecklist ? html`<p>Deployment-owned values were not copied to the server. Review the deployment checklist, update Compose or the host <code>.env</code>, then recreate the Allstarr container to apply those separate changes.</p>` : html`<p>No container restart is required for this migration.</p>`}
             </div>
             ${this.renderMigrationOptionalRuntimeGuidance()}
-            <dl><div><dt>Durable settings</dt><dd>${this.migrationResultCount(result.settingsImported ?? result.SettingsImported ?? result.importedSettings ?? result.ImportedSettings)}</dd></div><div><dt>Disabled accounts created</dt><dd>${this.migrationResultCount(result.providerAccountsCreated ?? result.ProviderAccountsCreated)}</dd></div><div><dt>Skipped</dt><dd>${this.migrationResultCount(result.settingsSkipped ?? result.SettingsSkipped) + this.migrationResultCount(result.providerAccountsSkipped ?? result.ProviderAccountsSkipped)}</dd></div><div><dt>Manual checklist</dt><dd>${this.migrationResultCount(result.manualChecklistItems ?? result.ManualChecklistItems)}</dd></div><div><dt>Playlist handoffs</dt><dd>${this.migrationResultCount(result.playlistHandoffsPending ?? result.PlaylistHandoffsPending)}</dd></div></dl>
+            <dl><div><dt>Durable settings</dt><dd>${this.migrationResultCount(result.settingsImported ?? result.SettingsImported ?? result.importedSettings ?? result.ImportedSettings)}</dd></div><div><dt>Provider accounts</dt><dd>${this.migrationResultCount(result.providerAccountsCreated ?? result.ProviderAccountsCreated)}</dd></div><div><dt>Backend identities</dt><dd>${this.migrationResultCount(result.backendIdentitiesCreated ?? result.BackendIdentitiesCreated)}</dd></div><div><dt>Playlist links</dt><dd>${this.migrationResultCount(result.playlistLinksCreated ?? result.PlaylistLinksCreated)}</dd></div><div><dt>Schedules</dt><dd>${this.migrationResultCount(result.schedulesCreated ?? result.SchedulesCreated)}</dd></div><div><dt>Skipped</dt><dd>${this.migrationResultCount(result.settingsSkipped ?? result.SettingsSkipped) + this.migrationResultCount(result.providerAccountsSkipped ?? result.ProviderAccountsSkipped)}</dd></div><div><dt>Manual checklist</dt><dd>${this.migrationResultCount(result.manualChecklistItems ?? result.ManualChecklistItems)}</dd></div><div><dt>Playlist handoffs</dt><dd>${this.migrationResultCount(result.playlistHandoffsPending ?? result.PlaylistHandoffsPending)}</dd></div></dl>
             ${resultPlaylistHandoffs.length ? html`<section class="env-migration-result-section" aria-labelledby="migration-result-playlists"><h5 id="migration-result-playlists">Finish playlist migration</h5><div class="migration-playlist-handoffs">${resultPlaylistHandoffs.map((handoff) => html`<div><span><strong>${handoff.name || handoff.Name}</strong><small class="mono">${handoff.sourcePlaylistId || handoff.SourcePlaylistId}</small></span><button type="button" @click=${() => this.continueLegacyPlaylistHandoff(handoff)}>Continue in Playlists</button></div>`)}</div></section>` : nothing}
             ${resultSections.map((section) => html`<section class="env-migration-result-section" aria-labelledby=${`migration-result-${section.id}`}>
               <h5 id=${`migration-result-${section.id}`}>${section.label}</h5>

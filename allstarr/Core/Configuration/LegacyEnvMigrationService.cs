@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Operations;
+using allstarr.Core.Jobs;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -52,7 +53,12 @@ public sealed record LegacyEnvMigrationPreview(
     IReadOnlyList<LegacyProviderAccountPreview> ProviderAccounts,
     IReadOnlyList<LegacyPlaylistHandoff> PlaylistHandoffs,
     IReadOnlyList<string> Conflicts,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings)
+{
+    public int BackendIdentityCount { get; init; }
+    public int PlaylistLinkCount { get; init; }
+    public int ScheduleCount { get; init; }
+}
 
 public sealed record LegacyEnvMigrationApplyResult(
     bool Success,
@@ -65,7 +71,12 @@ public sealed record LegacyEnvMigrationApplyResult(
     int PlaylistHandoffsPending,
     IReadOnlyList<string> CreatedProviders,
     string SourceFingerprint,
-    DateTimeOffset AppliedAt);
+    DateTimeOffset AppliedAt)
+{
+    public int BackendIdentitiesCreated { get; init; }
+    public int PlaylistLinksCreated { get; init; }
+    public int SchedulesCreated { get; init; }
+}
 
 public sealed record LegacyEnvMigrationStatus(
     bool Available,
@@ -132,6 +143,8 @@ public sealed class LegacyEnvMigrationService
             new Dictionary<string, EffectiveRuntimeSetting>(StringComparer.OrdinalIgnoreCase);
         HashSet<string> existingProviders = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> existingUserProviders = new(StringComparer.OrdinalIgnoreCase);
+        IReadOnlyList<BackendIdentityRecord> existingBackendIdentities = [];
+        HashSet<string> existingPlaylistTargets = new(StringComparer.Ordinal);
         if (tenantId.HasValue)
         {
             existingSettings = await _settings.GetManyAsync(
@@ -153,6 +166,26 @@ public sealed class LegacyEnvMigrationService
                         .Select(item => item.ProviderId)
                         .ToListAsync(cancellationToken))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                existingBackendIdentities = await db.BackendIdentities.AsNoTracking()
+                    .Where(item => item.TenantId == tenantId.Value &&
+                                   item.UserId == actor.ActorUserId.Value)
+                    .ToListAsync(cancellationToken);
+                existingPlaylistTargets = (await db.PlaylistLinks.AsNoTracking()
+                        .Where(item => item.TenantId == tenantId.Value &&
+                                       item.OwnerUserId == actor.ActorUserId.Value &&
+                                       item.SourceProviderId == "spotify")
+                        .Select(item => new
+                        {
+                            item.SourcePlaylistIdHash,
+                            item.TargetProtocol,
+                            item.TargetBackendInstanceId
+                        })
+                        .ToListAsync(cancellationToken))
+                    .Select(item => PlaylistTargetKey(
+                        item.SourcePlaylistIdHash,
+                        item.TargetProtocol,
+                        item.TargetBackendInstanceId))
+                    .ToHashSet(StringComparer.Ordinal);
             }
         }
 
@@ -162,12 +195,40 @@ public sealed class LegacyEnvMigrationService
             conflicts.Add("The administrator session is not linked to an Allstarr tenant.");
         }
 
+        var accountPreviews = BuildProviderPreviews(document, existingProviders, conflicts);
+        var identityPlan = BuildBackendIdentityPlan(document, actor, existingBackendIdentities);
+        document = document with
+        {
+            Playlists = PlanPlaylists(
+                document.Playlists,
+                identityPlan,
+                existingProviders.Contains("spotify") ||
+                accountPreviews.Any(item =>
+                    item.ProviderId == "spotify" && item.Action == "create_disabled_if_missing"),
+                existingPlaylistTargets)
+        };
         var previewItems = new List<LegacyEnvPreviewItem>(document.Entries.Count);
         foreach (var entry in document.Entries)
         {
             var action = entry.Action;
             var reason = entry.Reason;
             long? existingRevision = null;
+            if (entry.Key.Equals("JELLYFIN_USER_ID", StringComparison.OrdinalIgnoreCase) &&
+                identityPlan.Create)
+            {
+                action = "import_backend_identity";
+                reason = "Create the current administrator's durable Jellyfin backend identity.";
+            }
+            else if (entry.Disposition == LegacyEnvDisposition.PlaylistHandoff)
+            {
+                action = document.Playlists.All(item =>
+                    item.Action is "import_playlist_link" or "conflict_existing")
+                    ? "import_playlist_links"
+                    : "requires_target_selection";
+                reason = action == "import_playlist_links"
+                    ? "Create durable disabled playlist links and schedules for administrator review."
+                    : "At least one playlist still needs an explicit source account, backend target, or behavior review.";
+            }
             if (entry.Disposition == LegacyEnvDisposition.DurableSetting)
             {
                 if (entry.Value.Length == 0)
@@ -237,7 +298,6 @@ public sealed class LegacyEnvMigrationService
                 DuplicateScrobbleWarning(entry)));
         }
 
-        var accountPreviews = BuildProviderPreviews(document, existingProviders, conflicts);
         var revision = await ComputeRevisionAsync(document.SourceSha256, tenantId, actor.ActorUserId, cancellationToken);
         var rawToken = Base64Url(RandomNumberGenerator.GetBytes(32));
         var tokenHash = HashToken(rawToken);
@@ -276,7 +336,12 @@ public sealed class LegacyEnvMigrationService
             accountPreviews,
             document.Playlists,
             conflicts,
-            DuplicateAssignmentWarnings(document));
+            DuplicateAssignmentWarnings(document))
+        {
+            BackendIdentityCount = identityPlan.Create ? 1 : 0,
+            PlaylistLinkCount = document.Playlists.Count(item => item.Action == "import_playlist_link"),
+            ScheduleCount = document.Playlists.Count(item => item.Action == "import_playlist_link")
+        };
     }
 
     public async Task<LegacyEnvMigrationApplyResult> ApplyAsync(
@@ -405,6 +470,31 @@ public sealed class LegacyEnvMigrationService
                         cancellationToken);
                 }
 
+                var existingIdentities = state.ActorUserId.HasValue
+                    ? await db.BackendIdentities.Where(item =>
+                            item.TenantId == state.TenantId.Value &&
+                            item.UserId == state.ActorUserId.Value)
+                        .ToListAsync(cancellationToken)
+                    : [];
+                var identityPlan = BuildBackendIdentityPlan(state.Document, actor, existingIdentities);
+                var createdIdentities = new List<BackendIdentityRecord>();
+                if (identityPlan.Create)
+                {
+                    var identity = new BackendIdentityRecord
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = state.TenantId.Value,
+                        UserId = state.ActorUserId!.Value,
+                        BackendType = identityPlan.BackendType!,
+                        BackendInstanceId = identityPlan.BackendInstanceId,
+                        PrincipalId = identityPlan.PrincipalId!,
+                        CreatedAt = _clock.UtcNow,
+                        LastSeenAt = _clock.UtcNow
+                    };
+                    db.BackendIdentities.Add(identity);
+                    createdIdentities.Add(identity);
+                }
+
                 var createdProviders = new List<string>();
                 var createdProviderRecords = new List<ProviderAccountRecord>();
                 foreach (var provider in state.ProviderAccounts.Where(item =>
@@ -510,6 +600,89 @@ public sealed class LegacyEnvMigrationService
                     createdProviderRecords.Add(account);
                 }
 
+                var spotifyAccount = createdProviderRecords.SingleOrDefault(item => item.ProviderId == "spotify") ??
+                                     await db.ProviderAccounts.SingleOrDefaultAsync(item =>
+                                         item.Scope == ProviderAccountScope.Global && item.TenantId == null &&
+                                         item.ProviderId == "spotify", cancellationToken);
+                var createdSchedules = new List<JobScheduleRecord>();
+                var createdPlaylistLinks = new List<PlaylistLinkRecord>();
+                foreach (var playlist in state.Document.Playlists.Where(item =>
+                             item.Action == "import_playlist_link"))
+                {
+                    if (spotifyAccount == null || !state.ActorUserId.HasValue)
+                    {
+                        throw new LegacyEnvMigrationException(
+                            "playlist_prerequisite_changed",
+                            "The Spotify account or playlist owner changed after preview.");
+                    }
+
+                    var sourceHash = HashToken(playlist.SourcePlaylistId);
+                    if (await db.PlaylistLinks.AnyAsync(item =>
+                            item.TenantId == state.TenantId.Value &&
+                            item.OwnerUserId == state.ActorUserId.Value &&
+                            item.LibraryScopeId == playlist.LibraryScopeId &&
+                            item.ProviderAccountId == spotifyAccount.Id &&
+                            item.SourcePlaylistIdHash == sourceHash &&
+                            item.TargetProtocol == playlist.TargetProtocol &&
+                            item.TargetBackendInstanceId == playlist.TargetBackendInstanceId,
+                            cancellationToken))
+                    {
+                        continue;
+                    }
+
+                    var schedule = new JobScheduleRecord
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = state.TenantId.Value,
+                        OwnerUserId = state.ActorUserId.Value,
+                        LibraryScopeId = playlist.LibraryScopeId,
+                        JobType = DurableScheduleEngine.PlaylistSyncJobType,
+                        CronExpression = playlist.SyncSchedule,
+                        TimeZoneId = "UTC",
+                        OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                        MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                        RetryPolicyJson = """{"policy":"standard"}""",
+                        PayloadTemplateJson = "{}",
+                        Enabled = false,
+                        CreatedAt = _clock.UtcNow,
+                        UpdatedAt = _clock.UtcNow,
+                        Revision = 1
+                    };
+                    var link = new PlaylistLinkRecord
+                    {
+                        Id = Guid.CreateVersion7(),
+                        TenantId = state.TenantId.Value,
+                        OwnerUserId = state.ActorUserId.Value,
+                        ProviderAccountId = spotifyAccount.Id,
+                        ScheduleId = schedule.Id,
+                        Enabled = false,
+                        LibraryScopeId = playlist.LibraryScopeId,
+                        SourceProviderId = "spotify",
+                        SourcePlaylistId = playlist.SourcePlaylistId,
+                        SourcePlaylistIdHash = sourceHash,
+                        TargetProtocol = playlist.TargetProtocol!,
+                        TargetBackendInstanceId = playlist.TargetBackendInstanceId!,
+                        TargetPlaylistId = string.IsNullOrWhiteSpace(playlist.JellyfinTargetPlaylistId)
+                            ? null
+                            : playlist.JellyfinTargetPlaylistId,
+                        Mode = PlaylistLinkMode.Materialized,
+                        MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                        PreserveManualEntries = true,
+                        SyncName = true,
+                        SyncDescription = true,
+                        SyncArtwork = true,
+                        RuleVersion = MigrationSchemaVersion,
+                        PolicyVersion = MigrationSchemaVersion,
+                        CreatedAt = _clock.UtcNow,
+                        UpdatedAt = _clock.UtcNow,
+                        Revision = 1
+                    };
+                    db.JobSchedules.Add(schedule);
+                    db.PlaylistLinks.Add(link);
+                    createdSchedules.Add(schedule);
+                    createdPlaylistLinks.Add(link);
+                }
+
                 var appliedAt = _clock.UtcNow;
                 var audit = new AuditEventRecord
                 {
@@ -526,7 +699,10 @@ public sealed class LegacyEnvMigrationService
                         schemaVersion = MigrationSchemaVersion,
                         settingsImported = settingWrites.Length,
                         createdProviders,
-                        playlistHandoffsPending = state.Document.Playlists.Count
+                        backendIdentitiesCreated = createdIdentities.Count,
+                        playlistLinksCreated = createdPlaylistLinks.Count,
+                        schedulesCreated = createdSchedules.Count,
+                        playlistHandoffsPending = state.Document.Playlists.Count(IsPlaylistHandoffPending)
                     }, JsonOptions),
                     CreatedAt = appliedAt
                 };
@@ -539,10 +715,15 @@ public sealed class LegacyEnvMigrationService
                     state.ProviderAccounts.Count(item => item.Action == "conflict_existing"),
                     state.Items.Count(item => item.Action is "retain_in_deployment" or "per_user_manual" or
                         "manual_review" or "deprecated_manual_review" or "requires_target_selection"),
-                    state.Document.Playlists.Count,
+                    state.Document.Playlists.Count(IsPlaylistHandoffPending),
                     createdProviders,
                     state.Document.SourceSha256,
-                    appliedAt);
+                    appliedAt)
+                {
+                    BackendIdentitiesCreated = createdIdentities.Count,
+                    PlaylistLinksCreated = createdPlaylistLinks.Count,
+                    SchedulesCreated = createdSchedules.Count
+                };
                 db.AuditEvents.Add(audit);
                 db.LegacyEnvImports.Add(new LegacyEnvImportRecord
                 {
@@ -565,6 +746,23 @@ public sealed class LegacyEnvMigrationService
                             recordId = item.Id,
                             item.ProviderId,
                             scope = item.Scope.ToString()
+                        }),
+                        backendIdentities = createdIdentities.Select(item => new
+                        {
+                            recordId = item.Id,
+                            item.BackendType,
+                            item.BackendInstanceId
+                        }),
+                        playlistLinks = createdPlaylistLinks.Select(item => new
+                        {
+                            recordId = item.Id,
+                            item.SourceProviderId,
+                            item.SourcePlaylistIdHash
+                        }),
+                        schedules = createdSchedules.Select(item => new
+                        {
+                            recordId = item.Id,
+                            item.JobType
                         })
                     }, JsonOptions),
                     AppliedAt = appliedAt
@@ -657,6 +855,43 @@ public sealed class LegacyEnvMigrationService
             builder.Append('|').Append(account.ProviderId).Append(':').Append(account.Id.ToString("N"))
                 .Append(':').Append(account.Revision);
         }
+        if (tenantId.HasValue && actorUserId.HasValue)
+        {
+            var identities = await db.BackendIdentities.AsNoTracking()
+                .Where(item => item.TenantId == tenantId.Value && item.UserId == actorUserId.Value)
+                .OrderBy(item => item.BackendType).ThenBy(item => item.BackendInstanceId)
+                .Select(item => new { item.Id, item.BackendType, item.BackendInstanceId })
+                .ToListAsync(cancellationToken);
+            foreach (var identity in identities)
+            {
+                builder.Append("|identity:").Append(identity.Id.ToString("N")).Append(':')
+                    .Append(identity.BackendType).Append(':').Append(identity.BackendInstanceId);
+            }
+
+            var links = await db.PlaylistLinks.AsNoTracking()
+                .Where(item => item.TenantId == tenantId.Value && item.OwnerUserId == actorUserId.Value)
+                .OrderBy(item => item.Id)
+                .Select(item => new { item.Id, item.Revision, item.ScheduleId })
+                .ToListAsync(cancellationToken);
+            foreach (var link in links)
+            {
+                builder.Append("|playlist:").Append(link.Id.ToString("N")).Append(':')
+                    .Append(link.Revision).Append(':').Append(link.ScheduleId?.ToString("N") ?? "none");
+            }
+
+            var scheduleIds = links.Where(item => item.ScheduleId.HasValue)
+                .Select(item => item.ScheduleId!.Value).ToArray();
+            var schedules = await db.JobSchedules.AsNoTracking()
+                .Where(item => scheduleIds.Contains(item.Id))
+                .OrderBy(item => item.Id)
+                .Select(item => new { item.Id, item.Revision })
+                .ToListAsync(cancellationToken);
+            foreach (var schedule in schedules)
+            {
+                builder.Append("|schedule:").Append(schedule.Id.ToString("N")).Append(':')
+                    .Append(schedule.Revision);
+            }
+        }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
     }
@@ -703,6 +938,96 @@ public sealed class LegacyEnvMigrationService
 
         return result;
     }
+
+    private static LegacyBackendIdentityPlan BuildBackendIdentityPlan(
+        LegacyEnvDocument document,
+        LegacyEnvMigrationActor actor,
+        IReadOnlyList<BackendIdentityRecord> existing)
+    {
+        string? Value(params string[] keys) => document.Entries
+            .Where(item => keys.Contains(item.Key, StringComparer.OrdinalIgnoreCase))
+            .OrderByDescending(item => item.LineNumber)
+            .Select(item => item.Value.Trim())
+            .FirstOrDefault(item => item.Length > 0);
+
+        var backendType = Value("BACKEND_TYPE", "Backend__Type")?.ToLowerInvariant();
+        var instanceId = Value("ALLSTARR_BACKEND_INSTANCE_ID") ?? "primary";
+        if (backendType == null && existing.Count == 1)
+        {
+            backendType = existing[0].BackendType;
+            instanceId = existing[0].BackendInstanceId;
+        }
+
+        var matching = backendType == null
+            ? null
+            : existing.SingleOrDefault(item =>
+                item.BackendType.Equals(backendType, StringComparison.OrdinalIgnoreCase) &&
+                item.BackendInstanceId.Equals(instanceId, StringComparison.Ordinal));
+        var principalId = matching?.PrincipalId ??
+                          (backendType == "jellyfin" ? Value("JELLYFIN_USER_ID") : null);
+        var create = matching == null && actor.TenantId.HasValue && actor.ActorUserId.HasValue &&
+                     backendType == "jellyfin" && principalId != null;
+        return new(backendType, instanceId, principalId, create, matching != null || create);
+    }
+
+    private static IReadOnlyList<LegacyPlaylistHandoff> PlanPlaylists(
+        IReadOnlyList<LegacyPlaylistHandoff> playlists,
+        LegacyBackendIdentityPlan identity,
+        bool spotifyAccountReady,
+        IReadOnlySet<string> existingTargets) =>
+        playlists.Select(item =>
+        {
+            if (!spotifyAccountReady)
+            {
+                return item with
+                {
+                    Action = "requires_source_account",
+                    Reason = "A Spotify provider account must be imported or selected before this playlist can become a durable link."
+                };
+            }
+            if (!identity.Ready)
+            {
+                return item with
+                {
+                    Action = "requires_target_selection",
+                    Reason = "An explicit durable backend identity is required before this playlist can become a durable link."
+                };
+            }
+            if (item.LocalTracksPosition == "last")
+            {
+                return item with
+                {
+                    Action = "requires_behavior_review",
+                    Reason = "The current playlist model preserves manual entries but cannot safely infer the legacy 'local tracks last' ordering rule."
+                };
+            }
+            if (existingTargets.Contains(PlaylistTargetKey(
+                    HashToken(item.SourcePlaylistId),
+                    identity.BackendType!,
+                    identity.BackendInstanceId)))
+            {
+                return item with
+                {
+                    Action = "conflict_existing",
+                    Reason = "The matching durable playlist link already exists and will not be duplicated.",
+                    TargetProtocol = identity.BackendType,
+                    TargetBackendInstanceId = identity.BackendInstanceId
+                };
+            }
+            return item with
+            {
+                Action = "import_playlist_link",
+                Reason = "Create a disabled durable playlist link and schedule for administrator review.",
+                TargetProtocol = identity.BackendType,
+                TargetBackendInstanceId = identity.BackendInstanceId
+            };
+        }).ToArray();
+
+    private static string PlaylistTargetKey(string sourceHash, string protocol, string backendInstanceId) =>
+        $"{sourceHash}|{protocol.ToLowerInvariant()}|{backendInstanceId}";
+
+    private static bool IsPlaylistHandoffPending(LegacyPlaylistHandoff playlist) =>
+        playlist.Action.StartsWith("requires_", StringComparison.Ordinal);
 
     private static byte[] BuildProviderSecret(LegacyEnvDocument document, string providerId)
     {
@@ -949,6 +1274,13 @@ public sealed class LegacyEnvMigrationService
         return leftBytes.Length == rightBytes.Length &&
                CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
+
+    private sealed record LegacyBackendIdentityPlan(
+        string? BackendType,
+        string BackendInstanceId,
+        string? PrincipalId,
+        bool Create,
+        bool Ready);
 
     private sealed class PreviewState(
         LegacyEnvDocument document,

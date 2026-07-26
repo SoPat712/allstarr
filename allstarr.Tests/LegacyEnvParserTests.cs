@@ -86,6 +86,8 @@ public sealed class LegacyEnvParserTests
             """);
 
         var playlist = Assert.Single(document.Playlists);
+        AssertEntry(document, "SPOTIFY_IMPORT_PLAYLISTS", LegacyEnvDisposition.PlaylistHandoff,
+            "requires_target_selection", true);
         Assert.Equal("Discover Weekly", playlist.Name);
         Assert.Equal("spotify-source-id", playlist.SourcePlaylistId);
         Assert.Equal("jellyfin-target-id", playlist.JellyfinTargetPlaylistId);
@@ -176,6 +178,7 @@ public sealed class LegacyEnvParserTests
     [InlineData("NOT AN ASSIGNMENT", "KEY=VALUE")]
     [InlineData("SPOTIFY_IMPORT_PLAYLISTS=not-json", "invalid JSON")]
     [InlineData("SPOTIFY_IMPORT_PLAYLISTS=[[\"name\",\"\",\"target\"]]", "are required")]
+    [InlineData("SPOTIFY_IMPORT_PLAYLISTS=[[\"name\",\"source\",\"target\",\"first\",\"not-a-cron\"]]", "sync schedule")]
     public void Parse_RejectsAmbiguousOrInvalidInput(string source, string expected)
     {
         var error = Assert.Throws<LegacyEnvParseException>(() => Parse(source));
