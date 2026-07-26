@@ -159,7 +159,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var matcher = File.ReadAllText(FindRepositoryFile("allstarr", "Core", "Matching", "PlaylistMatchingCoordinator.cs"));
         var adapter = File.ReadAllText(FindRepositoryFile("allstarr", "Services", "Spotify", "SpotifyPlaylistMatchingAdapter.cs"));
         Assert.Contains("PlaylistMatchAllJobHandler", matcher, StringComparison.Ordinal);
-        Assert.Contains("cachedSource?.Tracks is { Count: > 0 } sourceTracks", adapter, StringComparison.Ordinal);
+        Assert.Contains("BuildSpotifyMissingTracksKey(playlist.Name)", adapter, StringComparison.Ordinal);
+        Assert.Contains("sourceTracks is { Count: > 0 }", adapter, StringComparison.Ordinal);
         Assert.Contains("MatchPlaylistTracksWithIsrcAsync(", adapter, StringComparison.Ordinal);
         Assert.Contains("sourceTracks?.OrderBy(track => track.Position)", adapter, StringComparison.Ordinal);
         Assert.Contains("IDurableJobHandler", matcher, StringComparison.Ordinal);

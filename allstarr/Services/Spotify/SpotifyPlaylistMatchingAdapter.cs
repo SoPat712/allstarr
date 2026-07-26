@@ -223,7 +223,24 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             {
                 var cachedSource = await _cache.GetAsync<SpotifyPlaylist>(
                     CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name));
-                if (cachedSource?.Tracks is { Count: > 0 } sourceTracks)
+                var sourceTracks = cachedSource?.Tracks;
+                if (sourceTracks is not { Count: > 0 })
+                {
+                    var legacySource = await _cache.GetAsync<List<MissingTrack>>(
+                        CacheKeyBuilder.BuildSpotifyMissingTracksKey(playlist.Name));
+                    sourceTracks = legacySource?
+                        .Select((track, position) => new SpotifyPlaylistTrack
+                        {
+                            SpotifyId = track.SpotifyId,
+                            Position = position,
+                            Title = track.Title,
+                            Album = track.Album,
+                            Artists = track.Artists
+                        })
+                        .ToList();
+                }
+
+                if (sourceTracks is { Count: > 0 })
                 {
                     await MatchPlaylistTracksWithIsrcAsync(
                         playlist.Name,
