@@ -5123,6 +5123,12 @@ button.setup-choice {
     font-size: .82rem;
 }
 
+.playlist-operation-actions,
+.playlist-operation-menu,
+.playlist-operation-menu > summary {
+    width: 100%;
+}
+
 .playlist-track-toolbar {
     display: grid;
     grid-template-columns: minmax(220px, 1fr) minmax(150px, auto) minmax(150px, auto) auto;
