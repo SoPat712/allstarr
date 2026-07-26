@@ -74,7 +74,19 @@ public sealed record TrackMatchCandidateScore(
     double Confidence,
     IReadOnlyList<string> Reasons,
     IReadOnlyList<string> Warnings,
-    IReadOnlyDictionary<string, double>? Components = null);
+    IReadOnlyDictionary<string, double>? Components = null,
+    string? Title = null,
+    string? Artist = null,
+    string? Album = null,
+    int? DurationSeconds = null,
+    string? SourceIsrc = null,
+    string? CandidateIsrc = null,
+    IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
+    string? NormalizedSourceTitle = null,
+    string? NormalizedCandidateTitle = null,
+    double? ArtistOverlap = null,
+    double? AlbumEvidence = null,
+    int? DurationDeltaSeconds = null);
 
 public sealed record TrackMatchDecision(
     TrackMatchReviewState State,
@@ -187,7 +199,7 @@ public sealed class TrackMatchDecisionEngine
                     TrackMatchReviewState.Pinned,
                     pinned,
                     1,
-                    [Score(pinned, 1, ["manual_override_pinned"], [])],
+                    [Score(source, pinned, 1, ["manual_override_pinned"], [])],
                     ["manual_override_pinned"],
                     [],
                     scope);
@@ -209,7 +221,7 @@ public sealed class TrackMatchDecisionEngine
                 0,
                 [],
                 [],
-                [scopedCandidates.Count > 0 ? "manual_override_rejected_all" : "no_visible_candidates"],
+                [scopedCandidates.Count > 0 ? "manual_override_rejected_all" : "no_indexed_candidate"],
                 scope);
         }
 
@@ -225,7 +237,7 @@ public sealed class TrackMatchDecisionEngine
                 best.Confidence,
                 scores,
                 best.Reasons,
-                ["top_candidates_within_ambiguity_delta"],
+                ["ambiguous_top_candidates"],
                 scope);
         }
 
@@ -253,25 +265,25 @@ public sealed class TrackMatchDecisionEngine
         if (source.CanonicalRecordingId.HasValue &&
             source.CanonicalRecordingId == candidate.CanonicalRecordingId)
         {
-            return Score(candidate, 1, ["canonical_recording_id_exact"], warnings,
+            return Score(source, candidate, 1, ["canonical_recording_id_exact"], warnings,
                 new Dictionary<string, double> { ["canonicalRecordingId"] = 1 });
         }
         if (EqualsNormalized(source.MusicBrainzRecordingId, candidate.MusicBrainzRecordingId))
         {
-            return Score(candidate, 1, ["musicbrainz_recording_id_exact"], warnings,
+            return Score(source, candidate, 1, ["musicbrainz_recording_id_exact"], warnings,
                 new Dictionary<string, double> { ["musicbrainzRecordingId"] = 1 });
         }
 
         if (EqualsNormalized(source.Isrc, candidate.Isrc))
         {
-            return Score(candidate, 0.99, ["isrc_exact"], warnings,
+            return Score(source, candidate, 0.99, ["isrc_exact"], warnings,
                 new Dictionary<string, double> { ["isrc"] = 1 });
         }
 
         if (TryGetProviderTrackId(candidate.ProviderTrackIds, source.ProviderId, out var providerId) &&
             providerId.Equals(source.ExternalId, StringComparison.Ordinal))
         {
-            return Score(candidate, 1, ["provider_track_id_exact"], warnings,
+            return Score(source, candidate, 1, ["provider_track_id_exact"], warnings,
                 new Dictionary<string, double> { ["providerTrackId"] = 1 });
         }
 
@@ -307,7 +319,7 @@ public sealed class TrackMatchDecisionEngine
             warnings.Add("explicit_flag_mismatch");
         }
 
-        return Score(candidate, Math.Round(confidence, 4), reasons, warnings,
+        return Score(source, candidate, Math.Round(confidence, 4), reasons, warnings,
             new Dictionary<string, double>
             {
                 ["title"] = Math.Round(title, 4),
@@ -489,6 +501,7 @@ public sealed class TrackMatchDecisionEngine
     }
 
     private static TrackMatchCandidateScore Score(
+        ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
         double confidence,
         IReadOnlyList<string> reasons,
@@ -499,7 +512,22 @@ public sealed class TrackMatchDecisionEngine
         confidence,
         reasons,
         warnings,
-        components);
+        components,
+        candidate.Title,
+        candidate.Artist,
+        candidate.Album,
+        candidate.DurationSeconds,
+        source.Isrc,
+        candidate.Isrc,
+        candidate.ProviderTrackIds,
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(source.Title)),
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(candidate.Title)),
+        ArtistSimilarity(source.Artist, candidate.Artist),
+        Math.Max(Similarity(source.Album, candidate.Album),
+            Similarity(source.AlbumArtist, candidate.AlbumArtist)),
+        source.DurationSeconds.HasValue && candidate.DurationSeconds.HasValue
+            ? Math.Abs(source.DurationSeconds.Value - candidate.DurationSeconds.Value)
+            : null);
 
     private TrackMatchDecision Result(
         TrackMatchReviewState state,

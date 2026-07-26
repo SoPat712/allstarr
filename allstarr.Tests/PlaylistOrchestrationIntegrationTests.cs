@@ -171,12 +171,18 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         var unresolved = decisions[snapshots[Hash("source-unresolved")].Id];
         Assert.Equal(TrackMatchState.Suggested, suggested.State);
         Assert.Null(suggested.LibraryTrackId);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, suggested.MatcherVersion);
+        Assert.Contains("NormalizedCandidateTitle", suggested.CandidateResultsJson);
+        Assert.Contains("ArtistOverlap", suggested.CandidateResultsJson);
+        Assert.Contains("DurationDeltaSeconds", suggested.CandidateResultsJson);
         Assert.Equal(suggestedId,
             TrackMatchOverridePolicy.TopCandidateLibraryTrackId(suggested.CandidateResultsJson));
         Assert.Equal(TrackMatchState.Ambiguous, ambiguous.State);
         Assert.Null(ambiguous.LibraryTrackId);
+        Assert.Contains("ambiguous_top_candidates", ambiguous.WarningsJson);
         Assert.Equal(TrackMatchState.Unresolved, unresolved.State);
         Assert.Null(unresolved.LibraryTrackId);
+        Assert.Contains("no_indexed_candidate", unresolved.WarningsJson);
     }
 
     [Fact]

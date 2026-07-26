@@ -96,6 +96,12 @@ public sealed class TrackMatchDecisionEngineTests
         Assert.Equal(TrackMatchReviewState.Accepted, accepted.State);
         Assert.Equal(strong.LibraryTrackId, accepted.SelectedLibraryTrackId);
         Assert.Contains("title_exact", accepted.Reasons);
+        var diagnostics = accepted.Candidates[0];
+        Assert.Equal("A Song (Remastered)", diagnostics.Title);
+        Assert.Equal("a song", diagnostics.NormalizedCandidateTitle);
+        Assert.Equal(1, diagnostics.ArtistOverlap);
+        Assert.Equal(1, diagnostics.DurationDeltaSeconds);
+        Assert.NotNull(diagnostics.Components);
         Assert.Equal(TrackMatchReviewState.Unresolved, unresolved.State);
         Assert.Null(unresolved.SelectedLibraryTrackId);
         Assert.Contains("below_suggestion_threshold", unresolved.Warnings);
@@ -117,7 +123,7 @@ public sealed class TrackMatchDecisionEngineTests
 
         Assert.Equal(TrackMatchReviewState.Ambiguous, decision.State);
         Assert.Null(decision.SelectedLibraryTrackId);
-        Assert.Contains("top_candidates_within_ambiguity_delta", decision.Warnings);
+        Assert.Contains("ambiguous_top_candidates", decision.Warnings);
     }
 
     [Fact]
@@ -291,7 +297,7 @@ public sealed class TrackMatchDecisionEngineTests
 
         Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
         Assert.Empty(decision.Candidates);
-        Assert.Contains("no_visible_candidates", decision.Warnings);
+        Assert.Contains("no_indexed_candidate", decision.Warnings);
     }
 
     [Fact]

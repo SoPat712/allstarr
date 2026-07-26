@@ -485,6 +485,10 @@ public sealed class TrackMatchesController(
             decision?.Confidence,
             decision?.Threshold,
             decision?.DecisionVersion,
+            algorithmVersion = decision?.MatcherVersion,
+            policyVersion = decision?.PolicyVersion,
+            sourceSnapshotVersion = decision?.SourceSnapshotVersion,
+            libraryIndexRevision = decision?.LibraryIndexRevision,
             canonicalRecordingId = canonicalId,
             libraryTrackId = trackId,
             overrideId = manual?.Id,
@@ -569,11 +573,31 @@ public sealed class TrackMatchesController(
             {
                 libraryTrackId = Text(item, "libraryTrackId") ?? Text(item, "LibraryTrackId"),
                 backendItemId = Text(item, "backendItemId") ?? Text(item, "BackendItemId"),
-                confidence = Number(item, "confidence") ?? Number(item, "Confidence")
+                confidence = Number(item, "confidence") ?? Number(item, "Confidence"),
+                title = Text(item, "title") ?? Text(item, "Title"),
+                artist = Text(item, "artist") ?? Text(item, "Artist"),
+                album = Text(item, "album") ?? Text(item, "Album"),
+                durationSeconds = Number(item, "durationSeconds") ?? Number(item, "DurationSeconds"),
+                sourceIsrc = Text(item, "sourceIsrc") ?? Text(item, "SourceIsrc"),
+                candidateIsrc = Text(item, "candidateIsrc") ?? Text(item, "CandidateIsrc"),
+                normalizedSourceTitle = Text(item, "normalizedSourceTitle") ?? Text(item, "NormalizedSourceTitle"),
+                normalizedCandidateTitle = Text(item, "normalizedCandidateTitle") ?? Text(item, "NormalizedCandidateTitle"),
+                artistOverlap = Number(item, "artistOverlap") ?? Number(item, "ArtistOverlap"),
+                albumEvidence = Number(item, "albumEvidence") ?? Number(item, "AlbumEvidence"),
+                durationDeltaSeconds = Number(item, "durationDeltaSeconds") ?? Number(item, "DurationDeltaSeconds"),
+                providerTrackIds = Element(item, "providerTrackIds", "ProviderTrackIds"),
+                components = Element(item, "components", "Components"),
+                reasons = Element(item, "reasons", "Reasons"),
+                warnings = Element(item, "warnings", "Warnings")
             }).Where(item => item.libraryTrackId != null).Cast<object>().ToArray();
         }
         catch (JsonException) { return []; }
     }
+
+    private static JsonElement? Element(JsonElement root, string camelName, string pascalName) =>
+        root.TryGetProperty(camelName, out var value) || root.TryGetProperty(pascalName, out value)
+            ? value.Clone()
+            : null;
 
     private static double? Number(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&
         root.TryGetProperty(name, out var value) && value.TryGetDouble(out var number) ? number : null;
