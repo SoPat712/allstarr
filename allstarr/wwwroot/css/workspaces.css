@@ -97,12 +97,17 @@
 .injected-playlist-dialog .playlist-track-table {
     flex: 1 1 auto;
     min-height: 180px;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
     gap: 0;
     background: transparent;
+}
+
+.injected-playlist-dialog .playlist-operation-summary.playlist-operation-metrics {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    padding: 10px 12px;
 }
 
 .injected-playlist-dialog .playlist-track-row {
@@ -166,6 +171,10 @@
 
     .injected-playlist-dialog .playlist-operation-summary {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .injected-playlist-dialog .playlist-operation-summary.playlist-operation-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .injected-playlist-dialog .injected-playlist-scroll {

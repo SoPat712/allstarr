@@ -4110,23 +4110,13 @@ class AllstarrApp extends LitElement {
           </div>
           </div>
           <button class="icon-button ghost dialog-close" @click=${close} aria-label="Close playlist tracks">${icon("close")}</button>
-          ${details ? html`<div class="playlist-operation-row"><div class="playlist-operation-summary" aria-label="Playlist synchronization details">
-            <section class="playlist-operation-group coverage-group" aria-label="Playlist coverage">
-              <div class="playlist-operation-heading"><span>${icon("playlist", 16)}</span><div><small>Coverage</small><strong>${playableRatio === null ? "Waiting for tracks" : `${Math.round(playableRatio * 100)}% playable`}</strong></div></div>
-              <div class="playlist-operation-metrics">
-                <span><small>Local</small><strong>${localTracks}</strong></span>
-                <span><small>External</small><strong>${externalTracks}</strong></span>
-                <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
-              </div>
-            </section>
-            <section class="playlist-operation-group timing-group" aria-label="Synchronization timing">
-              <div class="playlist-operation-heading"><span>${icon("clock", 16)}</span><div><small>Timing</small><strong>Source and target cadence</strong></div></div>
-              <div class="playlist-operation-metrics">
-                <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
-                <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not yet"}</strong></span>
-                <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
-              </div>
-            </section>
+          ${details ? html`<div class="playlist-operation-row"><div class="playlist-operation-summary playlist-operation-metrics" aria-label="Playlist synchronization details">
+            <span><small>Local</small><strong>${localTracks}</strong></span>
+            <span><small>External</small><strong>${externalTracks}</strong></span>
+            <span class=${unmatchedTracks ? "needs-attention" : ""}><small>Unmatched</small><strong>${unmatchedTracks}</strong></span>
+            <span><small>Source refreshed</small><strong>${lastSourceRefreshAt ? formatRelativeTime(lastSourceRefreshAt) : "Not recorded"}</strong></span>
+            <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not yet"}</strong></span>
+            <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
           </div><div class="playlist-operation-actions" aria-label="Playlist actions">
             <button class="primary compact playlist-rematch-action" @click=${async () => {
               await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);

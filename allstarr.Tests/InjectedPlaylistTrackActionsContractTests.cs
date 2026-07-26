@@ -105,7 +105,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Last synced", script, StringComparison.Ordinal);
         Assert.Contains("<span>Sync now</span>", script, StringComparison.Ordinal);
         Assert.Contains("playlist-rematch-action", script, StringComparison.Ordinal);
-        var summaryStart = script.IndexOf("playlist-operation-summary\" aria-label=\"Playlist synchronization details", StringComparison.Ordinal);
+        var summaryStart = script.IndexOf("aria-label=\"Playlist synchronization details", StringComparison.Ordinal);
         var summaryEnd = script.IndexOf("</div>", summaryStart, StringComparison.Ordinal);
         var action = script.IndexOf("playlist-rematch-action", StringComparison.Ordinal);
         Assert.True(summaryStart >= 0 && summaryEnd > summaryStart && action > summaryEnd,
