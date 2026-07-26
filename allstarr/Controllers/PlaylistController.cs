@@ -31,7 +31,7 @@ public class PlaylistController : ControllerBase
     private readonly AdminHelperService _helperService;
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
-    private const int PlaylistSummarySchemaVersion = 9;
+    private const int PlaylistSummarySchemaVersion = 10;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -128,7 +128,9 @@ public class PlaylistController : ControllerBase
                 ["syncSchedule"] = config.SyncSchedule ?? "0 8 * * *",
                 ["trackCount"] = durable?.Entries.Count ?? 0,
                 ["localTracks"] = durable?.LocalCount ?? 0,
-                ["externalTracks"] = 0,
+                ["externalTracks"] = durable?.ExternalCount ?? 0,
+                ["unmatchedTracks"] = durable?.MissingCount ?? 0,
+                ["unknownDurationTracks"] = durable?.UnknownDurationCount ?? 0,
                 ["lastFetched"] = durable?.RetrievedAt,
                 ["lastSuccessfulSyncAt"] = durable?.CompletedAt,
                 ["cacheAge"] = null as string,
@@ -153,9 +155,13 @@ public class PlaylistController : ControllerBase
 
                 var providerBreakdown = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 if (durable?.LocalCount > 0) providerBreakdown[targetBackend] = durable.LocalCount;
+                foreach (var group in durable?.Entries
+                             .Where(item => item.RouteKind == "external" && item.RouteProviderId != null)
+                             .GroupBy(item => item.RouteProviderId!, StringComparer.OrdinalIgnoreCase) ?? [])
+                    providerBreakdown[group.Key] = group.Count();
                 var coverage = new PlaylistCoverage(
                     durable?.LocalCount ?? 0,
-                    0,
+                    durable?.ExternalCount ?? 0,
                     durable?.MissingCount ?? 0,
                     providerBreakdown);
                 ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing);
@@ -313,6 +319,7 @@ public class PlaylistController : ControllerBase
         playlistInfo["externalTracks"] = coverage.External;
         playlistInfo["externalMatched"] = coverage.External;
         playlistInfo["externalMissing"] = coverage.Missing;
+        playlistInfo["unmatchedTracks"] = coverage.Missing;
         playlistInfo["externalTotal"] = coverage.External + coverage.Missing;
         playlistInfo["totalInJellyfin"] = coverage.Playable;
         playlistInfo["totalPlayable"] = coverage.Playable;
@@ -414,6 +421,7 @@ public class PlaylistController : ControllerBase
                 matchedTracks = 0,
                 unmatchedTracks = 0,
                 durationMs = (long?)null,
+                unknownDurationTracks = 0,
                 syncSchedule,
                 lastSourceRefreshAt = (DateTimeOffset?)null,
                 lastSuccessfulSyncAt = (DateTimeOffset?)null,
@@ -425,7 +433,7 @@ public class PlaylistController : ControllerBase
 
         var tracks = playlist.Entries.Select((track, index) =>
         {
-            var local = track.BackendItemId != null;
+            var local = track.RouteKind == "local";
             var artwork = local && playlist.TargetProtocol == "jellyfin"
                 ? $"/Items/{Uri.EscapeDataString(track.BackendItemId!)}/Images/Primary"
                 : null;
@@ -440,17 +448,19 @@ public class PlaylistController : ControllerBase
                 isrc = track.Isrc,
                 spotifyId = track.ExternalId,
                 durationMs = track.DurationMilliseconds,
+                durationProvenance = track.DurationProvenance,
+                durationRetrievedAt = track.DurationRetrievedAt,
                 albumArtUrl = artwork,
                 backendItemId = track.BackendItemId,
                 isLocal = local ? true : (bool?)null,
-                externalProvider = (string?)null,
-                provider = local ? playlist.TargetProtocol : null,
-                matchState = local ? "local" : "unmatched",
+                externalProvider = track.RouteKind == "external" ? track.RouteProviderId : null,
+                provider = track.RouteProviderId,
+                matchState = track.RouteKind,
                 decisionState = track.MatchState?.ToString().ToLowerInvariant(),
                 searchQuery = local ? null : $"{track.Title} {track.Artists.FirstOrDefault()}"
             };
         }).ToArray();
-        var matched = playlist.LocalCount;
+        var matched = playlist.LocalCount + playlist.ExternalCount;
         return Ok(new
         {
             name = playlist.Name,
@@ -460,11 +470,12 @@ public class PlaylistController : ControllerBase
             sourceProvider = playlist.SourceProviderId,
             targetBackend = playlist.TargetProtocol,
             totalPlayable = matched,
-            localTracks = matched,
-            externalTracks = 0,
+            localTracks = playlist.LocalCount,
+            externalTracks = playlist.ExternalCount,
             matchedTracks = matched,
             unmatchedTracks = playlist.MissingCount,
             durationMs = playlist.DurationMilliseconds,
+            unknownDurationTracks = playlist.UnknownDurationCount,
             syncSchedule,
             lastSourceRefreshAt = playlist.RetrievedAt,
             lastSuccessfulSyncAt = playlist.CompletedAt,

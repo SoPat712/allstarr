@@ -455,6 +455,52 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         });
     }
 
+    [Fact]
+    public async Task Durable_projection_classifies_each_source_row_once()
+    {
+        var externalCanonical = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord
+            {
+                Id = externalCanonical,
+                TenantId = _tenant,
+                CreatedByUserId = _user,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            var externalIdentity = ProviderIdentity("source-external");
+            externalIdentity.CanonicalRecordingId = externalCanonical;
+            db.ProviderTrackIdentities.Add(externalIdentity);
+            await db.SaveChangesAsync();
+        }
+        _source.Snapshot = Snapshot(
+            "revision-classification",
+            Entry(0, "entry-local", "source-1", "One"),
+            Entry(1, "entry-external", "source-external", "External"),
+            Entry(2, "entry-unmatched", "source-unmatched", "Missing") with
+            {
+                DurationMilliseconds = null
+            });
+        await _service.RefreshAsync(Context(), _link);
+
+        var projection = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByNameAsync(_tenant, _user, "Provider Mix");
+
+        Assert.NotNull(projection);
+        Assert.Equal(3, projection.TotalCount);
+        Assert.Equal(1, projection.LocalCount);
+        Assert.Equal(1, projection.ExternalCount);
+        Assert.Equal(1, projection.MissingCount);
+        Assert.Equal(projection.TotalCount,
+            projection.LocalCount + projection.ExternalCount + projection.MissingCount);
+        Assert.Equal(1, projection.UnknownDurationCount);
+        Assert.Equal(360_000, projection.DurationMilliseconds);
+        Assert.Equal(["local", "external", "unmatched"],
+            projection.Entries.Select(item => item.RouteKind));
+        Assert.Equal("fixture", projection.Entries[1].RouteProviderId);
+    }
+
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,

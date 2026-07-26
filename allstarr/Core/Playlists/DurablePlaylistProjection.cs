@@ -17,7 +17,9 @@ public sealed record DurablePlaylistEntryProjection(
     string? DurationProvenance,
     DateTimeOffset? DurationRetrievedAt,
     TrackMatchState? MatchState,
-    string? BackendItemId);
+    string? BackendItemId,
+    string RouteKind,
+    string? RouteProviderId);
 
 public sealed record DurablePlaylistProjection(
     Guid LinkId,
@@ -35,10 +37,13 @@ public sealed record DurablePlaylistProjection(
     PlaylistSyncState? SyncState,
     IReadOnlyList<DurablePlaylistEntryProjection> Entries)
 {
+    public int TotalCount => Entries.Count;
     public int LocalCount => Entries.Count(item => item.BackendItemId != null);
-    public int MissingCount => Entries.Count - LocalCount;
-    public long? DurationMilliseconds => Entries.All(item => item.DurationMilliseconds.HasValue)
-        ? Entries.Sum(item => (long)item.DurationMilliseconds!.Value)
+    public int ExternalCount => Entries.Count(item => item.RouteKind == "external");
+    public int MissingCount => Entries.Count(item => item.RouteKind == "unmatched");
+    public int UnknownDurationCount => Entries.Count(item => !item.DurationMilliseconds.HasValue);
+    public long? DurationMilliseconds => Entries.Any(item => item.DurationMilliseconds.HasValue)
+        ? Entries.Sum(item => item.DurationMilliseconds ?? 0)
         : null;
 }
 
@@ -88,9 +93,15 @@ public sealed class DurablePlaylistProjectionReader(
             .ToDictionary(
                 group => group.Key,
                 group => group.OrderByDescending(item => item.DecisionVersion).First());
+        var overrides = await database.ManualTrackOverrides.AsNoTracking()
+            .Where(item => externalIds.Contains(item.ExternalSnapshotId) && item.RevokedAt == null)
+            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
         var libraryIds = latestMatches.Values
             .Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
+            .Concat(overrides.Values.Where(item => item.LibraryTrackId.HasValue)
+                .Select(item => item.LibraryTrackId!.Value))
+            .Distinct()
             .ToArray();
         var library = await database.LibraryTracks.AsNoTracking()
             .Where(item => libraryIds.Contains(item.Id))
@@ -120,6 +131,7 @@ public sealed class DurablePlaylistProjectionReader(
                     external[entry.ExternalMetadataSnapshotId],
                     identities,
                     latestMatches,
+                    overrides,
                     library))
                 .ToArray());
     }
@@ -129,19 +141,30 @@ public sealed class DurablePlaylistProjectionReader(
         ExternalMetadataSnapshotRecord external,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> identities,
         IReadOnlyDictionary<Guid, TrackMatchRecord> matches,
+        IReadOnlyDictionary<Guid, ManualTrackOverrideRecord> overrides,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
     {
         matches.TryGetValue(external.Id, out var match);
+        overrides.TryGetValue(external.Id, out var manual);
+        var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, match);
+        var libraryId = manual?.Decision == ManualOverrideDecision.Pin
+            ? manual.LibraryTrackId
+            : rejected ? null : match?.LibraryTrackId;
         LibraryTrackRecord? local = null;
-        if (match?.State is TrackMatchState.Accepted or TrackMatchState.Pinned &&
-            match.LibraryTrackId is { } libraryId)
-            library.TryGetValue(libraryId, out local);
+        if (libraryId.HasValue)
+            library.TryGetValue(libraryId.Value, out local);
         var backendItemId = local?.BackendItemId;
         var metadata = ReadMetadata(external.PayloadJson);
-        var externalId = external.ProviderTrackIdentityId is { } identityId &&
-                         identities.TryGetValue(identityId, out var identity)
-            ? identity.ExternalId
+        ProviderTrackIdentityRecord? identity = null;
+        if (external.ProviderTrackIdentityId is { } identityId)
+            identities.TryGetValue(identityId, out identity);
+        var hasExternal = !rejected &&
+                          identity?.Verification is ProviderIdentityVerification.Verified or
+                              ProviderIdentityVerification.Pinned;
+        var externalId = hasExternal
+            ? identity!.ExternalId
             : external.ExternalIdHash;
+        var routeKind = local != null ? "local" : hasExternal ? "external" : "unmatched";
         return new(
             entry.SourcePosition,
             external.Id,
@@ -157,8 +180,12 @@ public sealed class DurablePlaylistProjectionReader(
             local?.DurationMilliseconds.HasValue == true
                 ? local.DurationRetrievedAt ?? local.IndexedAt
                 : metadata.DurationMilliseconds.HasValue ? external.RetrievedAt : null,
-            match?.State,
-            backendItemId);
+            manual?.Decision == ManualOverrideDecision.Pin
+                ? TrackMatchState.Pinned
+                : rejected ? TrackMatchState.Rejected : match?.State,
+            backendItemId,
+            routeKind,
+            routeKind == "local" ? local!.Protocol : hasExternal ? identity!.ProviderId : null);
     }
 
     private static EntryMetadata ReadMetadata(string payload)
