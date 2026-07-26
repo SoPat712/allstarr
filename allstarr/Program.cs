@@ -92,6 +92,7 @@ builder.Services.AddPlatformOperations(builder.Configuration);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ProviderCtsTrackSelector>();
 builder.Services.AddSingleton<ProviderCtsDiagnosticRunner>();
+builder.Services.AddSingleton<EndpointUsageAudit>();
 builder.Services.AddHostedService<AuditEventRetentionService>();
 
 // Configure forwarded headers for reverse proxy support (nginx, etc.)

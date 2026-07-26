@@ -11,6 +11,7 @@ using allstarr.Services.Scrobbling;
 using allstarr.Services.SquidWTF;
 using System.Runtime;
 using allstarr.Core.Storage;
+using allstarr.Core.Operations;
 using allstarr.Models.Spotify;
 
 namespace allstarr.Controllers;
@@ -734,62 +735,24 @@ public class DiagnosticsController : ControllerBase
     {
         try
         {
-            var logFile = EndpointUsagePathResolver.GetLogFile(_configuration);
-
-            if (!System.IO.File.Exists(logFile))
+            DateTimeOffset? sinceDate = null;
+            if (!string.IsNullOrWhiteSpace(since))
             {
-                return Ok(new
-                {
-                    message = "No endpoint usage data available",
-                    endpoints = new object[0]
-                });
-            }
-
-            var lines = await System.IO.File.ReadAllLinesAsync(logFile);
-            var usage = new Dictionary<string, int>();
-            DateTime? sinceDate = null;
-
-            if (!string.IsNullOrEmpty(since) && DateTime.TryParse(since, out var parsedDate))
-            {
+                if (!DateTimeOffset.TryParse(since, out var parsedDate))
+                    return BadRequest(new { error = "since must be a valid timestamp" });
                 sinceDate = parsedDate;
             }
-
-            foreach (var line in lines.Skip(1)) // Skip header
-            {
-                var parts = line.Split(',');
-                if (parts.Length >= 3)
-                {
-                    var timestamp = parts[0];
-                    var method = parts[1];
-                    var endpoint = parts[2];
-
-                    // Combine method and endpoint for better clarity
-                    var fullEndpoint = $"{method} {endpoint}";
-
-                    // Filter by date if specified
-                    if (sinceDate.HasValue && DateTime.TryParse(timestamp, out var logDate))
-                    {
-                        if (logDate < sinceDate.Value)
-                            continue;
-                    }
-
-                    usage[fullEndpoint] = usage.GetValueOrDefault(fullEndpoint, 0) + 1;
-                }
-            }
-
-            var topEndpoints = usage
-                .OrderByDescending(kv => kv.Value)
-                .Take(top)
-                .Select(kv => new { endpoint = kv.Key, count = kv.Value })
-                .ToArray();
+            var summary = await HttpContext.RequestServices
+                .GetRequiredService<EndpointUsageAudit>()
+                .SummarizeAsync(top, sinceDate, HttpContext.RequestAborted);
 
             return Ok(new
             {
-                totalEndpoints = usage.Count,
-                totalRequests = usage.Values.Sum(),
-                since = since,
-                top = top,
-                endpoints = topEndpoints
+                summary.TotalEndpoints,
+                summary.TotalRequests,
+                since,
+                top = Math.Clamp(top, 1, 1000),
+                summary.Endpoints
             });
         }
         catch (Exception ex)
@@ -800,34 +763,25 @@ public class DiagnosticsController : ControllerBase
     }
 
     /// <summary>
-    /// Clears the endpoint usage log file.
+    /// Clears endpoint usage audit events.
     /// </summary>
     [HttpDelete("debug/endpoint-usage")]
-    public IActionResult ClearEndpointUsage()
+    public async Task<IActionResult> ClearEndpointUsage()
     {
         try
         {
-            var logFile = EndpointUsagePathResolver.GetLogFile(_configuration);
-
-            if (System.IO.File.Exists(logFile))
+            var deleted = await HttpContext.RequestServices
+                .GetRequiredService<EndpointUsageAudit>()
+                .ClearAsync(HttpContext.RequestAborted);
+            _logger.LogDebug("Cleared {Count} endpoint usage events via admin endpoint", deleted);
+            return Ok(new
             {
-                System.IO.File.Delete(logFile);
-                _logger.LogDebug("Cleared endpoint usage log via admin endpoint");
-
-                return Ok(new
-                {
-                    message = "Endpoint usage log cleared successfully",
-                    timestamp = DateTime.UtcNow
-                });
-            }
-            else
-            {
-                return Ok(new
-                {
-                    message = "No endpoint usage log file found",
-                    timestamp = DateTime.UtcNow
-                });
-            }
+                message = deleted == 0
+                    ? "No endpoint usage data found"
+                    : "Endpoint usage data cleared successfully",
+                deleted,
+                timestamp = DateTime.UtcNow
+            });
         }
         catch (Exception ex)
         {

@@ -4,6 +4,8 @@ using System.Net.Http;
 using allstarr.Models.Domain;
 using allstarr.Models.Spotify;
 using allstarr.Services.Common;
+using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http.Features;
 
@@ -375,32 +377,26 @@ public partial class JellyfinController
     }
 
     /// <summary>
-    /// Logs endpoint usage to a file for analysis.
-    /// Creates a CSV file with timestamp, method, and path only.
-    /// Query strings are intentionally excluded to avoid persisting sensitive data.
+    /// Records retention-bounded endpoint usage without query strings.
     /// </summary>
     private async Task LogEndpointUsageAsync(string path, string method)
     {
         try
         {
-            var logDir = EndpointUsagePathResolver.GetDirectory(_configuration);
-            Directory.CreateDirectory(logDir);
-
-            var logFile = EndpointUsagePathResolver.GetLogFile(_configuration);
-            var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-
-            // Sanitize path for CSV (remove commas, quotes, newlines)
-            var sanitizedPath = path.Replace(",", ";").Replace("\"", "'").Replace("\n", " ").Replace("\r", " ");
-
-            var logLine = $"{timestamp},{method},{sanitizedPath}\n";
-
-            // Append to file (thread-safe)
-            await System.IO.File.AppendAllTextAsync(logFile, logLine);
+            var execution = HttpContext.GetProtocolExecutionContext();
+            var actor = execution?.Actor;
+            await HttpContext.RequestServices.GetRequiredService<EndpointUsageAudit>().RecordAsync(
+                method,
+                path,
+                actor?.TenantId,
+                actor?.UserId,
+                HttpContext.TraceIdentifier,
+                HttpContext.RequestAborted);
         }
         catch (Exception ex)
         {
             // Don't let logging failures break the request
-            _logger.LogError(ex, "Failed to log endpoint usage");
+            _logger.LogWarning(ex, "Failed to record endpoint usage");
         }
     }
 
