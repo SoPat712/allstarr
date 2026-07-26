@@ -1085,6 +1085,7 @@ class AllstarrApp extends LitElement {
     this.onVisibilityChange = null;
     this.activeDialogElement = null;
     this.dialogReturnFocus = null;
+    this.onSegmentedResize = () => this.syncSegmentedControls();
   }
 
   createRenderRoot() {
@@ -1123,6 +1124,7 @@ class AllstarrApp extends LitElement {
       else this.startNowPlayingClock();
     };
     document.addEventListener("visibilitychange", this.onVisibilityChange);
+    window.addEventListener("resize", this.onSegmentedResize);
     this.startNowPlayingClock();
     this.bootstrap();
   }
@@ -1153,6 +1155,7 @@ class AllstarrApp extends LitElement {
   disconnectedCallback() {
     window.removeEventListener("hashchange", this.onHashChange);
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    window.removeEventListener("resize", this.onSegmentedResize);
     this.stopNowPlayingClock();
     this.stopSignalBoot();
     this.stopActivityStream();
@@ -1162,6 +1165,7 @@ class AllstarrApp extends LitElement {
   }
 
   updated() {
+    this.syncSegmentedControls();
     const activeDialog = this.querySelector(
       ".track-match-dialog, .provider-account-dialog, .provider-detail-dialog, .source-catalog-dialog, .compact-dialog, .playlist-link-wizard, .injected-playlist-dialog, .track-details-dialog, .extension-manage-dialog, .extension-permission-dialog, .extension-install-dialog, .setup-guide",
     );
@@ -1181,6 +1185,20 @@ class AllstarrApp extends LitElement {
       this.dialogReturnFocus = null;
       if (returnFocus?.isConnected) window.requestAnimationFrame(() => returnFocus.focus());
     }
+  }
+
+  syncSegmentedControls() {
+    window.requestAnimationFrame(() => {
+      this.querySelectorAll(".library-tabs, .settings-tabs, .workspace-tabs, .mapping-target-tabs").forEach((control) => {
+        const active = control.querySelector(".active, [aria-selected='true']");
+        if (!active) return;
+        const controlRect = control.getBoundingClientRect();
+        const activeRect = active.getBoundingClientRect();
+        control.style.setProperty("--tab-indicator-x", `${activeRect.left - controlRect.left + control.scrollLeft}px`);
+        control.style.setProperty("--tab-indicator-width", `${activeRect.width}px`);
+        control.classList.add("segmented-ready");
+      });
+    });
   }
 
   handleActionMenuKeydown(event) {
@@ -3267,8 +3285,10 @@ class AllstarrApp extends LitElement {
       ["kept", "Kept", "check"],
     ];
     return html`
-      <nav class="subnav library-tabs" data-testid="library-tabs">
-        ${items.map(([id, label, iconName]) => html`<a class=${active === id ? "active" : ""} href="#/library/${id}">${icon(iconName, 16)}<span>${label}</span></a>`)}
+      <nav class="subnav library-tabs" role="tablist" aria-label="Library sections" data-testid="library-tabs">
+        ${items.map(([id, label, iconName]) => html`<a role="tab" aria-selected=${active === id ? "true" : "false"}
+          tabindex=${active === id ? "0" : "-1"} class=${active === id ? "active" : ""} href="#/library/${id}"
+          @keydown=${(event) => this.moveSegmentedTabFocus(event)}>${icon(iconName, 16)}<span>${label}</span></a>`)}
       </nav>
     `;
   }
@@ -4124,14 +4144,14 @@ class AllstarrApp extends LitElement {
           ${details ? html`
             <div class="playlist-track-toolbar" role="search" aria-label="Filter playlist tracks">
               <label class="search-control playlist-track-search">${icon("search")}<input aria-label="Search playlist tracks" placeholder="Search tracks…" .value=${this.injectedTrackFilter} @input=${(event) => { this.injectedTrackFilter = event.target.value; }}></label>
-              <label><span class="visually-hidden">Match state</span><select aria-label="Filter by match state" .value=${this.injectedTrackStateFilter} @change=${(event) => { this.injectedTrackStateFilter = event.target.value; }}>
+              <label><select aria-label="Filter by match state" .value=${this.injectedTrackStateFilter} @change=${(event) => { this.injectedTrackStateFilter = event.target.value; }}>
                 <option value="all">All match states</option>
                 <option value="matched">Matched</option>
                 <option value="unmatched">Unmatched</option>
                 <option value="local">Local library</option>
                 <option value="external">External provider</option>
               </select></label>
-              <label><span class="visually-hidden">Playback provider</span><select aria-label="Filter by playback provider" .value=${this.injectedTrackProviderFilter} @change=${(event) => { this.injectedTrackProviderFilter = event.target.value; }}>
+              <label><select aria-label="Filter by playback provider" .value=${this.injectedTrackProviderFilter} @change=${(event) => { this.injectedTrackProviderFilter = event.target.value; }}>
                 <option value="all">All providers</option>
                 ${providerOptions.map(([id, label]) => html`<option value=${id}>${label}</option>`)}
               </select></label>

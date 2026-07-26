@@ -118,7 +118,10 @@ public class SpotifyPlaylistTrack
         SpotifyId = SpotifyId,
         Title = Title,
         Album = Album,
-        Artists = Artists
+        Artists = Artists,
+        AlbumArtUrl = AlbumArtUrl,
+        DurationMs = DurationMs,
+        Isrc = Isrc
     };
 }
 

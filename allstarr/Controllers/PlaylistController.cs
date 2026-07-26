@@ -34,7 +34,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
-    private const int PlaylistSummarySchemaVersion = 7;
+    private const int PlaylistSummarySchemaVersion = 8;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -213,7 +213,10 @@ public class PlaylistController : ControllerBase
             Position = position,
             Title = track.Title,
             Album = track.Album,
-            Artists = track.Artists
+            Artists = track.Artists,
+            AlbumArtUrl = track.AlbumArtUrl,
+            DurationMs = track.DurationMs,
+            Isrc = track.Isrc
         }).ToList() ?? [];
     }
 

@@ -33,6 +33,22 @@ public sealed class InjectedPlaylistResponsiveDesignContractTests
     }
 
     [Fact]
+    public void PlaylistDialogPrioritizesScrollableTracksAndSharedTabIndicators()
+    {
+        var root = FindRepositoryRoot();
+        var script = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "js", "webui.js"));
+        var workspaceStyles = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "css", "workspaces.css"));
+        var designStyles = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "css", "design-system.css"));
+
+        Assert.Contains("syncSegmentedControls()", script, StringComparison.Ordinal);
+        Assert.Contains("--tab-indicator-width", script, StringComparison.Ordinal);
+        Assert.Contains("grid-template-rows: auto minmax(0, 1fr)", workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("overflow-y: auto", workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains(".segmented-ready::before", designStyles, StringComparison.Ordinal);
+        Assert.Contains("prefers-reduced-motion: reduce", designStyles, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PaginationUsesAWindowWithGapMarkers()
     {
         var root = FindRepositoryRoot();

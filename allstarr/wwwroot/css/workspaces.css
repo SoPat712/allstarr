@@ -4,6 +4,141 @@
     gap: 14px;
 }
 
+/* Managed playlist details prioritize browsing over dashboard decoration. */
+.injected-playlist-dialog.redesigned-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(1180px, calc(100vw - 32px));
+    height: min(860px, calc(100dvh - 32px));
+}
+
+.injected-playlist-dialog .playlist-dialog-hero {
+    grid-template-columns: 88px minmax(0, 1fr) 40px;
+    gap: 16px;
+    padding: 18px 20px;
+}
+
+.injected-playlist-dialog .playlist-hero-art {
+    width: 88px;
+    height: 88px;
+    border-radius: 12px;
+}
+
+.injected-playlist-dialog .playlist-hero-content h3 {
+    margin-top: 0;
+    font-size: clamp(1.65rem, 3vw, 2.15rem);
+}
+
+.injected-playlist-dialog .playlist-hero-content > p {
+    margin: 2px 0 10px;
+}
+
+.injected-playlist-dialog .playlist-hero-stats {
+    gap: 8px;
+}
+
+.injected-playlist-dialog .playlist-hero-stats > div {
+    min-width: 0;
+    padding: 7px 10px;
+}
+
+.injected-playlist-dialog .playlist-operation-row {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) 168px;
+    gap: 12px;
+    margin-top: 2px;
+}
+
+.injected-playlist-dialog .playlist-operation-group {
+    gap: 10px;
+    padding: 10px 12px;
+}
+
+.injected-playlist-dialog .playlist-operation-actions {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    width: 168px;
+}
+
+.injected-playlist-dialog .playlist-operation-actions button {
+    min-height: 36px;
+    padding: 7px 10px;
+}
+
+.injected-playlist-dialog .injected-playlist-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+    padding: 14px 20px 16px;
+}
+
+.injected-playlist-dialog .playlist-track-toolbar,
+.injected-playlist-dialog .playlist-track-summary {
+    flex: 0 0 auto;
+}
+
+.injected-playlist-dialog .playlist-track-table {
+    flex: 1 1 auto;
+    min-height: 180px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.injected-playlist-dialog .playlist-track-head {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+}
+
+.injected-playlist-dialog .playlist-track-search > input {
+    padding-left: 42px;
+}
+
+@media (max-width: 900px) {
+    .injected-playlist-dialog .playlist-operation-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .injected-playlist-dialog .playlist-operation-actions {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .injected-playlist-dialog .playlist-track-table {
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+}
+
+@media (max-width: 620px) {
+    .injected-playlist-dialog .playlist-dialog-hero {
+        grid-template-columns: 56px minmax(0, 1fr) 40px;
+        padding: 14px;
+    }
+
+    .injected-playlist-dialog .playlist-hero-art {
+        width: 56px;
+        height: 56px;
+    }
+
+    .injected-playlist-dialog .playlist-hero-stats,
+    .injected-playlist-dialog .playlist-operation-row {
+        grid-column: 1 / -1;
+    }
+
+    .injected-playlist-dialog .playlist-operation-summary {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .injected-playlist-dialog .injected-playlist-scroll {
+        padding: 12px 14px 14px;
+    }
+}
+
 .overview-card {
     display: grid;
     grid-template-columns: 44px minmax(0, 1fr);

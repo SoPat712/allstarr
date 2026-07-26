@@ -20,6 +20,72 @@
     scrollbar-width: none;
 }
 
+/* One shared selection surface moves between every segmented navigation item. */
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs) {
+    --tab-indicator-x: 0px;
+    --tab-indicator-width: 0px;
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control, 12px);
+    background: var(--surface-card);
+}
+
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs)::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    inset-block: 0;
+    left: 0;
+    width: var(--tab-indicator-width);
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--accent) 16%, var(--surface-elevated));
+    opacity: 0;
+    transform: translateX(var(--tab-indicator-x));
+    transition:
+        transform 300ms cubic-bezier(.22, 1, .36, 1),
+        width 300ms cubic-bezier(.22, 1, .36, 1),
+        opacity 120ms ease;
+    pointer-events: none;
+}
+
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs).segmented-ready::before {
+    opacity: 1;
+}
+
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs) > :is(a, button) {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+}
+
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs) > :is(a, button).active,
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs) > [aria-selected="true"] {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-primary);
+}
+
+:is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs) > :is(a, button):focus-visible {
+    z-index: 2;
+    outline: 2px solid var(--accent-strong);
+    outline-offset: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :is(.settings-tabs, .library-tabs, .workspace-tabs, .mapping-target-tabs)::before {
+        transition: none;
+    }
+}
+
 .subnav::-webkit-scrollbar,
 .settings-tabs::-webkit-scrollbar,
 .library-tabs::-webkit-scrollbar,
