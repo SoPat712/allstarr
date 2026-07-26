@@ -42,7 +42,7 @@ public class AdminAuthControllerTests
             };
         });
 
-        var sessionService = new AdminAuthSessionService();
+        var sessionService = AdminAuthSessionTestSupport.Create();
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers["X-Forwarded-Proto"] = "https";
 
@@ -80,7 +80,8 @@ public class AdminAuthControllerTests
         Assert.Contains("samesite=strict", setCookieHeader.ToLowerInvariant());
 
         var sessionId = ExtractCookieValue(setCookieHeader);
-        Assert.True(sessionService.TryGetValidSession(sessionId, out var session));
+        var session = await sessionService.GetValidSessionAsync(sessionId);
+        Assert.NotNull(session);
         Assert.Equal("user-1", session.UserId);
         Assert.Equal("josh", session.UserName);
         Assert.False(session.IsAdministrator);
@@ -92,7 +93,7 @@ public class AdminAuthControllerTests
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)));
 
-        var sessionService = new AdminAuthSessionService();
+        var sessionService = AdminAuthSessionTestSupport.Create();
         var httpContext = new DefaultHttpContext();
         var controller = CreateController(handler, sessionService, httpContext);
 
@@ -129,7 +130,7 @@ public class AdminAuthControllerTests
                     """)
             };
         });
-        var sessionService = new AdminAuthSessionService();
+        var sessionService = AdminAuthSessionTestSupport.Create();
         var httpContext = new DefaultHttpContext();
         var controller = CreateController(
             handler,
@@ -155,7 +156,8 @@ public class AdminAuthControllerTests
         Assert.Contains("p=secret-pass", capturedBody);
 
         var sessionId = ExtractCookieValue(httpContext.Response.Headers.SetCookie[0]!);
-        Assert.True(sessionService.TryGetValidSession(sessionId, out var session));
+        var session = await sessionService.GetValidSessionAsync(sessionId);
+        Assert.NotNull(session);
         Assert.Equal("Subsonic", session.BackendType);
         Assert.Equal(string.Empty, session.JellyfinAccessToken);
     }
@@ -172,7 +174,7 @@ public class AdminAuthControllerTests
             }));
         var controller = CreateController(
             handler,
-            new AdminAuthSessionService(),
+            AdminAuthSessionTestSupport.Create(),
             new DefaultHttpContext(),
             BackendType.Subsonic);
 
@@ -186,17 +188,17 @@ public class AdminAuthControllerTests
     }
 
     [Fact]
-    public void GetCurrentSession_WithUnknownCookie_ReturnsUnauthenticated()
+    public async Task GetCurrentSession_WithUnknownCookie_ReturnsUnauthenticated()
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        var sessionService = new AdminAuthSessionService();
+        var sessionService = AdminAuthSessionTestSupport.Create();
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Cookie = $"{AdminAuthSessionService.SessionCookieName}=missing-session";
 
         var controller = CreateController(handler, sessionService, httpContext);
-        var result = controller.GetCurrentSession();
+        var result = await controller.GetCurrentSession();
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var payloadJson = JsonSerializer.Serialize(ok.Value);
@@ -213,18 +215,18 @@ public class AdminAuthControllerTests
     [InlineData(ProviderAccountManagementMode.AdminManaged)]
     [InlineData(ProviderAccountManagementMode.UserManaged)]
     [InlineData(ProviderAccountManagementMode.Hybrid)]
-    public void GetCurrentSession_ExposesOnlyTheNonSecretAccountManagementMode(
+    public async Task GetCurrentSession_ExposesOnlyTheNonSecretAccountManagementMode(
         ProviderAccountManagementMode managementMode)
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
         var controller = CreateController(
             handler,
-            new AdminAuthSessionService(),
+            AdminAuthSessionTestSupport.Create(),
             new DefaultHttpContext(),
             managementMode: managementMode);
 
-        var result = Assert.IsType<OkObjectResult>(controller.GetCurrentSession());
+        var result = Assert.IsType<OkObjectResult>(await controller.GetCurrentSession());
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
 
         Assert.False(payload.RootElement.GetProperty("authenticated").GetBoolean());
@@ -236,13 +238,13 @@ public class AdminAuthControllerTests
     }
 
     [Fact]
-    public void GetCurrentSession_WithValidCookie_ReturnsSessionUser()
+    public async Task GetCurrentSession_WithValidCookie_ReturnsSessionUser()
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "user-42",
             userName: "alice",
             isAdministrator: true,
@@ -253,7 +255,7 @@ public class AdminAuthControllerTests
         httpContext.Request.Headers.Cookie = $"{AdminAuthSessionService.SessionCookieName}={session.SessionId}";
 
         var controller = CreateController(handler, sessionService, httpContext);
-        var result = controller.GetCurrentSession();
+        var result = await controller.GetCurrentSession();
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var payloadJson = JsonSerializer.Serialize(ok.Value);
@@ -273,12 +275,12 @@ public class AdminAuthControllerTests
     }
 
     [Fact]
-    public void GetCurrentSession_WithLegacyCookie_MigratesToV3Cookie()
+    public async Task GetCurrentSession_WithLegacyCookie_MigratesToV3Cookie()
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "legacy-user",
             userName: "legacy",
             isAdministrator: true,
@@ -288,7 +290,7 @@ public class AdminAuthControllerTests
         httpContext.Request.Headers.Cookie = $"{AdminAuthSessionService.LegacySessionCookieName}={session.SessionId}";
 
         var result = Assert.IsType<OkObjectResult>(
-            CreateController(handler, sessionService, httpContext).GetCurrentSession());
+            await CreateController(handler, sessionService, httpContext).GetCurrentSession());
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
 
         Assert.True(payload.RootElement.GetProperty("authenticated").GetBoolean());

@@ -50,7 +50,8 @@ public class AdminAuthenticationMiddleware
             return;
         }
 
-        if (!_sessionService.TryGetValidSession(context.Request, out var session))
+        var session = await _sessionService.GetValidSessionAsync(context.Request, context.RequestAborted);
+        if (session is null)
         {
             DeleteSessionCookies(context.Response);
             await WriteUnauthorizedResponse(context);

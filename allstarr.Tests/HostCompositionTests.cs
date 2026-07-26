@@ -251,9 +251,6 @@ public sealed class HostCompositionTests
                     ["SpotifyImport:Enabled"] = "false",
                     ["Storage:EnforceMutationGuard"] = "false",
                     ["Extensions:Directory"] = _extensionDirectory,
-                    ["Admin:SessionStorePath"] = Path.Combine(
-                        Directory.GetParent(_extensionDirectory)!.FullName,
-                        "sessions.protected"),
                     ["Cache:GenreDirectory"] = Path.Combine(
                         Directory.GetParent(_extensionDirectory)!.FullName,
                         "genres"),

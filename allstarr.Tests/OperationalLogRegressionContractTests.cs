@@ -39,6 +39,21 @@ public sealed class OperationalLogRegressionContractTests
     }
 
     [Fact]
+    public void AdminSessions_UsePostgreSqlWithoutProcessOrFileAuthority()
+    {
+        var service = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Services", "Admin", "AdminAuthSessionService.cs"));
+        var context = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Storage", "AllstarrDbContext.cs"));
+
+        Assert.Contains("EfAdminAuthSessionStore", service, StringComparison.Ordinal);
+        Assert.Contains("AdminAuthSessions", context, StringComparison.Ordinal);
+        Assert.DoesNotContain("sessions.protected", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConcurrentDictionary", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PlaylistTrackContext_UsesTheBoundedSharedCacheWithoutAPrivateCleanupLoop()
     {
         var source = File.ReadAllText(FindRepositoryFile(

@@ -14,6 +14,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<TenantRecord> Tenants => Set<TenantRecord>();
     public DbSet<PlatformUserRecord> Users => Set<PlatformUserRecord>();
     public DbSet<BackendIdentityRecord> BackendIdentities => Set<BackendIdentityRecord>();
+    public DbSet<AdminAuthSessionRecord> AdminAuthSessions => Set<AdminAuthSessionRecord>();
     public DbSet<ProviderAccountRecord> ProviderAccounts => Set<ProviderAccountRecord>();
     public DbSet<SecretReferenceRecord> SecretReferences => Set<SecretReferenceRecord>();
     public DbSet<SecretVersionRecord> SecretVersions => Set<SecretVersionRecord>();
@@ -74,6 +75,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureTenant(modelBuilder);
+        ConfigureAdminAuthSessions(modelBuilder);
         ConfigureProviderAccounts(modelBuilder);
         ConfigureSecrets(modelBuilder);
         ConfigureJobs(modelBuilder);
@@ -145,6 +147,18 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureAdminAuthSessions(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AdminAuthSessionRecord>(entity =>
+        {
+            entity.ToTable("admin_auth_sessions");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).HasMaxLength(64);
+            entity.Property(item => item.ProtectedPayload).IsRequired();
+            entity.HasIndex(item => item.ExpiresAt);
         });
     }
 

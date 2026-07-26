@@ -11,7 +11,7 @@ public class AdminAuthenticationMiddlewareTests
     [Fact]
     public async Task InvokeAsync_UnauthenticatedAdminRequest_Returns401()
     {
-        var sessionService = new AdminAuthSessionService();
+        var sessionService = AdminAuthSessionTestSupport.Create();
         var nextInvoked = false;
 
         var middleware = new AdminAuthenticationMiddleware(
@@ -40,8 +40,8 @@ public class AdminAuthenticationMiddlewareTests
     [Fact]
     public async Task InvokeAsync_NonAdminUser_AllowedRoute_PassesThrough()
     {
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "user-1",
             userName: "josh",
             isAdministrator: false,
@@ -82,8 +82,8 @@ public class AdminAuthenticationMiddlewareTests
         string path,
         string method)
     {
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "user-1",
             userName: "josh",
             isAdministrator: false,
@@ -116,8 +116,8 @@ public class AdminAuthenticationMiddlewareTests
         string path,
         string method)
     {
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "user-1",
             userName: "josh",
             isAdministrator: false,
@@ -155,8 +155,8 @@ public class AdminAuthenticationMiddlewareTests
         string path,
         string method)
     {
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "user-1",
             userName: "josh",
             isAdministrator: false,
@@ -181,8 +181,8 @@ public class AdminAuthenticationMiddlewareTests
     [Fact]
     public async Task InvokeAsync_NonAdminUser_DisallowedRoute_Returns403()
     {
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "user-1",
             userName: "josh",
             isAdministrator: false,
@@ -217,8 +217,8 @@ public class AdminAuthenticationMiddlewareTests
     [Fact]
     public async Task InvokeAsync_AdminUser_DisallowedForUserButAllowedForAdmin_PassesThrough()
     {
-        var sessionService = new AdminAuthSessionService();
-        var session = sessionService.CreateSession(
+        var sessionService = AdminAuthSessionTestSupport.Create();
+        var session = await sessionService.CreateSessionAsync(
             userId: "admin-1",
             userName: "admin",
             isAdministrator: true,
@@ -251,7 +251,7 @@ public class AdminAuthenticationMiddlewareTests
     [Fact]
     public async Task InvokeAsync_AdminApiOnMainPort_PassesThroughForDownstreamFilter()
     {
-        var sessionService = new AdminAuthSessionService();
+        var sessionService = AdminAuthSessionTestSupport.Create();
         var nextInvoked = false;
 
         var middleware = new AdminAuthenticationMiddleware(

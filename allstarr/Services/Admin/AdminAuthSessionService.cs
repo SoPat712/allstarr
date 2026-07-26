@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using allstarr.Core.Storage;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Admin;
 
@@ -22,12 +22,59 @@ public sealed class AdminAuthSession
     public DateTime LastSeenUtc { get; set; }
 }
 
+public interface IAdminAuthSessionStore
+{
+    Task<AdminAuthSessionRecord?> FindAsync(string id, CancellationToken cancellationToken);
+    Task AddAsync(AdminAuthSessionRecord record, CancellationToken cancellationToken);
+    Task TouchAsync(string id, DateTimeOffset lastSeenAt, CancellationToken cancellationToken);
+    Task RemoveAsync(string id, CancellationToken cancellationToken);
+    Task RemoveExpiredAsync(DateTimeOffset now, CancellationToken cancellationToken);
+}
+
+public sealed class EfAdminAuthSessionStore(IDbContextFactory<AllstarrDbContext> factory)
+    : IAdminAuthSessionStore
+{
+    public async Task<AdminAuthSessionRecord?> FindAsync(string id, CancellationToken cancellationToken)
+    {
+        await using var context = await factory.CreateDbContextAsync(cancellationToken);
+        return await context.AdminAuthSessions.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+    }
+
+    public async Task AddAsync(AdminAuthSessionRecord record, CancellationToken cancellationToken)
+    {
+        await using var context = await factory.CreateDbContextAsync(cancellationToken);
+        context.AdminAuthSessions.Add(record);
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task TouchAsync(string id, DateTimeOffset lastSeenAt, CancellationToken cancellationToken)
+    {
+        await using var context = await factory.CreateDbContextAsync(cancellationToken);
+        await context.AdminAuthSessions.Where(item => item.Id == id)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.LastSeenAt, lastSeenAt), cancellationToken);
+    }
+
+    public async Task RemoveAsync(string id, CancellationToken cancellationToken)
+    {
+        await using var context = await factory.CreateDbContextAsync(cancellationToken);
+        await context.AdminAuthSessions.Where(item => item.Id == id).ExecuteDeleteAsync(cancellationToken);
+    }
+
+    public async Task RemoveExpiredAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var context = await factory.CreateDbContextAsync(cancellationToken);
+        await context.AdminAuthSessions.Where(item => item.ExpiresAt <= now).ExecuteDeleteAsync(cancellationToken);
+    }
+}
+
 /// <summary>
-/// Cookie-backed admin sessions for the local Web UI.
-/// Session IDs stay in the browser cookie, while the resolved backend identity
-/// is protected and persisted so brief app restarts do not force a relogin.
+/// Stores only opaque session IDs in cookies and encrypted session payloads in PostgreSQL.
 /// </summary>
-public class AdminAuthSessionService : IDisposable
+public sealed class AdminAuthSessionService(
+    IAdminAuthSessionStore store,
+    IDataProtectionProvider dataProtectionProvider,
+    ILogger<AdminAuthSessionService> logger)
 {
     public const string SessionCookieName = "allstarr_admin_session_v3";
     public const string LegacySessionCookieName = "allstarr_admin_session";
@@ -36,72 +83,11 @@ public class AdminAuthSessionService : IDisposable
     public static readonly TimeSpan DefaultSessionLifetime = TimeSpan.FromHours(12);
     public static readonly TimeSpan PersistentSessionLifetime = TimeSpan.FromDays(30);
 
-    private readonly ConcurrentDictionary<string, AdminAuthSession> _sessions = new();
-    private readonly IDataProtector _protector;
-    private readonly ILogger<AdminAuthSessionService> _logger;
+    private readonly IDataProtector _protector =
+        dataProtectionProvider.CreateProtector("allstarr.admin.auth.sessions.v2");
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly object _persistLock = new();
-    private readonly string _sessionStoreFilePath;
-    private readonly Timer _cleanupTimer;
 
-    public AdminAuthSessionService(
-        IDataProtectionProvider dataProtectionProvider,
-        ILogger<AdminAuthSessionService> logger,
-        IConfiguration configuration)
-        : this(
-            dataProtectionProvider,
-            logger,
-            configuration["Admin:SessionStorePath"] ?? "/app/cache/admin-auth/sessions.protected")
-    {
-    }
-
-    public AdminAuthSessionService(
-        IDataProtectionProvider dataProtectionProvider,
-        ILogger<AdminAuthSessionService> logger)
-        : this(dataProtectionProvider, logger, "/app/cache/admin-auth/sessions.protected")
-    {
-    }
-
-    private AdminAuthSessionService(
-        IDataProtectionProvider dataProtectionProvider,
-        ILogger<AdminAuthSessionService> logger,
-        string sessionStoreFilePath)
-    {
-        _protector = dataProtectionProvider.CreateProtector("allstarr.admin.auth.sessions.v1");
-        _logger = logger;
-        _sessionStoreFilePath = sessionStoreFilePath;
-
-        var directory = Path.GetDirectoryName(_sessionStoreFilePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        LoadSessionsFromDisk();
-        _cleanupTimer = new Timer(
-            _ => CleanupExpiredSessionsSafely(),
-            null,
-            TimeSpan.FromMinutes(15),
-            TimeSpan.FromMinutes(15));
-    }
-
-    public AdminAuthSessionService(ILogger<AdminAuthSessionService> logger)
-        : this(
-            CreateFallbackDataProtectionProvider(),
-            logger,
-            Path.Combine(Path.GetTempPath(), "allstarr-admin-auth", "sessions.protected"))
-    {
-    }
-
-    public AdminAuthSessionService()
-        : this(
-            CreateFallbackDataProtectionProvider(),
-            NullLogger<AdminAuthSessionService>.Instance,
-            Path.Combine(Path.GetTempPath(), "allstarr-admin-auth", "sessions.protected"))
-    {
-    }
-
-    public AdminAuthSession CreateSession(
+    public async Task<AdminAuthSession> CreateSessionAsync(
         string userId,
         string userName,
         bool isAdministrator,
@@ -110,10 +96,9 @@ public class AdminAuthSessionService : IDisposable
         bool isPersistent = false,
         string backendType = "Jellyfin",
         Guid? tenantId = null,
-        Guid? allstarrUserId = null)
+        Guid? allstarrUserId = null,
+        CancellationToken cancellationToken = default)
     {
-        RemoveExpiredSessions();
-
         var now = DateTime.UtcNow;
         var session = new AdminAuthSession
         {
@@ -131,49 +116,74 @@ public class AdminAuthSessionService : IDisposable
             LastSeenUtc = now
         };
 
-        _sessions[session.SessionId] = session;
-        PersistSessions();
+        await store.RemoveExpiredAsync(now, cancellationToken);
+        await store.AddAsync(new AdminAuthSessionRecord
+        {
+            Id = session.SessionId,
+            ProtectedPayload = _protector.Protect(JsonSerializer.Serialize(session, _jsonOptions)),
+            ExpiresAt = session.ExpiresAtUtc,
+            LastSeenAt = now
+        }, cancellationToken);
         return session;
     }
 
-    public bool TryGetValidSession(string? sessionId, out AdminAuthSession session)
+    public async Task<AdminAuthSession?> GetValidSessionAsync(
+        string? sessionId,
+        CancellationToken cancellationToken = default)
     {
-        session = null!;
+        if (string.IsNullOrWhiteSpace(sessionId)) return null;
 
-        if (string.IsNullOrWhiteSpace(sessionId))
+        var record = await store.FindAsync(sessionId, cancellationToken);
+        if (record is null) return null;
+        if (record.ExpiresAt <= DateTimeOffset.UtcNow)
         {
-            return false;
+            await store.RemoveAsync(sessionId, cancellationToken);
+            return null;
         }
 
-        if (!_sessions.TryGetValue(sessionId, out var existing))
+        try
         {
-            return false;
-        }
+            var session = JsonSerializer.Deserialize<AdminAuthSession>(
+                _protector.Unprotect(record.ProtectedPayload),
+                _jsonOptions);
+            if (session is null ||
+                !CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(session.SessionId),
+                    Convert.FromHexString(sessionId)) ||
+                session.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                await store.RemoveAsync(sessionId, cancellationToken);
+                return null;
+            }
 
-        if (existing.ExpiresAtUtc <= DateTime.UtcNow)
+            var now = DateTime.UtcNow;
+            session.LastSeenUtc = now;
+            if (record.LastSeenAt <= DateTimeOffset.UtcNow.AddMinutes(-5))
+            {
+                await store.TouchAsync(sessionId, now, cancellationToken);
+            }
+            return session;
+        }
+        catch (Exception exception) when (
+            exception is CryptographicException or JsonException or FormatException)
         {
-            _sessions.TryRemove(sessionId, out _);
-            PersistSessions();
-            return false;
+            await store.RemoveAsync(sessionId, cancellationToken);
+            logger.LogWarning(
+                "Rejected corrupt administrator session payload ({ExceptionType})",
+                exception.GetType().Name);
+            return null;
         }
-
-        existing.LastSeenUtc = DateTime.UtcNow;
-        session = existing;
-        return true;
     }
 
-    public bool TryGetValidSession(HttpRequest request, out AdminAuthSession session)
+    public async Task<AdminAuthSession?> GetValidSessionAsync(
+        HttpRequest request,
+        CancellationToken cancellationToken = default)
     {
         foreach (var sessionId in ReadSessionIds(request))
         {
-            if (TryGetValidSession(sessionId, out session))
-            {
-                return true;
-            }
+            if (await GetValidSessionAsync(sessionId, cancellationToken) is { } session) return session;
         }
-
-        session = null!;
-        return false;
+        return null;
     }
 
     public IReadOnlyList<string> ReadSessionIds(HttpRequest request)
@@ -196,190 +206,18 @@ public class AdminAuthSessionService : IDisposable
                 if (!string.IsNullOrWhiteSpace(value)) values.Add(value);
             }
         }
-
         return values.ToArray();
     }
 
-    public void RemoveSession(string? sessionId)
-    {
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            return;
-        }
-
-        if (_sessions.TryRemove(sessionId, out _))
-        {
-            PersistSessions();
-        }
-    }
-
-    private void RemoveExpiredSessions()
-    {
-        var now = DateTime.UtcNow;
-        var removedAny = false;
-        foreach (var kvp in _sessions)
-        {
-            if (kvp.Value.ExpiresAtUtc <= now &&
-                _sessions.TryRemove(kvp.Key, out _))
-            {
-                removedAny = true;
-            }
-        }
-
-        if (removedAny)
-        {
-            PersistSessions();
-        }
-    }
-
-    private void CleanupExpiredSessionsSafely()
-    {
-        try
-        {
-            RemoveExpiredSessions();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to clean expired administrator sessions");
-        }
-    }
-
-    public void Dispose() => _cleanupTimer.Dispose();
-
-    private void LoadSessionsFromDisk()
-    {
-        try
-        {
-            if (!File.Exists(_sessionStoreFilePath))
-            {
-                return;
-            }
-
-            var protectedPayload = File.ReadAllText(_sessionStoreFilePath);
-            if (string.IsNullOrWhiteSpace(protectedPayload))
-            {
-                return;
-            }
-
-            var json = _protector.Unprotect(protectedPayload);
-            var sessions = JsonSerializer.Deserialize<List<PersistedAdminAuthSession>>(json, _jsonOptions)
-                ?? [];
-
-            var now = DateTime.UtcNow;
-            foreach (var persisted in sessions)
-            {
-                var backendType = string.IsNullOrWhiteSpace(persisted.BackendType)
-                    ? "Jellyfin"
-                    : persisted.BackendType;
-                if (string.IsNullOrWhiteSpace(persisted.SessionId) ||
-                    string.IsNullOrWhiteSpace(persisted.UserId) ||
-                    string.IsNullOrWhiteSpace(persisted.UserName) ||
-                    (!backendType.Equals("Subsonic", StringComparison.OrdinalIgnoreCase) &&
-                     string.IsNullOrWhiteSpace(persisted.JellyfinAccessToken)) ||
-                    persisted.ExpiresAtUtc <= now)
-                {
-                    continue;
-                }
-
-                _sessions[persisted.SessionId] = new AdminAuthSession
-                {
-                    SessionId = persisted.SessionId,
-                    UserId = persisted.UserId,
-                    UserName = persisted.UserName,
-                    IsAdministrator = persisted.IsAdministrator,
-                    BackendType = backendType,
-                    TenantId = persisted.TenantId,
-                    AllstarrUserId = persisted.AllstarrUserId,
-                    JellyfinAccessToken = persisted.JellyfinAccessToken,
-                    JellyfinServerId = persisted.JellyfinServerId,
-                    IsPersistent = persisted.IsPersistent,
-                    ExpiresAtUtc = persisted.ExpiresAtUtc,
-                    LastSeenUtc = persisted.LastSeenUtc
-                };
-            }
-
-            if (_sessions.Count > 0)
-            {
-                _logger.LogInformation("Loaded {Count} persisted admin auth sessions", _sessions.Count);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                "Failed to load persisted admin auth sessions ({ExceptionType}); starting with an empty session store",
-                ex.GetType().Name);
-            _sessions.Clear();
-        }
-    }
-
-    private void PersistSessions()
-    {
-        lock (_persistLock)
-        {
-            try
-            {
-                var activeSessions = _sessions.Values
-                    .Where(session => session.ExpiresAtUtc > DateTime.UtcNow)
-                    .Select(session => new PersistedAdminAuthSession
-                    {
-                        SessionId = session.SessionId,
-                        UserId = session.UserId,
-                        UserName = session.UserName,
-                        IsAdministrator = session.IsAdministrator,
-                        BackendType = session.BackendType,
-                        TenantId = session.TenantId,
-                        AllstarrUserId = session.AllstarrUserId,
-                        JellyfinAccessToken = session.JellyfinAccessToken,
-                        JellyfinServerId = session.JellyfinServerId,
-                        IsPersistent = session.IsPersistent,
-                        ExpiresAtUtc = session.ExpiresAtUtc,
-                        LastSeenUtc = session.LastSeenUtc
-                    })
-                    .ToList();
-
-                var json = JsonSerializer.Serialize(activeSessions, _jsonOptions);
-                var protectedPayload = _protector.Protect(json);
-                File.WriteAllText(_sessionStoreFilePath, protectedPayload);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    "Failed to persist admin auth sessions ({ExceptionType})",
-                    ex.GetType().Name);
-            }
-        }
-    }
+    public Task RemoveSessionAsync(string? sessionId, CancellationToken cancellationToken = default) =>
+        string.IsNullOrWhiteSpace(sessionId)
+            ? Task.CompletedTask
+            : store.RemoveAsync(sessionId, cancellationToken);
 
     private static string GenerateSessionId()
     {
         Span<byte> bytes = stackalloc byte[32];
         RandomNumberGenerator.Fill(bytes);
         return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
-
-    private static IDataProtectionProvider CreateFallbackDataProtectionProvider()
-    {
-        var keysDirectory = new DirectoryInfo(Path.Combine(Path.GetTempPath(), "allstarr-admin-auth-keys"));
-        keysDirectory.Create();
-        return DataProtectionProvider.Create(keysDirectory, configuration =>
-        {
-            configuration.SetApplicationName("allstarr-admin");
-        });
-    }
-
-    private sealed class PersistedAdminAuthSession
-    {
-        public required string SessionId { get; init; }
-        public required string UserId { get; init; }
-        public required string UserName { get; init; }
-        public required bool IsAdministrator { get; init; }
-        public string BackendType { get; init; } = "Jellyfin";
-        public Guid? TenantId { get; init; }
-        public Guid? AllstarrUserId { get; init; }
-        public required string JellyfinAccessToken { get; init; }
-        public string? JellyfinServerId { get; init; }
-        public required bool IsPersistent { get; init; }
-        public required DateTime ExpiresAtUtc { get; init; }
-        public required DateTime LastSeenUtc { get; init; }
     }
 }

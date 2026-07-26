@@ -142,7 +142,7 @@ public class AdminAuthController : ControllerBase
                         userName,
                         isAdministrator),
                     HttpContext.RequestAborted);
-            var session = _sessionService.CreateSession(
+            var session = await _sessionService.CreateSessionAsync(
                 userId: userId,
                 userName: userName,
                 isAdministrator: isAdministrator,
@@ -150,7 +150,8 @@ public class AdminAuthController : ControllerBase
                 jellyfinServerId: serverId,
                 isPersistent: request.RememberMe,
                 tenantId: principal?.TenantId,
-                allstarrUserId: principal?.UserId);
+                allstarrUserId: principal?.UserId,
+                cancellationToken: HttpContext.RequestAborted);
 
             SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
 
@@ -185,9 +186,10 @@ public class AdminAuthController : ControllerBase
     }
 
     [HttpGet("me")]
-    public IActionResult GetCurrentSession()
+    public async Task<IActionResult> GetCurrentSession()
     {
-        if (!_sessionService.TryGetValidSession(Request, out var session))
+        var session = await _sessionService.GetValidSessionAsync(Request, HttpContext.RequestAborted);
+        if (session is null)
         {
             DeleteSessionCookies();
             return Ok(new
@@ -227,7 +229,8 @@ public class AdminAuthController : ControllerBase
     [HttpGet("me/avatar")]
     public async Task<IActionResult> GetCurrentUserAvatar(CancellationToken cancellationToken)
     {
-        if (!_sessionService.TryGetValidSession(Request, out var session) ||
+        var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
+        if (session is null ||
             !session.BackendType.Equals(BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(session.JellyfinAccessToken) ||
             string.IsNullOrWhiteSpace(_jellyfinSettings.Url))
@@ -257,11 +260,11 @@ public class AdminAuthController : ControllerBase
     }
 
     [HttpPost("logout")]
-    public IActionResult Logout()
+    public async Task<IActionResult> Logout()
     {
         foreach (var sessionId in _sessionService.ReadSessionIds(Request))
         {
-            _sessionService.RemoveSession(sessionId);
+            await _sessionService.RemoveSessionAsync(sessionId, HttpContext.RequestAborted);
         }
 
         DeleteSessionCookies();
@@ -353,7 +356,7 @@ public class AdminAuthController : ControllerBase
                         identity.UserName,
                         identity.IsAdministrator),
                     HttpContext.RequestAborted);
-            var session = _sessionService.CreateSession(
+            var session = await _sessionService.CreateSessionAsync(
                 userId: identity.UserName,
                 userName: identity.UserName,
                 isAdministrator: identity.IsAdministrator,
@@ -362,7 +365,8 @@ public class AdminAuthController : ControllerBase
                 isPersistent: request.RememberMe,
                 backendType: BackendType.Subsonic.ToString(),
                 tenantId: principal?.TenantId,
-                allstarrUserId: principal?.UserId);
+                allstarrUserId: principal?.UserId,
+                cancellationToken: HttpContext.RequestAborted);
 
             SetSessionCookie(session.SessionId, session.ExpiresAtUtc);
             _logger.LogInformation(

@@ -1,106 +1,107 @@
+using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
 
 public sealed class AdminAuthSessionServiceTests
 {
     [Fact]
-    public void SubsonicIdentitySession_PersistsWithoutPersistingBackendPassword()
+    public async Task SubsonicIdentitySession_PersistsWithoutPersistingBackendPassword()
     {
-        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        try
-        {
-            var dataProtection = DataProtectionProvider.Create(
-                new DirectoryInfo(Path.Combine(root, "keys")),
-                options => options.SetApplicationName("allstarr-admin-session-test"));
-            var configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Admin:SessionStorePath"] = Path.Combine(root, "sessions.protected")
-                })
-                .Build();
-            var first = new AdminAuthSessionService(
-                dataProtection,
-                NullLogger<AdminAuthSessionService>.Instance,
-                configuration);
-            var tenantId = Guid.CreateVersion7();
-            var allstarrUserId = Guid.CreateVersion7();
-            var created = first.CreateSession(
-                userId: "alice",
-                userName: "alice",
-                isAdministrator: true,
-                jellyfinAccessToken: string.Empty,
-                jellyfinServerId: null,
-                backendType: "Subsonic",
-                tenantId: tenantId,
-                allstarrUserId: allstarrUserId);
+        var store = new MemoryAdminAuthSessionStore();
+        var dataProtection = new EphemeralDataProtectionProvider();
+        var first = AdminAuthSessionTestSupport.Create(store, dataProtection);
+        var tenantId = Guid.CreateVersion7();
+        var allstarrUserId = Guid.CreateVersion7();
+        var created = await first.CreateSessionAsync(
+            userId: "alice",
+            userName: "alice",
+            isAdministrator: true,
+            jellyfinAccessToken: string.Empty,
+            jellyfinServerId: null,
+            backendType: "Subsonic",
+            tenantId: tenantId,
+            allstarrUserId: allstarrUserId);
 
-            var restoredService = new AdminAuthSessionService(
-                dataProtection,
-                NullLogger<AdminAuthSessionService>.Instance,
-                configuration);
+        var restored = await AdminAuthSessionTestSupport.Create(store, dataProtection)
+            .GetValidSessionAsync(created.SessionId);
 
-            Assert.True(restoredService.TryGetValidSession(created.SessionId, out var restored));
-            Assert.Equal("Subsonic", restored.BackendType);
-            Assert.Equal(string.Empty, restored.JellyfinAccessToken);
-            Assert.Equal(tenantId, restored.TenantId);
-            Assert.Equal(allstarrUserId, restored.AllstarrUserId);
-
-            var protectedPayload = File.ReadAllText(configuration["Admin:SessionStorePath"]!);
-            Assert.DoesNotContain("alice", protectedPayload, StringComparison.Ordinal);
-        }
-        finally
-        {
-            if (Directory.Exists(root))
-            {
-                Directory.Delete(root, recursive: true);
-            }
-        }
+        Assert.NotNull(restored);
+        Assert.Equal("Subsonic", restored.BackendType);
+        Assert.Equal(string.Empty, restored.JellyfinAccessToken);
+        Assert.Equal(tenantId, restored.TenantId);
+        Assert.Equal(allstarrUserId, restored.AllstarrUserId);
+        Assert.DoesNotContain("alice", store.Records[created.SessionId].ProtectedPayload, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void CorruptSessionStore_LogsOnlyExceptionType()
+    public async Task CorruptSessionStore_LogsOnlyExceptionType()
     {
-        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        try
+        var store = new MemoryAdminAuthSessionStore();
+        store.Records["bad"] = new()
         {
-            var storePath = Path.Combine(root, "sessions-private-name.protected");
-            File.WriteAllText(storePath, "not-a-valid-protected-payload-private-token");
-            var dataProtection = DataProtectionProvider.Create(
-                new DirectoryInfo(Path.Combine(root, "keys")),
-                options => options.SetApplicationName("allstarr-admin-session-redaction-test"));
-            var configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Admin:SessionStorePath"] = storePath
-                })
-                .Build();
-            var entries = new List<(string Message, Exception? Exception)>();
+            Id = "bad",
+            ProtectedPayload = "not-a-valid-protected-payload-private-token",
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            LastSeenAt = DateTimeOffset.UtcNow
+        };
+        var entries = new List<(string Message, Exception? Exception)>();
+        var service = AdminAuthSessionTestSupport.Create(
+            store,
+            logger: new CollectingLogger<AdminAuthSessionService>(entries));
 
-            _ = new AdminAuthSessionService(
+        Assert.Null(await service.GetValidSessionAsync("bad"));
+        Assert.Empty(store.Records);
+        var entry = Assert.Single(entries);
+        Assert.Null(entry.Exception);
+        Assert.Contains("CryptographicException", entry.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-token", entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExpiredSession_IsRejectedAndDeleted()
+    {
+        var store = new MemoryAdminAuthSessionStore();
+        var service = AdminAuthSessionTestSupport.Create(store);
+        var session = await service.CreateSessionAsync("id", "name", true, "token", null);
+        store.Records[session.SessionId].ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+
+        Assert.Null(await service.GetValidSessionAsync(session.SessionId));
+        Assert.Empty(store.Records);
+    }
+
+    [Fact]
+    public async Task PostgreSqlSession_SurvivesServiceRestart()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using (var context = new AllstarrDbContext(database.Options))
+        {
+            await context.Database.MigrateAsync();
+        }
+
+        var factory = new Factory(database.Options);
+        var dataProtection = new EphemeralDataProtectionProvider();
+        var created = await new AdminAuthSessionService(
+                new EfAdminAuthSessionStore(factory),
                 dataProtection,
-                new CollectingLogger<AdminAuthSessionService>(entries),
-                configuration);
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance)
+            .CreateSessionAsync("id", "alice", true, "secret-token", "server");
 
-            var entry = Assert.Single(entries);
-            Assert.Null(entry.Exception);
-            Assert.Contains("CryptographicException", entry.Message, StringComparison.Ordinal);
-            Assert.DoesNotContain("private-token", entry.Message, StringComparison.Ordinal);
-            Assert.DoesNotContain(storePath, entry.Message, StringComparison.Ordinal);
-        }
-        finally
-        {
-            if (Directory.Exists(root))
-            {
-                Directory.Delete(root, recursive: true);
-            }
-        }
+        var restored = await new AdminAuthSessionService(
+                new EfAdminAuthSessionStore(factory),
+                dataProtection,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance)
+            .GetValidSessionAsync(created.SessionId);
+
+        Assert.NotNull(restored);
+        Assert.Equal("alice", restored.UserName);
+        await using var verification = new AllstarrDbContext(database.Options);
+        var record = await verification.AdminAuthSessions.SingleAsync();
+        Assert.DoesNotContain("alice", record.ProtectedPayload, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-token", record.ProtectedPayload, StringComparison.Ordinal);
     }
 
     private sealed class CollectingLogger<T>(List<(string Message, Exception? Exception)> entries)
@@ -117,5 +118,15 @@ public sealed class AdminAuthSessionServiceTests
             Exception? exception,
             Func<TState, Exception?, string> formatter) =>
             entries.Add((formatter(state, exception), exception));
+    }
+
+    private sealed class Factory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+
+        public Task<AllstarrDbContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AllstarrDbContext(options));
     }
 }

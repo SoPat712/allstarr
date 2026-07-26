@@ -94,6 +94,14 @@ public sealed class BackendIdentityRecord
     public DateTimeOffset LastSeenAt { get; set; }
 }
 
+public sealed class AdminAuthSessionRecord
+{
+    public string Id { get; set; } = string.Empty;
+    public string ProtectedPayload { get; set; } = string.Empty;
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset LastSeenAt { get; set; }
+}
+
 public sealed class ProviderAccountRecord
 {
     public Guid Id { get; set; }

@@ -1614,7 +1614,6 @@ public sealed class ProtocolRouteFixtureTests
                     ["SpotifyImport:Enabled"] = "false",
                     ["Storage:EnforceMutationGuard"] = "false",
                     ["Extensions:Directory"] = Path.Combine(_stateRoot, "extensions"),
-                    ["Admin:SessionStorePath"] = Path.Combine(_stateRoot, "sessions.protected"),
                     ["Cache:GenreDirectory"] = Path.Combine(_stateRoot, "genres"),
                     ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "applemusic,deezer,qobuz,squidwtf,spotify"
                 });

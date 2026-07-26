@@ -326,6 +326,7 @@ builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
 
 // Admin helper service (shared utilities for admin controllers)
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
+builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminAuthSessionService>();
 
 // Configuration - register both settings, active one determined by backend type
