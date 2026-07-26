@@ -22,13 +22,17 @@ public sealed class InjectedPlaylistResponsiveDesignContractTests
         var root = FindRepositoryRoot();
         var script = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "js", "webui.js"));
         var styles = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "css", "responsive.css"));
+        var workspaceStyles = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "css", "workspaces.css"));
 
         Assert.Contains("class=\"track-primary-action\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"track-byline\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"track-provider-cell\"", script, StringComparison.Ordinal);
         Assert.Contains("class=\"track-menu-cell\"", script, StringComparison.Ordinal);
         Assert.Contains(".playlist-track-head", styles, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: 30px minmax(0, 1fr) 44px", styles, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: 30px minmax(0, 1fr)", styles, StringComparison.Ordinal);
+        Assert.Contains(".playlist-track-row .shared-track-row-grid", styles, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: minmax(0, 1fr) minmax(130px, auto) 64px 44px", styles, StringComparison.Ordinal);
+        Assert.Contains("place-items: center", workspaceStyles, StringComparison.Ordinal);
         Assert.Contains("height: 100dvh", styles, StringComparison.Ordinal);
     }
 

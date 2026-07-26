@@ -120,6 +120,7 @@ public static class JellyfinMusicEndpointPolicy
              path.Equals("system/ping", StringComparison.OrdinalIgnoreCase) ||
              path.Equals("users/me", StringComparison.OrdinalIgnoreCase) ||
              path.Equals("users/public", StringComparison.OrdinalIgnoreCase) ||
+             IsUserProfile(path) ||
              path.Equals("userimage", StringComparison.OrdinalIgnoreCase) ||
              IsUserProfileImage(path)))
         {
@@ -338,6 +339,13 @@ public static class JellyfinMusicEndpointPolicy
         return segments.Length >= 4 &&
                segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
                segments[2].Equals("images", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUserProfile(string path)
+    {
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length == 2 &&
+               segments[0].Equals("users", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSpecificGenre(string path)

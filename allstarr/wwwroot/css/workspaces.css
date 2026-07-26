@@ -111,7 +111,30 @@
 }
 
 .injected-playlist-dialog .playlist-track-row {
+    grid-template-columns: 34px minmax(0, 1fr);
     border-bottom: 1px solid var(--border);
+}
+
+.injected-playlist-dialog .shared-track-row-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(150px, .42fr) 74px 42px;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    overflow: visible;
+}
+
+.injected-playlist-dialog .track-position,
+.injected-playlist-dialog .track-menu-cell,
+.injected-playlist-dialog .track-menu-cell .track-action-menu {
+    display: grid;
+    align-self: stretch;
+    place-items: center;
+    text-align: center;
+}
+
+.injected-playlist-dialog .track-action-trigger {
+    margin: 0;
 }
 
 .injected-playlist-dialog .playlist-track-row:last-child {
@@ -566,14 +589,18 @@
 }
 
 .playlist-operation-actions {
-    display: grid;
-    grid-template-rows: repeat(3, minmax(40px, 1fr));
+    display: flex;
+    align-items: stretch;
     align-self: stretch;
-    gap: 8px;
     min-width: 164px;
 }
 
-.playlist-operation-actions button {
+.playlist-operation-menu {
+    position: relative;
+    width: 100%;
+}
+
+.playlist-operation-menu > summary {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -584,6 +611,12 @@
     margin: 0;
     padding: 8px 14px;
     white-space: nowrap;
+}
+
+.playlist-operation-menu > div {
+    right: 0;
+    left: auto;
+    min-width: 190px;
 }
 
 .playlist-match-notice {

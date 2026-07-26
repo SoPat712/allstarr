@@ -4118,20 +4118,25 @@ class AllstarrApp extends LitElement {
             <span><small>Last synced</small><strong>${lastSuccessfulSyncAt ? formatRelativeTime(lastSuccessfulSyncAt) : "Not yet"}</strong></span>
             <span><small>Next rematch</small><strong>${nextSyncAt ? formatRelativeTime(nextSyncAt) : "Manual only"}</strong></span>
           </div><div class="playlist-operation-actions" aria-label="Playlist actions">
-            <button class="primary compact playlist-rematch-action" @click=${async () => {
-              await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
-              await this.reloadInjectedPlaylistDetails();
-            }}>${icon("refresh", 15)}<span>Sync now</span></button>
-            <button class="compact" @click=${async () => {
-              await API.matchPlaylist(this.selectedInjectedPlaylist);
-              await this.reloadInjectedPlaylistDetails();
-              this.toast("Rematching requested");
-            }}>${icon("search", 15)}<span>Rematch</span></button>
-            <button class="compact" @click=${async () => {
-              await API.refreshPlaylist(this.selectedInjectedPlaylist);
-              await this.reloadInjectedPlaylistDetails();
-              this.toast("Source refresh requested");
-            }}>${icon("download", 15)}<span>Refresh source</span></button>
+            <details class="action-menu playlist-action-menu playlist-operation-menu" @keydown=${(event) => this.handleActionMenuKeydown(event)}>
+              <summary class="primary compact">${icon("more", 15)}<span>Actions</span></summary>
+              <div role="menu">
+                <button role="menuitem" class="playlist-rematch-action" @click=${async () => {
+                  await this.syncInjectedPlaylist(this.selectedInjectedPlaylist);
+                  await this.reloadInjectedPlaylistDetails();
+                }}>${icon("refresh", 15)}<span>Sync now</span></button>
+                <button role="menuitem" @click=${async () => {
+                  await API.matchPlaylist(this.selectedInjectedPlaylist);
+                  await this.reloadInjectedPlaylistDetails();
+                  this.toast("Rematching requested");
+                }}>${icon("search", 15)}<span>Rematch</span></button>
+                <button role="menuitem" @click=${async () => {
+                  await API.refreshPlaylist(this.selectedInjectedPlaylist);
+                  await this.reloadInjectedPlaylistDetails();
+                  this.toast("Source refresh requested");
+                }}>${icon("download", 15)}<span>Refresh source</span></button>
+              </div>
+            </details>
           </div></div>
           ${matchStatus === "rematch_required" ? html`<div class="playlist-match-notice" role="status">
             ${icon("warning", 17)}<span><strong>Current source snapshot needs matching</strong><small>The provider playlist changed after its last completed match. Run a sync now or wait for the next scheduled sync.</small></span>

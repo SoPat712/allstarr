@@ -23,6 +23,8 @@ public sealed class JellyfinMusicEndpointPolicyTests
     [InlineData("GET", "/Items/Counts")]
     [InlineData("GET", "/UserItems/Resume")]
     [InlineData("GET", "/Genres/Rock")]
+    [InlineData("GET", "/Users/user-id")]
+    [InlineData("HEAD", "/Users/user-id")]
     public void Evaluate_AllowsMusicAndRequiredClientRoutes(string method, string target)
     {
         var decision = Evaluate(method, target);

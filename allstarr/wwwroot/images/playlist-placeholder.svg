@@ -1,23 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
-  <title id="title">Playlist artwork</title>
-  <desc id="description">A stylized playlist with a music note.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="background" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#232b3a"/>
-      <stop offset="1" stop-color="#111722"/>
+    <linearGradient id="background" x1="54" y1="38" x2="458" y2="474" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#263351"/>
+      <stop offset="1" stop-color="#121827"/>
     </linearGradient>
-    <linearGradient id="accent" x1="150" y1="120" x2="390" y2="398" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7c8cff"/>
-      <stop offset="1" stop-color="#48d1b5"/>
+    <linearGradient id="accent" x1="122" y1="132" x2="406" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b95ff"/>
+      <stop offset="1" stop-color="#59d7bd"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="72" fill="url(#background)"/>
-  <rect x="34" y="34" width="444" height="444" rx="50" fill="none" stroke="#303b4e" stroke-width="4"/>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M132 166h146M132 238h118M132 310h90" stroke="#d8deea" stroke-width="24"/>
-    <path d="M326 156v168" stroke="url(#accent)" stroke-width="28"/>
-    <path d="M326 170l92-22v150" stroke="url(#accent)" stroke-width="28"/>
-  </g>
-  <circle cx="286" cy="342" r="47" fill="url(#accent)"/>
-  <circle cx="378" cy="316" r="47" fill="url(#accent)"/>
+  <rect width="512" height="512" rx="88" fill="url(#background)"/>
+  <path d="M112 154h288M112 230h288M112 306h146M112 382h146" fill="none" stroke="#edf1fb" stroke-width="24" stroke-linecap="round"/>
+  <path d="M310 304v82c0 30-24 54-54 54s-54-20-54-46 24-46 54-46c10 0 19 2 28 6V258l126-28v110c0 30-24 54-54 54s-54-20-54-46 24-46 54-46c10 0 19 2 28 6v-48l-74 16v28Z" fill="url(#accent)"/>
 </svg>

@@ -41,13 +41,7 @@
     }
 
     .playlist-operation-actions {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        grid-template-rows: minmax(40px, auto);
         width: 100%;
-    }
-
-    .playlist-operation-actions button {
-        min-width: 0;
     }
 
     .playlist-operation-summary {
@@ -81,7 +75,7 @@
     }
 
     .playlist-track-row {
-        grid-template-columns: 30px minmax(0, 1fr) 44px;
+        grid-template-columns: 30px minmax(0, 1fr);
         min-width: 0;
         gap: 8px;
         padding: 12px;
@@ -90,25 +84,34 @@
         background: var(--surface-elevated);
     }
 
+    .playlist-track-row .shared-track-row-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(130px, auto) 64px 44px;
+        align-items: center;
+        gap: 8px;
+        overflow: visible;
+    }
+
     .playlist-track-row .track-position {
+        grid-column: 1;
+        grid-row: 1;
+        align-self: stretch;
+    }
+
+    .playlist-track-row .track-primary-action {
         grid-column: 1;
         grid-row: 1;
     }
 
-    .playlist-track-row .track-primary-action {
-        grid-column: 2;
-        grid-row: 1;
-    }
-
     .playlist-track-row .track-menu-cell {
-        grid-column: 3;
+        grid-column: 4;
         grid-row: 1;
     }
 
     .playlist-track-row .track-provider-cell {
         display: grid;
         grid-column: 2;
-        grid-row: 2;
+        grid-row: 1;
         gap: 4px;
         align-items: center;
         min-width: 0;
@@ -116,7 +119,7 @@
 
     .playlist-track-row .track-duration-cell {
         grid-column: 3;
-        grid-row: 2;
+        grid-row: 1;
         align-self: center;
     }
 
@@ -183,8 +186,31 @@
     }
 
     .playlist-operation-actions {
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: repeat(3, minmax(40px, auto));
+        width: 100%;
+    }
+
+    .playlist-track-row .shared-track-row-grid {
+        grid-template-columns: minmax(0, 1fr) 44px;
+    }
+
+    .playlist-track-row .track-primary-action {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .playlist-track-row .track-menu-cell {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .playlist-track-row .track-provider-cell {
+        grid-column: 1;
+        grid-row: 2;
+    }
+
+    .playlist-track-row .track-duration-cell {
+        grid-column: 2;
+        grid-row: 2;
     }
 }
 
