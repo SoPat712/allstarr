@@ -53,9 +53,9 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("playlistInfo[\"externalTracks\"] = coverage.External", controller, StringComparison.Ordinal);
         Assert.Contains("ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing)", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
-        Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
+        Assert.Contains("ReadDurablePlaylistAsync(", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistSummarySchemaVersion = 9", controller, StringComparison.Ordinal);
-        Assert.Equal(2, Count(controller, "GetSourcePlaylistTracksAsync(") - 1);
+        Assert.DoesNotContain("GetSourcePlaylistTracksAsync(", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildSpotifyMissingTracksKey", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistCoverageMath.Normalize(", controller, StringComparison.Ordinal);
         Assert.Contains("[\"providerBreakdown\"]", controller, StringComparison.Ordinal);
@@ -64,24 +64,20 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("Math.min(trackCount, Math.max(0", script, StringComparison.Ordinal);
     }
 
-    private static int Count(string source, string value) =>
-        source.Split(value, StringSplitOptions.None).Length - 1;
-
     [Fact]
     public void PlaylistDetails_UseMaterializedOrderAndReturnAuthoritativeCounts()
     {
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
-        Assert.Contains("MatchMaterializedItems(spotifyTracks, materializedItems)", controller, StringComparison.Ordinal);
-        Assert.Contains("MaterializedIdentityMatches", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("cachedItem = cachedPlaylistItems[trackIndex]", controller, StringComparison.Ordinal);
-        Assert.Contains("totalPlayable = matchedTrackCount", controller, StringComparison.Ordinal);
-        Assert.Contains("localTracks = localTrackCount", controller, StringComparison.Ordinal);
-        Assert.Contains("externalTracks = externalTrackCount", controller, StringComparison.Ordinal);
-        Assert.Contains("matchState = isLocal == true ? \"local\"", controller, StringComparison.Ordinal);
-        Assert.Contains("backendItemId = isLocal == true", controller, StringComparison.Ordinal);
-        Assert.Contains("FuzzyMatcher.StripDecorators", File.ReadAllText(FindRepositoryFile("allstarr", "Services", "Admin", "PlaylistTrackStatusResolver.cs")), StringComparison.Ordinal);
+        Assert.Contains("playlist.Entries.Select", controller, StringComparison.Ordinal);
+        Assert.Contains("totalPlayable = matched", controller, StringComparison.Ordinal);
+        Assert.Contains("localTracks = matched", controller, StringComparison.Ordinal);
+        Assert.Contains("externalTracks = 0", controller, StringComparison.Ordinal);
+        Assert.Contains("matchState = local ? \"local\" : \"unmatched\"", controller, StringComparison.Ordinal);
+        Assert.Contains("backendItemId = track.BackendItemId", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildSpotifyPlaylistItemsKey", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildSpotifyMatchedTracksKey", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("playlistSummary?.totalPlayable", script, StringComparison.Ordinal);
     }
 
@@ -94,8 +90,10 @@ public sealed class InjectedPlaylistTrackActionsContractTests
 
         Assert.Contains("lastSourceRefreshAt", controller, StringComparison.Ordinal);
         Assert.Contains("lastSuccessfulSyncAt", controller, StringComparison.Ordinal);
-        Assert.Contains("BuildSpotifyPlaylistLastSuccessfulSyncKey", controller, StringComparison.Ordinal);
-        Assert.Contains("playlistMetadata?.FetchedAt", controller, StringComparison.Ordinal);
+        Assert.Contains("playlist.RetrievedAt", controller, StringComparison.Ordinal);
+        Assert.Contains("playlist.CompletedAt", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadPlaylistCacheTimestamp", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildSpotifyPlaylistLastSuccessfulSyncKey", controller, StringComparison.Ordinal);
         Assert.Contains("nextSyncAt", controller, StringComparison.Ordinal);
         Assert.Contains("matchStatus", controller, StringComparison.Ordinal);
         Assert.Contains("Local</small>", script, StringComparison.Ordinal);
@@ -121,12 +119,8 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         var controller = File.ReadAllText(FindRepositoryFile("allstarr", "Controllers", "PlaylistController.cs"));
         var script = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "js", "webui.js"));
 
-        Assert.True(
-            controller.Split("position = trackIndex + 1", StringSplitOptions.None).Length >= 3,
-            "Both playlist detail paths must return a contiguous display ordinal.");
-        Assert.True(
-            controller.Split("sourcePosition = track.Position", StringSplitOptions.None).Length >= 3,
-            "Both playlist detail paths must retain the raw provider position for diagnostics.");
+        Assert.Contains("position = index + 1", controller, StringComparison.Ordinal);
+        Assert.Contains("sourcePosition = track.Position", controller, StringComparison.Ordinal);
         Assert.Contains("Provider position ${track.sourcePosition}", script, StringComparison.Ordinal);
     }
 

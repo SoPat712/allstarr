@@ -222,6 +222,28 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(["local-1"], _target.LastWrite.OrderedBackendItemIds);
     }
 
+    [Fact]
+    public async Task Durable_projection_reads_latest_generation_metrics_and_receipt()
+    {
+        _source.Snapshot = Snapshot(
+            "revision-projection",
+            Entry(0, "entry-projection-1", "source-1", "One"),
+            Entry(1, "entry-projection-2", "source-2", "Two"));
+        await _service.RunAsync(Context(), new(_link, 73));
+
+        var projection = await new DurablePlaylistProjectionReader(_factory)
+            .ReadByNameAsync(_tenant, _user, "Provider Mix");
+
+        Assert.NotNull(projection);
+        Assert.Equal(2, projection.Entries.Count);
+        Assert.Equal(2, projection.LocalCount);
+        Assert.Equal(0, projection.MissingCount);
+        Assert.Equal(360000, projection.DurationMilliseconds);
+        Assert.Equal(PlaylistSyncState.PartiallySucceeded, projection.SyncState);
+        Assert.Equal(_now, projection.CompletedAt);
+        Assert.All(projection.Entries, item => Assert.NotNull(item.BackendItemId));
+    }
+
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,
