@@ -1,10 +1,38 @@
+using System.Text.Json;
 using allstarr.Core.Matching;
+using allstarr.Core.Playlists;
 using allstarr.Core.Storage;
 
 namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests
 {
+    [Fact]
+    public void PreparedCandidatesAndPersistenceInputPreserveOneDecision()
+    {
+        var scope = Scope();
+        var candidate = Candidate(scope);
+        var engine = new TrackMatchDecisionEngine();
+        var candidates = engine.PrepareCandidates([candidate]);
+
+        var decision = engine.Decide(scope, Source(), candidates);
+        var input = MatchDecisionInput.FromDecision(
+            Guid.CreateVersion7(),
+            candidate.CanonicalRecordingId,
+            decision,
+            decisionVersion: 3,
+            sourceSnapshotVersion: 2,
+            libraryIndexRevision: candidates.Revision,
+            policyVersion: "shared-policy");
+
+        Assert.Equal(candidate.LibraryTrackId, input.LibraryTrackId);
+        Assert.Equal(TrackMatchState.Accepted, input.State);
+        Assert.Equal(decision.AcceptThreshold, input.Threshold);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, input.MatcherVersion);
+        Assert.Equal(decision.Candidates.Count,
+            JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(input.CandidateResultsJson)!.Length);
+    }
+
     [Fact]
     public void LibraryIndexRevision_IsStableAndChangesWithMatchableMetadata()
     {

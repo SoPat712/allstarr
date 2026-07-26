@@ -617,8 +617,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     : candidate;
             })
             .ToArray();
-        var candidateIndex = new TrackMatchCandidateIndex(mappedCandidates);
-        var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(mappedCandidates);
+        var candidateSet = _matcher.PrepareCandidates(mappedCandidates);
+        var libraryIndexRevision = candidateSet.Revision;
         var candidateById = candidates.ToDictionary(item => item.Id);
 
         var actor = execution.RequireActor();
@@ -672,7 +672,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
                     canonicalRecordingId);
 
-                var matchCandidates = candidateIndex.Select(source);
                 var rejectedOverride =
                     manual?.Decision == ManualOverrideDecision.Reject &&
                     manual.LibraryTrackId.HasValue &&
@@ -690,29 +689,23 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 var match = _matcher.Decide(
                     new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion),
                     source,
-                    matchCandidates,
+                    candidateSet,
                     rejectedOverride);
 
+                var matchedCanonicalRecordingId = match.SelectedLibraryTrackId.HasValue &&
+                                                  candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCandidate)
+                    ? canonicalRecordingId ?? matchedCandidate.CanonicalRecordingId
+                    : null;
                 stored = await _trackMatches.RecordDecisionAsync(
                     execution,
-                    new MatchDecisionInput(
+                    MatchDecisionInput.FromDecision(
                         external.Id,
-                        match.SelectedLibraryTrackId,
-                        match.SelectedLibraryTrackId.HasValue &&
-                        candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCand)
-                            ? canonicalRecordingId ?? matchedCand.CanonicalRecordingId
-                            : null,
-                        ToStorageState(match.State),
-                        match.Confidence,
-                        .88,
+                        matchedCanonicalRecordingId,
+                        match,
                         (stored?.DecisionVersion ?? 0) + 1,
                         external.SnapshotVersion,
                         libraryIndexRevision,
-                        TrackMatchDecisionEngine.AlgorithmVersion,
-                        link.PolicyVersion,
-                        JsonSerializer.Serialize(match.Candidates),
-                        JsonSerializer.Serialize(match.Reasons),
-                        JsonSerializer.Serialize(match.Warnings)),
+                        link.PolicyVersion),
                     cancellationToken);
                 storedByExternalId[external.Id] = stored;
             }
@@ -975,15 +968,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             item.Isrc, item.MusicBrainzRecordingId, null, providers);
     }
 
-    private static TrackMatchState ToStorageState(TrackMatchReviewState state) => state switch
-    {
-        TrackMatchReviewState.Accepted => TrackMatchState.Accepted,
-        TrackMatchReviewState.Pinned => TrackMatchState.Pinned,
-        TrackMatchReviewState.Suggested => TrackMatchState.Suggested,
-        TrackMatchReviewState.Rejected => TrackMatchState.Rejected,
-        TrackMatchReviewState.Ambiguous => TrackMatchState.Ambiguous,
-        _ => TrackMatchState.Unresolved
-    };
     private static TrackMatchReviewState ToReviewState(TrackMatchState state) => state switch
     {
         TrackMatchState.Accepted => TrackMatchReviewState.Accepted,

@@ -159,6 +159,19 @@ public sealed class TrackMatchDecisionEngine
         return BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 
+    public TrackMatchCandidateSet PrepareCandidates(IEnumerable<LocalTrackMatchCandidate> candidates)
+    {
+        var items = candidates.ToArray();
+        return new(new TrackMatchCandidateIndex(items), LibraryIndexRevision(items));
+    }
+
+    public TrackMatchDecision Decide(
+        TrackMatchScope scope,
+        ExternalTrackMatchSnapshot source,
+        TrackMatchCandidateSet candidates,
+        ScopedTrackMatchOverride? manualOverride = null) =>
+        Decide(scope, source, candidates.Select(source), manualOverride);
+
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
         ExternalTrackMatchSnapshot source,
@@ -551,6 +564,14 @@ public sealed class TrackMatchDecisionEngine
         _policy.AmbiguityDelta,
         state is TrackMatchReviewState.Suggested or TrackMatchReviewState.Ambiguous or
             TrackMatchReviewState.Unresolved or TrackMatchReviewState.Rejected);
+}
+
+public sealed class TrackMatchCandidateSet(TrackMatchCandidateIndex index, long revision)
+{
+    public long Revision { get; } = revision;
+
+    internal IReadOnlyList<LocalTrackMatchCandidate> Select(ExternalTrackMatchSnapshot source) =>
+        index.Select(source);
 }
 
 public static class TrackMatchOverridePolicy

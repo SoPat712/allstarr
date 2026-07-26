@@ -171,7 +171,7 @@ public sealed class PlaylistDryRunPreviewController(
                 execution,
                 request.LibraryScopeId.Trim(),
                 deadline.Token);
-            var candidateIndex = new TrackMatchCandidateIndex(candidates);
+            var candidateSet = matcher.PrepareCandidates(candidates);
             var candidateById = candidates.ToDictionary(item => item.LibraryTrackId);
             var enabledProviderIds = (await db.ProviderAccounts.AsNoTracking()
                     .Where(item => item.Enabled &&
@@ -211,7 +211,7 @@ public sealed class PlaylistDryRunPreviewController(
                 SourceSnapshotVersion: 1);
             var decisions = snapshot.Entries.Select(entry =>
                 {
-                    var local = Decide(entry, account.ProviderId, scope, candidateIndex, matcher);
+                    var local = Decide(entry, account.ProviderId, scope, candidateSet, matcher);
                     var providerMatches = entry.CanonicalRecordingId.HasValue &&
                                           playableByCanonical.TryGetValue(entry.CanonicalRecordingId.Value, out var routes)
                         ? routes
@@ -323,7 +323,7 @@ public sealed class PlaylistDryRunPreviewController(
         CollectedPlaylistSourceEntry entry,
         string providerId,
         TrackMatchScope scope,
-        TrackMatchCandidateIndex candidates,
+        TrackMatchCandidateSet candidates,
         TrackMatchDecisionEngine matcher)
     {
         if (string.IsNullOrWhiteSpace(entry.Title) || entry.Artists.Count == 0)
@@ -350,7 +350,7 @@ public sealed class PlaylistDryRunPreviewController(
             entry.Isrc,
             null,
             entry.IsExplicit);
-        return new(entry, matcher.Decide(scope, source, candidates.Select(source)));
+        return new(entry, matcher.Decide(scope, source, candidates));
     }
 
     private bool TryGetAdministrator(out AdminAuthSession session, out IActionResult? error)

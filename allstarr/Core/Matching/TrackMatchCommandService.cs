@@ -343,29 +343,9 @@ public sealed class TrackMatchCommandService(
             return existing;
         }
 
-        var record = new TrackMatchRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
-            OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id,
-            LibraryTrackId = input.LibraryTrackId,
-            CanonicalRecordingId = input.CanonicalRecordingId,
-            LibraryScopeId = snapshot.LibraryScopeId,
-            State = input.State,
-            Confidence = input.Confidence,
-            Threshold = input.Threshold,
-            DecisionVersion = input.DecisionVersion,
-            SourceSnapshotVersion = input.SourceSnapshotVersion,
-            LibraryIndexRevision = input.LibraryIndexRevision,
-            MatcherVersion = input.MatcherVersion.Trim(),
-            PolicyVersion = input.PolicyVersion.Trim(),
-            CandidateResultsJson = input.CandidateResultsJson,
-            ReasonsJson = input.ReasonsJson,
-            WarningsJson = input.WarningsJson,
-            CorrelationId = context.CorrelationId,
-            DecidedAt = clock.UtcNow
-        };
+        var record = ToRecord(
+            input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
+            context.CorrelationId, clock.UtcNow);
         db.TrackMatches.Add(record);
         try
         {
@@ -1138,9 +1118,8 @@ public sealed class TrackMatchCommandService(
                 continue;
             }
 
-            var candidates = new TrackMatchCandidateIndex(scopedTracks.Select(ToLocalCandidate));
-            var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(
-                scopedTracks.Select(ToLocalCandidate));
+            var candidates = decisionEngine.PrepareCandidates(scopedTracks.Select(ToLocalCandidate));
+            var libraryIndexRevision = candidates.Revision;
             var scope = new TrackMatchScope(
                 snapshot.TenantId,
                 snapshot.OwnerUserId,
@@ -1175,7 +1154,7 @@ public sealed class TrackMatchCommandService(
                         new HashSet<Guid> { manual.LibraryTrackId.Value })
                     : null;
             var decision = decisionEngine.Decide(
-                scope, source, candidates.Select(source), rejectedOverride);
+                scope, source, candidates, rejectedOverride);
             var selected = decision.SelectedLibraryTrackId is { } selectedId
                 ? scopedTracks.Single(item => item.Id == selectedId)
                 : null;
@@ -1195,29 +1174,17 @@ public sealed class TrackMatchCommandService(
                             latest.PolicyVersion == "automatic-provider-neutral-v2";
             if (!unchanged)
             {
-                db.TrackMatches.Add(new TrackMatchRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    TenantId = snapshot.TenantId,
-                    OwnerUserId = snapshot.OwnerUserId,
-                    ExternalSnapshotId = snapshot.Id,
-                    CanonicalRecordingId = identity.CanonicalRecordingId,
-                    LibraryScopeId = snapshot.LibraryScopeId,
-                    LibraryTrackId = selected?.Id,
-                    State = state,
-                    Confidence = decision.Confidence,
-                    Threshold = decision.AcceptThreshold,
-                    DecisionVersion = (latest?.DecisionVersion ?? 0) + 1,
-                    SourceSnapshotVersion = snapshot.SnapshotVersion,
-                    LibraryIndexRevision = libraryIndexRevision,
-                    MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
-                    PolicyVersion = "automatic-provider-neutral-v2",
-                    CandidateResultsJson = JsonSerializer.Serialize(decision.Candidates),
-                    ReasonsJson = JsonSerializer.Serialize(decision.Reasons),
-                    WarningsJson = JsonSerializer.Serialize(decision.Warnings),
-                    CorrelationId = correlationId,
-                    DecidedAt = now
-                });
+                var input = MatchDecisionInput.FromDecision(
+                    snapshot.Id,
+                    identity.CanonicalRecordingId,
+                    decision,
+                    (latest?.DecisionVersion ?? 0) + 1,
+                    snapshot.SnapshotVersion,
+                    libraryIndexRevision,
+                    "automatic-provider-neutral-v2");
+                db.TrackMatches.Add(ToRecord(
+                    input, snapshot.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
+                    correlationId, now));
             }
 
             results.Add(ToAutomatedResult(seed, decision.State, selected, decision.Confidence));
@@ -1315,10 +1282,8 @@ public sealed class TrackMatchCommandService(
             payload.Isrc,
             null,
             null);
-        var localCandidates = new TrackMatchCandidateIndex(candidates.Select(ToLocalCandidate))
-            .Select(sourceTrack);
-        var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(
-            candidates.Select(ToLocalCandidate));
+        var localCandidates = decisionEngine.PrepareCandidates(candidates.Select(ToLocalCandidate));
+        var libraryIndexRevision = localCandidates.Revision;
         var scope = new TrackMatchScope(
             actor.TenantId,
             snapshot.OwnerUserId,
@@ -1344,30 +1309,17 @@ public sealed class TrackMatchCommandService(
         var selected = decision.SelectedLibraryTrackId.HasValue
             ? candidates.SingleOrDefault(item => item.Id == decision.SelectedLibraryTrackId.Value)
             : null;
-        var state = Enum.Parse<TrackMatchState>(decision.State.ToString(), ignoreCase: true);
-        db.TrackMatches.Add(new TrackMatchRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
-            OwnerUserId = snapshot.OwnerUserId,
-            ExternalSnapshotId = snapshot.Id,
-            CanonicalRecordingId = selected?.CanonicalRecordingId,
-            LibraryScopeId = snapshot.LibraryScopeId,
-            LibraryTrackId = decision.SelectedLibraryTrackId,
-            State = state,
-            Confidence = decision.Confidence,
-            Threshold = 0.88,
-            DecisionVersion = latestVersion + 1,
-            SourceSnapshotVersion = snapshot.SnapshotVersion,
-            LibraryIndexRevision = libraryIndexRevision,
-            MatcherVersion = TrackMatchDecisionEngine.AlgorithmVersion,
-            PolicyVersion = "manual-rematch-v2",
-            CandidateResultsJson = JsonSerializer.Serialize(decision.Candidates),
-            ReasonsJson = JsonSerializer.Serialize(decision.Reasons),
-            WarningsJson = JsonSerializer.Serialize(decision.Warnings),
-            CorrelationId = correlationId,
-            DecidedAt = DateTimeOffset.UtcNow
-        });
+        var input = MatchDecisionInput.FromDecision(
+            snapshot.Id,
+            selected?.CanonicalRecordingId,
+            decision,
+            latestVersion + 1,
+            snapshot.SnapshotVersion,
+            libraryIndexRevision,
+            "manual-rematch-v2");
+        db.TrackMatches.Add(ToRecord(
+            input, actor.TenantId, snapshot.OwnerUserId, snapshot.LibraryScopeId,
+            correlationId, clock.UtcNow));
         await db.SaveChangesAsync(cancellationToken);
 
         return new(
@@ -1658,6 +1610,36 @@ public sealed class TrackMatchCommandService(
         record.CandidateResultsJson == input.CandidateResultsJson &&
         record.ReasonsJson == input.ReasonsJson &&
         record.WarningsJson == input.WarningsJson;
+
+    private static TrackMatchRecord ToRecord(
+        MatchDecisionInput input,
+        Guid tenantId,
+        Guid ownerUserId,
+        string libraryScopeId,
+        string correlationId,
+        DateTimeOffset decidedAt) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            OwnerUserId = ownerUserId,
+            ExternalSnapshotId = input.ExternalSnapshotId,
+            LibraryTrackId = input.LibraryTrackId,
+            CanonicalRecordingId = input.CanonicalRecordingId,
+            LibraryScopeId = libraryScopeId,
+            State = input.State,
+            Confidence = input.Confidence,
+            Threshold = input.Threshold,
+            DecisionVersion = input.DecisionVersion,
+            SourceSnapshotVersion = input.SourceSnapshotVersion,
+            LibraryIndexRevision = input.LibraryIndexRevision,
+            MatcherVersion = input.MatcherVersion.Trim(),
+            PolicyVersion = input.PolicyVersion.Trim(),
+            CandidateResultsJson = input.CandidateResultsJson,
+            ReasonsJson = input.ReasonsJson,
+            WarningsJson = input.WarningsJson,
+            CorrelationId = correlationId,
+            DecidedAt = decidedAt
+        };
 
     private static async Task<ExternalMetadataSnapshotRecord> OwnedSnapshotAsync(
         AllstarrDbContext db,
