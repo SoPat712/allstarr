@@ -112,6 +112,7 @@
 
 .injected-playlist-dialog .playlist-track-row {
     grid-template-columns: 34px minmax(0, 1fr);
+    min-height: 82px;
     border-bottom: 1px solid var(--border);
 }
 
