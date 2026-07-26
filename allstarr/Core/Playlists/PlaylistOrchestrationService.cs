@@ -347,7 +347,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     entry.Title,
                     entry.Artists,
                     entry.Album,
-                    durationSeconds = entry.Duration?.TotalSeconds,
+                    entry.DurationMilliseconds,
+                    durationProvenance = entry.DurationMilliseconds.HasValue ? link.SourceProviderId : null,
+                    durationRetrievedAt = entry.DurationMilliseconds.HasValue ? now : (DateTimeOffset?)null,
                     entry.Isrc,
                     entry.IsExplicit,
                     entry.CanonicalRecordingId
@@ -606,7 +608,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     external.ExternalIdHash, root.TryGetProperty("Title", out var title) ? title.GetString() ?? "Unknown" : "Unknown",
                     artists.Length > 0 ? string.Join(", ", artists) : "Unknown",
                     root.TryGetProperty("Album", out var album) ? album.GetString() : null, null,
-                    root.TryGetProperty("durationSeconds", out var duration) && duration.ValueKind == JsonValueKind.Number ? (int?)Math.Round(duration.GetDouble()) : null,
+                    ReadDurationMilliseconds(root),
                     root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
                     root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
                     canonicalRecordingId);
@@ -813,7 +815,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         try { providers = JsonSerializer.Deserialize<Dictionary<string, string>>(item.ProviderIdsJson); } catch (JsonException) { }
         return new(item.Id, item.TenantId, item.OwnerUserId, item.BackendInstanceId, item.LibraryScopeId,
             item.BackendItemId, item.CanonicalRecordingId, item.Title, item.Artist, item.Album, item.AlbumArtist,
-            (int)Math.Round(item.DurationMilliseconds / 1000d), item.Isrc, item.MusicBrainzRecordingId, null, providers);
+            item.DurationMilliseconds,
+            item.Isrc, item.MusicBrainzRecordingId, null, providers);
     }
 
     private static TrackMatchState ToStorageState(TrackMatchReviewState state) => state switch
@@ -836,6 +839,16 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     };
     private static IReadOnlyList<string> DeserializeStrings(string json) =>
         JsonSerializer.Deserialize<string[]>(json) ?? [];
+    private static long? ReadDurationMilliseconds(JsonElement root)
+    {
+        if ((root.TryGetProperty("DurationMilliseconds", out var value) ||
+             root.TryGetProperty("durationMilliseconds", out value)) &&
+            value.TryGetInt64(out var milliseconds))
+            return milliseconds;
+        return root.TryGetProperty("durationSeconds", out value) && value.TryGetDouble(out var seconds)
+            ? checked((long)Math.Round(seconds * 1000d))
+            : null;
+    }
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
 

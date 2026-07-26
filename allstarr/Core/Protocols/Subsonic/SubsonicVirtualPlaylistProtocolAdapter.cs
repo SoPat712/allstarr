@@ -95,7 +95,9 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
                         ["owner"] = "allstarr",
                         ["public"] = false,
                         ["songCount"] = playlist.Tracks.Count,
-                        ["duration"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) / 1000,
+                        ["duration"] = playlist.Tracks.All(track => track.DurationMilliseconds.HasValue)
+                            ? playlist.Tracks.Sum(track => track.DurationMilliseconds) / 1000
+                            : null,
                         ["coverArt"] = playlist.ArtworkReferenceKey,
                         ["entry"] = playlist.Tracks.Select(ToJsonEntry).ToList()
                     }
@@ -107,8 +109,9 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         var element = new XElement(ns + "playlist",
             new XAttribute("id", playlist.ProtocolId), new XAttribute("name", playlist.Name),
             new XAttribute("owner", "allstarr"), new XAttribute("public", false),
-            new XAttribute("songCount", playlist.Tracks.Count),
-            new XAttribute("duration", playlist.Tracks.Sum(track => track.DurationMilliseconds) / 1000));
+            new XAttribute("songCount", playlist.Tracks.Count));
+        if (playlist.Tracks.All(track => track.DurationMilliseconds.HasValue))
+            element.Add(new XAttribute("duration", playlist.Tracks.Sum(track => track.DurationMilliseconds)!.Value / 1000));
         if (playlist.Description != null) element.Add(new XAttribute("comment", playlist.Description));
         if (playlist.ArtworkReferenceKey != null) element.Add(new XAttribute("coverArt", playlist.ArtworkReferenceKey));
         foreach (var track in playlist.Tracks)
@@ -139,7 +142,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         yield return new XAttribute("artist", track.Artist);
         if (track.Album != null) yield return new XAttribute("album", track.Album);
         if (track.AlbumArtist != null) yield return new XAttribute("albumArtist", track.AlbumArtist);
-        yield return new XAttribute("duration", track.DurationMilliseconds / 1000);
+        if (track.DurationMilliseconds.HasValue)
+            yield return new XAttribute("duration", track.DurationMilliseconds.Value / 1000);
         yield return new XAttribute("track", track.SourcePosition + 1);
         yield return new XAttribute("isDir", false);
         yield return new XAttribute("type", "music");

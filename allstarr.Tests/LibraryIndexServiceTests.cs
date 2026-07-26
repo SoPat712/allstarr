@@ -78,9 +78,11 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Equal("Updated title", item.Title);
         Assert.Equal("/media/music/artist/song.flac", item.FilePath);
         Assert.Equal("deezer-track", item.ProviderTrackIds["deezer"]);
+        Assert.Equal("jellyfin", item.DurationProvenance);
+        Assert.Equal(input.DurationRetrievedAt, item.DurationRetrievedAt);
         var candidate = Assert.Single(candidates);
         Assert.Equal("local-item", candidate.BackendItemId);
-        Assert.Equal(240, candidate.DurationSeconds);
+        Assert.Equal(240_000, candidate.DurationMilliseconds);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Single(await db.LibraryTracks.ToListAsync());
         Assert.Equal(2, await db.AuditEvents.CountAsync());
@@ -118,6 +120,20 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
                     ["spotify"] = "track?token=secret"
                 }
             }));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.UpsertAsync(
+            context,
+            Input() with { DurationMilliseconds = null }));
+        var unknown = await _service.UpsertAsync(
+            context,
+            Input() with
+            {
+                DurationMilliseconds = null,
+                DurationProvenance = null,
+                DurationRetrievedAt = null
+            });
+        Assert.Null(unknown.DurationMilliseconds);
+        Assert.Null(unknown.DurationProvenance);
+        Assert.Null(unknown.DurationRetrievedAt);
     }
 
     private ProtocolExecutionContext Context(Guid userId, string principalId, string libraryScope) => new(
@@ -156,6 +172,8 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         "Album",
         "Artist",
         240_000,
+        "jellyfin",
+        new DateTimeOffset(2026, 7, 12, 1, 0, 0, TimeSpan.Zero),
         "US-RC1-76-07839",
         null,
         null,

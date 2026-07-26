@@ -103,7 +103,10 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             .OrderBy(item => item.SourcePosition).ToListAsync();
         Assert.Equal([0, 1], entries.Select(item => item.SourcePosition));
         Assert.Equal(entries[0].ExternalMetadataSnapshotId, entries[1].ExternalMetadataSnapshotId);
-        Assert.Single(await db.ExternalMetadataSnapshots.ToListAsync());
+        var external = Assert.Single(await db.ExternalMetadataSnapshots.ToListAsync());
+        Assert.Contains("\"DurationMilliseconds\":180000", external.PayloadJson);
+        Assert.Contains("\"durationProvenance\":\"fixture\"", external.PayloadJson);
+        Assert.Contains("\"durationRetrievedAt\":\"2026-07-12T05:00:00+00:00\"", external.PayloadJson);
         Assert.Equal(2, await db.PlaylistSourceEntries.CountAsync());
     }
 
@@ -174,7 +177,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, suggested.MatcherVersion);
         Assert.Contains("NormalizedCandidateTitle", suggested.CandidateResultsJson);
         Assert.Contains("ArtistOverlap", suggested.CandidateResultsJson);
-        Assert.Contains("DurationDeltaSeconds", suggested.CandidateResultsJson);
+        Assert.Contains("DurationDeltaMilliseconds", suggested.CandidateResultsJson);
         Assert.Equal(suggestedId,
             TrackMatchOverridePolicy.TopCandidateLibraryTrackId(suggested.CandidateResultsJson));
         Assert.Equal(TrackMatchState.Ambiguous, ambiguous.State);
@@ -526,7 +529,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         new("fixture", _account, Hash("playlist"), revision, $"etag-{revision}", "Provider Mix", "Description",
             "provider-artwork:stable:key", entries);
     private static CollectedPlaylistSourceEntry Entry(int position, string entry, string source, string title) =>
-        new(position, Hash(entry), Hash(source), null, title, ["Artist"], "Album", TimeSpan.FromMinutes(3), null, false);
+        new(position, Hash(entry), Hash(source), null, title, ["Artist"], "Album", 180_000, null, false);
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     public async Task DisposeAsync() => await _database.DisposeAsync();

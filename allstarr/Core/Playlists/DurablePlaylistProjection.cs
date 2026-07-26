@@ -13,7 +13,7 @@ public sealed record DurablePlaylistEntryProjection(
     IReadOnlyList<string> Artists,
     string? Album,
     string? Isrc,
-    int? DurationMilliseconds,
+    long? DurationMilliseconds,
     TrackMatchState? MatchState,
     string? BackendItemId);
 
@@ -165,10 +165,16 @@ public sealed class DurablePlaylistProjectionReader(
                 .Select(item => item!)
                 .ToArray()
             : [];
-        var duration = root.TryGetProperty("durationSeconds", out var durationValue) &&
-                       durationValue.TryGetDouble(out var seconds)
-            ? (int?)Math.Round(seconds * 1000d)
-            : null;
+        var duration = root.TryGetProperty("DurationMilliseconds", out var durationValue) &&
+                       durationValue.TryGetInt64(out var milliseconds)
+            ? milliseconds
+            : root.TryGetProperty("durationMilliseconds", out durationValue) &&
+              durationValue.TryGetInt64(out milliseconds)
+                ? milliseconds
+                : root.TryGetProperty("durationSeconds", out durationValue) &&
+                  durationValue.TryGetDouble(out var seconds)
+                    ? (long?)Math.Round(seconds * 1000d)
+                    : null;
         return new(
             root.TryGetProperty("Title", out var title) ? title.GetString() ?? "Unknown" : "Unknown",
             artists,
@@ -182,5 +188,5 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyList<string> Artists,
         string? Album,
         string? Isrc,
-        int? DurationMilliseconds);
+        long? DurationMilliseconds);
 }

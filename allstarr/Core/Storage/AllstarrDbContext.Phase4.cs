@@ -17,7 +17,8 @@ public sealed partial class AllstarrDbContext
         {
             entity.ToTable("library_tracks", table =>
             {
-                table.HasCheckConstraint("CK_library_tracks_duration", "\"DurationMilliseconds\" >= 0");
+                table.HasCheckConstraint("CK_library_tracks_duration",
+                    "\"DurationMilliseconds\" IS NULL OR \"DurationMilliseconds\" > 0");
                 table.HasCheckConstraint("CK_library_tracks_decision_version", "\"AcceptedDecisionVersion\" IS NULL OR \"AcceptedDecisionVersion\" > 0");
                 table.HasCheckConstraint("CK_library_tracks_stable_artwork", "\"CoverArtReference\" IS NULL OR \"CoverArtReference\" NOT LIKE '%://%'");
             });
@@ -33,6 +34,7 @@ public sealed partial class AllstarrDbContext
             Required(entity.Property(item => item.Artist), 500);
             entity.Property(item => item.Album).HasMaxLength(500);
             entity.Property(item => item.AlbumArtist).HasMaxLength(500);
+            entity.Property(item => item.DurationProvenance).HasMaxLength(100);
             entity.Property(item => item.Isrc).HasMaxLength(32);
             entity.Property(item => item.MusicBrainzRecordingId).HasMaxLength(100);
             entity.Property(item => item.MusicBrainzReleaseId).HasMaxLength(100);

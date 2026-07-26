@@ -33,6 +33,7 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
         Assert.Equal([0, 1, 2], snapshot.Entries.Select(entry => entry.SourcePosition));
         Assert.Equal(snapshot.Entries[0].ProviderTrackIdHash, snapshot.Entries[2].ProviderTrackIdHash);
         Assert.NotEqual(snapshot.Entries[0].SourceEntryIdHash, snapshot.Entries[2].SourceEntryIdHash);
+        Assert.All(snapshot.Entries, entry => Assert.Equal(180_000, entry.DurationMilliseconds));
         var json = JsonSerializer.Serialize(snapshot);
         Assert.DoesNotContain("opaque-playlist-secret", json, StringComparison.Ordinal);
         Assert.DoesNotContain("opaque-track-a", json, StringComparison.Ordinal);

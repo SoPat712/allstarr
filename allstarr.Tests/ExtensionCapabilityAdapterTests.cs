@@ -422,6 +422,31 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task PlaylistTrackMetadata_PreservesExtensionDuration()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Playlist, "getPlaylistTracks");
+        var sandbox = Sandbox(manifest, """
+            registerExtension({ getPlaylistTracks: function() { return {
+              playlist: { id: 'playlist-1', name: 'Mix', owner: { providerUserId: 'owner' },
+                sourceRevision: 'r1', trackCount: 1 },
+              tracks: { items: [{ position: 0, trackId: 'track-1', metadata: {
+                title: 'Track', artists: [{ name: 'Artist' }], albumTitle: 'Album', durationMs: 196456
+              }}], isPartial: false }
+            }; }});
+            """);
+        var adapter = new ExtensionPlaylistCapabilityAdapter(sandbox, manifest);
+
+        var outcome = await adapter.GetPlaylistTracksAsync(
+            Context(includeAccount: true),
+            new ProviderPlaylistTracksRequest(
+                Id(ProviderResourceKind.Playlist, "playlist-1"),
+                new ProviderPageRequest()));
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
+        Assert.Equal(196_456, Assert.Single(outcome.Value!.Tracks.Items).Metadata!.Duration!.Value.TotalMilliseconds);
+    }
+
+    [Fact]
     public async Task ForeignResourceId_IsRejectedBeforeHookInvocation()
     {
         var manifest = Manifest(ProviderCapabilityKind.Download, "checkAvailability");
@@ -558,11 +583,15 @@ public sealed class ExtensionCapabilityAdapterTests
     private static ProviderExternalResourceId Id(ProviderResourceKind kind, string value) =>
         new("fixture-extension", kind, value);
 
-    private static ProviderExecutionContext Context(string providerId = "fixture-extension")
+    private static ProviderExecutionContext Context(string providerId = "fixture-extension", bool includeAccount = false)
     {
         var actor = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User, Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "user"));
-        return new ProviderExecutionContext(actor, providerId, null, null,
+        var account = includeAccount
+            ? new ProviderAccountContext(Guid.CreateVersion7(), providerId, ProviderAccountScope.User, 1,
+                tenantId: actor.TenantId, ownerUserId: actor.EffectiveUserId)
+            : null;
+        return new ProviderExecutionContext(actor, providerId, account, null,
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, true, false, true, [providerId]),
             "extension-test", "extension-test-correlation", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None,

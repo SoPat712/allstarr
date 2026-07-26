@@ -250,7 +250,7 @@ public static class SpotiFlacExtensionCompatibility
             var raw = typeof _spotiflacExtension.getPlaylist === 'function' ? _spotiflacExtension.getPlaylist(request.playlistId) : null;
             var playlist = _sfPlaylist(raw);
             var tracks = _sfArray(raw && (raw.tracks || (raw.playlist && raw.playlist.tracks))).map(function(item, index) {
-              var track = _sfTrack(item); return { position: index, trackId: track.id, canonicalRecordingId: null };
+              var track = _sfTrack(item); return { position: index, trackId: track.id, canonicalRecordingId: null, metadata: track };
             });
             return { playlist: playlist, tracks: { items: tracks, nextCursor: null, isPartial: false, snapshotVersion: playlist.sourceRevision } };
           },

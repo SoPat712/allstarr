@@ -19,7 +19,7 @@ public sealed record CollectedPlaylistSourceEntry(
     string? Title,
     IReadOnlyList<string> Artists,
     string? Album,
-    TimeSpan? Duration,
+    long? DurationMilliseconds,
     string? Isrc,
     bool? IsExplicit);
 
@@ -195,7 +195,9 @@ public sealed class ProviderPlaylistSnapshotCollector
             metadata?.Title,
             metadata?.Artists.Select(artist => artist.Name).ToArray() ?? [],
             metadata?.AlbumTitle,
-            metadata?.Duration,
+            metadata?.Duration is { } duration
+                ? checked((long)Math.Round(duration.TotalMilliseconds))
+                : null,
             metadata?.Isrc,
             metadata?.IsExplicit);
     }

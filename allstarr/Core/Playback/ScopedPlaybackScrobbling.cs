@@ -9,7 +9,7 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Playback;
 
-public sealed record ScopedPlaybackTrack(string Title, string Artist, string? Album, long DurationMilliseconds);
+public sealed record ScopedPlaybackTrack(string Title, string Artist, string? Album, long? DurationMilliseconds);
 public interface IExactScopePlaybackScrobbleTarget
 {
     string ProviderId { get; }
@@ -126,9 +126,10 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
     }
 
-    public static bool EligibleForCompletedScrobble(long durationMilliseconds, long? positionTicks)
+    public static bool EligibleForCompletedScrobble(long? durationMilliseconds, long? positionTicks)
     {
-        var durationSeconds = durationMilliseconds / 1000d;
+        if (!durationMilliseconds.HasValue) return false;
+        var durationSeconds = durationMilliseconds.Value / 1000d;
         if (durationSeconds < 30 || positionTicks is null || positionTicks < 0) return false;
         var playedSeconds = positionTicks.Value / (double)TimeSpan.TicksPerSecond;
         return playedSeconds >= Math.Min(durationSeconds / 2d, 240d);

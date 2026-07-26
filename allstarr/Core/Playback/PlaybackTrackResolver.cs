@@ -11,7 +11,7 @@ public sealed record PlaybackTrackSnapshot(
     string Title,
     string Artist,
     string? Album,
-    long DurationMilliseconds);
+    long? DurationMilliseconds);
 
 public interface IPlaybackTrackResolver
 {

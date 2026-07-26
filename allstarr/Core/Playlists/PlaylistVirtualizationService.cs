@@ -14,7 +14,7 @@ public sealed record VirtualPlaylistTrack(
     string Artist,
     string? Album,
     string? AlbumArtist,
-    long DurationMilliseconds,
+    long? DurationMilliseconds,
     string? CoverArtReference,
     TrackMatchState MatchState);
 
@@ -176,7 +176,9 @@ public sealed class PlaylistVirtualizationService(
             if (artists.Count == 0) artists = Array(root, "artists");
             var artist = artists.FirstOrDefault() ?? Text(root, "Artist") ?? Text(root, "artist");
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist)) return null;
-            var durationSeconds = Number(root, "durationSeconds") ?? Number(root, "DurationSeconds");
+            var durationMilliseconds = Number(root, "durationMilliseconds") ??
+                                       Number(root, "DurationMilliseconds") ??
+                                       (Number(root, "durationSeconds") ?? Number(root, "DurationSeconds")) * 1000d;
             return new VirtualPlaylistTrack(
                 position,
                 $"ext-{identity.ProviderId}-song-{identity.ExternalId}",
@@ -184,7 +186,7 @@ public sealed class PlaylistVirtualizationService(
                 artist,
                 Text(root, "Album") ?? Text(root, "album"),
                 Text(root, "AlbumArtist") ?? Text(root, "albumArtist"),
-                durationSeconds.HasValue ? checked((long)Math.Round(durationSeconds.Value * 1000d)) : 0,
+                durationMilliseconds.HasValue ? checked((long)Math.Round(durationMilliseconds.Value)) : null,
                 null,
                 state);
         }

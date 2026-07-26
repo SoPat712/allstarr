@@ -286,7 +286,7 @@ public sealed class PlaylistDryRunPreviewController(
                         item.Entry.Title,
                         artists = item.Entry.Artists,
                         item.Entry.Album,
-                        durationSeconds = item.Entry.Duration?.TotalSeconds,
+                        durationMilliseconds = item.Entry.DurationMilliseconds,
                         state = item.Decision.State == TrackMatchReviewState.Accepted
                             ? "accepted"
                             : item.ProviderMatchIds.Count > 0
@@ -346,7 +346,7 @@ public sealed class PlaylistDryRunPreviewController(
             string.Join(", ", entry.Artists),
             entry.Album,
             null,
-            entry.Duration.HasValue ? checked((int)Math.Round(entry.Duration.Value.TotalSeconds)) : null,
+            entry.DurationMilliseconds,
             entry.Isrc,
             null,
             entry.IsExplicit);

@@ -77,7 +77,7 @@ public sealed class TrackMatchDecisionEngineTests
             Title = "A Song (Remastered)",
             Artist = "The Artist",
             Album = "The Album",
-            DurationSeconds = 241
+            DurationMilliseconds = 241_000
         };
         var weak = Candidate(scope) with
         {
@@ -86,7 +86,7 @@ public sealed class TrackMatchDecisionEngineTests
             Title = "Completely Different",
             Artist = "Someone Else",
             Album = "Another Album",
-            DurationSeconds = 90
+            DurationMilliseconds = 90_000
         };
         var engine = new TrackMatchDecisionEngine();
 
@@ -100,7 +100,7 @@ public sealed class TrackMatchDecisionEngineTests
         Assert.Equal("A Song (Remastered)", diagnostics.Title);
         Assert.Equal("a song", diagnostics.NormalizedCandidateTitle);
         Assert.Equal(1, diagnostics.ArtistOverlap);
-        Assert.Equal(1, diagnostics.DurationDeltaSeconds);
+        Assert.Equal(1_000, diagnostics.DurationDeltaMilliseconds);
         Assert.NotNull(diagnostics.Components);
         Assert.Equal(TrackMatchReviewState.Unresolved, unresolved.State);
         Assert.Null(unresolved.SelectedLibraryTrackId);
@@ -116,7 +116,7 @@ public sealed class TrackMatchDecisionEngineTests
         {
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "local-2",
-            DurationSeconds = 242
+            DurationMilliseconds = 242_000
         };
 
         var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [first, second]);
@@ -136,7 +136,7 @@ public sealed class TrackMatchDecisionEngineTests
             Artist = "2Pac, Outlawz",
             Album = "Greatest Hits",
             AlbumArtist = null,
-            DurationSeconds = 313
+            DurationMilliseconds = 313_000
         };
         var preferred = Candidate(scope) with
         {
@@ -144,7 +144,7 @@ public sealed class TrackMatchDecisionEngineTests
             Artist = "2Pac, The Outlawz",
             Album = "Greatest Hits",
             AlbumArtist = "2Pac",
-            DurationSeconds = 313
+            DurationMilliseconds = 313_000
         };
         var compilation = preferred with
         {
@@ -175,7 +175,7 @@ public sealed class TrackMatchDecisionEngineTests
             Artist = "ZAYN",
             Album = "Mind of Mine",
             AlbumArtist = "ZAYN",
-            DurationSeconds = 203
+            DurationMilliseconds = 203_000
         };
         var candidate = Candidate(scope) with
         {
@@ -183,7 +183,7 @@ public sealed class TrackMatchDecisionEngineTests
             Artist = "ZAYN",
             Album = "Mind of Mine",
             AlbumArtist = "ZAYN",
-            DurationSeconds = 203
+            DurationMilliseconds = 203_000
         };
 
         var selected = new TrackMatchCandidateIndex([candidate]).Select(source);
@@ -443,7 +443,7 @@ public sealed class TrackMatchDecisionEngineTests
         var decision = new TrackMatchDecisionEngine().Decide(
             scope,
             Source(),
-            [Candidate(scope) with { Title = "Wrong", Artist = "Unknown", Album = "Elsewhere", DurationSeconds = 12 }]);
+            [Candidate(scope) with { Title = "Wrong", Artist = "Unknown", Album = "Elsewhere", DurationMilliseconds = 12_000 }]);
 
         Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
         Assert.True(decision.RequiresReview);
@@ -487,7 +487,7 @@ public sealed class TrackMatchDecisionEngineTests
         "The Artist",
         "The Album",
         "The Artist",
-        240,
+        240_000,
         null,
         null,
         IsExplicit: false);
@@ -504,7 +504,7 @@ public sealed class TrackMatchDecisionEngineTests
         "The Artist",
         "The Album",
         "The Artist",
-        240,
+        240_000,
         null,
         null,
         IsExplicit: false);

@@ -229,14 +229,49 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
         {
             var summary = MapPlaylist(value.GetProperty("playlist"));
             var tracksValue = value.GetProperty("tracks");
-            var tracks = tracksValue.GetProperty("items").EnumerateArray().Select(item => new ProviderPlaylistTrack(
-                item.GetProperty("position").GetInt32(), new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Track, Text(item, "trackId")),
-                item.TryGetProperty("canonicalRecordingId", out var canonical) && canonical.TryGetGuid(out var id) ? id : null)).ToArray();
+            var tracks = tracksValue.GetProperty("items").EnumerateArray().Select(MapTrack).ToArray();
             return new ProviderPlaylistTrackPage(summary, new ProviderPage<ProviderPlaylistTrack>(ProviderId, tracks,
                 OptionalText(tracksValue, "nextCursor"), Bool(tracksValue, "isPartial"), OptionalText(tracksValue, "snapshotVersion")));
         }, true);
     }
     private static object PageRequest(ProviderPageRequest page) => new { page.Limit, page.Cursor };
+    private ProviderPlaylistTrack MapTrack(JsonElement item)
+    {
+        var trackId = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Track, Text(item, "trackId"));
+        var canonical = item.TryGetProperty("canonicalRecordingId", out var canonicalValue) &&
+                        canonicalValue.TryGetGuid(out var canonicalId)
+            ? canonicalId
+            : (Guid?)null;
+        var value = item.TryGetProperty("metadata", out var metadata) ? metadata : item;
+        var title = OptionalText(value, "title");
+        if (title == null || !value.TryGetProperty("artists", out var artistsValue) ||
+            artistsValue.ValueKind != JsonValueKind.Array)
+            return new(item.GetProperty("position").GetInt32(), trackId, canonical);
+        var artists = artistsValue.EnumerateArray()
+            .Select(artist => artist.ValueKind == JsonValueKind.String
+                ? artist.GetString()
+                : OptionalText(artist, "name"))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => new ProviderArtistCredit(name!))
+            .ToArray();
+        if (artists.Length == 0) return new(item.GetProperty("position").GetInt32(), trackId, canonical);
+        var albumTitle = OptionalText(value, "albumTitle");
+        var albumId = OptionalText(value, "albumId");
+        var duration = Long(value, "durationMs");
+        return new(item.GetProperty("position").GetInt32(), trackId, canonical,
+            new ProviderTrackMetadata(
+                trackId,
+                title,
+                artists,
+                albumId == null ? null : new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Album, albumId),
+                albumTitle,
+                duration > 0 ? TimeSpan.FromMilliseconds(duration.Value) : null,
+                OptionalText(value, "isrc"),
+                value.TryGetProperty("isExplicit", out var explicitValue) &&
+                explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? explicitValue.GetBoolean()
+                    : null));
+    }
     private ProviderPage<ProviderPlaylistSummary> MapPlaylistPage(JsonElement value) => new(ProviderId,
         value.GetProperty("items").EnumerateArray().Select(MapPlaylist), OptionalText(value, "nextCursor"), Bool(value, "isPartial"), OptionalText(value, "snapshotVersion"));
     private ProviderPlaylistSummary MapPlaylist(JsonElement value)

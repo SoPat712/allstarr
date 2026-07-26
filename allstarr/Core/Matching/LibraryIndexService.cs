@@ -14,7 +14,9 @@ public sealed record LibraryTrackIndexInput(
     string Artist,
     string? Album,
     string? AlbumArtist,
-    long DurationMilliseconds,
+    long? DurationMilliseconds,
+    string? DurationProvenance,
+    DateTimeOffset? DurationRetrievedAt,
     string? Isrc,
     string? MusicBrainzRecordingId,
     string? MusicBrainzReleaseId,
@@ -33,7 +35,9 @@ public sealed record IndexedLibraryTrack(
     string Artist,
     string? Album,
     string? AlbumArtist,
-    long DurationMilliseconds,
+    long? DurationMilliseconds,
+    string? DurationProvenance,
+    DateTimeOffset? DurationRetrievedAt,
     string? Isrc,
     string? MusicBrainzRecordingId,
     Guid? CanonicalRecordingId,
@@ -130,6 +134,8 @@ public sealed class LibraryIndexService : ILibraryIndexService
         record.Album = Clean(input.Album);
         record.AlbumArtist = Clean(input.AlbumArtist);
         record.DurationMilliseconds = input.DurationMilliseconds;
+        record.DurationProvenance = input.DurationMilliseconds.HasValue ? Clean(input.DurationProvenance) : null;
+        record.DurationRetrievedAt = input.DurationMilliseconds.HasValue ? input.DurationRetrievedAt : null;
         record.Isrc = Clean(input.Isrc)?.Replace("-", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
         record.MusicBrainzRecordingId = NormalizeGuid(input.MusicBrainzRecordingId);
         record.MusicBrainzReleaseId = NormalizeGuid(input.MusicBrainzReleaseId);
@@ -207,7 +213,7 @@ public sealed class LibraryIndexService : ILibraryIndexService
             track.Artist,
             track.Album,
             track.AlbumArtist,
-            checked((int)Math.Round(track.DurationMilliseconds / 1000d)),
+            track.DurationMilliseconds,
             track.Isrc,
             track.MusicBrainzRecordingId,
             IsExplicit: null,
@@ -263,7 +269,13 @@ public sealed class LibraryIndexService : ILibraryIndexService
             string.IsNullOrWhiteSpace(input.FilePath) ||
             string.IsNullOrWhiteSpace(input.Title) ||
             string.IsNullOrWhiteSpace(input.Artist) ||
-            input.DurationMilliseconds < 0 ||
+            input.DurationMilliseconds is <= 0 ||
+            input.DurationMilliseconds.HasValue &&
+                (string.IsNullOrWhiteSpace(input.DurationProvenance) ||
+                 input.DurationRetrievedAt is null ||
+                 input.DurationRetrievedAt == default) ||
+            !input.DurationMilliseconds.HasValue &&
+                (input.DurationProvenance != null || input.DurationRetrievedAt.HasValue) ||
             input.SourceModifiedAt == default ||
             input.AcceptedDecisionVersion is <= 0)
         {
@@ -306,6 +318,8 @@ public sealed class LibraryIndexService : ILibraryIndexService
         record.Album,
         record.AlbumArtist,
         record.DurationMilliseconds,
+        record.DurationProvenance,
+        record.DurationRetrievedAt,
         record.Isrc,
         record.MusicBrainzRecordingId,
         record.CanonicalRecordingId,

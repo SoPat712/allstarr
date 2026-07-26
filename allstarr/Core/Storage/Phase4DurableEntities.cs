@@ -25,7 +25,9 @@ public sealed class LibraryTrackRecord
     public string Artist { get; set; } = string.Empty;
     public string? Album { get; set; }
     public string? AlbumArtist { get; set; }
-    public long DurationMilliseconds { get; set; }
+    public long? DurationMilliseconds { get; set; }
+    public string? DurationProvenance { get; set; }
+    public DateTimeOffset? DurationRetrievedAt { get; set; }
     public string? Isrc { get; set; }
     public string? MusicBrainzRecordingId { get; set; }
     public string? MusicBrainzReleaseId { get; set; }

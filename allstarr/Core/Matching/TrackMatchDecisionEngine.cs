@@ -35,7 +35,7 @@ public sealed record ExternalTrackMatchSnapshot(
     string Artist,
     string? Album,
     string? AlbumArtist,
-    int? DurationSeconds,
+    long? DurationMilliseconds,
     string? Isrc,
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
@@ -53,7 +53,7 @@ public sealed record LocalTrackMatchCandidate(
     string Artist,
     string? Album,
     string? AlbumArtist,
-    int? DurationSeconds,
+    long? DurationMilliseconds,
     string? Isrc,
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
@@ -78,7 +78,7 @@ public sealed record TrackMatchCandidateScore(
     string? Title = null,
     string? Artist = null,
     string? Album = null,
-    int? DurationSeconds = null,
+    long? DurationMilliseconds = null,
     string? SourceIsrc = null,
     string? CandidateIsrc = null,
     IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
@@ -86,7 +86,7 @@ public sealed record TrackMatchCandidateScore(
     string? NormalizedCandidateTitle = null,
     double? ArtistOverlap = null,
     double? AlbumEvidence = null,
-    int? DurationDeltaSeconds = null);
+    long? DurationDeltaMilliseconds = null);
 
 public sealed record TrackMatchDecision(
     TrackMatchReviewState State,
@@ -150,7 +150,7 @@ public sealed class TrackMatchDecisionEngine
                 candidate.Artist,
                 candidate.Album,
                 candidate.AlbumArtist,
-                candidate.DurationSeconds,
+                candidate.DurationMilliseconds,
                 candidate.Isrc,
                 candidate.MusicBrainzRecordingId,
                 candidate.IsExplicit,
@@ -291,7 +291,7 @@ public sealed class TrackMatchDecisionEngine
         var artist = ArtistSimilarity(source.Artist, candidate.Artist);
         var album = Similarity(source.Album, candidate.Album);
         var albumArtist = Similarity(source.AlbumArtist, candidate.AlbumArtist);
-        var duration = DurationScore(source.DurationSeconds, candidate.DurationSeconds);
+        var duration = DurationScore(source.DurationMilliseconds, candidate.DurationMilliseconds);
         AddReason(reasons, "title", title);
         AddReason(reasons, "artist", artist);
         AddReason(reasons, "album", album);
@@ -361,14 +361,14 @@ public sealed class TrackMatchDecisionEngine
         return false;
     }
 
-    private double DurationScore(int? source, int? candidate)
+    private double DurationScore(long? source, long? candidate)
     {
         if (!source.HasValue || !candidate.HasValue)
         {
             return 0.5;
         }
 
-        var delta = Math.Abs(source.Value - candidate.Value);
+        var delta = Math.Abs(source.Value - candidate.Value) / 1000d;
         return delta == 0
             ? 1
             : delta <= 2
@@ -516,7 +516,7 @@ public sealed class TrackMatchDecisionEngine
         candidate.Title,
         candidate.Artist,
         candidate.Album,
-        candidate.DurationSeconds,
+        candidate.DurationMilliseconds,
         source.Isrc,
         candidate.Isrc,
         candidate.ProviderTrackIds,
@@ -525,8 +525,8 @@ public sealed class TrackMatchDecisionEngine
         ArtistSimilarity(source.Artist, candidate.Artist),
         Math.Max(Similarity(source.Album, candidate.Album),
             Similarity(source.AlbumArtist, candidate.AlbumArtist)),
-        source.DurationSeconds.HasValue && candidate.DurationSeconds.HasValue
-            ? Math.Abs(source.DurationSeconds.Value - candidate.DurationSeconds.Value)
+        source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
+            ? Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value)
             : null);
 
     private TrackMatchDecision Result(

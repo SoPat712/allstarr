@@ -10,10 +10,10 @@ public sealed class PlaybackLyricsPrefetch(IDbContextFactory<AllstarrDbContext> 
     public async Task PrefetchAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
         var track = await new PlaybackTrackResolver(factory).ResolveAsync(payload, cancellationToken);
-        if (track == null) return;
+        if (track?.DurationMilliseconds == null) return;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         await orchestrator.PrefetchLyricsAsync(track.Title, [track.Artist], track.Album,
-            (int)Math.Clamp(track.DurationMilliseconds / 1000, 0, int.MaxValue)).WaitAsync(timeout.Token);
+            (int)Math.Clamp(track.DurationMilliseconds.Value / 1000, 0, int.MaxValue)).WaitAsync(timeout.Token);
     }
 }

@@ -4,7 +4,7 @@ public sealed record ProviderArtistCredit
 {
     public ProviderArtistCredit(string name, ProviderExternalResourceId? artistId = null)
     {
-        if (artistId?.ResourceKind != ProviderResourceKind.Artist)
+        if (artistId != null && artistId.ResourceKind != ProviderResourceKind.Artist)
         {
             throw new ArgumentException("Artist credits require artist resource IDs.", nameof(artistId));
         }
@@ -34,8 +34,9 @@ public sealed record ProviderTrackMetadata
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
-        if (albumId?.ResourceKind != ProviderResourceKind.Album ||
-            albumId != null && !albumId.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal))
+        if (albumId != null &&
+            (albumId.ResourceKind != ProviderResourceKind.Album ||
+             !albumId.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
         {
             throw new ArgumentException("Album IDs must belong to the track provider.", nameof(albumId));
         }
@@ -63,7 +64,7 @@ public sealed record ProviderTrackMetadata
         Artists = artistList;
         AlbumId = albumId;
         AlbumTitle = ProviderContractValidation.OptionalText(albumTitle, nameof(albumTitle), 500);
-        Duration = duration;
+        Duration = duration > TimeSpan.Zero ? duration : null;
         Isrc = ProviderContractValidation.OptionalText(isrc, nameof(isrc), 20);
         IsExplicit = isExplicit;
         Artwork = artwork;

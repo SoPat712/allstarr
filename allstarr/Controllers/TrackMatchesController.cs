@@ -402,25 +402,6 @@ public sealed class TrackMatchesController(
         });
     }
 
-    private static int? DurationSeconds(string payloadJson)
-    {
-        try
-        {
-            using var payload = JsonDocument.Parse(payloadJson);
-            var root = payload.RootElement;
-            foreach (var name in new[] { "durationSeconds", "DurationSeconds", "duration", "Duration" })
-            {
-                if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)
-                    return (int)Math.Round(value.GetDouble());
-            }
-        }
-        catch (JsonException)
-        {
-            // The normal metadata projection will surface malformed payloads.
-        }
-        return null;
-    }
-
     private static bool MatchesStateFilter(TrackMatchState state, string? filter) =>
         string.IsNullOrWhiteSpace(filter) ||
         (filter.Equals("attention", StringComparison.OrdinalIgnoreCase) && state is TrackMatchState.Unresolved or TrackMatchState.Suggested or TrackMatchState.Ambiguous or TrackMatchState.Rejected) ||
@@ -577,14 +558,18 @@ public sealed class TrackMatchesController(
                 title = Text(item, "title") ?? Text(item, "Title"),
                 artist = Text(item, "artist") ?? Text(item, "Artist"),
                 album = Text(item, "album") ?? Text(item, "Album"),
-                durationSeconds = Number(item, "durationSeconds") ?? Number(item, "DurationSeconds"),
+                durationMilliseconds = Number(item, "durationMilliseconds") ??
+                                       Number(item, "DurationMilliseconds") ??
+                                       (Number(item, "durationSeconds") ?? Number(item, "DurationSeconds")) * 1000,
                 sourceIsrc = Text(item, "sourceIsrc") ?? Text(item, "SourceIsrc"),
                 candidateIsrc = Text(item, "candidateIsrc") ?? Text(item, "CandidateIsrc"),
                 normalizedSourceTitle = Text(item, "normalizedSourceTitle") ?? Text(item, "NormalizedSourceTitle"),
                 normalizedCandidateTitle = Text(item, "normalizedCandidateTitle") ?? Text(item, "NormalizedCandidateTitle"),
                 artistOverlap = Number(item, "artistOverlap") ?? Number(item, "ArtistOverlap"),
                 albumEvidence = Number(item, "albumEvidence") ?? Number(item, "AlbumEvidence"),
-                durationDeltaSeconds = Number(item, "durationDeltaSeconds") ?? Number(item, "DurationDeltaSeconds"),
+                durationDeltaMilliseconds = Number(item, "durationDeltaMilliseconds") ??
+                                            Number(item, "DurationDeltaMilliseconds") ??
+                                            (Number(item, "durationDeltaSeconds") ?? Number(item, "DurationDeltaSeconds")) * 1000,
                 providerTrackIds = Element(item, "providerTrackIds", "ProviderTrackIds"),
                 components = Element(item, "components", "Components"),
                 reasons = Element(item, "reasons", "Reasons"),

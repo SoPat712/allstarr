@@ -94,12 +94,14 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                     ? artistValues.EnumerateArray().Select(value => value.GetString()).Where(value => !string.IsNullOrWhiteSpace(value)).ToArray() : [];
                 if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(title) || artists.Length == 0 || modified == null) { malformed++; continue; }
                 var providers = item.TryGetProperty("ProviderIds", out var providerRoot) ? ProviderIds(providerRoot) : new Dictionary<string, string>();
-                var duration = Number(item, "RunTimeTicks") is { } ticks ? ticks / TimeSpan.TicksPerMillisecond : 0;
+                var ticks = Number(item, "RunTimeTicks");
+                var duration = ticks > 0 ? ticks / TimeSpan.TicksPerMillisecond : null;
                 var imageTag = item.TryGetProperty("ImageTags", out var tags) ? Text(tags, "Primary") : null;
                 try
                 {
                     await Index.UpsertAsync(context, new(request.LibraryScopeId, id, path, title, string.Join(", ", artists), Text(item, "Album"),
-                        Text(item, "AlbumArtist"), duration, Get(providers, "isrc"), Get(providers, "musicbrainztrack"),
+                        Text(item, "AlbumArtist"), duration, duration.HasValue ? "jellyfin" : null,
+                        duration.HasValue ? Clock.UtcNow : null, Get(providers, "isrc"), Get(providers, "musicbrainztrack"),
                         Get(providers, "musicbrainzalbum"), Get(providers, "musicbrainzartist"), providers, null, null,
                         imageTag == null ? null : $"jellyfin-cover:{id}:{imageTag}", modified.Value), cancellationToken);
                     indexed++;
@@ -165,8 +167,11 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                 if (item.TryGetProperty("providerIds", out var providerRoot)) foreach (var pair in ProviderIds(providerRoot)) providers[pair.Key] = pair.Value;
                 try
                 {
+                    var seconds = Number(item, "duration");
+                    var duration = seconds > 0 ? checked(seconds * 1000) : null;
                     await Index.UpsertAsync(context, new(request.LibraryScopeId, id, path, title, artist, Text(item, "album"),
-                        Text(item, "albumArtist"), (Number(item, "duration") ?? 0) * 1000, Text(item, "isrc"),
+                        Text(item, "albumArtist"), duration, duration.HasValue ? "subsonic" : null,
+                        duration.HasValue ? Clock.UtcNow : null, Text(item, "isrc"),
                         Text(item, "musicBrainzId"), Text(item, "releaseMusicBrainzId"), Text(item, "artistMusicBrainzId"),
                         providers, null, null, Text(item, "coverArt") is { } cover ? $"subsonic-cover:{cover}" : null, modified.Value), cancellationToken);
                     indexed++;

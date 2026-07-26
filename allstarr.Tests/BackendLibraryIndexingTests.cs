@@ -36,6 +36,9 @@ public sealed class BackendLibraryIndexingTests
         var track = Assert.Single(index.Inputs);
         Assert.Equal("/music/Artist/First.flac", track.FilePath);
         Assert.Equal("Artist, Featured Artist", track.Artist);
+        Assert.Equal(180_000, track.DurationMilliseconds);
+        Assert.Equal("jellyfin", track.DurationProvenance);
+        Assert.Equal(new Clock().UtcNow, track.DurationRetrievedAt);
         Assert.Equal("USABC1234567", track.Isrc);
         Assert.Equal("jellyfin-cover:song-1:cover-v1", track.CoverArtReference);
         Assert.Equal("ephemeral-key", handler.LastRequest!.Headers.GetValues("X-Emby-Token").Single());
@@ -96,6 +99,31 @@ public sealed class BackendLibraryIndexingTests
         Assert.DoesNotContain("password", handler.LastRequest.RequestUri!.ToString(), StringComparison.Ordinal);
         Assert.Contains("p=password", handler.LastBody, StringComparison.Ordinal);
         Assert.Equal("Artist/Album/First.flac", Assert.Single(index.Inputs).FilePath);
+        Assert.Equal(180_000, index.Inputs[0].DurationMilliseconds);
+        Assert.Equal("subsonic", index.Inputs[0].DurationProvenance);
+    }
+
+    [Fact]
+    public async Task JellyfinScanner_PreservesMissingDurationAsUnknown()
+    {
+        var handler = new RecordingHandler("""
+            {"Items":[
+              {"Id":"song-1","Name":"First","Path":"/music/First.flac","Artists":["Artist"],"DateCreated":"2026-07-12T01:00:00Z"}
+            ],"TotalRecordCount":1}
+            """);
+        var index = new RecordingIndex();
+        var scanner = new JellyfinLibraryCatalogScanner(
+            new HttpClient(handler),
+            new JellyfinSettings { Url = "https://jellyfin.test", ApiKey = "ephemeral-key" },
+            index,
+            new Clock());
+
+        await scanner.ScanAsync(Context(ProtocolKind.Jellyfin), new("music", PageSize: 50), default);
+
+        var track = Assert.Single(index.Inputs);
+        Assert.Null(track.DurationMilliseconds);
+        Assert.Null(track.DurationProvenance);
+        Assert.Null(track.DurationRetrievedAt);
     }
 
     private ProtocolExecutionContext Context(ProtocolKind protocol) => new(
@@ -146,7 +174,8 @@ public sealed class BackendLibraryIndexingTests
             Inputs.Add(input);
             return Task.FromResult(new IndexedLibraryTrack(
                 Guid.CreateVersion7(), input.BackendItemId, input.FilePath, input.Title, input.Artist,
-                input.Album, input.AlbumArtist, input.DurationMilliseconds, input.Isrc,
+                input.Album, input.AlbumArtist, input.DurationMilliseconds,
+                input.DurationProvenance, input.DurationRetrievedAt, input.Isrc,
                 input.MusicBrainzRecordingId, input.CanonicalRecordingId,
                 input.ProviderTrackIds ?? new Dictionary<string, string>(), DateTimeOffset.UtcNow,
                 input.SourceModifiedAt, 0));

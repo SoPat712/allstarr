@@ -31,7 +31,7 @@ public sealed record AutomatedSourceMatchResult(
     string? Title,
     string? Artist,
     string? Album,
-    int? DurationSeconds,
+    long? DurationMilliseconds,
     string? Isrc,
     double Confidence);
 
@@ -78,7 +78,7 @@ public sealed record SourceTrackSeed(
     string Title,
     string Artist,
     string? Album,
-    int? DurationMilliseconds,
+    long? DurationMilliseconds,
     string? Isrc,
     string? ArtworkReference,
     string ProviderRevision);
@@ -934,7 +934,11 @@ public sealed class TrackMatchCommandService(
                         track.Title,
                         track.Artist,
                         track.Album,
-                        durationMs = track.DurationMilliseconds,
+                        durationMilliseconds = track.DurationMilliseconds is > 0
+                            ? track.DurationMilliseconds
+                            : null,
+                        durationProvenance = track.DurationMilliseconds is > 0 ? providerId : null,
+                        durationRetrievedAt = track.DurationMilliseconds is > 0 ? now : (DateTimeOffset?)null,
                         track.Isrc,
                         artworkReference = track.ArtworkReference
                     });
@@ -1135,9 +1139,7 @@ public sealed class TrackMatchCommandService(
                 seed.Artist,
                 seed.Album,
                 null,
-                seed.DurationMilliseconds is > 0
-                    ? (int?)Math.Round(seed.DurationMilliseconds.Value / 1000d)
-                    : null,
+                seed.DurationMilliseconds is > 0 ? seed.DurationMilliseconds : null,
                 seed.Isrc,
                 null,
                 null);
@@ -1299,9 +1301,7 @@ public sealed class TrackMatchCommandService(
         item.Artist,
         item.Album,
         item.AlbumArtist,
-        item.DurationMilliseconds > 0
-            ? (int?)Math.Round(item.DurationMilliseconds / 1000d)
-            : null,
+        item.DurationMilliseconds is > 0 ? item.DurationMilliseconds : null,
         item.Isrc,
         item.MusicBrainzRecordingId,
         null,
@@ -1319,9 +1319,7 @@ public sealed class TrackMatchCommandService(
         local?.Title,
         local?.Artist,
         local?.Album,
-        local?.DurationMilliseconds > 0
-            ? (int?)Math.Round(local.DurationMilliseconds / 1000d)
-            : null,
+        local?.DurationMilliseconds is > 0 ? local.DurationMilliseconds : null,
         local?.Isrc,
         confidence);
 
@@ -1372,7 +1370,7 @@ public sealed class TrackMatchCommandService(
             payload.Artist ?? "Unknown",
             payload.Album,
             payload.AlbumArtist,
-            ReadDurationSeconds(snapshot.PayloadJson),
+            ReadDurationMilliseconds(snapshot.PayloadJson),
             payload.Isrc,
             null,
             null);
@@ -1769,21 +1767,21 @@ public sealed class TrackMatchCommandService(
         }
     }
 
-    private static int? ReadDurationSeconds(string json)
+    private static long? ReadDurationMilliseconds(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            foreach (var name in new[] { "durationMilliseconds", "DurationMilliseconds", "durationMs", "DurationMs" })
+            {
+                if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)
+                    return (long)Math.Round(value.GetDouble());
+            }
             foreach (var name in new[] { "durationSeconds", "DurationSeconds", "duration", "Duration" })
             {
                 if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)
-                    return (int)Math.Round(value.GetDouble());
-            }
-            foreach (var name in new[] { "durationMs", "DurationMs", "durationMilliseconds", "DurationMilliseconds" })
-            {
-                if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)
-                    return (int)Math.Round(value.GetDouble() / 1000d);
+                    return (long)Math.Round(value.GetDouble() * 1000d);
             }
         }
         catch (JsonException)
