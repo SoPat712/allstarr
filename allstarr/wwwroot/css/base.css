@@ -643,7 +643,7 @@ a {
 
 .theme-menu {
     position: relative;
-    width: 108px;
+    width: 124px;
 }
 
 .theme-menu > summary {
@@ -651,14 +651,25 @@ a {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    min-height: 40px;
+    min-height: 44px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--surface-elevated);
+    background: var(--surface-control);
     color: var(--text-primary);
     cursor: pointer;
     list-style: none;
     padding: 8px 12px;
+    transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.theme-menu > summary:hover,
+.theme-menu[open] > summary {
+    border-color: var(--border-strong);
+    background: var(--surface-elevated);
+}
+
+.theme-menu[open] > summary {
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .theme-menu > summary::-webkit-details-marker {
@@ -684,7 +695,7 @@ a {
     top: calc(100% + 7px);
     right: 0;
     display: grid;
-    width: 148px;
+    width: 100%;
     gap: 3px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
@@ -5172,7 +5183,7 @@ button.setup-choice {
     transition: background 0.12s ease;
     border-radius: 0;
     margin: 0;
-    min-height: 68px;
+    min-height: 82px;
 }
 .playlist-track-row[role="button"]:hover {
     background: color-mix(in srgb, var(--surface-raised, var(--panel)) 80%, transparent);
@@ -5191,8 +5202,21 @@ button.setup-choice {
     overflow: visible;
 }
 
+.playlist-track-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+}
+
+.playlist-track-row .shared-track-row-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(170px, .42fr) 74px 42px;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    overflow: visible;
+}
+
 @media (min-width: 761px) {
-    .playlist-track-row > span:not(:first-child):not(.track-menu-cell) {
+    .playlist-track-row .shared-track-row-grid > span:not(:first-child) {
         border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
         padding-left: 12px;
     }

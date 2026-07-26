@@ -51,13 +51,17 @@ public sealed class WebUiResponsiveContractTests
         Assert.Contains("SIDEBAR_COLLAPSED_KEY", script, StringComparison.Ordinal);
         Assert.Contains("localStorage.setItem(SIDEBAR_COLLAPSED_KEY", script, StringComparison.Ordinal);
         Assert.Contains("class=\"ghost icon-button sidebar-collapse\"", script, StringComparison.Ordinal);
-        Assert.Contains("class=\"brand-heading\"", script, StringComparison.Ordinal);
+        Assert.Contains("aria-controls=\"primary-sidebar\"", script, StringComparison.Ordinal);
         Assert.Contains("this.sidebarCollapsed ? \"Expand sidebar\" : \"Collapse sidebar\"", script, StringComparison.Ordinal);
         Assert.Contains("title=${route.label} aria-label=${route.label}", script, StringComparison.Ordinal);
         Assert.Contains("@media (min-width: 961px)", css, StringComparison.Ordinal);
         Assert.Contains(".app-shell.sidebar-collapsed", css, StringComparison.Ordinal);
         Assert.Contains("--rail-width: 76px;", css, StringComparison.Ordinal);
         Assert.Contains(".sidebar-collapsed .nav-link > span", css, StringComparison.Ordinal);
+        var shell = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "shell.css"));
+        Assert.Contains("transition: grid-template-columns 300ms", shell, StringComparison.Ordinal);
+        Assert.Contains("right: -14px;", shell, StringComparison.Ordinal);
+        Assert.Contains("top: 50%;", shell, StringComparison.Ordinal);
         var responsive = File.ReadAllText(FindRepositoryFile("allstarr", "wwwroot", "css", "responsive.css"));
         Assert.Contains(".sidebar-collapse {\n        display: none !important;", responsive, StringComparison.Ordinal);
     }

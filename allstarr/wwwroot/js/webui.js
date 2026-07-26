@@ -2802,19 +2802,8 @@ class AllstarrApp extends LitElement {
           <div class="brand-heading">
             <a class="brand-title" href=${administrator ? "#/home" : "#/sources"} title="Allstarr home" aria-label="Allstarr home">
               <span class="brand-mark" aria-hidden="true">A</span>
-              <span><strong>Allstarr</strong><small>Music control center</small></span>
+              <span><strong>Allstarr</strong></span>
             </a>
-            <button
-              type="button"
-              class="ghost icon-button sidebar-collapse"
-              title=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-label=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-expanded=${this.sidebarCollapsed ? "false" : "true"}
-              @click=${() => {
-                this.sidebarCollapsed = !this.sidebarCollapsed;
-                localStorage.setItem(SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed ? "1" : "0");
-              }}
-            >${icon(this.sidebarCollapsed ? "chevronRight" : "chevronLeft")}</button>
           </div>
           <div class="brand-status">
             <span class="status-dot" aria-hidden="true"></span>
@@ -2830,6 +2819,18 @@ class AllstarrApp extends LitElement {
           ${administrator ? html`<button class="ghost" title=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-label=${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"} aria-pressed=${this.redactionMode ? "true" : "false"} @click=${this.toggleRedactionMode}>${icon("shield")}<span>${this.redactionMode ? "Sharing redaction on" : "Redact for sharing"}</span></button>` : nothing}
           <button class="ghost" title="Logout" aria-label="Logout" @click=${this.logout}>${icon("logout")}<span>Logout</span></button>
         </div>
+        <button
+          type="button"
+          class="ghost icon-button sidebar-collapse"
+          title=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label=${this.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-controls="primary-sidebar"
+          aria-expanded=${this.sidebarCollapsed ? "false" : "true"}
+          @click=${() => {
+            this.sidebarCollapsed = !this.sidebarCollapsed;
+            localStorage.setItem(SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed ? "1" : "0");
+          }}
+        >${icon(this.sidebarCollapsed ? "chevronRight" : "chevronLeft")}</button>
       </aside>
     `;
   }
@@ -2863,9 +2864,6 @@ class AllstarrApp extends LitElement {
               <span></span><span></span><span></span>
             </span>
           </button>
-          <div class="topbar-title-group">
-            <h1>Workspace</h1>
-          </div>
         </div>
         ${administrator ? this.renderGlobalSearch() : nothing}
         <div class="actions">
@@ -4223,7 +4221,9 @@ class AllstarrApp extends LitElement {
   renderPlaylistTrackRow(track, index, targetBackend) {
     const artists = asArray(track.artists).join(", ") || "Unknown artist";
     const album = display(track.album, "Unknown album");
-    const durationMs = Number(track.durationMs ?? track.DurationMs ?? 0);
+    const durationMs = Number(track.durationMs ?? track.DurationMs ?? 0)
+      || Number(track.durationSeconds ?? track.DurationSeconds ?? 0) * 1000
+      || Number(track.runTimeTicks ?? track.RunTimeTicks ?? 0) / 10000;
     const routeProvider = track.isLocal === true
       ? targetBackend
       : track.isLocal === false
@@ -4261,7 +4261,7 @@ class AllstarrApp extends LitElement {
         title: track.title,
         artists,
         album,
-        artworkUrl: track.albumArtUrl,
+        artworkUrl: track.albumArtUrl || track.AlbumArtUrl || track.artworkUrl || track.ArtworkUrl,
         durationMs,
         provider: routeProvider,
         providerLabel: routeName,

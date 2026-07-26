@@ -19,7 +19,7 @@
     .sidebar {
         visibility: visible;
         transform: none;
-        transition: none;
+        transition: width 300ms cubic-bezier(.22, 1, .36, 1);
     }
 
     .injected-table-wrap {
@@ -147,7 +147,7 @@
     .sidebar {
         visibility: visible;
         transform: none;
-        transition: none;
+        transition: width 300ms cubic-bezier(.22, 1, .36, 1);
     }
 
     .brand-heading,
