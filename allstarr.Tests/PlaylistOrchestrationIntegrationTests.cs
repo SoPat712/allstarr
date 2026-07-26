@@ -9,6 +9,7 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
@@ -22,6 +23,7 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     private FakeTarget _target = null!;
     private PlaylistOrchestrationService _service = null!;
     private TrackMatchCommandService _trackMatches = null!;
+    private TestMemoryApplicationCache _cache = null!;
     private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
@@ -46,8 +48,9 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             new TrackMatchDecisionEngine(),
             accountResolver,
             clock);
+        _cache = new TestMemoryApplicationCache();
         _service = new(_factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(),
-            new TrackMatchDecisionEngine(), _trackMatches, clock);
+            new TrackMatchDecisionEngine(), _trackMatches, clock, _cache);
         await using var db = await _factory.CreateDbContextAsync();
         await db.Database.MigrateAsync();
         _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
@@ -96,9 +99,12 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Refresh_persists_duplicate_source_positions_with_one_external_snapshot()
     {
+        var summaryKey = CacheKeyBuilder.BuildAdminPlaylistSummaryKey();
+        await _cache.SetStringAsync(summaryKey, "{}");
         _source.Snapshot = Snapshot("revision-duplicates", Entry(0, "entry-0", "source-1", "One"), Entry(1, "entry-1", "source-1", "One"));
         var refresh = await _service.RefreshAsync(Context(), _link);
 
+        Assert.False(await _cache.ExistsAsync(summaryKey));
         await using var db = await _factory.CreateDbContextAsync();
         var entries = await db.PlaylistSourceEntries.Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
             .OrderBy(item => item.SourcePosition).ToListAsync();

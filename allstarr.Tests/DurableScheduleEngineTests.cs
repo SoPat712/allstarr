@@ -193,9 +193,17 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
             job.TenantId, job.OwnerUserId, job.ProviderAccountId, job.LibraryScopeId,
             job.ProviderCapability, JsonDocument.Parse(job.PolicySnapshotJson).RootElement.Clone(),
             job.CorrelationId, "test-worker", _clock.UtcNow.AddMinutes(1));
+        var progress = new List<DurableJobProgressUpdate>();
 
         var result = await handler.ExecuteAsync(new DurableJobExecutionContext(claim,
-            new EmptyServiceProvider()), CancellationToken.None);
+            new EmptyServiceProvider())
+        {
+            ReportProgressAsync = (update, _) =>
+            {
+                progress.Add(update);
+                return Task.FromResult(true);
+            }
+        }, CancellationToken.None);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
         Assert.NotNull(orchestration.Request);
@@ -203,6 +211,10 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         Assert.Equal(scheduledFor.UtcTicks, orchestration.Request.Generation);
         Assert.Equal(job.Id, orchestration.Request.JobId);
         Assert.Equal(_schedule, orchestration.Request.ScheduleId);
+        Assert.Equal(["playlist.prepare", "playlist.match", "playlist.complete"],
+            progress.Select(item => item.Stage));
+        Assert.Null(progress[^1].Completed);
+        Assert.Null(progress[^1].Total);
     }
 
     [Fact]

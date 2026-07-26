@@ -10,6 +10,7 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -168,6 +169,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly TrackMatchDecisionEngine _matcher;
     private readonly ITrackMatchRepository _trackMatches;
     private readonly IPlatformClock _clock;
+    private readonly IApplicationCache _cache;
 
     public PlaylistOrchestrationService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -176,9 +178,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PlaylistMaterializationPlanner planner,
         TrackMatchDecisionEngine matcher,
         ITrackMatchRepository trackMatches,
-        IPlatformClock clock) =>
-        (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock) =
-        (factory, source, targets, planner, matcher, trackMatches, clock);
+        IPlatformClock clock,
+        IApplicationCache cache) =>
+        (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _cache) =
+        (factory, source, targets, planner, matcher, trackMatches, clock, cache);
 
     public async Task<PlaylistOrchestrationResult> RunAsync(
         ProtocolExecutionContext execution,
@@ -362,6 +365,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         published.PublishedAt = _clock.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        await _cache.DeleteAsync(CacheKeyBuilder.BuildAdminPlaylistSummaryKey());
     }
 
     private async Task<PlaylistSourceSnapshotRecord> CollectAndPersistAsync(
@@ -1037,6 +1041,8 @@ public sealed class PlaylistMaterializationJobHandler(
             item.TenantId == context.Claim.TenantId && item.OwnerUserId == context.Claim.OwnerUserId, cancellationToken);
         if (link == null) return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
         if (!link.Enabled) return DurableJobCompletion.Success();
+        await context.ReportProgressAsync(
+            new("playlist.prepare", "Preparing playlist synchronization."), cancellationToken);
         var identity = await db.BackendIdentities.AsNoTracking().FirstOrDefaultAsync(item => item.TenantId == link.TenantId &&
             item.UserId == link.OwnerUserId && item.BackendType == link.TargetProtocol &&
             item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken);
@@ -1049,10 +1055,18 @@ public sealed class PlaylistMaterializationJobHandler(
             context.Claim.CorrelationId, clock.UtcNow.AddMinutes(10), cancellationToken, libraryScopeId: link.LibraryScopeId);
         try
         {
+            await context.ReportProgressAsync(
+                new("playlist.match", "Matching and materializing playlist tracks."), cancellationToken);
             var result = await orchestration.RunAsync(execution,
                 new PlaylistOrchestrationRequest(link.Id, payload.Generation, payload.SourceSnapshotId,
                     context.Claim.JobId, link.ScheduleId), cancellationToken);
-            return result.State is PlaylistSyncState.Failed or PlaylistSyncState.Conflicted
+            var completed = result.Plan?.Entries.Count;
+            var retry = result.State is PlaylistSyncState.Failed or PlaylistSyncState.Conflicted;
+            await context.ReportProgressAsync(
+                new(retry ? "playlist.retry" : "playlist.complete",
+                    retry ? "Playlist synchronization requires retry." : "Playlist synchronization completed.",
+                    completed, completed), cancellationToken);
+            return retry
                 ? DurableJobCompletion.Retry(result.ErrorCode ?? "playlist_materialization_failed", "Playlist materialization did not complete.")
                 : DurableJobCompletion.Success();
         }
