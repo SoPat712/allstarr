@@ -713,19 +713,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 storedByExternalId[external.Id] = stored;
             }
 
-            var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, stored);
-
-            var effectiveLibraryTrackId = manual?.Decision == ManualOverrideDecision.Pin
-                ? manual.LibraryTrackId
-                : rejected
-                    ? null
-                    : stored.LibraryTrackId;
-            var effectiveState = manual?.Decision switch
-            {
-                ManualOverrideDecision.Pin => TrackMatchReviewState.Pinned,
-                ManualOverrideDecision.Reject when rejected => TrackMatchReviewState.Rejected,
-                _ => ToReviewState(stored.State)
-            };
+            var classification = TrackClassifier.Classify(
+                manual,
+                stored,
+                playableLibraryTrackIds: candidateIds);
+            var effectiveLibraryTrackId = classification.LibraryTrackId;
+            var effectiveState = ToReviewState(classification.State);
 
             // O(1) lookup dictionary instead of O(candidates) linear scan
             var library = effectiveLibraryTrackId.HasValue && candidateById.TryGetValue(effectiveLibraryTrackId.Value, out var libCand)

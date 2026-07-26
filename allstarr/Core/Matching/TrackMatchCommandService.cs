@@ -37,14 +37,6 @@ public sealed record AutomatedSourceMatchResult(
 
 public sealed record DurableProviderRoute(string ProviderId, string ExternalId, bool IsManual = false);
 
-public sealed record DurableSpotifyMatchProjection(
-    string? LocalBackendItemId,
-    bool LocalIsManual,
-    IReadOnlyList<DurableProviderRoute> ProviderRoutes)
-{
-    public bool IsManual => LocalIsManual || ProviderRoutes.Any(route => route.IsManual);
-}
-
 public sealed record TrackMatchDetailData(
     IReadOnlyList<ProviderTrackIdentityRecord> ProviderIdentities,
     IReadOnlyList<LibraryTrackRecord> LocalTracks,
@@ -120,10 +112,6 @@ public interface ITrackMatchRepository
     Task<IReadOnlyList<AutomatedSourceMatchResult>> MatchSourceTracksAsync(
         IReadOnlyCollection<SourceTrackSeed> sourceTracks,
         string correlationId,
-        CancellationToken cancellationToken = default);
-
-    Task<DurableSpotifyMatchProjection> GetSpotifyProjectionAsync(
-        string spotifyId,
         CancellationToken cancellationToken = default);
 
     Task<TrackMatchDetailData> GetDetailAsync(
@@ -688,15 +676,30 @@ public sealed class TrackMatchCommandService(
                 .Select(item => item.LibraryTrackId!.Value))
             .Distinct()
             .ToArray();
-        var library = await db.LibraryTracks.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && libraryIds.Contains(item.Id))
+        var sourceIdentityIds = snapshots
+            .Where(item => item.ProviderTrackIdentityId.HasValue)
+            .Select(item => item.ProviderTrackIdentityId!.Value)
+            .Distinct()
+            .ToArray();
+        var sourceIdentities = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId &&
+                           sourceIdentityIds.Contains(item.Id))
             .ToListAsync(cancellationToken);
         var canonicalIds = decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)
-            .Concat(library.Where(item => item.CanonicalRecordingId.HasValue)
-                .Select(item => item.CanonicalRecordingId!.Value))
+            .Concat(sourceIdentities.Select(item => item.CanonicalRecordingId))
             .Distinct()
             .ToArray();
+        var libraryQuery = db.LibraryTracks.AsNoTracking()
+            .Where(item => item.TenantId == actor.TenantId &&
+                           (libraryIds.Contains(item.Id) ||
+                            item.CanonicalRecordingId.HasValue &&
+                            canonicalIds.Contains(item.CanonicalRecordingId.Value)));
+        if (!actor.IsAdministrator)
+            libraryQuery = libraryQuery.Where(item => item.OwnerUserId == actor.UserId);
+        if (!string.IsNullOrWhiteSpace(libraryScopeId))
+            libraryQuery = libraryQuery.Where(item => item.LibraryScopeId == libraryScopeId.Trim());
+        var library = await libraryQuery.ToListAsync(cancellationToken);
         var identities = await db.ProviderTrackIdentities.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId &&
                            canonicalIds.Contains(item.CanonicalRecordingId))
@@ -1110,22 +1113,6 @@ public sealed class TrackMatchCommandService(
             var seed = tracks[SourceKey(identity.ProviderId, identity.ExternalId)];
             latestDecisions.TryGetValue(snapshot.Id, out var latest);
             activeOverrides.TryGetValue(snapshot.Id, out var manual);
-            if (manual?.Decision == ManualOverrideDecision.Pin ||
-                manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue)
-            {
-                var protectedLocal = latest?.LibraryTrackId is { } protectedId
-                    ? libraryTracks.FirstOrDefault(item => item.Id == protectedId)
-                    : null;
-                results.Add(ToAutomatedResult(
-                    seed,
-                    latest == null
-                        ? TrackMatchReviewState.Unresolved
-                        : Enum.Parse<TrackMatchReviewState>(latest.State.ToString(), true),
-                    protectedLocal,
-                    latest?.Confidence ?? 0));
-                continue;
-            }
-
             var scopedTracks = libraryTracks
                 .Where(item =>
                     item.TenantId == snapshot.TenantId &&
@@ -1133,6 +1120,24 @@ public sealed class TrackMatchCommandService(
                     item.LibraryScopeId == snapshot.LibraryScopeId &&
                     item.BackendInstanceId == snapshot.BackendInstanceId)
                 .ToArray();
+            if (manual?.Decision == ManualOverrideDecision.Pin ||
+                manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue)
+            {
+                var classification = TrackClassifier.Classify(
+                    manual,
+                    latest,
+                    playableLibraryTrackIds: scopedTracks.Select(item => item.Id).ToHashSet());
+                var protectedLocal = classification.LibraryTrackId is { } protectedId
+                    ? scopedTracks.FirstOrDefault(item => item.Id == protectedId)
+                    : null;
+                results.Add(ToAutomatedResult(
+                    seed,
+                    Enum.Parse<TrackMatchReviewState>(classification.State.ToString(), true),
+                    protectedLocal,
+                    latest?.Confidence ?? 0));
+                continue;
+            }
+
             var candidates = new TrackMatchCandidateIndex(scopedTracks.Select(ToLocalCandidate));
             var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(
                 scopedTracks.Select(ToLocalCandidate));
@@ -1220,83 +1225,6 @@ public sealed class TrackMatchCommandService(
 
         await db.SaveChangesAsync(cancellationToken);
         return results;
-    }
-
-    public async Task<DurableSpotifyMatchProjection> GetSpotifyProjectionAsync(
-        string spotifyId,
-        CancellationToken cancellationToken = default)
-    {
-        spotifyId = spotifyId.Trim();
-        if (spotifyId.Length is < 3 or > 128)
-            return new(null, false, []);
-
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var identities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.ProviderId == "spotify" && item.ExternalId == spotifyId)
-            .ToListAsync(cancellationToken);
-        if (identities.Count == 0)
-            return new(null, false, []);
-
-        var canonicalIds = identities.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
-        var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-                .Where(item => canonicalIds.Contains(item.CanonicalRecordingId) &&
-                               item.ProviderId != "spotify" &&
-                               item.ResourceKind == ProviderResourceKind.Track)
-                .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
-                .ThenBy(item => item.ProviderId)
-                .ThenByDescending(item => item.VerifiedAt)
-                .ToListAsync(cancellationToken);
-        var routes = providerIdentities
-            .Where(item => ExternalTrackPlaybackPolicy.CanUseForPlayback(item.ProviderId))
-            .DistinctBy(item => $"{item.ProviderId}:{item.ExternalId}", StringComparer.OrdinalIgnoreCase)
-            .Select(item => new DurableProviderRoute(
-                item.ProviderId,
-                item.ExternalId,
-                item.Verification == ProviderIdentityVerification.Pinned))
-            .ToArray();
-
-        var identityIds = identities.Select(item => item.Id).ToArray();
-        var snapshotIds = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.ProviderTrackIdentityId.HasValue &&
-                           identityIds.Contains(item.ProviderTrackIdentityId.Value))
-            .Select(item => item.Id)
-            .ToArrayAsync(cancellationToken);
-        var latestDecisions = snapshotIds.Length == 0
-            ? []
-            : (await db.TrackMatches.AsNoTracking()
-                .Where(item => snapshotIds.Contains(item.ExternalSnapshotId))
-                .OrderByDescending(item => item.DecisionVersion)
-                .ThenByDescending(item => item.DecidedAt)
-                .ToListAsync(cancellationToken))
-                .GroupBy(item => item.ExternalSnapshotId)
-                .Select(group => group.First())
-                .ToArray();
-        var selectedLocalId = latestDecisions
-            .Where(item => item.LibraryTrackId.HasValue &&
-                           item.State is TrackMatchState.Accepted or TrackMatchState.Pinned)
-            .OrderByDescending(item => item.DecidedAt)
-            .Select(item => item.LibraryTrackId)
-            .FirstOrDefault();
-        var pinnedLocalId = snapshotIds.Length == 0
-            ? null
-            : await db.ManualTrackOverrides.AsNoTracking()
-                .Where(item => snapshotIds.Contains(item.ExternalSnapshotId) &&
-                               item.RevokedAt == null &&
-                               item.Decision == ManualOverrideDecision.Pin &&
-                               item.LibraryTrackId.HasValue)
-                .OrderByDescending(item => item.CreatedAt)
-                .Select(item => item.LibraryTrackId)
-                .FirstOrDefaultAsync(cancellationToken);
-        var backendItemId = selectedLocalId.HasValue
-            ? await db.LibraryTracks.AsNoTracking()
-                .Where(item => item.Id == selectedLocalId.Value)
-                .Select(item => item.BackendItemId)
-                .FirstOrDefaultAsync(cancellationToken)
-            : null;
-        return new(
-            backendItemId,
-            pinnedLocalId.HasValue && pinnedLocalId == selectedLocalId,
-            routes);
     }
 
     private static string SourceKey(string providerId, string externalId) =>

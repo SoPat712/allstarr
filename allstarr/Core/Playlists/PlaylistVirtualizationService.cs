@@ -122,6 +122,23 @@ public sealed class PlaylistVirtualizationService(
         var publishedMatches = await db.TrackMatches.AsNoTracking()
             .Where(item => publishedMatchIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var potentialLibraryIds = publishedMatches.Values
+            .Where(item => item.LibraryTrackId.HasValue)
+            .Select(item => item.LibraryTrackId!.Value)
+            .Concat(overrides.Values
+                .Where(item => item.LibraryTrackId.HasValue)
+                .Select(item => item.LibraryTrackId!.Value))
+            .Distinct()
+            .ToArray();
+        var libraryTracks = await db.LibraryTracks.AsNoTracking().Where(item =>
+                potentialLibraryIds.Contains(item.Id) && item.TenantId == actor.TenantId &&
+                item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId &&
+                item.BackendInstanceId == link.TargetBackendInstanceId &&
+                (context.Protocol == ProtocolKind.Jellyfin
+                    ? item.Protocol == "jellyfin"
+                    : item.Protocol == "subsonic" || item.Protocol == "opensubsonic" || item.Protocol == "navidrome"))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var playableLibraryTrackIds = libraryTracks.Keys.ToHashSet();
 
         var selected = entries.Select(entry =>
         {
@@ -129,40 +146,28 @@ public sealed class PlaylistVirtualizationService(
             TrackMatchRecord? decision = null;
             if (entry.PublishedTrackMatchId is { } matchId)
                 publishedMatches.TryGetValue(matchId, out decision);
-            var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision);
-            var state = manual?.Decision == ManualOverrideDecision.Pin
-                ? TrackMatchState.Pinned
-                : rejected
-                    ? TrackMatchState.Rejected
-                    : decision?.State ?? TrackMatchState.Unresolved;
-            var trackId = manual?.Decision == ManualOverrideDecision.Pin
-                ? manual.LibraryTrackId
-                : state == TrackMatchState.Accepted && decision!.Confidence >= decision.Threshold
-                    ? decision.LibraryTrackId
-                    : null;
+            ProviderTrackIdentityRecord? sourceIdentity = null;
+            if (externalSnapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external) &&
+                external.ProviderTrackIdentityId is { } sourceIdentityId)
+                providerIdentities.TryGetValue(sourceIdentityId, out sourceIdentity);
+            var classification = TrackClassifier.Classify(
+                manual,
+                decision,
+                sourceIdentity,
+                resolution.ProviderIdentities,
+                providerOrder,
+                playableLibraryTrackIds);
             ProviderTrackIdentityRecord? providerIdentity = null;
-            if (!trackId.HasValue && externalSnapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external) &&
-                external.ProviderTrackIdentityId.HasValue)
+            if (classification.RouteKind == TrackRouteKind.External)
             {
-                providerIdentities.TryGetValue(external.ProviderTrackIdentityId.Value, out var sourceIdentity);
-                var primary = DurableProviderRouteSelector.Select(
-                    sourceIdentity, resolution.ProviderIdentities, providerOrder).FirstOrDefault();
+                var primary = classification.PrimaryProviderRoute;
                 if (primary != null)
                     providerIdentity = resolution.ProviderIdentities.First(item =>
                         item.ProviderId == primary.ProviderId &&
                         item.ExternalId == primary.ExternalId);
             }
-            return (Entry: entry, State: state, TrackId: trackId, ProviderIdentity: providerIdentity);
+            return (Entry: entry, classification.State, TrackId: classification.LibraryTrackId, ProviderIdentity: providerIdentity);
         }).Where(item => item.TrackId.HasValue || item.ProviderIdentity != null).ToList();
-        var libraryIds = selected.Where(item => item.TrackId.HasValue).Select(item => item.TrackId!.Value).Distinct().ToArray();
-        var libraryTracks = await db.LibraryTracks.AsNoTracking().Where(item =>
-                libraryIds.Contains(item.Id) && item.TenantId == actor.TenantId &&
-                item.OwnerUserId == link.OwnerUserId && item.LibraryScopeId == link.LibraryScopeId &&
-                item.BackendInstanceId == link.TargetBackendInstanceId &&
-                (context.Protocol == ProtocolKind.Jellyfin
-                    ? item.Protocol == "jellyfin"
-                    : item.Protocol == "subsonic" || item.Protocol == "opensubsonic" || item.Protocol == "navidrome"))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
 
         var tracks = selected
             .Select(item =>

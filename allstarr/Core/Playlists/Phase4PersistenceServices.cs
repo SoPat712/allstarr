@@ -227,20 +227,12 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         {
             manualOverrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
             latestMatches.TryGetValue(entry.ExternalMetadataSnapshotId, out var match);
-            var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, match);
+            var classification = TrackClassifier.Classify(manual, match);
             result.Add(new PersistedPlaylistPreviewEntry(
                 entry.SourcePosition,
                 entry.ExternalMetadataSnapshotId,
-                manual?.Decision == ManualOverrideDecision.Pin
-                    ? TrackMatchState.Pinned
-                    : rejected
-                        ? TrackMatchState.Rejected
-                        : match?.State ?? TrackMatchState.Unresolved,
-                manual?.Decision == ManualOverrideDecision.Pin
-                    ? manual.LibraryTrackId
-                    : rejected
-                        ? null
-                        : match?.LibraryTrackId,
+                classification.State,
+                classification.LibraryTrackId,
                 manual?.Decision));
         }
         return new PlaylistPreview(link.Id, snapshot.Id, snapshot.Name, snapshot.Description, snapshot.ArtworkReferenceKey, result);

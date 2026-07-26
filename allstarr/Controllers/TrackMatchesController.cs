@@ -440,18 +440,33 @@ public sealed class TrackMatchesController(
         IReadOnlyDictionary<Guid, LibraryTrackRecord> libraryByCanonical,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities)
     {
-        var state = manual?.Decision == ManualOverrideDecision.Pin ? TrackMatchState.Pinned :
-            TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision) ? TrackMatchState.Rejected :
-            decision?.State ?? (sourceIdentity == null ? TrackMatchState.Unresolved : TrackMatchState.Accepted);
-        var trackId = manual?.Decision == ManualOverrideDecision.Pin
-            ? manual.LibraryTrackId
-            : state == TrackMatchState.Rejected
-                ? null
-                : decision?.LibraryTrackId;
+        var routeCanonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
+        var routeIdentities = routeCanonicalId.HasValue &&
+                              identities.TryGetValue(routeCanonicalId.Value, out var canonicalIdentities)
+            ? canonicalIdentities
+            : [];
+        var providerOrder = routeIdentities.Select(item => item.ProviderId)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var classification = TrackClassifier.Classify(
+            manual,
+            decision,
+            sourceIdentity,
+            routeIdentities,
+            providerOrder,
+            library.Keys.ToHashSet());
+        var state = classification.ReviewState;
+        var trackId = classification.LibraryTrackId;
         library.TryGetValue(trackId ?? Guid.Empty, out var track);
         var canonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId ?? track?.CanonicalRecordingId;
-        if (track == null && canonicalId.HasValue &&
-            libraryByCanonical.TryGetValue(canonicalId.Value, out var canonicalTrack))
+        if (track == null &&
+            state is TrackMatchState.Accepted or TrackMatchState.Pinned &&
+            canonicalId.HasValue &&
+            libraryByCanonical.TryGetValue(canonicalId.Value, out var canonicalTrack) &&
+            canonicalTrack.OwnerUserId == snapshot.OwnerUserId &&
+            canonicalTrack.LibraryScopeId == snapshot.LibraryScopeId &&
+            canonicalTrack.BackendInstanceId == snapshot.BackendInstanceId)
         {
             track = canonicalTrack;
             trackId = canonicalTrack.Id;
