@@ -407,36 +407,35 @@ public sealed class PlaylistLinksController(
             var linkIds = links.Select(item => item.Id).ToArray();
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var snapshots = linkIds.Length == 0 ? [] : await db.PlaylistSourceSnapshots.AsNoTracking()
-                .Where(item => linkIds.Contains(item.PlaylistLinkId))
+                .Where(item => linkIds.Contains(item.PlaylistLinkId) && item.PublishedAt.HasValue)
                 .GroupBy(item => item.PlaylistLinkId)
                 .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
                     .ThenByDescending(item => item.RetrievedAt).First())
                 .ToListAsync(cancellationToken);
-            var runs = linkIds.Length == 0 ? [] : await db.PlaylistSyncRuns.AsNoTracking()
-                .Where(item => linkIds.Contains(item.PlaylistLinkId))
+            var snapshotIds = snapshots.Select(item => item.Id).ToArray();
+            var runs = snapshotIds.Length == 0 ? [] : await db.PlaylistSyncRuns.AsNoTracking()
+                .Where(item => snapshotIds.Contains(item.PlaylistSourceSnapshotId) &&
+                               item.State != PlaylistSyncState.Pending &&
+                               item.State != PlaylistSyncState.Running)
                 .GroupBy(item => item.PlaylistLinkId)
                 .Select(group => group.OrderByDescending(item => item.Generation)
                     .ThenByDescending(item => item.StartedAt).First())
                 .ToListAsync(cancellationToken);
             var snapshotsByLink = snapshots.ToDictionary(item => item.PlaylistLinkId);
             var runsByLink = runs.ToDictionary(item => item.PlaylistLinkId);
-            var snapshotIds = snapshots.Select(item => item.Id).ToArray();
             var sourceEntries = snapshotIds.Length == 0 ? [] : await db.PlaylistSourceEntries.AsNoTracking()
                 .Where(item => snapshotIds.Contains(item.PlaylistSourceSnapshotId))
                 .ToListAsync(cancellationToken);
-            var externalSnapshotIds = sourceEntries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
-            var actor = context.Actor ?? throw new UnauthorizedAccessException("Actor context is required.");
-            var matchResolution = await matches.GetResolutionDataAsync(
-                new TrackMatchActor(
-                    actor.TenantId,
-                    actor.EffectiveUserId ?? session.AllstarrUserId!.Value,
-                    actor.Kind == ProviderActorKind.Administrator),
-                session.AllstarrUserId!.Value,
-                context.LibraryScopeId ?? libraryScopeId,
-                externalSnapshotIds,
-                cancellationToken);
-            var latestMatches = matchResolution.LatestDecisions
-                .ToDictionary(item => item.ExternalSnapshotId);
+            var publishedMatchIds = sourceEntries
+                .Where(item => item.PublishedTrackMatchId.HasValue)
+                .Select(item => item.PublishedTrackMatchId!.Value)
+                .Distinct()
+                .ToArray();
+            var publishedMatches = publishedMatchIds.Length == 0
+                ? new Dictionary<Guid, TrackMatchRecord>()
+                : await db.TrackMatches.AsNoTracking()
+                    .Where(item => publishedMatchIds.Contains(item.Id))
+                    .ToDictionaryAsync(item => item.Id, cancellationToken);
             var runIds = runs.Select(item => item.Id).ToArray();
             var runEntries = runIds.Length == 0 ? [] : await db.PlaylistSyncEntryResults.AsNoTracking()
                 .Where(item => runIds.Contains(item.PlaylistSyncRunId))
@@ -451,7 +450,7 @@ public sealed class PlaylistLinksController(
                 snapshotsByLink.GetValueOrDefault(link.Id),
                 runsByLink.GetValueOrDefault(link.Id),
                 sourceEntriesBySnapshot,
-                latestMatches,
+                publishedMatches,
                 runEntriesByRun));
             return Ok(new
             {
@@ -920,14 +919,16 @@ public sealed class PlaylistLinksController(
         PlaylistSourceSnapshotRecord? snapshot,
         PlaylistSyncRunRecord? run,
         IReadOnlyDictionary<Guid, PlaylistSourceEntryRecord[]> entriesBySnapshot,
-        IReadOnlyDictionary<Guid, TrackMatchRecord> latestMatches,
+        IReadOnlyDictionary<Guid, TrackMatchRecord> publishedMatches,
         IReadOnlyDictionary<Guid, PlaylistSyncEntryResultRecord[]> entriesByRun)
     {
         var entries = snapshot == null
             ? []
             : entriesBySnapshot.GetValueOrDefault(snapshot.Id) ?? [];
         var decisions = entries
-            .Select(item => latestMatches.GetValueOrDefault(item.ExternalMetadataSnapshotId))
+            .Select(item => item.PublishedTrackMatchId is { } matchId
+                ? publishedMatches.GetValueOrDefault(matchId)
+                : null)
             .ToArray();
         var runEntries = run == null
             ? []

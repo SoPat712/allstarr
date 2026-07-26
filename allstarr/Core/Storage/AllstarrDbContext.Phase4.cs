@@ -204,6 +204,8 @@ public sealed partial class AllstarrDbContext
             Required(entity.Property(item => item.PayloadSha256), 64);
             Required(entity.Property(item => item.CorrelationId), 100);
             entity.HasIndex(item => new { item.TenantId, item.PlaylistLinkId, item.SnapshotVersion }).IsUnique().HasDatabaseName("IX_playlist_snapshot_version");
+            entity.HasIndex(item => new { item.TenantId, item.PlaylistLinkId, item.PublishedAt, item.SnapshotVersion })
+                .HasDatabaseName("IX_playlist_snapshot_published");
             TenantUser(entity, item => new { item.TenantId, item.OwnerUserId });
             TenantReference<PlaylistSourceSnapshotRecord, PlaylistLinkRecord>(entity, item => new { item.TenantId, item.PlaylistLinkId });
             entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(item => item.ProviderAccountId).HasConstraintName("FK_playlist_snapshot_provider_account").OnDelete(DeleteBehavior.Restrict);
@@ -224,6 +226,7 @@ public sealed partial class AllstarrDbContext
             entity.HasIndex(item => new { item.TenantId, item.PlaylistSourceSnapshotId, item.SourcePosition }).IsUnique().HasDatabaseName("IX_playlist_source_entry_position");
             TenantReference<PlaylistSourceEntryRecord, PlaylistSourceSnapshotRecord>(entity, item => new { item.TenantId, item.PlaylistSourceSnapshotId });
             TenantReference<PlaylistSourceEntryRecord, ExternalMetadataSnapshotRecord>(entity, item => new { item.TenantId, item.ExternalMetadataSnapshotId });
+            TenantReference<PlaylistSourceEntryRecord, TrackMatchRecord>(entity, item => new { item.TenantId, item.PublishedTrackMatchId });
         });
 
         modelBuilder.Entity<PlaylistSyncRunRecord>(entity =>

@@ -59,7 +59,9 @@ public sealed class DurablePlaylistProjectionReader(
         await using var database = await factory.CreateDbContextAsync(cancellationToken);
         var normalizedName = name.Trim().ToLowerInvariant();
         var snapshots = database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && item.Name.ToLower() == normalizedName);
+            .Where(item => item.TenantId == tenantId &&
+                           item.Name.ToLower() == normalizedName &&
+                           item.PublishedAt.HasValue);
         if (ownerUserId.HasValue)
             snapshots = snapshots.Where(item => item.OwnerUserId == ownerUserId.Value);
         var snapshot = await snapshots
@@ -85,18 +87,18 @@ public sealed class DurablePlaylistProjectionReader(
         var identities = await database.ProviderTrackIdentities.AsNoTracking()
             .Where(item => identityIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var matches = await database.TrackMatches.AsNoTracking()
-            .Where(item => externalIds.Contains(item.ExternalSnapshotId))
-            .ToListAsync(cancellationToken);
-        var latestMatches = matches
-            .GroupBy(item => item.ExternalSnapshotId)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderByDescending(item => item.DecisionVersion).First());
+        var publishedMatchIds = entries
+            .Where(item => item.PublishedTrackMatchId.HasValue)
+            .Select(item => item.PublishedTrackMatchId!.Value)
+            .Distinct()
+            .ToArray();
+        var publishedMatches = await database.TrackMatches.AsNoTracking()
+            .Where(item => publishedMatchIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
         var overrides = await database.ManualTrackOverrides.AsNoTracking()
             .Where(item => externalIds.Contains(item.ExternalSnapshotId) && item.RevokedAt == null)
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
-        var libraryIds = latestMatches.Values
+        var libraryIds = publishedMatches.Values
             .Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
             .Concat(overrides.Values.Where(item => item.LibraryTrackId.HasValue)
@@ -130,7 +132,9 @@ public sealed class DurablePlaylistProjectionReader(
                     entry,
                     external[entry.ExternalMetadataSnapshotId],
                     identities,
-                    latestMatches,
+                    entry.PublishedTrackMatchId is { } matchId
+                        ? publishedMatches.GetValueOrDefault(matchId)
+                        : null,
                     overrides,
                     library))
                 .ToArray());
@@ -140,11 +144,10 @@ public sealed class DurablePlaylistProjectionReader(
         PlaylistSourceEntryRecord entry,
         ExternalMetadataSnapshotRecord external,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> identities,
-        IReadOnlyDictionary<Guid, TrackMatchRecord> matches,
+        TrackMatchRecord? match,
         IReadOnlyDictionary<Guid, ManualTrackOverrideRecord> overrides,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
     {
-        matches.TryGetValue(external.Id, out var match);
         overrides.TryGetValue(external.Id, out var manual);
         var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, match);
         var libraryId = manual?.Decision == ManualOverrideDecision.Pin

@@ -565,7 +565,13 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 (entry.State is EntityState.Modified or EntityState.Deleted) &&
                 (entry.Entity is ExternalMetadataSnapshotRecord or
                     PlaylistSourceSnapshotRecord or
-                    PlaylistSourceEntryRecord));
+                    PlaylistSourceEntryRecord) &&
+                !(entry.State == EntityState.Modified &&
+                  entry.Properties.Where(property => property.IsModified).All(property =>
+                      entry.Entity is PlaylistSourceSnapshotRecord &&
+                      property.Metadata.Name == nameof(PlaylistSourceSnapshotRecord.PublishedAt) ||
+                      entry.Entity is PlaylistSourceEntryRecord &&
+                      property.Metadata.Name == nameof(PlaylistSourceEntryRecord.PublishedTrackMatchId))));
         if (changed != null)
         {
             throw new InvalidOperationException(

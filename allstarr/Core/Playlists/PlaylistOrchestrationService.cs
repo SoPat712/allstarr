@@ -200,6 +200,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             : await CollectAndPersistAsync(execution, link, request.JobId, cancellationToken);
         var (source, decisions, decisionIds) = await MatchAndLoadAsync(
             execution, link, snapshot, cancellationToken);
+        await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
         var mode = link.Mode == PlaylistLinkMode.Virtual
             ? PlaylistPlanMode.Virtual
             : link.MaterializationMode == PlaylistMaterializationMode.Recreate
@@ -313,8 +314,46 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before refreshing.");
         var snapshot = await CollectAndPersistAsync(execution, link, jobId, cancellationToken);
-        _ = await MatchAndLoadAsync(execution, link, snapshot, cancellationToken);
+        var (_, _, decisionIds) = await MatchAndLoadAsync(execution, link, snapshot, cancellationToken);
+        await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
         return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision);
+    }
+
+    private async Task PublishGenerationAsync(
+        PlaylistLinkRecord link,
+        PlaylistSourceSnapshotRecord snapshot,
+        IReadOnlyDictionary<Guid, Guid?> decisionIds,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var published = await db.PlaylistSourceSnapshots.SingleAsync(item =>
+            item.Id == snapshot.Id &&
+            item.TenantId == link.TenantId &&
+            item.PlaylistLinkId == link.Id,
+            cancellationToken);
+        var entries = await db.PlaylistSourceEntries
+            .Where(item => item.TenantId == link.TenantId &&
+                           item.PlaylistSourceSnapshotId == snapshot.Id)
+            .ToListAsync(cancellationToken);
+        if (entries.Count != decisionIds.Count ||
+            entries.Any(item => !decisionIds.TryGetValue(item.Id, out var decisionId) ||
+                                !decisionId.HasValue))
+            throw new InvalidOperationException("A playlist generation cannot publish without one durable decision per source entry.");
+        var matchIds = decisionIds.Values.Select(item => item!.Value).Distinct().ToArray();
+        var matches = await db.TrackMatches.AsNoTracking()
+            .Where(item => item.TenantId == link.TenantId && matchIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        if (matches.Count != matchIds.Length ||
+            entries.Any(item =>
+                !matches.TryGetValue(decisionIds[item.Id]!.Value, out var match) ||
+                match.ExternalSnapshotId != item.ExternalMetadataSnapshotId))
+            throw new InvalidOperationException("A playlist generation references an unavailable match decision.");
+        foreach (var entry in entries)
+            entry.PublishedTrackMatchId = decisionIds[entry.Id];
+        published.PublishedAt = _clock.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<PlaylistSourceSnapshotRecord> CollectAndPersistAsync(

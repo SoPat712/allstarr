@@ -501,6 +501,92 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal("fixture", projection.Entries[1].RouteProviderId);
     }
 
+    [Fact]
+    public async Task Durable_projection_keeps_the_published_generation_until_the_next_publish()
+    {
+        _source.Snapshot = Snapshot(
+            "revision-published",
+            Entry(0, "entry-published", "source-1", "One"));
+        var first = await _service.RefreshAsync(Context(), _link);
+
+        PlaylistSourceSnapshotRecord building;
+        PlaylistSourceEntryRecord buildingEntry;
+        TrackMatchRecord firstMatch;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var firstEntry = await db.PlaylistSourceEntries
+                .SingleAsync(item => item.PlaylistSourceSnapshotId == first.SnapshotId);
+            firstMatch = await db.TrackMatches
+                .SingleAsync(item => item.Id == firstEntry.PublishedTrackMatchId);
+            building = new PlaylistSourceSnapshotRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                OwnerUserId = _user,
+                PlaylistLinkId = _link,
+                ProviderAccountId = _account,
+                SnapshotVersion = first.SnapshotVersion + 1,
+                ProviderRevision = "revision-building",
+                Name = "Provider Mix",
+                Description = "Building",
+                ArtworkReferenceKey = "provider-artwork:building",
+                PayloadSha256 = Hash("building"),
+                CorrelationId = "building",
+                RetrievedAt = _now.AddMinutes(1)
+            };
+            buildingEntry = new PlaylistSourceEntryRecord
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = _tenant,
+                PlaylistSourceSnapshotId = building.Id,
+                ExternalMetadataSnapshotId = firstEntry.ExternalMetadataSnapshotId,
+                SourcePosition = 0,
+                SourceEntryIdHash = Hash("building-entry")
+            };
+            db.AddRange(building, buildingEntry);
+            await db.SaveChangesAsync();
+        }
+        var rejected = await _trackMatches.RecordDecisionAsync(Context(), new MatchDecisionInput(
+            firstMatch.ExternalSnapshotId,
+            null,
+            firstMatch.CanonicalRecordingId,
+            TrackMatchState.Rejected,
+            0,
+            firstMatch.Threshold,
+            firstMatch.DecisionVersion + 1,
+            firstMatch.SourceSnapshotVersion,
+            firstMatch.LibraryIndexRevision,
+            firstMatch.MatcherVersion,
+            firstMatch.PolicyVersion,
+            "[]",
+            "[\"test\"]",
+            "[]"));
+
+        var reader = new DurablePlaylistProjectionReader(_factory);
+        var active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
+        Assert.NotNull(active);
+        Assert.Equal(first.SnapshotId, active.SnapshotId);
+        Assert.Equal("local", Assert.Single(active.Entries).RouteKind);
+        Assert.Equal("provider-artwork:stable:key", active.ArtworkReferenceKey);
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var snapshot = await db.PlaylistSourceSnapshots.SingleAsync(item => item.Id == building.Id);
+            var entry = await db.PlaylistSourceEntries.SingleAsync(item => item.Id == buildingEntry.Id);
+            entry.PublishedTrackMatchId = rejected.Id;
+            snapshot.PublishedAt = _now.AddMinutes(2);
+            await db.SaveChangesAsync();
+        }
+
+        active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
+        Assert.NotNull(active);
+        Assert.Equal(building.Id, active.SnapshotId);
+        var publishedEntry = Assert.Single(active.Entries);
+        Assert.Equal("external", publishedEntry.RouteKind);
+        Assert.Equal(TrackMatchState.Rejected, publishedEntry.MatchState);
+        Assert.Equal("provider-artwork:building", active.ArtworkReferenceKey);
+    }
+
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,

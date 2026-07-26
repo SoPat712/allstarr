@@ -83,7 +83,9 @@ public sealed class PlaylistVirtualizationService(
             return null;
 
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == link.Id)
+            .Where(item => item.TenantId == actor.TenantId &&
+                           item.PlaylistLinkId == link.Id &&
+                           item.PublishedAt.HasValue)
             .OrderByDescending(item => item.SnapshotVersion)
             .ThenByDescending(item => item.RetrievedAt)
             .FirstOrDefaultAsync(cancellationToken);
@@ -106,12 +108,21 @@ public sealed class PlaylistVirtualizationService(
         var externalSnapshots = resolution.Snapshots.ToDictionary(item => item.Id);
         var providerIdentities = resolution.ProviderIdentities.ToDictionary(item => item.Id);
         var overrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
-        var decisions = resolution.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
+        var publishedMatchIds = entries
+            .Where(item => item.PublishedTrackMatchId.HasValue)
+            .Select(item => item.PublishedTrackMatchId!.Value)
+            .Distinct()
+            .ToArray();
+        var publishedMatches = await db.TrackMatches.AsNoTracking()
+            .Where(item => publishedMatchIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
 
         var selected = entries.Select(entry =>
         {
             overrides.TryGetValue(entry.ExternalMetadataSnapshotId, out var manual);
-            decisions.TryGetValue(entry.ExternalMetadataSnapshotId, out var decision);
+            TrackMatchRecord? decision = null;
+            if (entry.PublishedTrackMatchId is { } matchId)
+                publishedMatches.TryGetValue(matchId, out decision);
             var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision);
             var state = manual?.Decision == ManualOverrideDecision.Pin
                 ? TrackMatchState.Pinned

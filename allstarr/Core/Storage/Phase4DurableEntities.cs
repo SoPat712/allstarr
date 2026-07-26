@@ -175,6 +175,7 @@ public sealed class PlaylistSourceSnapshotRecord
     public string PayloadSha256 { get; set; } = string.Empty;
     public string CorrelationId { get; set; } = string.Empty;
     public DateTimeOffset RetrievedAt { get; set; }
+    public DateTimeOffset? PublishedAt { get; set; }
 }
 
 public sealed class PlaylistSourceEntryRecord
@@ -183,6 +184,7 @@ public sealed class PlaylistSourceEntryRecord
     public Guid TenantId { get; set; }
     public Guid PlaylistSourceSnapshotId { get; set; }
     public Guid ExternalMetadataSnapshotId { get; set; }
+    public Guid? PublishedTrackMatchId { get; set; }
     public int SourcePosition { get; set; }
     public string SourceEntryIdHash { get; set; } = string.Empty;
 }
