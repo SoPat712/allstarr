@@ -3328,10 +3328,10 @@ class AllstarrApp extends LitElement {
       return String(link.name || link.Name || "").trim().toLowerCase() === String(playlist.name || playlist.Name || "").trim().toLowerCase();
     }));
     return html`
-      <section class="view-stack playlist-inventory" aria-labelledby="playlist-inventory-title">
-        <div class="section-heading"><div><h3 id="playlist-inventory-title">Your playlists</h3><p>Provider links and existing injected playlists live in one workspace. Every row can be synchronized, reviewed, and managed here.</p></div><div class="actions"><span class="chip">${links.length + imported.length} total</span><button class="primary" @click=${() => this.openPlaylistWizard()}>${icon("plus", 16)} Add playlist</button></div></div>
+      <section class="view-stack playlist-inventory" aria-label="Playlist workspace">
         ${links.length ? this.renderLinkPlaylists() : nothing}
-        ${imported.length ? this.renderInjectedPlaylists(imported) : nothing}
+        ${imported.length ? this.renderInjectedPlaylists(imported, links.length + imported.length) : nothing}
+        ${links.length && !imported.length ? html`<div class="playlist-page-actions"><span class="chip">${links.length} total</span><button class="primary" @click=${() => this.openPlaylistWizard()}>${icon("plus", 16)} Add playlist</button></div>` : nothing}
         ${!links.length && !imported.length ? html`<div class="panel empty"><strong>No playlists yet.</strong><span>Add a playlist to choose a source and media-server target.</span></div>` : nothing}
       </section>
       ${this.renderPlaylistLinkWizard()}${this.renderPlaylistLinkPreview()}${this.renderPlaylistBehaviorDialog()}
@@ -3830,7 +3830,7 @@ class AllstarrApp extends LitElement {
     this.toast("Match review cleared");
   }
 
-  renderInjectedPlaylists(providedPlaylists = null) {
+  renderInjectedPlaylists(providedPlaylists = null, totalCount = null) {
     const playlists = providedPlaylists || asArray(this.playlists?.playlists || this.playlists?.Playlists);
     const query = this.injectedSearch.trim().toLowerCase();
     const filtered = playlists.filter((playlist) => {
@@ -3874,8 +3874,7 @@ class AllstarrApp extends LitElement {
     };
     return html`
       <div class="injected-page-heading">
-        <div><h3>Managed Playlists</h3><p>Active playlists synchronized with your configured providers.</p></div>
-        <div class="actions injected-heading-actions"><button class="primary" @click=${async () => {
+        <div class="actions injected-heading-actions"><span class="chip">${totalCount ?? playlists.length} total</span><button class="primary" @click=${() => this.openPlaylistWizard()}>${icon("plus", 16)} Add playlist</button><button class="primary" @click=${async () => {
           const names = selected.size ? [...selected] : playlists.map((item) => item.name);
           if (selected.size) {
             await Promise.all(names.map(async (name) => {

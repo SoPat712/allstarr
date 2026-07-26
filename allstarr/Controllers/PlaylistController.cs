@@ -34,7 +34,7 @@ public class PlaylistController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
     private const string CacheDirectory = "/app/cache/spotify";
-    private const int PlaylistSummarySchemaVersion = 8;
+    private const int PlaylistSummarySchemaVersion = 9;
 
     public PlaylistController(
         ILogger<PlaylistController> logger,
@@ -121,6 +121,10 @@ public class PlaylistController : ControllerBase
 
         var playlists = new List<object>();
 
+        var targetBackend = (_configuration.GetValue<string>("Backend:Type") ?? "Jellyfin")
+            .Trim()
+            .ToLowerInvariant();
+
         foreach (var config in configuredPlaylists)
         {
             var playlistInfo = new Dictionary<string, object?>
@@ -146,10 +150,19 @@ public class PlaylistController : ControllerBase
                 var sourceTracks = await GetSourcePlaylistTracksAsync(config.Name);
                 var playlistMetadata = await _playlistFetcher.GetPlaylistMetadataAsync(config.Name);
                 playlistInfo["trackCount"] = sourceTracks.Count;
-                playlistInfo["artworkUrl"] = playlistMetadata?.ImageUrl ?? sourceTracks.FirstOrDefault()?.AlbumArtUrl;
+                var artworkUrl = playlistMetadata?.ImageUrl ?? sourceTracks.FirstOrDefault()?.AlbumArtUrl;
+                if (string.IsNullOrWhiteSpace(artworkUrl) &&
+                    targetBackend == "jellyfin" &&
+                    !string.IsNullOrWhiteSpace(config.JellyfinId))
+                {
+                    artworkUrl = $"/Items/{Uri.EscapeDataString(config.JellyfinId)}/Images/Primary";
+                }
+                playlistInfo["artworkUrl"] = artworkUrl;
                 playlistInfo["artworkSource"] = !string.IsNullOrWhiteSpace(playlistMetadata?.ImageUrl)
                     ? "playlist"
-                    : "track_fallback";
+                    : !string.IsNullOrWhiteSpace(sourceTracks.FirstOrDefault()?.AlbumArtUrl)
+                        ? "track_fallback"
+                        : "target";
                 playlistInfo["lastFetched"] = playlistMetadata?.FetchedAt;
                 if (playlistMetadata?.FetchedAt is { } fetchedAt)
                 {

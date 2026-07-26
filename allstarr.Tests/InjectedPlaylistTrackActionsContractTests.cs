@@ -54,7 +54,7 @@ public sealed class InjectedPlaylistTrackActionsContractTests
         Assert.Contains("ApplyPlaylistStats(playlistInfo, coverage.Local, coverage.External, coverage.Missing)", controller, StringComparison.Ordinal);
         Assert.Contains("display(playlist.externalTracks)", script, StringComparison.Ordinal);
         Assert.Contains("ResolveCanonicalPlaylistCoverageAsync(", controller, StringComparison.Ordinal);
-        Assert.Contains("PlaylistSummarySchemaVersion = 8", controller, StringComparison.Ordinal);
+        Assert.Contains("PlaylistSummarySchemaVersion = 9", controller, StringComparison.Ordinal);
         Assert.Equal(2, Count(controller, "GetSourcePlaylistTracksAsync(") - 1);
         Assert.Contains("BuildSpotifyMissingTracksKey(playlistName)", controller, StringComparison.Ordinal);
         Assert.Contains("PlaylistCoverageMath.Normalize(", controller, StringComparison.Ordinal);

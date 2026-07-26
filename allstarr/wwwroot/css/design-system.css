@@ -26,8 +26,10 @@
     --tab-indicator-width: 0px;
     position: relative;
     isolation: isolate;
+    gap: 0;
+    padding: 0;
     overflow: hidden;
-    border: 1px solid var(--border);
+    border: 0;
     border-radius: var(--radius-control, 12px);
     background: var(--surface-card);
 }
