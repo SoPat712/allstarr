@@ -30,6 +30,17 @@ public sealed class EventLogContractTests
     }
 
     [Fact]
+    public void ActivityProjection_UsesProtectedScopedArtwork()
+    {
+        var controller = Read("allstarr/Controllers/AdminUiController.cs");
+
+        Assert.Contains("PlaylistArtworkUrl(link.ProviderAccountId", controller, StringComparison.Ordinal);
+        Assert.Contains("ExternalArtworkUrl(providerId, identity.ExternalId)", controller, StringComparison.Ordinal);
+        Assert.Contains("LocalArtworkUrl(libraryTrack.BackendItemId)", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("AuditDetail(snapshot.PayloadJson, \"artworkUrl\")", controller, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EventLog_GroupsAndExpandsConsecutiveEvents()
     {
         var script = Read("allstarr/wwwroot/js/webui.js");

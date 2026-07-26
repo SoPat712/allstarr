@@ -242,15 +242,20 @@ public class AdminUiController : ControllerBase
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var playlistLinkIds = playlistRuns.Select(item => item.PlaylistLinkId).Distinct().ToArray();
-        var playlistNames = playlistLinkIds.Length == 0
-            ? new Dictionary<Guid, string>()
+        var playlistLinks = playlistLinkIds.Length == 0
+            ? new Dictionary<Guid, PlaylistLinkRecord>()
+            : await context.PlaylistLinks.AsNoTracking()
+                .Where(item => playlistLinkIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var playlistSnapshots = playlistLinkIds.Length == 0
+            ? new Dictionary<Guid, PlaylistSourceSnapshotRecord>()
             : (await context.PlaylistSourceSnapshots.AsNoTracking()
                 .Where(item => playlistLinkIds.Contains(item.PlaylistLinkId))
                 .GroupBy(item => item.PlaylistLinkId)
                 .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
                     .ThenByDescending(item => item.RetrievedAt).First())
                 .ToListAsync(cancellationToken))
-                .ToDictionary(item => item.PlaylistLinkId, item => item.Name);
+                .ToDictionary(item => item.PlaylistLinkId);
         var matchActivity = await _trackMatches.GetActivityDataAsync(
             new TrackMatchActor(tenantId, Guid.Empty, true),
             before,
@@ -311,17 +316,25 @@ public class AdminUiController : ControllerBase
                 Severity: SeverityForState(item.State.ToString()),
                 ProviderId: provider);
         }));
-        activity.AddRange(playlistRuns.Select(item => new AdminUiActivityItem(
-            item.Id.ToString("N"),
-            "playlist",
-            "playlists",
-            "Playlist sync",
-            item.State.ToString().ToLowerInvariant(),
-            item.ConflictCode ?? $"Generation {item.Generation}",
-            item.CompletedAt ?? item.StartedAt,
-            Severity: SeverityForState(item.State.ToString()),
-            PlaylistLinkId: item.PlaylistLinkId.ToString("N"),
-            PlaylistName: playlistNames.GetValueOrDefault(item.PlaylistLinkId, "Playlist"))));
+        activity.AddRange(playlistRuns.Select(item =>
+        {
+            playlistLinks.TryGetValue(item.PlaylistLinkId, out var link);
+            playlistSnapshots.TryGetValue(item.PlaylistLinkId, out var snapshot);
+            return new AdminUiActivityItem(
+                item.Id.ToString("N"),
+                "playlist",
+                "playlists",
+                "Playlist sync",
+                item.State.ToString().ToLowerInvariant(),
+                item.ConflictCode ?? $"Generation {item.Generation}",
+                item.CompletedAt ?? item.StartedAt,
+                Severity: SeverityForState(item.State.ToString()),
+                PlaylistLinkId: item.PlaylistLinkId.ToString("N"),
+                PlaylistName: snapshot?.Name ?? "Playlist",
+                ArtworkUrl: snapshot?.ArtworkReferenceKey == null || link == null
+                    ? null
+                    : PlaylistArtworkUrl(link.ProviderAccountId, link.SourcePlaylistId));
+        }));
         activity.AddRange(matches.Select(item =>
         {
             externalSnapshots.TryGetValue(item.ExternalSnapshotId, out var snapshot);
@@ -333,10 +346,11 @@ public class AdminUiController : ControllerBase
             var sourceTitle = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "title");
             var sourceArtist = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "artist");
             var sourceAlbum = snapshot == null ? null : AuditDetail(snapshot.PayloadJson, "album");
-            var artworkUrl = snapshot == null ? null
-                : AuditDetail(snapshot.PayloadJson, "artworkUrl")
-                  ?? AuditDetail(snapshot.PayloadJson, "coverUrl")
-                  ?? AuditDetail(snapshot.PayloadJson, "imageUrl");
+            var artworkUrl = identity != null
+                ? ExternalArtworkUrl(providerId, identity.ExternalId)
+                : libraryTrack?.CoverArtReference == null
+                    ? null
+                    : LocalArtworkUrl(libraryTrack.BackendItemId);
             return new AdminUiActivityItem(
                 item.Id.ToString("N"),
                 "matching",
@@ -470,15 +484,20 @@ public class AdminUiController : ControllerBase
             _ => HumanizeAuditCategory(item.Action)
         };
         var details = SafeAuditDetails(item.DetailsJson);
+        var sourceTrackId = Detail(details, "sourceProviderTrackId", "sourceExternalId", "externalId");
+        var backendItemId = Detail(details, "backendItemId", "targetBackendItemId");
         return new AdminUiActivityItem(
             item.Id.ToString("N"), kind, source, label, item.Outcome, detail, item.CreatedAt,
             item.CorrelationId, SeverityForState(item.Outcome), source,
             AuditDetail(item.DetailsJson, "playlistLinkId"),
             AuditDetail(item.DetailsJson, "playlistName"),
+            ArtworkUrl: sourceTrackId == null
+                ? backendItemId == null ? null : LocalArtworkUrl(backendItemId)
+                : ExternalArtworkUrl(source, sourceTrackId),
             Isrc: Detail(details, "isrc"),
-            SourceProviderTrackId: Detail(details, "sourceProviderTrackId", "sourceExternalId", "externalId"),
+            SourceProviderTrackId: sourceTrackId,
             TargetProviderTrackId: Detail(details, "targetProviderTrackId", "targetExternalId"),
-            BackendItemId: Detail(details, "backendItemId", "targetBackendItemId"),
+            BackendItemId: backendItemId,
             RouteDecisionId: Detail(details, "routeDecisionId"),
             ActorUserId: item.ActorUserId?.ToString("N"),
             Action: item.Action,
@@ -500,6 +519,15 @@ public class AdminUiController : ControllerBase
         var value = Detail(details, names);
         return long.TryParse(value, out var parsed) && parsed > 0 ? parsed : null;
     }
+
+    private static string PlaylistArtworkUrl(Guid providerAccountId, string playlistId) =>
+        $"/api/admin/playlist-sources/{providerAccountId}/playlists/{Uri.EscapeDataString(playlistId)}/artwork";
+
+    private static string LocalArtworkUrl(string backendItemId) =>
+        $"/api/admin/downloads/artwork/{Uri.EscapeDataString(backendItemId)}";
+
+    private static string ExternalArtworkUrl(string providerId, string externalId) =>
+        LocalArtworkUrl($"ext-{providerId}-song-{externalId}");
 
     private static IReadOnlyDictionary<string, string> SafeAuditDetails(string json)
     {
