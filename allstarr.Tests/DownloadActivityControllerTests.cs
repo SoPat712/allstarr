@@ -96,7 +96,9 @@ public sealed class DownloadActivityControllerTests
         var ok = Assert.IsType<OkObjectResult>(result);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
         var entry = Assert.Single(document.RootElement.EnumerateArray());
-        Assert.Equal("https://artwork.example/cover.jpg", entry.GetProperty("CoverArtUrl").GetString());
+        Assert.Equal(
+            "/api/admin/downloads/artwork/ext-apple-download-song-123",
+            entry.GetProperty("CoverArtUrl").GetString());
         Assert.True(entry.GetProperty("IsPlaying").GetBoolean());
     }
 
@@ -125,6 +127,9 @@ public sealed class DownloadActivityControllerTests
             downloads,
             playbackSources,
             metadataResolvers,
+            new MediaAssetResolver(
+                new TestMemoryApplicationCache(),
+                NullLogger<MediaAssetResolver>.Instance),
             NullLogger<DownloadActivityController>.Instance,
             playbackDeliveries)
         {

@@ -3,8 +3,10 @@ namespace allstarr.Services.Common;
 public sealed class ExternalPlaybackMetadataResolver(
     IMusicMetadataService metadataService,
     IApplicationCache cache,
+    IHttpClientFactory httpClientFactory,
     ILogger<ExternalPlaybackMetadataResolver> logger) : IPlaybackMetadataResolver
 {
+    private const int MaximumArtworkBytes = 5 * 1024 * 1024;
     private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
 
@@ -43,8 +45,42 @@ public sealed class ExternalPlaybackMetadataResolver(
         return metadata;
     }
 
-    public Task<PlaybackArtwork?> ResolveArtworkAsync(string itemId, CancellationToken cancellationToken) =>
-        Task.FromResult<PlaybackArtwork?>(null);
+    public async Task<PlaybackArtwork?> ResolveArtworkAsync(
+        string itemId,
+        CancellationToken cancellationToken)
+    {
+        var identity = ParseTrackIdentity(itemId);
+        if (identity == null) return null;
+        try
+        {
+            var song = await metadataService.GetSongAsync(
+                identity.Value.Provider, identity.Value.ExternalId, cancellationToken);
+            var artworkUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
+            if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                    artworkUrl, out var artworkUri, out _) || artworkUri == null)
+                return null;
+            using var response = await httpClientFactory.CreateClient().GetAsync(
+                artworkUri, cancellationToken);
+            var contentType = response.Content.Headers.ContentType?.MediaType;
+            if (!response.IsSuccessStatusCode ||
+                contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
+                response.Content.Headers.ContentLength > MaximumArtworkBytes)
+                return null;
+            await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, cancellationToken);
+            return new PlaybackArtwork(
+                await response.Content.ReadAsByteArrayAsync(cancellationToken),
+                contentType);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Unable to resolve external playback artwork for {ItemId}", itemId);
+            return null;
+        }
+    }
 
     internal static (string Provider, string ExternalId)? ParseTrackIdentity(string itemId)
     {

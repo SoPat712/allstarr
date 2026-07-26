@@ -12,6 +12,21 @@ public sealed class LegacyMappingReadinessContractTests
     }
 
     [Fact]
+    public void MappingAndDownloadArtwork_UseProtectedScopedUrls()
+    {
+        var mappings = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "TrackMatchesController.cs"));
+        var downloads = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Controllers", "DownloadActivityController.cs"));
+
+        Assert.Contains("sourceArtworkUrl", mappings, StringComparison.Ordinal);
+        Assert.Contains("candidateArtworkUrl", mappings, StringComparison.Ordinal);
+        Assert.DoesNotContain("artworkUrl = song.CoverArtUrl", mappings, StringComparison.Ordinal);
+        Assert.Contains("new MediaAssetIdentity(", downloads, StringComparison.Ordinal);
+        Assert.DoesNotContain("CoverArtUrl = download.CoverArtUrl", downloads, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AutomaticPlaylistMatching_QueriesOnlyPlaybackCapableProviders()
     {
         var walker = File.ReadAllText(FindRepositoryFile(

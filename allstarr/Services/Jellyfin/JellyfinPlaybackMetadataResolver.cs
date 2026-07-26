@@ -16,19 +16,16 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinPlaybackMetadataResolver> _logger;
     private readonly IApplicationCache _cache;
-    private readonly IMediaAssetResolver _mediaAssets;
 
     public JellyfinPlaybackMetadataResolver(
         IHttpClientFactory httpClientFactory,
         IOptions<JellyfinSettings> settings,
         IApplicationCache cache,
-        IMediaAssetResolver mediaAssets,
         ILogger<JellyfinPlaybackMetadataResolver> logger)
     {
         _httpClient = httpClientFactory.CreateClient(JellyfinProxyService.HttpClientName);
         _settings = settings.Value;
         _cache = cache;
-        _mediaAssets = mediaAssets;
         _logger = logger;
     }
 
@@ -91,27 +88,17 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             return null;
         }
 
-        var asset = await _mediaAssets.ResolveAsync(
-            new MediaAssetIdentity(
-                null, null, null, "jellyfin", "track", itemId, _settings.Url, Width: 96),
-            async token =>
-            {
-                using var request = CreateRequest(BuildArtworkUri(itemId), "image/*");
-                using var response = await _httpClient.SendAsync(request, token);
-                var contentType = response.Content.Headers.ContentType?.MediaType;
-                if (!response.IsSuccessStatusCode ||
-                    contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
-                    response.Content.Headers.ContentLength > MaximumArtworkBytes)
-                    return null;
-                return new MediaAssetSource(
-                    await response.Content.ReadAsByteArrayAsync(token),
-                    contentType,
-                    response.Headers.ETag?.Tag,
-                    response.Content.Headers.LastModified);
-            },
-            MaximumArtworkBytes,
-            cancellationToken);
-        return asset == null ? null : new PlaybackArtwork(asset.Bytes, asset.ContentType);
+        using var request = CreateRequest(BuildArtworkUri(itemId), "image/*");
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        if (!response.IsSuccessStatusCode ||
+            contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
+            response.Content.Headers.ContentLength > MaximumArtworkBytes)
+            return null;
+        await response.Content.LoadIntoBufferAsync(MaximumArtworkBytes, cancellationToken);
+        return new PlaybackArtwork(
+            await response.Content.ReadAsByteArrayAsync(cancellationToken),
+            contentType);
     }
 
     public static PlaybackTrackMetadata ParseMetadata(JsonElement root, string itemId)

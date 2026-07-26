@@ -47,15 +47,20 @@ public sealed class CacheIslandRegressionContractTests
             "Services",
             "Jellyfin",
             "JellyfinPlaybackMetadataResolver.cs"));
+        var downloads = File.ReadAllText(Path.Combine(
+            _repositoryRoot,
+            "allstarr",
+            "Controllers",
+            "DownloadActivityController.cs"));
 
         Assert.Contains("IApplicationCache cache", external, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", external, StringComparison.Ordinal);
         Assert.DoesNotContain("ConcurrentDictionary", external, StringComparison.Ordinal);
         Assert.Contains("IApplicationCache cache", jellyfin, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", jellyfin, StringComparison.Ordinal);
-        Assert.Contains("IMediaAssetResolver mediaAssets", jellyfin, StringComparison.Ordinal);
-        Assert.Contains("MediaAssetIdentity", jellyfin, StringComparison.Ordinal);
         Assert.DoesNotContain("ConcurrentDictionary", jellyfin, StringComparison.Ordinal);
+        Assert.Contains("IMediaAssetResolver mediaAssets", downloads, StringComparison.Ordinal);
+        Assert.Contains("MediaAssetIdentity", downloads, StringComparison.Ordinal);
     }
 
     [Fact]

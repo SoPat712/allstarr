@@ -134,7 +134,15 @@ public sealed class TrackMatchesController(
                 title = primaryLocal?.Title,
                 artist = primaryLocal?.Artist,
                 album = primaryLocal?.Album,
-                artworkUrl = primaryLocal?.CoverArtReference,
+                artworkUrl = primaryLocal?.CoverArtReference == null
+                    ? sourceMetadata.ArtworkUrl == null ? null : ExternalArtworkUrl("spotify", spotifyId)
+                    : LocalArtworkUrl(primaryLocal.BackendItemId),
+                sourceArtworkUrl = sourceMetadata.ArtworkUrl == null
+                    ? null
+                    : ExternalArtworkUrl("spotify", spotifyId),
+                candidateArtworkUrl = primaryLocal?.CoverArtReference == null
+                    ? null
+                    : LocalArtworkUrl(primaryLocal.BackendItemId),
                 isrc = primaryLocal?.Isrc,
                 musicBrainzRecordingId = primaryLocal?.MusicBrainzRecordingId
             },
@@ -168,6 +176,7 @@ public sealed class TrackMatchesController(
                 item.DurationRetrievedAt,
                 item.Isrc,
                 item.MusicBrainzRecordingId,
+                artworkUrl = item.CoverArtReference == null ? null : LocalArtworkUrl(item.BackendItemId),
                 providerIds = ParseObject(item.ProviderIdsJson),
                 item.IndexedAt,
                 item.SourceModifiedAt,
@@ -303,7 +312,7 @@ public sealed class TrackMatchesController(
             item.Album,
             item.DurationMilliseconds,
             item.Isrc,
-            item.CoverArtReference
+            artworkUrl = item.CoverArtReference == null ? null : LocalArtworkUrl(item.BackendItemId)
         }).ToArray();
         return Ok(new { tracks = values });
     }
@@ -338,7 +347,10 @@ public sealed class TrackMatchesController(
                 song.Title,
                 song.Artist,
                 song.Album,
-                artworkUrl = song.CoverArtUrl,
+                artworkUrl = string.IsNullOrWhiteSpace(song.CoverArtUrl) ||
+                             string.IsNullOrWhiteSpace(song.ExternalId)
+                    ? null
+                    : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
                 durationMilliseconds = song.Duration * 1000,
                 song.Isrc
             })
@@ -475,6 +487,12 @@ public sealed class TrackMatchesController(
             ? values.Select(item => new { item.ProviderId, item.ExternalId, scope = item.Scope.ToString(), verification = item.Verification.ToString() }).ToArray()
             : [];
         var metadata = Metadata(snapshot.PayloadJson);
+        var sourceArtworkUrl = metadata.ArtworkUrl == null || sourceIdentity == null
+            ? null
+            : ExternalArtworkUrl(sourceIdentity.ProviderId, sourceIdentity.ExternalId);
+        var candidateArtworkUrl = track?.CoverArtReference == null
+            ? null
+            : LocalArtworkUrl(track.BackendItemId);
         var value = new
         {
             externalSnapshotId = snapshot.Id,
@@ -503,7 +521,9 @@ public sealed class TrackMatchesController(
             title = metadata.Title,
             artist = metadata.Artist,
             album = metadata.Album,
-            artworkUrl = metadata.ArtworkUrl ?? track?.CoverArtReference,
+            artworkUrl = sourceArtworkUrl ?? candidateArtworkUrl,
+            sourceArtworkUrl,
+            candidateArtworkUrl,
             isrc = metadata.Isrc,
             durationMilliseconds = track?.DurationMilliseconds ?? metadata.DurationMilliseconds,
             durationProvenance = track?.DurationMilliseconds.HasValue == true
@@ -522,7 +542,7 @@ public sealed class TrackMatchesController(
                 track.DurationMilliseconds,
                 track.DurationProvenance,
                 track.DurationRetrievedAt,
-                track.CoverArtReference,
+                artworkUrl = candidateArtworkUrl,
                 providerIds = ParseObject(track.ProviderIdsJson)
             },
             providerIdentities,
@@ -579,6 +599,12 @@ public sealed class TrackMatchesController(
 
     private static string? Text(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object &&
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static string LocalArtworkUrl(string backendItemId) =>
+        $"/api/admin/downloads/artwork/{Uri.EscapeDataString(backendItemId)}";
+
+    private static string ExternalArtworkUrl(string provider, string externalId) =>
+        LocalArtworkUrl($"ext-{provider}-song-{externalId}");
     private static string[] ParseArray(string? json)
     { try { return JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []; } catch (JsonException) { return []; } }
 

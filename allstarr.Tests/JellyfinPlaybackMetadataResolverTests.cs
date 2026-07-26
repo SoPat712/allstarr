@@ -96,7 +96,6 @@ public sealed class JellyfinPlaybackMetadataResolverTests
                 UserId = "user-1"
             }),
             cache,
-            new MediaAssetResolver(cache, NullLogger<MediaAssetResolver>.Instance),
             NullLogger<JellyfinPlaybackMetadataResolver>.Instance);
     }
 

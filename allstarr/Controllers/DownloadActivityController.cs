@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Models.Download;
 using allstarr.Services;
+using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Filters;
@@ -15,6 +16,7 @@ public class DownloadActivityController : ControllerBase
     private readonly IEnumerable<IDownloadService> _downloadServices;
     private readonly IReadOnlyList<IPlaybackActivitySource> _playbackSources;
     private readonly IReadOnlyList<IPlaybackMetadataResolver> _metadataResolvers;
+    private readonly IMediaAssetResolver _mediaAssets;
     private readonly ILogger<DownloadActivityController> _logger;
     private readonly IPlaybackDeliveryActivitySource? _playbackDeliveries;
 
@@ -22,12 +24,14 @@ public class DownloadActivityController : ControllerBase
         IEnumerable<IDownloadService> downloadServices,
         IEnumerable<IPlaybackActivitySource> playbackSources,
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
+        IMediaAssetResolver mediaAssets,
         ILogger<DownloadActivityController> logger,
         IPlaybackDeliveryActivitySource? playbackDeliveries = null)
     {
         _downloadServices = downloadServices;
         _playbackSources = playbackSources.ToList();
         _metadataResolvers = metadataResolvers.ToList();
+        _mediaAssets = mediaAssets;
         _logger = logger;
         _playbackDeliveries = playbackDeliveries;
     }
@@ -47,16 +51,35 @@ public class DownloadActivityController : ControllerBase
         string itemId,
         CancellationToken cancellationToken)
     {
-        foreach (var resolver in _metadataResolvers)
-        {
-            var artwork = await resolver.ResolveArtworkAsync(itemId, cancellationToken);
-            if (artwork != null)
+        var normalizedItemId = NormalizeExternalItemId(itemId);
+        var session = HttpContext.Items.TryGetValue(
+            AdminAuthSessionService.HttpContextSessionItemKey, out var value)
+            ? value as AdminAuthSession
+            : null;
+        var asset = await _mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                session?.TenantId,
+                session?.AllstarrUserId,
+                null,
+                ResolvePlaybackProvider(normalizedItemId),
+                "track",
+                normalizedItemId),
+            async token =>
             {
-                return File(artwork.Content, artwork.ContentType);
-            }
-        }
+                foreach (var resolver in _metadataResolvers)
+                {
+                    var artwork = await resolver.ResolveArtworkAsync(normalizedItemId, token);
+                    if (artwork != null)
+                        return new MediaAssetSource(artwork.Content, artwork.ContentType);
+                }
+                return null;
+            },
+            5 * 1024 * 1024,
+            cancellationToken);
 
-        return NotFound();
+        if (asset == null) return NotFound();
+        Response.Headers.CacheControl = "private, max-age=300";
+        return File(asset.Bytes, asset.ContentType);
     }
 
     /// <summary>
@@ -154,7 +177,9 @@ public class DownloadActivityController : ControllerBase
                     Status = download.Status,
                     Progress = download.Progress,
                     RequestedForStreaming = download.RequestedForStreaming,
-                    CoverArtUrl = download.CoverArtUrl,
+                    CoverArtUrl = string.IsNullOrWhiteSpace(download.CoverArtUrl)
+                        ? null
+                        : ArtworkUrl(normalizedSongId),
                     DurationSeconds = download.DurationSeconds,
                     LocalPath = download.LocalPath,
                     ErrorMessage = download.ErrorMessage,
@@ -200,7 +225,9 @@ public class DownloadActivityController : ControllerBase
                 StartedAt = playbackState.LastActivity,
                 IsPlaying = true,
                 PlaybackLastActivity = playbackState.LastActivity,
-                CoverArtUrl = playbackMetadata?.CoverArtUrl,
+                CoverArtUrl = string.IsNullOrWhiteSpace(playbackMetadata?.CoverArtUrl)
+                    ? null
+                    : ArtworkUrl(itemId),
                 DurationSeconds = playbackMetadata?.DurationSeconds,
                 PlaybackPositionSeconds = (int)Math.Max(0, playbackState.PositionTicks / TimeSpan.TicksPerSecond),
                 PlaybackProgress = playbackMetadata?.DurationSeconds > 0
@@ -255,25 +282,22 @@ public class DownloadActivityController : ControllerBase
             return itemId;
         }
 
-        var parts = itemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 3)
+        var remainder = itemId[4..];
+        if (remainder.Length == 0)
         {
             return itemId;
         }
 
-        var knownTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "song",
-            "album",
-            "artist"
-        };
-
-        if (parts.Length >= 4 && knownTypes.Contains(parts[2]))
+        if (new[] { "-song-", "-album-", "-artist-" }.Any(marker =>
+                remainder.IndexOf(marker, StringComparison.OrdinalIgnoreCase) > 0))
         {
             return itemId;
         }
 
-        return $"ext-{parts[1]}-song-{string.Join("-", parts.Skip(2))}";
+        var separator = remainder.IndexOf('-');
+        return separator > 0 && separator + 1 < remainder.Length
+            ? $"ext-{remainder[..separator]}-song-{remainder[(separator + 1)..]}"
+            : itemId;
     }
 
     private static string ResolvePlaybackProvider(string itemId)
@@ -295,6 +319,9 @@ public class DownloadActivityController : ControllerBase
 
         return ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId)?.ExternalId ?? "External track";
     }
+
+    private static string ArtworkUrl(string itemId) =>
+        $"/api/admin/downloads/artwork/{Uri.EscapeDataString(itemId)}";
 
     private sealed class DownloadActivityEntry : DownloadInfo
     {
