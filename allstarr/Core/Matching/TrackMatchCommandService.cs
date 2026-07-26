@@ -807,12 +807,25 @@ public sealed class TrackMatchCommandService(
             .Select(item => item.ProviderTrackIdentityId!.Value)
             .Distinct()
             .ToArray();
-        var identities = await db.ProviderTrackIdentities.AsNoTracking()
+        var sourceIdentities = await db.ProviderTrackIdentities.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId &&
                            identityIds.Contains(item.Id) &&
                            (item.Verification == ProviderIdentityVerification.Verified ||
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
+        var canonicalIds = sourceIdentities
+            .Select(item => item.CanonicalRecordingId)
+            .Distinct()
+            .ToArray();
+        var identities = canonicalIds.Length == 0
+            ? sourceIdentities
+            : await db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => item.TenantId == actor.TenantId &&
+                               canonicalIds.Contains(item.CanonicalRecordingId) &&
+                               item.ResourceKind == ProviderResourceKind.Track &&
+                               (item.Verification == ProviderIdentityVerification.Verified ||
+                                item.Verification == ProviderIdentityVerification.Pinned))
+                .ToListAsync(cancellationToken);
         var overrides = await db.ManualTrackOverrides.AsNoTracking()
             .Where(item => item.TenantId == actor.TenantId &&
                            item.OwnerUserId == ownerUserId &&

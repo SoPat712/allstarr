@@ -456,6 +456,12 @@ public class PlaylistController : ControllerBase
                 isLocal = local ? true : (bool?)null,
                 externalProvider = track.RouteKind == "external" ? track.RouteProviderId : null,
                 provider = track.RouteProviderId,
+                providerRoutes = track.ProviderRoutes.Select(route => new
+                {
+                    provider = route.ProviderId,
+                    externalId = route.ExternalId,
+                    pinned = route.IsManual
+                }),
                 matchState = track.RouteKind,
                 decisionState = track.MatchState?.ToString().ToLowerInvariant(),
                 searchQuery = local ? null : $"{track.Title} {track.Artists.FirstOrDefault()}"

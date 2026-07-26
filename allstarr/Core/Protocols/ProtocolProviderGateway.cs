@@ -382,34 +382,46 @@ public sealed class ProtocolProviderGateway(
         string? rangeHeader)
     {
         var rangeStart = ParseRangeStart(rangeHeader);
-        var routed = await PlanExactAsync<IProviderStreamingCapability>(
+        var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming);
+        var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
             protocol,
-            providerId,
+            protocol.RequireActor(),
             ProviderCapabilityKind.Streaming,
             "protocol-stream-open",
+            providerOrder,
             new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId),
-            quality);
-        if (routed.Candidate == null) return null;
-
-        var trackId = routed.Candidate.TrackId ??
-                      new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
-        var outcome = await routed.Candidate.Implementation.GetStreamLeaseAsync(
-            routed.Candidate.Context,
-            new ProviderStreamLeaseRequest(trackId, quality, rangeStart));
-        if (!outcome.IsSuccess) ThrowRouteFailure(outcome.Error!);
-
-        var lease = outcome.RequireValue();
-        var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
-        if (rangeHeader != null && lease.SupportsByteRanges)
+            quality,
+            allowFallback: true));
+        for (var index = 0; index < plan.Candidates.Count; index++)
         {
-            request.Headers.Range = RangeHeaderValue.Parse(rangeHeader);
+            var candidate = plan.Candidates[index];
+            var trackId = candidate.TrackId ??
+                          new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
+            var outcome = await candidate.Implementation.GetStreamLeaseAsync(
+                candidate.Context,
+                new ProviderStreamLeaseRequest(trackId, quality, rangeStart));
+            if (!outcome.IsSuccess)
+            {
+                if (router.EvaluateFallback(plan, index, outcome.Error!).Disposition ==
+                    ProviderFallbackDisposition.Advance)
+                    continue;
+                ThrowRouteFailure(outcome.Error!);
+            }
+
+            var lease = outcome.RequireValue();
+            var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+            if (rangeHeader != null && lease.SupportsByteRanges)
+            {
+                request.Headers.Range = RangeHeaderValue.Parse(rangeHeader);
+            }
+            var response = await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                protocol.CancellationToken);
+            request.Dispose();
+            return new ProtocolProviderStream(response, lease);
         }
-        var response = await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            protocol.CancellationToken);
-        request.Dispose();
-        return new ProtocolProviderStream(response, lease);
+        return null;
     }
 
     public async Task<ProviderLyricsResult?> GetLyricsAsync(
@@ -585,7 +597,8 @@ public sealed class ProtocolProviderGateway(
         string operationId,
         IEnumerable<string> providerIds,
         ProviderExternalResourceId? sourceTrackId,
-        ProviderAudioQuality quality = ProviderAudioQuality.Any) => new(
+        ProviderAudioQuality quality = ProviderAudioQuality.Any,
+        bool allowFallback = false) => new(
         capability,
         actor,
         new ProviderExecutionPolicy(
@@ -593,7 +606,7 @@ public sealed class ProtocolProviderGateway(
                 ? ProviderAudioQuality.HighResolution
                 : quality, allowTranscode: true),
             ProviderExplicitContentPolicy.Allow,
-            allowFallback: false,
+            allowFallback,
             allowSharedAccount: true,
             allowManagedDownloads: false,
             providerIds),

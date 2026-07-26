@@ -44,7 +44,8 @@ public interface IPlaylistVirtualizationService
 /// </summary>
 public sealed class PlaylistVirtualizationService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    ITrackMatchRepository trackMatches) : IPlaylistVirtualizationService
+    ITrackMatchRepository trackMatches,
+    IProtocolProviderGateway? providerGateway = null) : IPlaylistVirtualizationService
 {
     public const string IdPrefix = "allstarr-vpl-";
 
@@ -107,6 +108,11 @@ public sealed class PlaylistVirtualizationService(
             cancellationToken);
         var externalSnapshots = resolution.Snapshots.ToDictionary(item => item.Id);
         var providerIdentities = resolution.ProviderIdentities.ToDictionary(item => item.Id);
+        var providerOrder = providerGateway?.GetProviderOrder(ProviderCapabilityKind.Streaming) ??
+                            resolution.ProviderIdentities.Select(item => item.ProviderId)
+                                .Distinct(StringComparer.Ordinal)
+                                .Order(StringComparer.Ordinal)
+                                .ToArray();
         var overrides = resolution.ActiveOverrides.ToDictionary(item => item.ExternalSnapshotId);
         var publishedMatchIds = entries
             .Where(item => item.PublishedTrackMatchId.HasValue)
@@ -137,7 +143,15 @@ public sealed class PlaylistVirtualizationService(
             ProviderTrackIdentityRecord? providerIdentity = null;
             if (!trackId.HasValue && externalSnapshots.TryGetValue(entry.ExternalMetadataSnapshotId, out var external) &&
                 external.ProviderTrackIdentityId.HasValue)
-                providerIdentities.TryGetValue(external.ProviderTrackIdentityId.Value, out providerIdentity);
+            {
+                providerIdentities.TryGetValue(external.ProviderTrackIdentityId.Value, out var sourceIdentity);
+                var primary = DurableProviderRouteSelector.Select(
+                    sourceIdentity, resolution.ProviderIdentities, providerOrder).FirstOrDefault();
+                if (primary != null)
+                    providerIdentity = resolution.ProviderIdentities.First(item =>
+                        item.ProviderId == primary.ProviderId &&
+                        item.ExternalId == primary.ExternalId);
+            }
             return (Entry: entry, State: state, TrackId: trackId, ProviderIdentity: providerIdentity);
         }).Where(item => item.TrackId.HasValue || item.ProviderIdentity != null).ToList();
         var libraryIds = selected.Where(item => item.TrackId.HasValue).Select(item => item.TrackId!.Value).Distinct().ToArray();

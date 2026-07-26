@@ -1,5 +1,7 @@
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,7 +21,8 @@ public sealed record DurablePlaylistEntryProjection(
     TrackMatchState? MatchState,
     string? BackendItemId,
     string RouteKind,
-    string? RouteProviderId);
+    string? RouteProviderId,
+    IReadOnlyList<DurableProviderRoute> ProviderRoutes);
 
 public sealed record DurablePlaylistProjection(
     Guid LinkId,
@@ -54,7 +57,8 @@ public sealed record DurablePlaylistProjection(
 }
 
 public sealed class DurablePlaylistProjectionReader(
-    IDbContextFactory<AllstarrDbContext> factory)
+    IDbContextFactory<AllstarrDbContext> factory,
+    IProtocolProviderGateway? providerGateway = null)
 {
     public async Task<DurablePlaylistProjection?> ReadByNameAsync(
         Guid tenantId,
@@ -90,9 +94,25 @@ public sealed class DurablePlaylistProjectionReader(
             .Where(item => item.ProviderTrackIdentityId.HasValue)
             .Select(item => item.ProviderTrackIdentityId!.Value)
             .ToArray();
-        var identities = await database.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => identityIds.Contains(item.Id))
+        var sourceIdentities = await database.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == tenantId && identityIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var canonicalIds = sourceIdentities.Values
+            .Select(item => item.CanonicalRecordingId)
+            .Distinct()
+            .ToArray();
+        var identities = await database.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.TenantId == tenantId &&
+                           canonicalIds.Contains(item.CanonicalRecordingId) &&
+                           item.ResourceKind == ProviderResourceKind.Track &&
+                           (item.Verification == ProviderIdentityVerification.Verified ||
+                            item.Verification == ProviderIdentityVerification.Pinned))
+            .ToListAsync(cancellationToken);
+        var providerOrder = providerGateway?.GetProviderOrder(ProviderCapabilityKind.Streaming) ??
+                            identities.Select(item => item.ProviderId)
+                                .Distinct(StringComparer.Ordinal)
+                                .Order(StringComparer.Ordinal)
+                                .ToArray();
         var publishedMatchIds = entries
             .Where(item => item.PublishedTrackMatchId.HasValue)
             .Select(item => item.PublishedTrackMatchId!.Value)
@@ -137,7 +157,9 @@ public sealed class DurablePlaylistProjectionReader(
             entries.Select(entry => ProjectEntry(
                     entry,
                     external[entry.ExternalMetadataSnapshotId],
+                    sourceIdentities,
                     identities,
+                    providerOrder,
                     entry.PublishedTrackMatchId is { } matchId
                         ? publishedMatches.GetValueOrDefault(matchId)
                         : null,
@@ -155,7 +177,9 @@ public sealed class DurablePlaylistProjectionReader(
     private static DurablePlaylistEntryProjection ProjectEntry(
         PlaylistSourceEntryRecord entry,
         ExternalMetadataSnapshotRecord external,
-        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> identities,
+        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> sourceIdentities,
+        IReadOnlyList<ProviderTrackIdentityRecord> identities,
+        IReadOnlyList<string> providerOrder,
         TrackMatchRecord? match,
         IReadOnlyDictionary<Guid, ManualTrackOverrideRecord> overrides,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
@@ -172,12 +196,14 @@ public sealed class DurablePlaylistProjectionReader(
         var metadata = ReadMetadata(external.PayloadJson);
         ProviderTrackIdentityRecord? identity = null;
         if (external.ProviderTrackIdentityId is { } identityId)
-            identities.TryGetValue(identityId, out identity);
-        var hasExternal = !rejected &&
-                          identity?.Verification is ProviderIdentityVerification.Verified or
-                              ProviderIdentityVerification.Pinned;
+            sourceIdentities.TryGetValue(identityId, out identity);
+        var providerRoutes = rejected
+            ? []
+            : DurableProviderRouteSelector.Select(identity, identities, providerOrder);
+        var primaryRoute = providerRoutes.FirstOrDefault();
+        var hasExternal = primaryRoute != null;
         var externalId = hasExternal
-            ? identity!.ExternalId
+            ? primaryRoute!.ExternalId
             : external.ExternalIdHash;
         var routeKind = local != null ? "local" : hasExternal ? "external" : "unmatched";
         return new(
@@ -200,7 +226,8 @@ public sealed class DurablePlaylistProjectionReader(
                 : rejected ? TrackMatchState.Rejected : match?.State,
             backendItemId,
             routeKind,
-            routeKind == "local" ? local!.Protocol : hasExternal ? identity!.ProviderId : null);
+            routeKind == "local" ? local!.Protocol : primaryRoute?.ProviderId,
+            providerRoutes);
     }
 
     private static EntryMetadata ReadMetadata(string payload)

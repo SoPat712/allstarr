@@ -10,6 +10,7 @@ using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -543,7 +544,16 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             });
             var externalIdentity = ProviderIdentity("source-external");
             externalIdentity.CanonicalRecordingId = externalCanonical;
-            db.ProviderTrackIdentities.Add(externalIdentity);
+            var qobuzIdentity = ProviderIdentity("qobuz-external");
+            qobuzIdentity.CanonicalRecordingId = externalCanonical;
+            qobuzIdentity.ProviderId = "qobuz";
+            qobuzIdentity.ExternalIdHash = Hash(qobuzIdentity.ExternalId);
+            var deezerIdentity = ProviderIdentity("deezer-external");
+            deezerIdentity.CanonicalRecordingId = externalCanonical;
+            deezerIdentity.ProviderId = "deezer";
+            deezerIdentity.ExternalIdHash = Hash(deezerIdentity.ExternalId);
+            deezerIdentity.Verification = ProviderIdentityVerification.Pinned;
+            db.ProviderTrackIdentities.AddRange(externalIdentity, qobuzIdentity, deezerIdentity);
             await db.SaveChangesAsync();
         }
         _source.Snapshot = Snapshot(
@@ -554,9 +564,13 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
             {
                 DurationMilliseconds = null
             });
+        await SetLink(mode: PlaylistLinkMode.Virtual);
         await _service.RefreshAsync(Context(), _link);
 
-        var projection = await new DurablePlaylistProjectionReader(_factory)
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["qobuz", "deezer"]);
+        var projection = await new DurablePlaylistProjectionReader(_factory, gateway.Object)
             .ReadByNameAsync(_tenant, _user, "Provider Mix");
 
         Assert.NotNull(projection);
@@ -570,7 +584,14 @@ public sealed class PlaylistOrchestrationIntegrationTests : IAsyncLifetime
         Assert.Equal(360_000, projection.DurationMilliseconds);
         Assert.Equal(["local", "external", "unmatched"],
             projection.Entries.Select(item => item.RouteKind));
-        Assert.Equal("fixture", projection.Entries[1].RouteProviderId);
+        Assert.Equal("qobuz", projection.Entries[1].RouteProviderId);
+        Assert.Equal(["qobuz", "deezer"],
+            projection.Entries[1].ProviderRoutes.Select(item => item.ProviderId));
+        var virtualPlaylist = await new PlaylistVirtualizationService(
+                _factory, _trackMatches, gateway.Object)
+            .ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        Assert.Equal("ext-qobuz-song-qobuz-external",
+            virtualPlaylist!.Tracks.Single(item => item.SourcePosition == 1).BackendItemId);
     }
 
     [Fact]
