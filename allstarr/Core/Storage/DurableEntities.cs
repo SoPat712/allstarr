@@ -309,9 +309,11 @@ public sealed class LegacyEnvImportRecord
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public string SourceSha256 { get; set; } = string.Empty;
+    public string SchemaVersion { get; set; } = "legacy-env-import-v1";
     public Guid? ActorUserId { get; set; }
     public Guid AuditEventId { get; set; }
     public string ResultJson { get; set; } = "{}";
+    public string ProvenanceJson { get; set; } = """{"settings":[],"providerAccounts":[]}""";
     public DateTimeOffset AppliedAt { get; set; }
 }
 

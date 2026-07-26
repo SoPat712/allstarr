@@ -83,6 +83,7 @@ public sealed class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private const int MaximumPreviewCount = 64;
+    internal const string MigrationSchemaVersion = "legacy-env-import-v1";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -392,9 +393,10 @@ public sealed class LegacyEnvMigrationService
                         return new RuntimeSettingWrite(item.DurableKey!, sourceEntry.Value, ExpectedRevision: null);
                     })
                     .ToArray();
+                IReadOnlyList<StagedRuntimeSetting> stagedSettings = [];
                 if (settingWrites.Length > 0)
                 {
-                    await _settings.StageBatchAsync(
+                    stagedSettings = await _settings.StageBatchAsync(
                         db,
                         state.TenantId.Value,
                         settingWrites,
@@ -404,6 +406,7 @@ public sealed class LegacyEnvMigrationService
                 }
 
                 var createdProviders = new List<string>();
+                var createdProviderRecords = new List<ProviderAccountRecord>();
                 foreach (var provider in state.ProviderAccounts.Where(item =>
                              item.Action == "create_disabled_if_missing"))
                 {
@@ -445,6 +448,7 @@ public sealed class LegacyEnvMigrationService
 
                     db.ProviderAccounts.Add(account);
                     createdProviders.Add(provider.ProviderId);
+                    createdProviderRecords.Add(account);
                 }
 
                 var personalProviders = state.Items
@@ -503,6 +507,7 @@ public sealed class LegacyEnvMigrationService
 
                     db.ProviderAccounts.Add(account);
                     createdProviders.Add(providerId);
+                    createdProviderRecords.Add(account);
                 }
 
                 var appliedAt = _clock.UtcNow;
@@ -518,6 +523,7 @@ public sealed class LegacyEnvMigrationService
                     DetailsJson = JsonSerializer.Serialize(new
                     {
                         sourceSha256 = state.Document.SourceSha256,
+                        schemaVersion = MigrationSchemaVersion,
                         settingsImported = settingWrites.Length,
                         createdProviders,
                         playlistHandoffsPending = state.Document.Playlists.Count
@@ -543,9 +549,24 @@ public sealed class LegacyEnvMigrationService
                     Id = Guid.CreateVersion7(),
                     TenantId = state.TenantId.Value,
                     SourceSha256 = state.Document.SourceSha256,
+                    SchemaVersion = MigrationSchemaVersion,
                     ActorUserId = state.ActorUserId,
                     AuditEventId = audit.Id,
                     ResultJson = JsonSerializer.Serialize(appliedResult, JsonOptions),
+                    ProvenanceJson = JsonSerializer.Serialize(new
+                    {
+                        settings = stagedSettings.Select(item => new
+                        {
+                            recordId = item.Record.Id,
+                            item.Record.Key
+                        }),
+                        providerAccounts = createdProviderRecords.Select(item => new
+                        {
+                            recordId = item.Id,
+                            item.ProviderId,
+                            scope = item.Scope.ToString()
+                        })
+                    }, JsonOptions),
                     AppliedAt = appliedAt
                 });
 
@@ -749,6 +770,19 @@ public sealed class LegacyEnvMigrationService
 
         try
         {
+            if (!receipt.SchemaVersion.Equals(MigrationSchemaVersion, StringComparison.Ordinal))
+            {
+                throw new JsonException();
+            }
+            using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
+            if (provenance.RootElement.ValueKind != JsonValueKind.Object ||
+                !provenance.RootElement.TryGetProperty("settings", out var settings) ||
+                settings.ValueKind != JsonValueKind.Array ||
+                !provenance.RootElement.TryGetProperty("providerAccounts", out var accounts) ||
+                accounts.ValueKind != JsonValueKind.Array)
+            {
+                throw new JsonException();
+            }
             var result = JsonSerializer.Deserialize<LegacyEnvMigrationApplyResult>(receipt.ResultJson, JsonOptions)
                          ?? throw new JsonException();
             if (!result.Success || !FixedEquals(result.SourceFingerprint, sourceSha256))

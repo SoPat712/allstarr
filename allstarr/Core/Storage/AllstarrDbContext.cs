@@ -485,7 +485,9 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.SourceSha256).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.SchemaVersion).HasMaxLength(100).IsRequired();
             entity.Property(item => item.ResultJson).IsRequired();
+            entity.Property(item => item.ProvenanceJson).IsRequired();
             entity.HasIndex(item => new { item.TenantId, item.SourceSha256 }).IsUnique();
             entity.HasIndex(item => item.AuditEventId).IsUnique();
             entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)

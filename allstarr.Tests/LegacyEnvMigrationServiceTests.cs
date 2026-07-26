@@ -197,6 +197,18 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             var receipt = Assert.Single(await db.LegacyEnvImports.ToListAsync());
             Assert.Equal(_tenantId, receipt.TenantId);
             Assert.Equal(result.SourceFingerprint, receipt.SourceSha256);
+            Assert.Equal("legacy-env-import-v1", receipt.SchemaVersion);
+            using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
+            var settingProvenance = Assert.Single(
+                provenance.RootElement.GetProperty("settings").EnumerateArray());
+            Assert.Equal(setting.Id, settingProvenance.GetProperty("recordId").GetGuid());
+            Assert.Equal(setting.Key, settingProvenance.GetProperty("key").GetString());
+            var providerRecordIds = provenance.RootElement.GetProperty("providerAccounts")
+                .EnumerateArray()
+                .Select(item => item.GetProperty("recordId").GetGuid())
+                .Order()
+                .ToArray();
+            Assert.Equal(accounts.Select(item => item.Id).Order().ToArray(), providerRecordIds);
             var audit = Assert.Single(await db.AuditEvents.ToListAsync());
             Assert.Equal(audit.Id, receipt.AuditEventId);
             Assert.Equal("legacy-env.apply", audit.Action);
@@ -348,6 +360,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
         Assert.Empty(await db.SecretReferences.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
+        Assert.Empty(await db.LegacyEnvImports.ToListAsync());
     }
 
     [Fact]
@@ -412,6 +425,34 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
         Assert.Single(await db.AuditEvents.ToListAsync());
         Assert.Single(await db.LegacyEnvImports.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ChangedSourceGetsNewReviewRevisionWithoutDuplicatingDurableRecords()
+    {
+        var service = CreateService();
+        var first = await service.PreviewAsync(Source("""
+            CACHE_LYRICS_DAYS=30
+            DEEZER_ARL=first-secret
+            """), Actor());
+        await service.ApplyAsync(first.PreviewToken, first.Revision, true, Actor());
+
+        var changed = await service.PreviewAsync(Source("""
+            CACHE_LYRICS_DAYS=45
+            DEEZER_ARL=changed-secret
+            """), Actor());
+
+        Assert.NotEqual(first.Revision, changed.Revision);
+        Assert.Equal("conflict_existing", Assert.Single(changed.Items, item => item.Key == "CACHE_LYRICS_DAYS").Action);
+        Assert.Equal("conflict_existing", Assert.Single(changed.ProviderAccounts).Action);
+        var result = await service.ApplyAsync(changed.PreviewToken, changed.Revision, true, Actor());
+        Assert.Equal(0, result.SettingsImported);
+        Assert.Equal(0, result.ProviderAccountsCreated);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Single(await db.ProviderAccounts.ToListAsync());
+        Assert.Equal(2, await db.LegacyEnvImports.CountAsync());
     }
 
     [Fact]

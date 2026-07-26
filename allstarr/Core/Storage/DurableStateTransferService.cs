@@ -654,7 +654,18 @@ public sealed class DurableStateTransferService
         foreach (var receipt in imports)
         {
             LegacyEnvMigrationApplyResult? result = null;
+            var validProvenance = false;
             try { result = JsonSerializer.Deserialize<LegacyEnvMigrationApplyResult>(receipt.ResultJson, JsonOptions); }
+            catch (JsonException) { }
+            try
+            {
+                using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
+                validProvenance = provenance.RootElement.ValueKind == JsonValueKind.Object &&
+                                  provenance.RootElement.TryGetProperty("settings", out var settings) &&
+                                  settings.ValueKind == JsonValueKind.Array &&
+                                  provenance.RootElement.TryGetProperty("providerAccounts", out var accounts) &&
+                                  accounts.ValueKind == JsonValueKind.Array;
+            }
             catch (JsonException) { }
             var validAudit = auditsById.TryGetValue(receipt.AuditEventId, out var audit) &&
                              audit.TenantId == receipt.TenantId &&
@@ -663,6 +674,8 @@ public sealed class DurableStateTransferService
                              audit.Action == "legacy-env.apply" && audit.Outcome == "succeeded";
             if (receipt.Id == Guid.Empty || !tenantIds.Contains(receipt.TenantId) ||
                 !IsNormalizedSha256(receipt.SourceSha256) ||
+                receipt.SchemaVersion != LegacyEnvMigrationService.MigrationSchemaVersion ||
+                !validProvenance ||
                 !sources.Add((receipt.TenantId, receipt.SourceSha256)) ||
                 receipt.ActorUserId is { } actorId &&
                 (!usersById.TryGetValue(actorId, out var actor) || actor.TenantId != receipt.TenantId) ||
