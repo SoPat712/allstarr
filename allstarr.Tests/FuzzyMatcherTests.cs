@@ -105,6 +105,8 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("PILLOWTALK", "PiLlOwT4lK")]
+    [InlineData("PILLOWTALK", "P1ll0wtalk")]
     [InlineData("Heebiejeebies - Bonus", "Heebiejeebies")]
     [InlineData("Homemade Dynamite (Feat. Khalid, Post Malone & SZA) - REMIX", "Homemade Dynamite (REMIX)")]
     [InlineData("Song Title - Bonus Track", "Song Title")]
@@ -116,6 +118,19 @@ public class FuzzyMatcherTests
     public void CalculateSimilarityAggressive_StripsTrailingReleaseDecorators(string source, string candidate)
     {
         Assert.Equal(100, FuzzyMatcher.CalculateSimilarityAggressive(source, candidate));
+    }
+
+    [Theory]
+    [InlineData("U2", "ua")]
+    [InlineData("24K Magic", "2ak magic")]
+    [InlineData("1999", "iggg")]
+    public void NormalizeForMatching_DoesNotFoldShortNamesOrNumericTokens(
+        string source,
+        string different)
+    {
+        Assert.NotEqual(
+            FuzzyMatcher.NormalizeForMatching(source),
+            FuzzyMatcher.NormalizeForMatching(different));
     }
 
     [Theory]

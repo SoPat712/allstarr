@@ -164,6 +164,37 @@ public sealed class TrackMatchDecisionEngineTests
     }
 
     [Theory]
+    [InlineData("PiLlOwT4lK")]
+    [InlineData("P1ll0wtalk")]
+    public void PillowtalkLookalikeTitle_IsRetrievedAndAccepted(string jellyfinTitle)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "PILLOWTALK",
+            Artist = "ZAYN",
+            Album = "Mind of Mine",
+            AlbumArtist = "ZAYN",
+            DurationSeconds = 203
+        };
+        var candidate = Candidate(scope) with
+        {
+            Title = jellyfinTitle,
+            Artist = "ZAYN",
+            Album = "Mind of Mine",
+            AlbumArtist = "ZAYN",
+            DurationSeconds = 203
+        };
+
+        var selected = new TrackMatchCandidateIndex([candidate]).Select(source);
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, selected);
+
+        Assert.Same(candidate, Assert.Single(selected));
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(1, Assert.Single(decision.Candidates).Components!["title"]);
+    }
+
+    [Theory]
     [InlineData("A Song (Live)", "A Song")]
     [InlineData("A Song", "A Song (Acoustic)")]
     [InlineData("A Song (Remix)", "A Song")]

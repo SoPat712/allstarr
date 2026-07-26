@@ -232,8 +232,27 @@ public static partial class FuzzyMatcher
         normalized = PunctuationRegex().Replace(normalized, "");
         // Collapse internal whitespace sequences to a single space, then trim edge whitespace
         normalized = WhitespaceRegex().Replace(normalized, " ").Trim();
+        normalized = string.Join(' ', normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(FoldLookalikeWord));
 
         return normalized;
+    }
+
+    private static string FoldLookalikeWord(string word)
+    {
+        // ponytail: only fold long mixed words; widen the heuristic if the residual corpus proves it safe.
+        if (word.Length < 4 || !word.Any(char.IsLetter) || !word.Any(char.IsDigit))
+            return word;
+        return string.Concat(word.Select(character => character switch
+        {
+            '0' => 'o',
+            '1' => 'i',
+            '3' => 'e',
+            '4' => 'a',
+            '5' => 's',
+            '7' => 't',
+            _ => character
+        }));
     }
 
     public static IReadOnlySet<string> SemanticVersionTags(string? title) =>
