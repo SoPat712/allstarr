@@ -296,18 +296,10 @@ public sealed class DiagnosticsControllerTests : IDisposable
         JellyfinSettings? jellyfinSettings = null,
         IServiceProvider? requestServices = null)
     {
-        var environment = new Mock<IWebHostEnvironment>();
-        environment.SetupGet(item => item.EnvironmentName).Returns("Development");
-        environment.SetupGet(item => item.ContentRootPath).Returns(Path.Combine(_root, "app"));
         var adminHelper = new AdminHelperService(
-            NullLogger<AdminHelperService>.Instance,
-            Options.Create(jellyfinSettings ?? new JellyfinSettings()),
-            environment.Object);
+            Options.Create(jellyfinSettings ?? new JellyfinSettings()));
         var spotifySettings = new SpotifyApiSettings();
-        var cookieService = new SpotifySessionCookieService(
-            Options.Create(spotifySettings),
-            adminHelper,
-            NullLogger<SpotifySessionCookieService>.Instance);
+        var cookieService = new SpotifySessionCookieService(Options.Create(spotifySettings));
         var applicationCache = new DisabledApplicationCache();
         var storageOptions = new DurableStorageOptions
         {

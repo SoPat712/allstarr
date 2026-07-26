@@ -65,6 +65,21 @@ public class SpotifyPlaylistConfig
 
 public static class SpotifyPlaylistConfigParser
 {
+    public static string Serialize(IEnumerable<SpotifyPlaylistConfig> playlists) =>
+        JsonSerializer.Serialize(playlists.Select(playlist =>
+        {
+            var values = new List<string>
+            {
+                playlist.Name ?? string.Empty,
+                playlist.Id ?? string.Empty,
+                playlist.JellyfinId ?? string.Empty,
+                playlist.LocalTracksPosition.ToString().ToLowerInvariant(),
+                string.IsNullOrWhiteSpace(playlist.SyncSchedule) ? "0 8 * * *" : playlist.SyncSchedule.Trim()
+            };
+            if (!string.IsNullOrWhiteSpace(playlist.UserId)) values.Add(playlist.UserId.Trim());
+            return values.ToArray();
+        }));
+
     public static List<SpotifyPlaylistConfig> Parse(string json)
     {
         string[][] entries;

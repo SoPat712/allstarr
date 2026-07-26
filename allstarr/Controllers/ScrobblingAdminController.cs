@@ -9,6 +9,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Core.Secrets;
+using allstarr.Core.Settings;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Models.Settings;
@@ -26,29 +27,23 @@ namespace allstarr.Controllers;
 public class ScrobblingAdminController : ControllerBase
 {
     private readonly ScrobblingSettings _settings;
-    private readonly IConfiguration _configuration;
     private readonly ILogger<ScrobblingAdminController> _logger;
     private readonly HttpClient _httpClient;
-    private readonly AdminHelperService _adminHelper;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
     private readonly IProviderAccountSecretAccessor? _accountSecrets;
     private readonly EncryptedSecretStore? _secretStore;
 
     public ScrobblingAdminController(
         IOptions<ScrobblingSettings> settings,
-        IConfiguration configuration,
         IHttpClientFactory httpClientFactory,
         ILogger<ScrobblingAdminController> logger,
-        AdminHelperService adminHelper,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         IProviderAccountSecretAccessor? accountSecrets = null,
         EncryptedSecretStore? secretStore = null)
     {
         _settings = settings.Value;
-        _configuration = configuration;
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient("LastFm");
-        _adminHelper = adminHelper;
         _contextFactory = contextFactory;
         _accountSecrets = accountSecrets;
         _secretStore = secretStore;
@@ -98,8 +93,7 @@ public class ScrobblingAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Authenticate with Last.fm using credentials from .env file.
-    /// Requires your own Last.fm API application credentials in .env.
+    /// Authenticate a managed Last.fm provider account.
     /// </summary>
     [HttpPost("lastfm/authenticate")]
     public async Task<IActionResult> AuthenticateLastFm(
@@ -113,6 +107,13 @@ public class ScrobblingAdminController : ControllerBase
         {
             return NotFound(new { error = "The selected Last.fm account was not found for the signed-in user." });
         }
+        if (managed == null)
+        {
+            return BadRequest(new
+            {
+                error = "Select a Last.fm provider account so the session can be stored securely."
+            });
+        }
 
         var username = request?.Username ?? Secret(managed?.Secrets, "username") ?? _settings.LastFm.Username;
         var password = request?.Password ?? _settings.LastFm.Password;
@@ -121,7 +122,7 @@ public class ScrobblingAdminController : ControllerBase
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            return BadRequest(new { error = "Username and password must be set in .env file (SCROBBLING_LASTFM_USERNAME and SCROBBLING_LASTFM_PASSWORD)" });
+            return BadRequest(new { error = "Username and password are required for the selected Last.fm provider account." });
         }
 
         if (LastFmSettings.IsLegacyJellyfinPluginApiKey(apiKey))
@@ -130,7 +131,7 @@ public class ScrobblingAdminController : ControllerBase
             {
                 error = "The built-in Jellyfin Last.fm API key is suspended by Last.fm. " +
                         "Create your own application at https://www.last.fm/api/account/create, " +
-                        "set SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET, then authenticate again."
+                        "save its credentials on the provider account, then authenticate again."
             });
         }
 
@@ -139,7 +140,7 @@ public class ScrobblingAdminController : ControllerBase
             return BadRequest(new
             {
                 error = "Last.fm API credentials are required. Create an application at https://www.last.fm/api/account/create " +
-                        "and set SCROBBLING_LASTFM_API_KEY and SCROBBLING_LASTFM_SHARED_SECRET in your .env file."
+                        "and save its credentials on the provider account."
             });
         }
 
@@ -195,33 +196,20 @@ public class ScrobblingAdminController : ControllerBase
 
             _logger.LogInformation("Successfully authenticated Last.fm user: {Username}", authenticatedUsername);
 
-            // Save session key to .env file
             try
             {
-                if (managed != null)
-                {
-                    await SaveManagedLastFmSessionAsync(
-                        managed,
-                        apiKey,
-                        sharedSecret,
-                        authenticatedUsername ?? username,
-                        sessionKey,
-                        cancellationToken);
-                    _logger.LogInformation("Last.fm session saved to encrypted provider account {AccountId}", managed.Account.Id);
-                }
-                else
-                {
-                    var updates = new Dictionary<string, string>
-                    {
-                        ["SCROBBLING_LASTFM_SESSION_KEY"] = sessionKey
-                    };
-                    await _adminHelper.UpdateEnvConfigAsync(updates);
-                    _logger.LogInformation("Last.fm session key saved to runtime configuration");
-                }
+                await SaveManagedLastFmSessionAsync(
+                    managed!,
+                    apiKey,
+                    sharedSecret,
+                    authenticatedUsername ?? username,
+                    sessionKey,
+                    cancellationToken);
+                _logger.LogInformation("Last.fm session saved to encrypted provider account {AccountId}", managed!.Account.Id);
             }
             catch (Exception saveEx)
             {
-                _logger.LogError(saveEx, "Failed to save session key to .env file");
+                _logger.LogError(saveEx, "Failed to save the Last.fm session to the provider account");
                 return StatusCode(500, new
                 {
                     error = "Authentication succeeded but failed to save session key",
@@ -233,9 +221,7 @@ public class ScrobblingAdminController : ControllerBase
             {
                 Success = true,
                 Username = authenticatedUsername,
-                Message = managed != null
-                    ? "Last.fm connected. The session was stored securely and is ready now."
-                    : "Authentication successful. Session key saved; restart Allstarr to load the runtime setting."
+                Message = "Last.fm connected. The session was stored securely and is ready now."
             });
         }
         catch (Exception ex)
@@ -369,19 +355,33 @@ public class ScrobblingAdminController : ControllerBase
     {
         try
         {
-            var updates = new Dictionary<string, string>
+            if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+                value is not AdminAuthSession session || session.TenantId is not { } tenantId)
             {
-                ["SCROBBLING_LOCAL_TRACKS_ENABLED"] = request.Enabled.ToString().ToLower()
-            };
+                return Unauthorized(new { error = "An authenticated tenant session is required." });
+            }
 
-            await _adminHelper.UpdateEnvConfigAsync(updates);
+            var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+            var current = await settings.GetAsync(
+                tenantId,
+                "Scrobbling:LocalTracksEnabled",
+                HttpContext.RequestAborted);
+            await settings.ApplyBatchAsync(
+                tenantId,
+                [new RuntimeSettingWrite(
+                    "Scrobbling:LocalTracksEnabled",
+                    request.Enabled.ToString(),
+                    current.Origin == RuntimeSettingOrigin.Durable ? current.Revision : null)],
+                "admin-ui",
+                session.AllstarrUserId,
+                HttpContext.RequestAborted);
             _logger.LogInformation("Local tracks scrobbling setting updated to: {Enabled}", request.Enabled);
 
             return Ok(new
             {
                 Success = true,
                 LocalTracksEnabled = request.Enabled,
-                Message = "Setting saved! Please restart the container for changes to take effect."
+                Message = "Setting saved."
             });
         }
         catch (Exception ex)
@@ -428,34 +428,12 @@ public class ScrobblingAdminController : ControllerBase
 
             var username = jsonDoc.RootElement.GetProperty("user_name").GetString();
 
-            // Save token to .env file
-            try
-            {
-                var updates = new Dictionary<string, string>
-                {
-                    ["SCROBBLING_LISTENBRAINZ_USER_TOKEN"] = request.UserToken
-                };
-
-                await _adminHelper.UpdateEnvConfigAsync(updates);
-                _logger.LogInformation("ListenBrainz token saved to .env file");
-            }
-            catch (Exception saveEx)
-            {
-                _logger.LogError(saveEx, "Failed to save token to .env file");
-                return StatusCode(500, new
-                {
-                    error = "Token validation succeeded but failed to save",
-                    username = username,
-                    message = "The token could not be persisted. Check server logs and retry."
-                });
-            }
-
             return Ok(new
             {
                 Success = true,
                 Valid = true,
                 Username = username,
-                Message = "Token validated and saved! Please restart the container for changes to take effect."
+                Message = "Token validated. Save it through a ListenBrainz provider account."
             });
         }
         catch (Exception ex)

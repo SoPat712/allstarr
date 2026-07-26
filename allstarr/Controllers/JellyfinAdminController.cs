@@ -5,6 +5,7 @@ using allstarr.Models.Admin;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Filters;
+using allstarr.Core.Settings;
 using System.Text.Json;
 
 namespace allstarr.Controllers;
@@ -83,6 +84,51 @@ public class JellyfinAdminController : ControllerBase
     {
         var cronParts = cron.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         return cronParts.Length == 5;
+    }
+
+    private async Task<List<SpotifyPlaylistConfig>> GetConfiguredPlaylistsAsync(AdminAuthSession session)
+    {
+        if (session.TenantId is not { } tenantId ||
+            HttpContext.RequestServices.GetService<IDurableRuntimeSettings>() is not { } settings)
+        {
+            return _spotifyImportSettings.Playlists.ToList();
+        }
+
+        var current = await settings.GetAsync(
+            tenantId,
+            "SpotifyImport:Playlists",
+            HttpContext.RequestAborted);
+        return current.Value is string json && !string.IsNullOrWhiteSpace(json)
+            ? SpotifyPlaylistConfigParser.Parse(json)
+            : _spotifyImportSettings.Playlists.ToList();
+    }
+
+    private async Task<IActionResult> PersistConfiguredPlaylistsAsync(
+        AdminAuthSession session,
+        IReadOnlyList<SpotifyPlaylistConfig> playlists)
+    {
+        if (session.TenantId is not { } tenantId)
+        {
+            return BadRequest(new { error = "The administrator session is not linked to an Allstarr tenant." });
+        }
+
+        var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+        var current = await settings.GetAsync(
+            tenantId,
+            "SpotifyImport:Playlists",
+            HttpContext.RequestAborted);
+        var result = await settings.ApplyBatchAsync(
+            tenantId,
+            [new RuntimeSettingWrite(
+                "SpotifyImport:Playlists",
+                SpotifyPlaylistConfigParser.Serialize(playlists),
+                current.Origin == RuntimeSettingOrigin.Durable ? current.Revision : null)],
+            "admin-ui",
+            session.AllstarrUserId,
+            HttpContext.RequestAborted);
+
+        _spotifyImportSettings.Playlists = playlists.ToList();
+        return Ok(new { message = "Playlist configuration updated.", changeVersion = result.ChangeVersion });
     }
 
     private HttpRequestMessage CreateJellyfinRequestForSession(HttpMethod method, string url, AdminAuthSession session)
@@ -293,7 +339,7 @@ public class JellyfinAdminController : ControllerBase
             using var doc = JsonDocument.Parse(json);
 
             var playlists = new List<object>();
-            var configuredPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+            var configuredPlaylists = await GetConfiguredPlaylistsAsync(session);
 
             if (doc.RootElement.TryGetProperty("Items", out var items))
             {
@@ -525,7 +571,7 @@ public class JellyfinAdminController : ControllerBase
             "Linking Jellyfin playlist {JellyfinId} ({PlaylistName}) to Spotify playlist {SpotifyId} for user {OwnerUserId}",
             jellyfinPlaylistId, playlistName, request.SpotifyPlaylistId, ownerUserId);
 
-        var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var currentPlaylists = await GetConfiguredPlaylistsAsync(session);
 
         var existingByJellyfinId = currentPlaylists
             .FirstOrDefault(p => p.JellyfinId.Equals(jellyfinPlaylistId, StringComparison.OrdinalIgnoreCase));
@@ -556,16 +602,7 @@ public class JellyfinAdminController : ControllerBase
             UserId = ownerUserId
         });
 
-        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
-        var updateRequest = new ConfigUpdateRequest
-        {
-            Updates = new Dictionary<string, string>
-            {
-                ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
-            }
-        };
-
-        return await _helperService.UpdateEnvConfigAsync(updateRequest.Updates);
+        return await PersistConfiguredPlaylistsAsync(session, currentPlaylists);
     }
 
     /// <summary>
@@ -580,7 +617,7 @@ public class JellyfinAdminController : ControllerBase
         }
 
         var decodedIdentifier = Uri.UnescapeDataString(jellyfinPlaylistId);
-        var currentPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+        var currentPlaylists = await GetConfiguredPlaylistsAsync(session);
         var playlist = currentPlaylists.FirstOrDefault(p =>
             p.JellyfinId.Equals(decodedIdentifier, StringComparison.OrdinalIgnoreCase));
 
@@ -603,13 +640,7 @@ public class JellyfinAdminController : ControllerBase
         }
 
         currentPlaylists.Remove(playlist);
-        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
-        var updates = new Dictionary<string, string>
-        {
-            ["SPOTIFY_IMPORT_PLAYLISTS"] = playlistsJson
-        };
-
-        return await _helperService.UpdateEnvConfigAsync(updates);
+        return await PersistConfiguredPlaylistsAsync(session, currentPlaylists);
     }
 
 }

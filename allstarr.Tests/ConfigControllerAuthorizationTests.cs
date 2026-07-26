@@ -434,18 +434,9 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var contentRoot = Path.Combine(_root, "app");
         Directory.CreateDirectory(contentRoot);
         webHostEnvironment.SetupGet(e => e.ContentRootPath).Returns(contentRoot);
-        var helperLogger = new Mock<ILogger<AdminHelperService>>();
-        var helperService = new AdminHelperService(
-            helperLogger.Object,
-            Options.Create(new JellyfinSettings()),
-            webHostEnvironment.Object);
-
         var applicationCache = new DisabledApplicationCache();
-        var spotifyCookieLogger = new Mock<ILogger<SpotifySessionCookieService>>();
         var spotifySessionCookieService = new SpotifySessionCookieService(
-            Options.Create(new SpotifyApiSettings()),
-            helperService,
-            spotifyCookieLogger.Object);
+            Options.Create(new SpotifyApiSettings()));
         var providerStatusManager = new ProviderStatusManager(
             configuration,
             httpClientFactory ?? Mock.Of<IHttpClientFactory>(),
@@ -485,7 +476,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Options.Create(new MusicBrainzSettings()),
             Options.Create(new SpotifyImportSettings()),
             Options.Create(new ScrobblingSettings()),
-            helperService,
+            webHostEnvironment.Object,
             spotifySessionCookieService,
             applicationCache)
         {

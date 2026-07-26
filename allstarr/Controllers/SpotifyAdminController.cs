@@ -9,6 +9,7 @@ using allstarr.Services;
 using allstarr.Services.Admin;
 using allstarr.Filters;
 using allstarr.Core.Matching;
+using allstarr.Core.Settings;
 using System.Text.Json;
 
 namespace allstarr.Controllers;
@@ -26,7 +27,6 @@ public class SpotifyAdminController : ControllerBase
     private readonly IServiceProvider _serviceProvider;
     private readonly SpotifyApiSettings _spotifyApiSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
-    private readonly AdminHelperService _helperService;
 
     public SpotifyAdminController(
         ILogger<SpotifyAdminController> logger,
@@ -36,8 +36,7 @@ public class SpotifyAdminController : ControllerBase
         IApplicationCache cache,
         IServiceProvider serviceProvider,
         IOptions<SpotifyApiSettings> spotifyApiSettings,
-        IOptions<SpotifyImportSettings> spotifyImportSettings,
-        AdminHelperService helperService)
+        IOptions<SpotifyImportSettings> spotifyImportSettings)
     {
         _logger = logger;
         _spotifyClient = spotifyClient;
@@ -47,7 +46,6 @@ public class SpotifyAdminController : ControllerBase
         _serviceProvider = serviceProvider;
         _spotifyApiSettings = spotifyApiSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
-        _helperService = helperService;
     }
 
     [HttpGet("spotify/user-playlists")]
@@ -100,7 +98,19 @@ public class SpotifyAdminController : ControllerBase
         try
         {
             // Get list of already-configured Spotify playlist IDs in the selected ownership scope.
-            var configuredPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
+            var configuredPlaylists = _spotifyImportSettings.Playlists;
+            if (session.TenantId is { } tenantId &&
+                HttpContext.RequestServices.GetService<IDurableRuntimeSettings>() is { } settings)
+            {
+                var current = await settings.GetAsync(
+                    tenantId,
+                    "SpotifyImport:Playlists",
+                    HttpContext.RequestAborted);
+                if (current.Value is string json && !string.IsNullOrWhiteSpace(json))
+                {
+                    configuredPlaylists = SpotifyPlaylistConfigParser.Parse(json);
+                }
+            }
 
             var scopedConfiguredPlaylists = configuredPlaylists.AsEnumerable();
             if (!string.IsNullOrWhiteSpace(requestedUserId))
@@ -172,47 +182,6 @@ public class SpotifyAdminController : ControllerBase
             hasCookie = status.HasCookie,
             usingGlobalFallback = status.UsingGlobalFallback,
             cookieSetDate = cookieSetDate?.ToString("o")
-        });
-    }
-
-    [HttpPost("spotify/session-cookie")]
-    public async Task<IActionResult> SetSpotifySessionCookie([FromBody] SetSpotifySessionCookieRequest request)
-    {
-        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionObj) ||
-            sessionObj is not AdminAuthSession session)
-        {
-            return Unauthorized(new { error = "Authentication required" });
-        }
-
-        var targetUserId = string.IsNullOrWhiteSpace(request.UserId)
-            ? session.UserId
-            : request.UserId.Trim();
-
-        if (!session.IsAdministrator &&
-            !targetUserId.Equals(session.UserId, StringComparison.OrdinalIgnoreCase))
-        {
-            return StatusCode(StatusCodes.Status403Forbidden, new
-            {
-                error = "You can only update your own Spotify session cookie"
-            });
-        }
-
-        if (string.IsNullOrWhiteSpace(targetUserId))
-        {
-            return BadRequest(new { error = "User ID is required" });
-        }
-
-        var saveResult = await _spotifySessionCookieService.SetUserSessionCookieAsync(targetUserId, request.SessionCookie);
-        if (saveResult is ObjectResult { StatusCode: >= 400 } failure)
-        {
-            return failure;
-        }
-
-        return Ok(new
-        {
-            success = true,
-            message = "Spotify session cookie saved for user scope.",
-            userId = targetUserId
         });
     }
 
@@ -291,11 +260,5 @@ public class SpotifyAdminController : ControllerBase
     }
 
 
-
-    public class SetSpotifySessionCookieRequest
-    {
-        public required string SessionCookie { get; set; }
-        public string? UserId { get; set; }
-    }
 
 }

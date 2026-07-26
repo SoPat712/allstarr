@@ -1595,7 +1595,7 @@ public class PlaylistController : ControllerBase
                 : LocalTracksPosition.First
         });
 
-        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
+        var playlistsJson = SpotifyPlaylistConfigParser.Serialize(currentPlaylists);
 
         return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
@@ -1619,7 +1619,7 @@ public class PlaylistController : ControllerBase
 
         currentPlaylists.Remove(playlist);
 
-        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
+        var playlistsJson = SpotifyPlaylistConfigParser.Serialize(currentPlaylists);
 
         return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
@@ -1658,7 +1658,7 @@ public class PlaylistController : ControllerBase
         }
 
         playlist.SyncSchedule = request.SyncSchedule.Trim();
-        var playlistsJson = AdminHelperService.SerializePlaylistsForEnv(currentPlaylists);
+        var playlistsJson = SpotifyPlaylistConfigParser.Serialize(currentPlaylists);
         return await PersistConfiguredPlaylistsAsync(currentPlaylists, playlistsJson);
     }
 
@@ -1677,7 +1677,9 @@ public class PlaylistController : ControllerBase
         }
 
         var current = await settings.GetAsync(tenantId, "SpotifyImport:Playlists", HttpContext.RequestAborted);
-        return SpotifyPlaylistConfigParser.Parse((string)current.Value);
+        return current.Value is string json && !string.IsNullOrWhiteSpace(json)
+            ? SpotifyPlaylistConfigParser.Parse(json)
+            : _spotifyImportSettings.Playlists.ToList();
     }
 
     private async Task<IActionResult> PersistConfiguredPlaylistsAsync(

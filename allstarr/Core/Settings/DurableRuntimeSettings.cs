@@ -142,7 +142,7 @@ public static class RuntimeSettingCatalog
         Bool("SpotifyApi:PreferIsrcMatching"); Bool("SpotifyImport:Enabled");
         Int("SpotifyImport:MatchingIntervalHours", 0, 8760);
         items.Add(new("SpotifyImport:Playlists", RuntimeSettingValueType.String,
-            "SpotifyImport:Playlists", MaximumLength: 65536));
+            "SpotifyImport:Playlists", MaximumLength: 65536, AllowEmpty: true));
         Bool("Scrobbling:Enabled"); Bool("Scrobbling:LocalTracksEnabled");
         Bool("Scrobbling:SyntheticLocalPlayedSignalEnabled"); Bool("Scrobbling:LastFm:Enabled");
         Bool("Scrobbling:ListenBrainz:Enabled");

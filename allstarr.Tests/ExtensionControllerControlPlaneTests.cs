@@ -41,18 +41,10 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         var clientFactory = new Mock<IHttpClientFactory>();
         clientFactory.Setup(item => item.CreateClient("ExtensionSdkV1"))
             .Returns(() => new HttpClient(new RegistryResponseHandler()));
-        var environment = new Mock<IWebHostEnvironment>();
-        environment.SetupGet(item => item.EnvironmentName).Returns(Environments.Development);
-        environment.SetupGet(item => item.ContentRootPath).Returns(_root);
-        var adminHelper = new AdminHelperService(
-            NullLogger<AdminHelperService>.Instance,
-            Options.Create(new JellyfinSettings()),
-            environment.Object);
         _manager = new ExtensionManager(
             clientFactory.Object,
             NullLogger<ExtensionManager>.Instance,
             configuration,
-            adminHelper,
             _service);
     }
 

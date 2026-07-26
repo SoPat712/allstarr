@@ -10,7 +10,6 @@ using Jint.Native;
 using allstarr.Core.Extensions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using allstarr.Services.Admin;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -31,7 +30,6 @@ public class ExtensionManager : IDisposable
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ExtensionManager> _logger;
     private readonly IConfiguration _configuration;
-    private readonly AdminHelperService _adminHelperService;
     private readonly string _extensionsDir;
     private readonly ExtensionControlPlaneService? _controlPlane;
 
@@ -46,13 +44,11 @@ public class ExtensionManager : IDisposable
         IHttpClientFactory httpClientFactory,
         ILogger<ExtensionManager> logger,
         IConfiguration configuration,
-        AdminHelperService adminHelperService,
         ExtensionControlPlaneService? controlPlane = null)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _configuration = configuration;
-        _adminHelperService = adminHelperService;
         _controlPlane = controlPlane;
         _extensionsDir = Path.GetFullPath(
             _configuration["Extensions:Directory"] ??
@@ -95,8 +91,7 @@ public class ExtensionManager : IDisposable
 
     public List<string> GetConfiguredRepositories()
     {
-        var repos = ReadExtensionRepositoriesFromEnvFile() ?? _configuration["EXTENSION_REPOSITORIES"];
-        return ParseRepositoryList(repos);
+        return ParseRepositoryList(_configuration["EXTENSION_REPOSITORIES"]);
     }
 
     public static List<string> ParseRepositoryList(string? repositories)
@@ -105,38 +100,6 @@ public class ExtensionManager : IDisposable
             ? []
             : repositories.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList();
-    }
-
-    private string? ReadExtensionRepositoriesFromEnvFile()
-    {
-        try
-        {
-            var envPath = _adminHelperService.GetEnvFilePath();
-            if (!File.Exists(envPath))
-            {
-                return null;
-            }
-
-            foreach (var line in File.ReadLines(envPath))
-            {
-                if (AdminHelperService.ShouldSkipEnvLine(line))
-                {
-                    continue;
-                }
-
-                var (key, value) = AdminHelperService.ParseEnvLine(line);
-                if (key.Equals("EXTENSION_REPOSITORIES", StringComparison.OrdinalIgnoreCase))
-                {
-                    return value;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to read extension repositories from .env file");
-        }
-
-        return null;
     }
 
     public async Task<List<StoreExtensionItem>> FetchStoreExtensionsAsync(CancellationToken cancellationToken = default)

@@ -13,8 +13,7 @@ public sealed record BackendSelectionAuthority(
     string? ConflictingDotEnvValue);
 
 /// <summary>
-/// Loads supported flat .env keys into ASP.NET configuration so Docker/admin UI
-/// updates stored in /app/.env take effect on the next application startup.
+/// Loads supported flat .env keys into ASP.NET configuration at process startup.
 /// </summary>
 public static class RuntimeEnvConfiguration
 {

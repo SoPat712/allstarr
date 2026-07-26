@@ -86,6 +86,36 @@ public sealed class WebUiConfigOwnershipContractTests
         Assert.Contains("setProviderAccountEnabled", script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void RuntimeConfiguration_NeverReadsOrWritesDotEnvAsLiveState()
+    {
+        var files = new[]
+        {
+            FindRepositoryFile("allstarr", "Services", "Admin", "AdminHelperService.cs"),
+            FindRepositoryFile("allstarr", "Services", "Spotify", "SpotifySessionCookieService.cs"),
+            FindRepositoryFile("allstarr", "Services", "Common", "ExtensionManager.cs"),
+            FindRepositoryFile("allstarr", "Controllers", "ConfigController.cs"),
+            FindRepositoryFile("allstarr", "Controllers", "JellyfinAdminController.cs"),
+            FindRepositoryFile("allstarr", "Controllers", "SpotifyAdminController.cs"),
+            FindRepositoryFile("allstarr", "Controllers", "ScrobblingAdminController.cs")
+        };
+        var source = string.Join('\n', files.Select(File.ReadAllText));
+
+        Assert.DoesNotContain("UpdateEnvConfigAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadPlaylistsFromEnvFileAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadJsonFileAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriteJsonFileAsync", source, StringComparison.Ordinal);
+        foreach (var path in files.Take(2))
+        {
+            Assert.DoesNotContain("WriteAllText", File.ReadAllText(path), StringComparison.Ordinal);
+        }
+
+        var migration = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "Configuration", "LegacyEnvMigrationService.cs"));
+        Assert.Contains("LegacyEnvImportRecord", migration, StringComparison.Ordinal);
+        Assert.Contains("AppliedAt", migration, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryFile(params string[] path)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -34,7 +34,7 @@ public class ConfigController : ControllerBase
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
-    private readonly AdminHelperService _helperService;
+    private readonly string _envFilePath;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly IApplicationCache _cache;
     private const string CacheDirectory = "/app/cache/spotify";
@@ -52,7 +52,7 @@ public class ConfigController : ControllerBase
         IOptions<MusicBrainzSettings> musicBrainzSettings,
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
-        AdminHelperService helperService,
+        IWebHostEnvironment environment,
         SpotifySessionCookieService spotifySessionCookieService,
         IApplicationCache cache)
     {
@@ -68,7 +68,7 @@ public class ConfigController : ControllerBase
         _musicBrainzSettings = musicBrainzSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
-        _helperService = helperService;
+        _envFilePath = RuntimeEnvConfiguration.ResolveEnvFilePath(environment);
         _spotifySessionCookieService = spotifySessionCookieService;
         _cache = cache;
     }
@@ -76,7 +76,6 @@ public class ConfigController : ControllerBase
     [HttpGet("config")]
     public async Task<IActionResult> GetConfig()
     {
-        var envVars = await ReadEnvSettingsAsync();
         IReadOnlyDictionary<string, EffectiveRuntimeSetting> runtimeSettings =
             new Dictionary<string, EffectiveRuntimeSetting>(StringComparer.OrdinalIgnoreCase);
         if (GetAdminSession()?.TenantId is { } tenantId &&
@@ -120,24 +119,13 @@ public class ConfigController : ControllerBase
         var storageModeValue = RuntimeString("Library:StorageMode", fallbackStorageMode);
         var isCacheStorageMode = storageModeValue.Equals(nameof(StorageMode.Cache), StringComparison.OrdinalIgnoreCase);
 
-        var libraryDownloadRoot = GetEnvString(
-            envVars,
-            "LIBRARY_DOWNLOAD_PATH",
-            GetEnvString(
-                envVars,
-                "Library__DownloadPath",
-                _configuration["Library:DownloadPath"] ?? "./downloads",
-                treatEmptyAsMissing: true),
-            treatEmptyAsMissing: true);
-        var libraryKeptPath = GetEnvString(
-            envVars,
-            "LIBRARY_KEPT_PATH",
-            Path.Combine(libraryDownloadRoot, "kept"),
-            treatEmptyAsMissing: true);
-
-        var envPlaylists = await _helperService.ReadPlaylistsFromEnvFileAsync();
-        var hasEnvPlaylistKey = envVars.ContainsKey("SPOTIFY_IMPORT_PLAYLISTS");
-        var effectivePlaylists = hasEnvPlaylistKey ? envPlaylists : _spotifyImportSettings.Playlists;
+        var libraryDownloadRoot = _configuration["Library:DownloadPath"] ?? "./downloads";
+        var libraryKeptPath = _configuration["Library:KeptPath"] ?? Path.Combine(libraryDownloadRoot, "kept");
+        var effectivePlaylists = runtimeSettings.TryGetValue("SpotifyImport:Playlists", out var playlistSetting) &&
+                                 playlistSetting.Value is string playlistJson &&
+                                 !string.IsNullOrWhiteSpace(playlistJson)
+            ? SpotifyPlaylistConfigParser.Parse(playlistJson)
+            : _spotifyImportSettings.Playlists;
         var sessionUserId = GetAuthenticatedUserId();
         var cookieStatus = await _spotifySessionCookieService.GetCookieStatusAsync(sessionUserId);
         var effectiveSessionCookie = await _spotifySessionCookieService.ResolveSessionCookieAsync(sessionUserId);
@@ -148,10 +136,7 @@ public class ConfigController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(effectiveCookieSetDate) && cookieStatus.UsingGlobalFallback)
         {
-            effectiveCookieSetDate = GetEnvString(
-                envVars,
-                "SPOTIFY_API_SESSION_COOKIE_SET_DATE",
-                _spotifyApiSettings.SessionCookieSetDate ?? string.Empty);
+            effectiveCookieSetDate = _spotifyApiSettings.SessionCookieSetDate ?? string.Empty;
         }
 
         return Ok(new
@@ -173,13 +158,13 @@ public class ConfigController : ControllerBase
             },
             debug = new
             {
-                logAllRequests = GetEnvBool(envVars, "DEBUG_LOG_ALL_REQUESTS", _configuration.GetValue<bool>("Debug:LogAllRequests", false)),
+                logAllRequests = _configuration.GetValue<bool>("Debug:LogAllRequests", false),
                 redactSensitiveRequestValues = true
             },
             admin = new
             {
-                bindAnyIp = GetEnvBool(envVars, "ADMIN_BIND_ANY_IP", AdminNetworkBindingPolicy.ShouldBindAdminAnyIp(_configuration)),
-                trustedSubnets = GetEnvString(envVars, "ADMIN_TRUSTED_SUBNETS", _configuration.GetValue<string>("Admin:TrustedSubnets") ?? string.Empty),
+                bindAnyIp = AdminNetworkBindingPolicy.ShouldBindAdminAnyIp(_configuration),
+                trustedSubnets = _configuration.GetValue<string>("Admin:TrustedSubnets") ?? string.Empty,
                 allowEnvExport = IsEnvExportEnabled(),
                 redactSensitiveValues = _configuration.GetValue<bool>("Admin:RedactSensitiveValues", false)
             },
@@ -206,14 +191,14 @@ public class ConfigController : ControllerBase
             },
             jellyfin = new
             {
-                url = GetEnvString(envVars, "JELLYFIN_URL", _jellyfinSettings.Url ?? string.Empty),
-                apiKey = AdminHelperService.MaskValue(GetEnvString(envVars, "JELLYFIN_API_KEY", _jellyfinSettings.ApiKey ?? string.Empty)),
-                userId = GetEnvString(envVars, "JELLYFIN_USER_ID", _jellyfinSettings.UserId ?? string.Empty),
-                libraryId = GetEnvString(envVars, "JELLYFIN_LIBRARY_ID", _jellyfinSettings.LibraryId ?? string.Empty)
+                url = _jellyfinSettings.Url ?? string.Empty,
+                apiKey = AdminHelperService.MaskValue(_jellyfinSettings.ApiKey ?? string.Empty),
+                userId = _jellyfinSettings.UserId ?? string.Empty,
+                libraryId = _jellyfinSettings.LibraryId ?? string.Empty
             },
             subsonic = new
             {
-                url = GetEnvString(envVars, "SUBSONIC_URL", _subsonicSettings.Url ?? string.Empty)
+                url = _subsonicSettings.Url ?? string.Empty
             },
             library = new
             {
@@ -227,15 +212,15 @@ public class ConfigController : ControllerBase
             },
             deezer = new
             {
-                arl = AdminHelperService.MaskValue(GetEnvString(envVars, "DEEZER_ARL", _deezerSettings.Arl ?? string.Empty), showLast: 8),
-                arlFallback = AdminHelperService.MaskValue(GetEnvString(envVars, "DEEZER_ARL_FALLBACK", _deezerSettings.ArlFallback ?? string.Empty), showLast: 8),
+                arl = AdminHelperService.MaskValue(_deezerSettings.Arl ?? string.Empty, showLast: 8),
+                arlFallback = AdminHelperService.MaskValue(_deezerSettings.ArlFallback ?? string.Empty, showLast: 8),
                 quality = RuntimeString("Deezer:Quality", _deezerSettings.Quality ?? "FLAC"),
                 minRequestIntervalMs = RuntimeInt("Deezer:MinRequestIntervalMs", _deezerSettings.MinRequestIntervalMs)
             },
             qobuz = new
             {
-                userAuthToken = AdminHelperService.MaskValue(GetEnvString(envVars, "QOBUZ_USER_AUTH_TOKEN", _qobuzSettings.UserAuthToken ?? string.Empty), showLast: 8),
-                userId = GetEnvString(envVars, "QOBUZ_USER_ID", _qobuzSettings.UserId ?? string.Empty),
+                userAuthToken = AdminHelperService.MaskValue(_qobuzSettings.UserAuthToken ?? string.Empty, showLast: 8),
+                userId = _qobuzSettings.UserId ?? string.Empty,
                 quality = RuntimeString("Qobuz:Quality", _qobuzSettings.Quality ?? "FLAC"),
                 minRequestIntervalMs = RuntimeInt("Qobuz:MinRequestIntervalMs", _qobuzSettings.MinRequestIntervalMs)
             },
@@ -255,8 +240,8 @@ public class ConfigController : ControllerBase
             musicBrainz = new
             {
                 enabled = RuntimeBool("MusicBrainz:Enabled", _musicBrainzSettings.Enabled),
-                username = GetEnvString(envVars, "MUSICBRAINZ_USERNAME", _musicBrainzSettings.Username ?? string.Empty),
-                password = AdminHelperService.MaskValue(GetEnvString(envVars, "MUSICBRAINZ_PASSWORD", _musicBrainzSettings.Password ?? string.Empty)),
+                username = _musicBrainzSettings.Username ?? string.Empty,
+                password = AdminHelperService.MaskValue(_musicBrainzSettings.Password ?? string.Empty),
                 baseUrl = _musicBrainzSettings.BaseUrl,
                 rateLimitMs = _musicBrainzSettings.RateLimitMs
             },
@@ -279,10 +264,7 @@ public class ConfigController : ControllerBase
             },
             extensions = new
             {
-                repositories = GetEnvString(
-                    envVars,
-                    "EXTENSION_REPOSITORIES",
-                    _configuration.GetValue<string>("EXTENSION_REPOSITORIES") ?? string.Empty)
+                repositories = _configuration.GetValue<string>("EXTENSION_REPOSITORIES") ?? string.Empty
             },
             scrobbling = new
             {
@@ -307,97 +289,6 @@ public class ConfigController : ControllerBase
                 }
             }
         });
-    }
-
-    private async Task<Dictionary<string, string>> ReadEnvSettingsAsync()
-    {
-        var envVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        try
-        {
-            var envPath = _helperService.GetEnvFilePath();
-            if (!System.IO.File.Exists(envPath))
-            {
-                return envVars;
-            }
-
-            var lines = await System.IO.File.ReadAllLinesAsync(envPath);
-            foreach (var line in lines)
-            {
-                if (AdminHelperService.ShouldSkipEnvLine(line))
-                    continue;
-
-                var (key, value) = AdminHelperService.ParseEnvLine(line);
-                if (!string.IsNullOrWhiteSpace(key))
-                {
-                    envVars[key] = value;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to parse env settings for config view");
-        }
-
-        return envVars;
-    }
-
-    private static string GetEnvString(
-        IReadOnlyDictionary<string, string> envVars,
-        string key,
-        string fallback,
-        bool treatEmptyAsMissing = false)
-    {
-        if (!envVars.TryGetValue(key, out var value))
-        {
-            return fallback;
-        }
-
-        if (treatEmptyAsMissing && string.IsNullOrWhiteSpace(value))
-        {
-            return fallback;
-        }
-
-        return value;
-    }
-
-    private static bool GetEnvBool(IReadOnlyDictionary<string, string> envVars, string key, bool fallback)
-    {
-        if (!envVars.TryGetValue(key, out var rawValue))
-        {
-            return fallback;
-        }
-
-        if (bool.TryParse(rawValue, out var parsed))
-        {
-            return parsed;
-        }
-
-        if (rawValue.Equals("1", StringComparison.OrdinalIgnoreCase) ||
-            rawValue.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-            rawValue.Equals("on", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (rawValue.Equals("0", StringComparison.OrdinalIgnoreCase) ||
-            rawValue.Equals("no", StringComparison.OrdinalIgnoreCase) ||
-            rawValue.Equals("off", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return fallback;
-    }
-
-    private static int GetEnvInt(IReadOnlyDictionary<string, string> envVars, string key, int fallback)
-    {
-        if (!envVars.TryGetValue(key, out var rawValue))
-        {
-            return fallback;
-        }
-
-        return int.TryParse(rawValue, out var parsed) ? parsed : fallback;
     }
 
     /// <summary>Update allowlisted tenant runtime settings in durable storage.</summary>
@@ -656,42 +547,6 @@ public class ConfigController : ControllerBase
     }
 
     /// <summary>
-    /// Initialize cookie date to current date if cookie exists but date is not set
-    /// </summary>
-    [HttpPost("config/init-cookie-date")]
-    public async Task<IActionResult> InitCookieDate()
-    {
-        var adminCheck = RequireAdministratorForSensitiveOperation("init cookie date");
-        if (adminCheck != null)
-        {
-            return adminCheck;
-        }
-
-        // Only init if cookie exists but date is not set
-        if (string.IsNullOrEmpty(_spotifyApiSettings.SessionCookie))
-        {
-            return BadRequest(new { error = "No cookie set" });
-        }
-
-        if (!string.IsNullOrEmpty(_spotifyApiSettings.SessionCookieSetDate))
-        {
-            return Ok(new { message = "Cookie date already set", date = _spotifyApiSettings.SessionCookieSetDate });
-        }
-
-        _logger.LogInformation("Initializing cookie date to current date (cookie existed without date tracking)");
-
-        var updateRequest = new ConfigUpdateRequest
-        {
-            Updates = new Dictionary<string, string>
-            {
-                ["SPOTIFY_API_SESSION_COOKIE_SET_DATE"] = DateTime.UtcNow.ToString("o")
-            }
-        };
-
-        return await UpdateConfig(updateRequest);
-    }
-
-    /// <summary>
     /// Get all Jellyfin users
     /// </summary>
     [HttpGet("export-env")]
@@ -715,12 +570,12 @@ public class ConfigController : ControllerBase
 
         try
         {
-            if (!System.IO.File.Exists(_helperService.GetEnvFilePath()))
+            if (!System.IO.File.Exists(_envFilePath))
             {
                 return NotFound(new { error = ".env file not found" });
             }
 
-            var envContent = System.IO.File.ReadAllText(_helperService.GetEnvFilePath());
+            var envContent = System.IO.File.ReadAllText(_envFilePath);
             var bytes = System.Text.Encoding.UTF8.GetBytes(envContent);
 
             return File(bytes, "text/plain", ".env");

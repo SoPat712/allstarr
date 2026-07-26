@@ -309,21 +309,10 @@ public class ExtensionManagerSecurityTests
             .AddInMemoryCollection(settings)
             .Build();
 
-        var contentRoot = Path.Combine(testRoot, "content");
-        Directory.CreateDirectory(contentRoot);
-        var environment = new Mock<IWebHostEnvironment>();
-        environment.SetupGet(item => item.EnvironmentName).Returns(Environments.Development);
-        environment.SetupGet(item => item.ContentRootPath).Returns(contentRoot);
-        var adminHelper = new AdminHelperService(
-            Mock.Of<ILogger<AdminHelperService>>(),
-            Options.Create(new JellyfinSettings()),
-            environment.Object);
-
         return new ExtensionManager(
             httpClientFactory,
             logger ?? Mock.Of<ILogger<ExtensionManager>>(),
-            configuration,
-            adminHelper);
+            configuration);
     }
 
     private static IHttpClientFactory CreateHttpClientFactory(byte[] package)

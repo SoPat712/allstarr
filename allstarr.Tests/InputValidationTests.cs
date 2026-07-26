@@ -10,33 +10,6 @@ namespace allstarr.Tests;
 public class InputValidationTests
 {
     [Theory]
-    [InlineData("VALID_KEY", true)]
-    [InlineData("VALID_KEY_123", true)]
-    [InlineData("VALID__KEY", true)]
-    [InlineData("_VALID_KEY", true)]
-    [InlineData("VALID-KEY", false)]      // Hyphens not allowed
-    [InlineData("VALID.KEY", false)]      // Dots not allowed
-    [InlineData("VALID KEY", false)]      // Spaces not allowed
-    [InlineData("VALID/KEY", false)]      // Slashes not allowed
-    [InlineData("VALID\\KEY", false)]     // Backslashes not allowed
-    [InlineData("123VALID", false)]       // Cannot start with number
-    [InlineData("", false)]               // Empty not allowed
-    [InlineData("KEY=VALUE", false)]      // Equals not allowed
-    [InlineData("KEY;DROP", false)]       // Semicolon not allowed
-    [InlineData("KEY&VALUE", false)]      // Ampersand not allowed
-    [InlineData("KEY|VALUE", false)]      // Pipe not allowed
-    [InlineData("KEY$VALUE", false)]      // Dollar not allowed
-    [InlineData("KEY`VALUE", false)]      // Backtick not allowed
-    public void IsValidEnvKey_VariousInputs_ValidatesCorrectly(string key, bool expected)
-    {
-        // Act
-        var result = AdminHelperService.IsValidEnvKey(key);
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Theory]
     [InlineData("username", true)]
     [InlineData("user123", true)]
     [InlineData("user_name", true)]
