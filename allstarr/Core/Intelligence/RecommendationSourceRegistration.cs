@@ -4,7 +4,7 @@ namespace allstarr.Core.Intelligence;
 
 public static class RecommendationSourceRegistration
 {
-    public static IServiceCollection AddFirstPartyRecommendationSources(this IServiceCollection services)
+    public static IServiceCollection AddBuiltInRecommendationSources(this IServiceCollection services)
     {
         services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
         services.AddSingleton<IJellyfinInstantMixClient, JellyfinInstantMixClient>();

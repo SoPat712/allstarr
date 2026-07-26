@@ -9,12 +9,12 @@ Clone the repository and install the .NET SDK version pinned by the project. Sta
 ```bash
 git clone https://github.com/SoPat712/allstarr.git
 cd allstarr
-cp .env.example .env
+./allstarr.sh init source
 ```
 
-Create the Postgres password and Allstarr key-ring files using the instructions in [README.md](README.md), review `.env`, then start the development Compose stack described by the checked-in Compose files.
+Review `.env`, then start the single checked-in Compose stack with `./allstarr.sh up`.
 
-For a direct application run, use an explicitly configured local database and persistent paths. SQLite deliberately requires a one-shot bootstrap confirmation for a missing database. Follow [docs/operations/storage.md](docs/operations/storage.md); do not weaken that guard just to make a local run shorter.
+For a direct application run, use an explicitly configured disposable PostgreSQL database and persistent paths. Follow [docs/operations/storage.md](docs/operations/storage.md).
 
 ```bash
 dotnet restore allstarr.sln
@@ -24,12 +24,12 @@ dotnet test allstarr.sln
 
 ## Before You Change Code
 
-Read [OVERHAUL.md](OVERHAUL.md) for the locked product decisions, then read the relevant document under [`docs/steering`](docs/steering/INTRODUCTION.md). Those documents describe boundaries that are easy to break accidentally, including protocol relay behavior, account scope, provider routing, downloads, playlists, scrobbling, storage, and testing.
+Read the [architecture overview](docs/architecture/overview.md) and the owning operations or SDK document for the area you are changing.
 
 In particular:
 
 - one deployment serves one selected proxy protocol;
-- Postgres and SQLite contain control-plane state, never audio bytes;
+- Postgres contains control-plane state, never audio bytes;
 - original library files are read-only inputs;
 - user-owned work needs a verified backend identity and exact tenant scope;
 - provider credentials are secret references resolved just in time;
@@ -58,13 +58,13 @@ Provider and external-gateway tests use local fixtures, fake providers, or mocke
 or live provider calls to the automated suite. Apple gateway tests must not assume wrapper-v2 itself implements the
 Allstarr search/download contract.
 
-Migration work must be checked against SQLite and Postgres. A passing SQLite test does not prove a Postgres migration, type, constraint, or locking claim.
+Migration work must be checked against an explicitly isolated disposable PostgreSQL database.
 
 ## Provider Extensions
 
 Provider SDK packages live outside the core implementation boundary and must declare their hooks, scope, network access, and secret permissions. Use the packaging and verification workflow documented in [docs/extensions/sdk-v1.md](docs/extensions/sdk-v1.md). Do not add an activation shortcut that bypasses checksum, permission review, staged lifecycle, or rollback.
 
-First-party packages should pass the same SDK compatibility suite as third-party packages. Do not auto-enroll users in an external registry.
+Do not bundle provider packages or auto-enroll users in an external registry.
 
 ## Documentation
 

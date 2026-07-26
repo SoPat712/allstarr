@@ -75,22 +75,13 @@ while IFS= read -r file; do compose_files+=("${file}"); done < <(
     find . -maxdepth 1 -type f -name 'docker-compose*.yml' -print | sed 's#^./##' | LC_ALL=C sort
 )
 
-extension_lock_files=(
-    first-party/dist/bundle.lock.json
-    first-party/sources/apple-musickit.lock.json
-    first-party/sources/deezer.lock.json
-    first-party/sources/spotify.lock.json
-)
-
 apple_lock_files=(
-    first-party/sources/apple-musickit.lock.json
     tools/apple-provider/source-lock.json
     sidecars/apple-gateway/uv.lock
 )
 
 migration_digest="$(hash_set migrations "${migration_files[@]}")"
 compose_digest="$(hash_set compose "${compose_files[@]}")"
-extension_digest="$(hash_set extensions "${extension_lock_files[@]}")"
 apple_digest="$(hash_set apple "${apple_lock_files[@]}")"
 package_lock_digest="$(hash_file package-lock.json)"
 
@@ -109,7 +100,6 @@ cat <<EOF
   "digests": {
     "databaseMigrationsSha256": $(json_string "${migration_digest}"),
     "composeFilesSha256": $(json_string "${compose_digest}"),
-    "firstPartyExtensionLocksSha256": $(json_string "${extension_digest}"),
     "appleGatewayLocksSha256": $(json_string "${apple_digest}"),
     "webUiPackageLockSha256": $(json_string "${package_lock_digest}")
   }

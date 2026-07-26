@@ -1,54 +1,40 @@
-# Spotify lyrics sidecar
+# Spotify lyrics service
 
-Spotify lyrics are optional. The normal and AIO installs stay healthy without this service. Add it only when you
-have a Spotify web session cookie and want Spotify to participate in the lyrics route.
+Spotify lyrics is an optional upstream service used only for lyric lookup. It is not Spotify playlist authentication, account discovery, metadata ownership, or playback routing.
 
-The sidecar is pinned by digest, stays on Allstarr's private Docker network, and does not publish a host port. Its
-upstream image currently runs on `linux/amd64`; ARM hosts need Docker's emulation support.
+## Enable
 
-## Add it
-
-Keep the cookie in the stack's host `.env`:
-
-```dotenv
-SPOTIFY_API_SESSION_COOKIE=replace-with-your-sp-dc-cookie
-SPOTIFY_LYRICS_API_URL=http://spotify-lyrics:8080
-```
-
-Then save and start the optional profile with the normal deployment helper:
+Place the required Spotify session cookie in the protected deployment environment, then enable the native profile:
 
 ```bash
 ./allstarr.sh enable spotify-lyrics
 ./allstarr.sh up
-./allstarr.sh status
 ```
 
-The helper remembers the profile, validates the merged Compose configuration, and reuses it during later updates.
+The checked-in Compose file points at a pinned image from `akashrchandran/spotify-lyrics-api`. Allstarr does not vendor that project's source or maintain a forked image.
 
-The `spotify-lyrics` service includes a lightweight local HTTP health check. An unhealthy sidecar removes only
-that lyrics source; it does not prevent Allstarr, Postgres, Valkey, or other providers from starting.
+## Verify
 
-This does not replace Postgres, Valkey, application state, downloads, or kept media. Compose may recreate the
-Allstarr container to attach the endpoint setting, but it reuses the same volumes.
+```bash
+./allstarr.sh status
+./allstarr.sh logs spotify-lyrics
+```
 
-If a legacy `.env` import contains `SPOTIFY_LYRICS_API_URL`, Allstarr imports that URL as a durable runtime setting.
-The WebUI never starts containers or copies the Spotify cookie into a sidecar. The administrator must still add the
-overlay so Docker creates the service and supplies its cookie.
+Provider readiness and lyrics routing are visible in the Sources and Settings surfaces. An unhealthy lyrics service degrades only the capability that depends on it; it must not make playlist discovery or the core proxy unavailable.
 
-## Update or remove it
-
-Normal updates use the saved profile:
+## Update or disable
 
 ```bash
 ./allstarr.sh update
-```
-
-To remove only the optional service:
-
-```bash
 ./allstarr.sh disable spotify-lyrics
 ./allstarr.sh up
 ```
 
-Remove or clear the Spotify lyrics URL in Sources if you do not want Allstarr to probe the absent endpoint. Removing
-the sidecar never removes music or durable Allstarr data.
+Disabling the profile removes the running optional container while preserving Allstarr's durable settings. Re-enable it explicitly when a valid session is available.
+
+## Security
+
+- Keep the session cookie out of Compose YAML, logs, cache keys, and support exports.
+- Do not expose the lyrics service port to the host; Allstarr reaches it on the private Compose network.
+- Do not mount the Docker socket or unrelated state into the service.
+- Treat upstream image updates as dependency changes: review and pin them before release.

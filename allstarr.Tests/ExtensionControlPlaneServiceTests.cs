@@ -205,7 +205,6 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new FirstPartyExtensionPolicy(_configuration),
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
                 new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
             new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
@@ -229,95 +228,6 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var reinstalled = await _service.StageAsync(Package("4.0.0", "runtime"));
         Assert.NotEqual(package.Id, reinstalled.Id);
         Assert.Equal(ExtensionPackageState.ReviewRequired, reinstalled.State);
-    }
-
-    [Fact]
-    public async Task FirstPartyBootstrap_VerifiesAndStagesWithoutAutoApprovingPermissions()
-    {
-        var bundle = Path.Combine(_root, "bundle");
-        Directory.CreateDirectory(bundle);
-        var source = Path.Combine(RepositoryRoot(), "first-party", "providers", "deezer");
-        var archive = FirstPartyExtensionPackages.Build(source, Path.Combine(bundle, "deezer-1.0.0.zip"));
-        var lockPath = Path.Combine(bundle, "bundle.lock.json");
-        File.WriteAllText(lockPath, JsonSerializer.Serialize(new
-        {
-            schemaVersion = 1,
-            sdkVersion = "1",
-            packages = new[] { new
-            {
-                id = "deezer", version = "1.0.0", activation = "ready",
-                archiveFile = Path.GetFileName(archive.Path), archiveSha256 = archive.Sha256,
-                contentSha256 = archive.ContentSha256
-            } }
-        }));
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Extensions:Directory"] = Path.Combine(_root, "extensions"),
-            ["Extensions:FirstPartyBundleLockPath"] = lockPath,
-            ["Extensions:BootstrapFirstPartyBundle"] = "true"
-        }).Build();
-        var controlPlane = new ExtensionControlPlaneService(_factory, new Clock(), configuration);
-        var bootstrapper = new FirstPartyExtensionBootstrapper(new FirstPartyExtensionPolicy(configuration),
-            controlPlane, configuration, NullLogger<FirstPartyExtensionBootstrapper>.Instance);
-
-        await bootstrapper.StartAsync(default);
-        await bootstrapper.StartAsync(default);
-
-        var package = Assert.Single(await controlPlane.ListPackagesAsync("deezer"));
-        Assert.Equal(ExtensionPackageState.ReviewRequired, package.State);
-        var reviews = await controlPlane.ListPermissionReviewsAsync(package.Id);
-        Assert.NotEmpty(reviews);
-        Assert.All(reviews, item => Assert.Equal(ExtensionPermissionDecision.Pending, item.Decision));
-    }
-
-    [Fact]
-    public async Task StartupRestore_UsesLockedFirstPartyReplacementAndDisableRestoresBuiltIn()
-    {
-        var package = await _service.StageAsync(Package("5.0.0", "first-party"));
-        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
-        [
-            new("network", "https://api.example.test/", true),
-            new("secret", "accountToken", true)
-        ]);
-        package = await _service.ActivateAsync(package.Id, package.Revision);
-        var lockPath = Path.Combine(_root, "runtime-bundle.lock.json");
-        File.WriteAllText(lockPath, JsonSerializer.Serialize(new
-        {
-            schemaVersion = 1,
-            sdkVersion = "1",
-            packages = new[] { new
-            {
-                id = package.ExtensionId, version = package.Version, activation = "ready",
-                archiveFile = "fixture-provider.zip", archiveSha256 = package.Sha256,
-                contentSha256 = package.ContentSha256
-            } }
-        }));
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Extensions:Directory"] = Path.Combine(_root, "extensions"),
-            ["Extensions:FirstPartyBundleLockPath"] = lockPath
-        }).Build();
-        var builtIn = new ProviderRegistration(new ProviderDescriptor("fixture-provider", "Built-in fixture",
-            "fallback", ProviderOrigin.BuiltIn, "1", "1",
-            [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata,
-                ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.None, "1")],
-            new ProviderPermissionDescriptor()));
-        var registry = new ProviderRegistry([builtIn]);
-        var clients = new Mock<IHttpClientFactory>();
-        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
-        var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
-            Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new FirstPartyExtensionPolicy(configuration),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
-            new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
-            configuration,
-            NullLogger<ExtensionRuntimeCoordinator>.Instance);
-
-        await coordinator.StartAsync(default);
-        Assert.Equal(ProviderOrigin.Extension, registry.GetRequired("fixture-provider").Origin);
-        await coordinator.DisableAsync(package.Id, package.Revision);
-        Assert.Equal(ProviderOrigin.BuiltIn, registry.GetRequired("fixture-provider").Origin);
     }
 
     private VerifiedExtensionPackage Package(string version, string suffix)

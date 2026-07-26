@@ -211,22 +211,6 @@ public sealed class ProviderRegistryTests
         Assert.False(registry.RemoveExtension("built-in"));
     }
 
-    [Fact]
-    public void VerifiedFirstPartySwitchover_RestoresBuiltInFallbackWhenDisabled()
-    {
-        var builtIn = new ProviderRegistration(Descriptor("first-party"), [new FakeMetadataCapability("first-party")]);
-        var registry = new ProviderRegistry([builtIn]);
-        var extension = new ProviderRegistration(
-            BaseDescriptor("first-party", origin: ProviderOrigin.Extension, entryPoint: "index.js"),
-            [new FakeMetadataCapability("first-party")]);
-
-        registry.RegisterOrReplaceFirstPartyExtension(extension);
-        Assert.Equal(ProviderOrigin.Extension, registry.GetRequired("first-party").Origin);
-        Assert.True(registry.RemoveExtension("first-party"));
-        Assert.Equal(ProviderOrigin.BuiltIn, registry.GetRequired("first-party").Origin);
-        Assert.False(registry.RemoveExtension("first-party"));
-    }
-
     private static ProviderDescriptor Descriptor(
         string id,
         ProviderCapabilitySupportState state = ProviderCapabilitySupportState.Supported,

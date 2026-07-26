@@ -18,7 +18,6 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly IHttpClientFactory _clients;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly ILogger<ExtensionRuntimeCoordinator> _logger;
-    private readonly FirstPartyExtensionPolicy _firstPartyPolicy;
     private readonly ProviderDownloadArtifactResolver _downloadArtifacts;
     private readonly ProviderDownloadWorkspaceOptions _downloadOptions;
     private readonly string _runtimeRoot;
@@ -33,7 +32,6 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         IProviderRegistry readRegistry,
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
-        FirstPartyExtensionPolicy firstPartyPolicy,
         ProviderDownloadArtifactResolver downloadArtifacts,
         ProviderDownloadWorkspaceOptions downloadOptions,
         IConfiguration configuration,
@@ -46,7 +44,6 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         _readRegistry = readRegistry;
         _clients = clients;
         _secrets = secrets;
-        _firstPartyPolicy = firstPartyPolicy;
         _downloadArtifacts = downloadArtifacts;
         _downloadOptions = downloadOptions;
         _logger = logger;
@@ -69,7 +66,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             try
             {
                 var build = await BuildRegistrationAsync(package, cancellationToken);
-                RegisterVerified(build.Registration, package);
+                RegisterVerified(build.Registration);
                 StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
             }
             catch (Exception exception)
@@ -91,7 +88,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         try
         {
             build = await BuildRegistrationAsync(package, cancellationToken);
-            RejectBuiltInCollision(build.Registration.Descriptor.Id, package);
+            RejectBuiltInCollision(build.Registration.Descriptor.Id);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -105,7 +102,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             throw;
         }
         var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
-        RegisterVerified(build.Registration, package);
+        RegisterVerified(build.Registration);
         StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
         return active;
     }
@@ -118,9 +115,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             throw new InvalidOperationException("The active package has no rollback version.");
         var previous = await GetPackageAsync(active.PreviousPackageId.Value, cancellationToken);
         var build = await BuildRegistrationAsync(previous, cancellationToken);
-        RejectBuiltInCollision(build.Registration.Descriptor.Id, previous);
+        RejectBuiltInCollision(build.Registration.Descriptor.Id);
         var restored = await _controlPlane.RollbackAsync(activePackageId, expectedRevision, cancellationToken);
-        RegisterVerified(build.Registration, previous);
+        RegisterVerified(build.Registration);
         StoreSandbox(previous.Id, previous.ExtensionId, build.Sandbox);
         return restored;
     }
@@ -331,22 +328,15 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                ?? throw new KeyNotFoundException("Extension package not found.");
     }
 
-    private void RejectBuiltInCollision(string extensionId, ExtensionPackageRecord package)
+    private void RejectBuiltInCollision(string extensionId)
     {
-        if (_readRegistry.TryGet(extensionId, out var current) && current!.Origin != ProviderOrigin.Extension &&
-            !_firstPartyPolicy.IsApprovedReplacement(package))
+        if (_readRegistry.TryGet(extensionId, out var current) && current!.Origin != ProviderOrigin.Extension)
             throw new ExtensionSdkValidationException("An extension cannot replace a built-in provider.");
     }
 
-    private void RegisterVerified(ProviderRegistration registration, ExtensionPackageRecord package)
+    private void RegisterVerified(ProviderRegistration registration)
     {
-        if (_readRegistry.TryGet(registration.Descriptor.Id, out var current) && current!.Origin != ProviderOrigin.Extension)
-        {
-            if (!_firstPartyPolicy.IsApprovedReplacement(package))
-                throw new ExtensionSdkValidationException("An extension cannot replace a built-in provider.");
-            _registry.RegisterOrReplaceFirstPartyExtension(registration);
-            return;
-        }
+        RejectBuiltInCollision(registration.Descriptor.Id);
         _registry.RegisterOrReplaceExtension(registration);
     }
 

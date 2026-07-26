@@ -29,7 +29,6 @@ state-transfers/
 
 apis/
 docs/
-first-party/
 tools/
 node_modules/
 package-lock.json

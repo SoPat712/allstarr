@@ -12,21 +12,20 @@ public sealed class PlaylistDetailStreamingContractTests
     [Fact]
     public void SynchronizationSummary_GroupsCoverageAndTiming()
     {
-        Assert.Contains("playlist-operation-group coverage-group", _script, StringComparison.Ordinal);
-        Assert.Contains("playlist-operation-group timing-group", _script, StringComparison.Ordinal);
-        Assert.Contains("playlist-operation-metrics", _script, StringComparison.Ordinal);
-        Assert.Contains("grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr)", _workspaceStyles, StringComparison.Ordinal);
-        Assert.Contains(".playlist-operation-group {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr)", _workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("playlist-operation-summary playlist-operation-metrics", _script, StringComparison.Ordinal);
+        Assert.Contains("<small>Local</small>", _script, StringComparison.Ordinal);
+        Assert.Contains("<small>External</small>", _script, StringComparison.Ordinal);
+        Assert.Contains("<small>Unmatched</small>", _script, StringComparison.Ordinal);
+        Assert.Contains("<small>Source refreshed</small>", _script, StringComparison.Ordinal);
+        Assert.Contains("<small>Last synced</small>", _script, StringComparison.Ordinal);
+        Assert.Contains("<small>Next rematch</small>", _script, StringComparison.Ordinal);
+        Assert.Contains("grid-template-columns: repeat(6, minmax(0, 1fr))", _workspaceStyles, StringComparison.Ordinal);
         Assert.Contains("grid-column: 1 / -1", _workspaceStyles, StringComparison.Ordinal);
-        Assert.Contains(".playlist-operation-heading", _workspaceStyles, StringComparison.Ordinal);
         var tabletBreakpoint = _responsiveStyles.IndexOf("@media (max-width: 900px)", StringComparison.Ordinal);
-        var tabletGroup = _responsiveStyles.IndexOf(".playlist-operation-group", tabletBreakpoint, StringComparison.Ordinal);
-        var tabletGroupEnd = _responsiveStyles.IndexOf('}', tabletGroup);
-        Assert.True(tabletBreakpoint >= 0 && tabletGroup > tabletBreakpoint && tabletGroupEnd > tabletGroup);
-        Assert.Contains(
-            "grid-template-columns: minmax(140px, .72fr) minmax(0, 1.28fr)",
-            _responsiveStyles[tabletGroup..tabletGroupEnd],
-            StringComparison.Ordinal);
+        var tabletSummary = _responsiveStyles.IndexOf(".playlist-operation-summary", tabletBreakpoint, StringComparison.Ordinal);
+        var tabletSummaryEnd = _responsiveStyles.IndexOf('}', tabletSummary);
+        Assert.True(tabletBreakpoint >= 0 && tabletSummary > tabletBreakpoint && tabletSummaryEnd > tabletSummary);
+        Assert.Contains("grid-template-columns: minmax(0, 1fr)", _responsiveStyles[tabletSummary..tabletSummaryEnd], StringComparison.Ordinal);
         var compactBreakpoint = _responsiveStyles.IndexOf("@media (max-width: 620px)", StringComparison.Ordinal);
         var compactSummary = _responsiveStyles.IndexOf(".playlist-operation-summary", compactBreakpoint, StringComparison.Ordinal);
         var compactSummaryEnd = _responsiveStyles.IndexOf('}', compactSummary);

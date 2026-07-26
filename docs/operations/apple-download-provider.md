@@ -1,7 +1,7 @@
 # Apple download provider
 
-Apple downloads are optional. Standard Compose and AIO do not start them. The optional
-`docker-compose.apple.yml` profile adds Allstarr's Apple gateway, GAMDL 3.8.2, and a locally built, source-locked
+Apple downloads are optional. The `apple` profile in `docker-compose.yml` adds Allstarr's Apple gateway, GAMDL
+3.8.2, and a locally built, source-locked
 wrapper-v2 0.0.2 service. It does not contain or download Apple code.
 
 The URL must point to a gateway that wraps GAMDL and wrapper-v2 and implements the API contract Allstarr expects.

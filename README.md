@@ -22,7 +22,7 @@ cd allstarr
 ./allstarr.sh init
 ```
 
-Edit `.env`. At minimum, select `BACKEND_TYPE`, set the matching backend URL, and review the image tag and mounted paths. Jellyfin server-side library operations also need its API key and user ID.
+Edit `.env`. Select `BACKEND_TYPE` and review the image tag, listeners, security opt-ins, and mounted paths. Complete the backend URL, credentials, library, and user mapping through onboarding after startup.
 
 ```bash
 ./allstarr.sh up
@@ -43,17 +43,7 @@ run `./allstarr.sh mode source`, then `./allstarr.sh up`. For later source updat
 `./allstarr.sh update`; it refuses tracked local changes, fast-forwards the current tracked branch, rebuilds, and
 recreates the services. The same volumes and optional-provider profiles remain attached in either mode.
 
-The standard stack is the smaller, recommended default. The AIO override mounts the checksum-locked offline
-first-party package bundle, but it does not force optional provider sidecars on anyone:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.aio.yml up -d
-```
-
-The bundle lock is still authoritative. A bundled package marked blocked is not staged or activated merely because
-the AIO files are mounted.
-
-Apple downloads are optional and are not bundled with Standard or AIO. The Apple profile builds the repository's
+Apple downloads are optional and are not part of the default installation. The Apple profile builds the repository's
 small gateway with GAMDL 3.8.2 and the official wrapper-v2 0.0.2 source. Allstarr never supplies Apple binaries, so
 the operator provides one legally obtained compatible APK/APKM through Sources > Apple download, then runs
 `./allstarr.sh install-apple x86_64`. Removing the profile disables Apple download routes without
@@ -67,7 +57,7 @@ endpoint URL, but it cannot start the sidecar or pass a cookie to it.
 
 Client traffic uses `http://localhost:5274`. The separate dashboard is on `http://localhost:5275`. Standard Compose publishes the dashboard on host loopback and only trusts the container gateway needed to cross that mapping. LAN or reverse-proxy access requires `ADMIN_BIND_ADDRESS=0.0.0.0`, `ADMIN_BIND_ANY_IP=true`, and an explicit `ADMIN_TRUSTED_SUBNETS` CIDR. Please keep it behind a private network, VPN, or authenticated access proxy. This software has meaningful access to your media server and provider accounts.
 
-The complete install, backup, restore, and rollback instructions live in [the storage runbook](docs/operations/storage.md). Configuration keys are explained in [CONFIGURATION.md](CONFIGURATION.md).
+The complete install, backup, restore, and rollback instructions live in [the storage runbook](docs/operations/storage.md). Configuration keys are explained in [the configuration guide](docs/operations/configuration.md).
 
 ## What It Does
 
@@ -98,18 +88,17 @@ A database backup does not contain your songs or encryption key ring. Back up th
 
 ## Clients And Backends
 
-Allstarr supports Jellyfin clients and Subsonic/OpenSubsonic clients through the selected deployment surface. Client behavior varies, especially around search, offline indexing, playlists, and lyrics. See [CLIENTS.md](CLIENTS.md) for the tested list and reporting checklist.
+Allstarr supports Jellyfin clients and Subsonic/OpenSubsonic clients through the selected deployment surface. Client behavior varies, especially around search, offline indexing, playlists, and lyrics. See [client compatibility](docs/operations/client-compatibility.md) for the tested list and reporting checklist.
 
 ## Documentation
 
-- [Architecture](ARCHITECTURE.md)
-- [Configuration](CONFIGURATION.md)
-- [Client compatibility](CLIENTS.md)
+- [Architecture](docs/architecture/overview.md)
+- [Configuration](docs/operations/configuration.md)
+- [Client compatibility](docs/operations/client-compatibility.md)
 - [Storage operations](docs/operations/storage.md)
 - [Deployment profiles and optional services](docs/operations/deployment-profiles.md)
 - [Extension SDK](docs/extensions/sdk-v1.md)
 - [Contributing](CONTRIBUTING.md)
-- [Implementation charter and phase history](OVERHAUL.md)
 
 ## Why “Allstarr”?
 

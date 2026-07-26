@@ -30,6 +30,7 @@ public static class RuntimeEnvConfiguration
             ["CORS_ALLOWED_METHODS"] = ["Cors:AllowedMethods"],
             ["CORS_ALLOWED_HEADERS"] = ["Cors:AllowedHeaders"],
             ["CORS_ALLOW_CREDENTIALS"] = ["Cors:AllowCredentials"],
+            ["EXTENSIONS_ALLOW_REMOTE_INSTALL"] = ["Extensions:AllowRemoteInstall"],
 
             ["SUBSONIC_URL"] = ["Subsonic:Url"],
             ["ALLSTARR_STORAGE_PROVIDER"] = ["Storage:Provider"],

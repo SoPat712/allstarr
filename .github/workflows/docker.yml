@@ -87,14 +87,17 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
 
-      - name: Test first-party bundle integrity
-        run: python -m unittest discover -s tools/tests -v
+      - name: Restore WebUI tooling
+        run: npm ci
 
       - name: Verify C# formatting and analyzers
         run: dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal
 
       - name: Build
         run: dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
+
+      - name: Verify WebUI contracts
+        run: npm run check:webui
 
       - name: Test
         run: dotnet test --configuration Release --no-build --verbosity normal
@@ -109,9 +112,8 @@ jobs:
       - name: Validate Compose contracts
         run: |
           docker compose -f docker-compose.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.apple.yml config --quiet
+          docker compose -f docker-compose.yml --profile spotify-lyrics config --quiet
+          docker compose -f docker-compose.yml --profile apple config --quiet
 
   docker:
     needs: build-and-test
@@ -154,25 +156,59 @@ jobs:
 
           smoke_dir="${RUNNER_TEMP}/allstarr-release-smoke"
           container_name="allstarr-release-smoke"
-          mkdir -p "${smoke_dir}/state"
-          printf '%s\n' 'create-new-allstarr-database' > "${smoke_dir}/sqlite-bootstrap-confirmation"
+          postgres_name="allstarr-release-smoke-postgres"
+          network_name="allstarr-release-smoke"
+          mkdir -p "${smoke_dir}/state" "${smoke_dir}/downloads" "${smoke_dir}/kept"
+          printf '%s\n' 'ci-postgres-password' > "${smoke_dir}/postgres-password"
+          key="$(openssl rand -base64 32)"
+          printf '{"activeKeyId":"key-1","keys":{"key-1":"%s"}}\n' "${key}" > "${smoke_dir}/allstarr-keyring.json"
+          chmod 600 "${smoke_dir}/postgres-password" "${smoke_dir}/allstarr-keyring.json"
 
           cleanup() {
             docker logs "${container_name}" || true
             docker rm --force "${container_name}" >/dev/null 2>&1 || true
+            docker logs "${postgres_name}" || true
+            docker rm --force "${postgres_name}" >/dev/null 2>&1 || true
+            docker network rm "${network_name}" >/dev/null 2>&1 || true
             rm -rf "${smoke_dir}"
           }
           trap cleanup EXIT
 
+          docker network create "${network_name}"
+          docker run --detach \
+            --name "${postgres_name}" \
+            --network "${network_name}" \
+            --env 'POSTGRES_DB=allstarr' \
+            --env 'POSTGRES_USER=allstarr' \
+            --env 'POSTGRES_PASSWORD=ci-postgres-password' \
+            postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
+
+          for attempt in {1..30}; do
+            if docker exec "${postgres_name}" pg_isready -U allstarr -d allstarr >/dev/null; then
+              break
+            fi
+            if [ "${attempt}" -eq 30 ]; then
+              echo 'Smoke-test PostgreSQL did not become ready.' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
           docker run --detach \
             --name "${container_name}" \
-            --volume "${smoke_dir}:/smoke" \
+            --network "${network_name}" \
+            --volume "${smoke_dir}/state:/app/state" \
+            --volume "${smoke_dir}/downloads:/app/downloads" \
+            --volume "${smoke_dir}/kept:/app/kept" \
+            --volume "${smoke_dir}/postgres-password:/run/secrets/postgres_password:ro" \
+            --volume "${smoke_dir}/allstarr-keyring.json:/run/secrets/allstarr_keyring:ro" \
             --env 'ASPNETCORE_ENVIRONMENT=Production' \
-            --env 'Redis__Enabled=false' \
-            --env 'Readiness__RequireSecretKeyRing=false' \
-            --env 'Storage__Provider=Sqlite' \
-            --env 'Storage__ConnectionString=Data Source=/smoke/state/allstarr.db' \
-            --env 'Storage__SqliteBootstrapConfirmationFile=/smoke/sqlite-bootstrap-confirmation' \
+            --env 'Backend__Type=Jellyfin' \
+            --env 'Storage__Provider=Postgres' \
+            --env "Storage__ConnectionString=Host=${postgres_name};Port=5432;Database=allstarr;Username=allstarr;SSL Mode=Disable" \
+            --env 'Storage__PasswordFile=/run/secrets/postgres_password' \
+            --env 'Storage__AutoMigrate=true' \
+            --env 'Secrets__KeyRingPath=/run/secrets/allstarr_keyring' \
             allstarr:release-smoke
 
           for attempt in {1..60}; do

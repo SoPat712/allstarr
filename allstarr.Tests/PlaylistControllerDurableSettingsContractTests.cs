@@ -22,7 +22,7 @@ public sealed class PlaylistControllerDurableSettingsContractTests
         Assert.Contains("playlistMetadata?.ImageUrl", Source, StringComparison.Ordinal);
         Assert.Contains("playlistInfo[\"artworkSource\"] = !string.IsNullOrWhiteSpace", Source, StringComparison.Ordinal);
         Assert.Contains("? \"playlist\"", Source, StringComparison.Ordinal);
-        Assert.Contains(": \"track_fallback\"", Source, StringComparison.Ordinal);
+        Assert.Contains("? \"track_fallback\"", Source, StringComparison.Ordinal);
         Assert.Contains("[\"matchedTracks\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"unmatchedTracks\"]", Source, StringComparison.Ordinal);
         Assert.Contains("[\"matchPercent\"]", Source, StringComparison.Ordinal);

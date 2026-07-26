@@ -1,9 +1,0 @@
-# Local source-build override for the standard PostgreSQL deployment.
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-
-services:
-  allstarr:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: allstarr:local

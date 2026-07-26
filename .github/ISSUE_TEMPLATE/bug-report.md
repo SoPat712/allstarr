@@ -22,7 +22,7 @@ Steps to reproduce the behavior:
 
 ## Deployment
 
-- Install type: [Standard Compose / AIO Compose / local development / other]
+- Install type: [Compose release / Compose source / local development / other]
 - Allstarr image tag or commit:
 - Host architecture: [amd64 / arm64]
 - Backend: [Jellyfin / Navidrome / other Subsonic server]
@@ -47,7 +47,7 @@ Add any other context, screenshots, or surrounding details here.
 - Storage Mode: [e.g. Cache]
 - Download Mode: [e.g. Track]
 - Storage: [Postgres version and readiness state]
-- Valkey Enabled: [e.g. Yes]
+- PostgreSQL readiness: [Ready / Degraded / Unavailable]
 - Relevant job or correlation ID:
 - Playlist mode, if relevant: [virtual / materialized / hybrid]
 - Scrobbling or intelligence enabled: [e.g. Disabled]

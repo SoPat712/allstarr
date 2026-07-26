@@ -96,7 +96,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  provider-contracts:
+  apple-contracts:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -106,9 +106,6 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
-
-      - name: Test first-party bundle integrity
-        run: python -m unittest discover -s tools/tests -v
 
       - name: Test Apple gateway contracts
         working-directory: sidecars/apple-gateway
@@ -128,7 +125,5 @@ jobs:
           SPOTIFY_API_SESSION_COOKIE: ci-placeholder
         run: |
           docker compose -f docker-compose.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.aio.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.spotify-lyrics.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.apple.yml config --quiet
+          docker compose -f docker-compose.yml --profile spotify-lyrics config --quiet
+          docker compose -f docker-compose.yml --profile apple config --quiet

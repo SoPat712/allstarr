@@ -69,8 +69,10 @@ public sealed class FreshInstallContractTests
         Assert.Contains("ALLSTARR_KEYRING_FILE=./secrets/allstarr-keyring.json", example, StringComparison.Ordinal);
         Assert.DoesNotContain("VALKEY_MAX_MEMORY", example, StringComparison.Ordinal);
         Assert.DoesNotContain("REDIS_ENABLED", example, StringComparison.Ordinal);
-        Assert.Contains("SUBSONIC_URL=http://host.docker.internal:4533", example, StringComparison.Ordinal);
-        Assert.Contains("JELLYFIN_URL=http://host.docker.internal:8096", example, StringComparison.Ordinal);
+        Assert.Contains("BACKEND_TYPE=Jellyfin", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUBSONIC_URL=", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("JELLYFIN_URL=", example, StringComparison.Ordinal);
+        Assert.DoesNotContain("JELLYFIN_API_KEY=", example, StringComparison.Ordinal);
         Assert.Contains("KEPT_PATH=./kept", example, StringComparison.Ordinal);
         Assert.DoesNotContain("REDIS_DATA_PATH", example, StringComparison.Ordinal);
         Assert.DoesNotContain("SPOTIFY_IMPORT_PLAYLIST_IDS", example, StringComparison.Ordinal);

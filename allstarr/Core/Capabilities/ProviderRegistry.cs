@@ -27,7 +27,6 @@ public interface IProviderRegistry
 public interface IDynamicProviderRegistry
 {
     void RegisterOrReplaceExtension(ProviderRegistration registration);
-    void RegisterOrReplaceFirstPartyExtension(ProviderRegistration registration);
     bool RemoveExtension(string providerId);
 }
 
@@ -49,7 +48,6 @@ public sealed record ProviderRegistration
 public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegistry
 {
     private readonly object _mutationLock = new();
-    private readonly Dictionary<string, ProviderRegistration> _firstPartyFallbacks = new(StringComparer.Ordinal);
     private RegistrySnapshot _snapshot;
 
     public ProviderRegistry(IEnumerable<ProviderRegistration> registrations)
@@ -109,23 +107,6 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
         }
     }
 
-    public void RegisterOrReplaceFirstPartyExtension(ProviderRegistration registration)
-    {
-        var validated = ProviderRegistrationValidator.Validate(registration);
-        if (validated.Descriptor.Origin != ProviderOrigin.Extension)
-            throw new InvalidOperationException("Dynamic provider registrations must be extension-owned.");
-        lock (_mutationLock)
-        {
-            var snapshot = _snapshot;
-            if (snapshot.Registrations.TryGetValue(validated.Descriptor.Id, out var current) &&
-                current.Descriptor.Origin != ProviderOrigin.Extension)
-                _firstPartyFallbacks.TryAdd(validated.Descriptor.Id, current);
-            var updated = snapshot.Registrations.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-            updated[validated.Descriptor.Id] = validated;
-            Volatile.Write(ref _snapshot, BuildSnapshot(updated.Values));
-        }
-    }
-
     public bool RemoveExtension(string providerId)
     {
         var id = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
@@ -136,7 +117,6 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
                 return false;
             var updated = snapshot.Registrations.Where(item => item.Key != id)
                 .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-            if (_firstPartyFallbacks.Remove(id, out var fallback)) updated[id] = fallback;
             Volatile.Write(ref _snapshot, BuildSnapshot(updated.Values));
             return true;
         }

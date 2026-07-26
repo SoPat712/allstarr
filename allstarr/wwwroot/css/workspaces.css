@@ -97,8 +97,7 @@
 .injected-playlist-dialog .playlist-track-table {
     flex: 1 1 auto;
     min-height: 180px;
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
+    overflow: hidden auto !important;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
     gap: 0;
@@ -163,8 +162,7 @@
     }
 
     .injected-playlist-dialog .playlist-track-table {
-        overflow-x: hidden;
-        overflow-y: auto;
+        overflow: hidden auto;
     }
 }
 

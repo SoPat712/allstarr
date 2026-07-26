@@ -1,126 +1,87 @@
 # Deployment profiles
 
-Beta release candidates must satisfy the
-[version 3.1 beta release checklist](beta-release-checklist.md) before their
-image is published or promoted.
-
-`allstarr.sh` is the normal Compose entry point. It keeps Standard small, remembers optional services, validates the
-merged Compose model before starting it, and never deletes volumes.
+`allstarr.sh` is the supported install and update entry point. It wraps the single checked-in `docker-compose.yml`, validates the resulting Compose model, remembers explicitly enabled optional profiles, and does not delete volumes.
 
 ## First install
 
 ```bash
 ./allstarr.sh init
-```
-
-This copies `.env.example` when needed, creates the media directories, and generates the Postgres password and
-Allstarr encryption key ring with owner-only permissions. Edit `.env`, then start the core stack:
-
-```bash
+# edit .env and protected files if required
 ./allstarr.sh up
 ```
 
-The default `release` mode uses reviewed published images. To run the checked-out commit instead:
+The default release mode uses the configured published image. Source mode builds the checked-out tree:
 
 ```bash
 ./allstarr.sh mode source
 ./allstarr.sh up
 ```
 
-Source mode includes `docker-compose.dev.yml` automatically. Switch back with `./allstarr.sh mode release`.
+Switch back with `./allstarr.sh mode release`.
 
-## Optional services
+## Default stack
 
-Spotify lyrics needs only its cookie in the protected `.env`:
+The default stack contains:
+
+- PostgreSQL 18 with a health check and private password file.
+- Allstarr with the state, cache, download, kept, Apple upload, and key-ring mounts it owns.
+
+There is no SQLite, Redis, Valkey, AIO image, conversion container, or Compose overlay in the supported topology.
+
+## Optional profiles
+
+Spotify lyrics uses the pinned upstream image already declared in the native `spotify-lyrics` profile:
 
 ```bash
 ./allstarr.sh enable spotify-lyrics
 ./allstarr.sh up
 ```
 
-Apple needs a legally obtained Apple Music Android 3.6.0-beta build 1109 APK/APKM. Upload it in Sources > Apple
-download, then Allstarr verifies every native library against the official wrapper-v2 lock before it will build:
+Apple download requires a legally obtained supported Apple Music Android package. Upload it through the Apple source setup, then run:
 
 ```bash
 ./allstarr.sh install-apple x86_64
 ```
 
-Use `arm64-v8a` instead of `x86_64` on an ARM64 Docker host. Finish Apple login and 2FA in the WebUI. The Apple
-download login is separate from every user's Apple MusicKit account.
+Use `arm64-v8a` on an ARM64 Docker host. The script verifies the staged package and upstream wrapper inputs before enabling the native `apple` profile. Allstarr distributes its own thin integration layer, not the upstream provider implementation or Apple package.
 
-An existing installation can pass its staged library directory instead of the APK/APKM. The same upstream hashes
-must pass before the profile is enabled:
+See [Spotify lyrics](spotify-lyrics-sidecar.md) and [Apple download](apple-download-provider.md).
 
-```bash
-./allstarr.sh install-apple /backup/apple_libs x86_64
-```
-
-The AIO override remains an offline first-party extension bundle. It is not an everything-in-one image and does not
-quietly enable provider accounts or sidecars.
+## Update
 
 ```bash
-./allstarr.sh enable aio
-./allstarr.sh up
+./allstarr.sh update
 ```
 
-## Updates
+Release mode pulls the configured images and recreates the active profiles. Source mode requires a clean tracked tree, fast-forwards the checkout, rebuilds, and recreates the active profiles. `up` does not pull repository changes.
+
+Use `upgrade` when a backup should be taken before the update:
 
 ```bash
 ./allstarr.sh upgrade
 ```
 
-`upgrade` briefly stops the stack, saves configuration, secrets, all named data volumes, mappings, and playlist
-caches to a private archive under `allstarr-backups/`, then updates and restarts. Use `./allstarr.sh backup` when
-you want the same portable export without upgrading.
-
-To restore the export on this or a freshly initialized host:
+## Backup and restore
 
 ```bash
-./allstarr.sh restore /path/to/allstarr-upgrade-20260718T221125Z.tar.gz --confirm-replace
+./allstarr.sh backup
+./allstarr.sh restore /path/to/archive.tar.gz --confirm-replace
 ```
 
-Restore rejects unexpected archive paths and links, stops the destination stack, and first writes a private
-rollback export under `allstarr-backups/pre-restore/`. It then restores the deployment configuration, encryption
-keyring, provider profiles, database, mappings, playlist caches, and other application state. The explicit
-`--confirm-replace` argument is required because the destination state is replaced. Downloaded and kept music are
-host-mounted folders and are not copied or replaced.
+Restore validates the archive, requires explicit replacement confirmation, and creates a pre-restore backup. PostgreSQL, configuration, the key ring, and enabled profile state have different recovery roles; follow [the storage runbook](storage.md). Downloaded and kept media remain host-mounted data and require their own backup policy.
 
-In release mode, the update pulls reviewed images and rebuilds the repository-owned Apple gateway only when that
-profile is enabled. In source mode, `update` refuses tracked local changes, runs `git pull --ff-only`, then rebuilds
-the Allstarr source and enabled Apple gateway. The private wrapper image is rebuilt only by `prepare-apple`, when
-its verified inputs may have changed. Both modes recreate the saved profile and show the resulting containers.
-`up` does not run `git pull`, and neither command removes Postgres, Valkey, Allstarr state, media, or
-provider-session volumes.
-
-Use `./allstarr.sh status` to see the deployment mode and active profile, and `./allstarr.sh logs SERVICE` for a bounded starting log
-window followed by new events.
-
-## Removing and re-adding a service
+## Operations
 
 ```bash
+./allstarr.sh status
+./allstarr.sh logs allstarr
 ./allstarr.sh disable spotify-lyrics
 ./allstarr.sh disable apple
-./allstarr.sh up
+./allstarr.sh down
 ```
 
-Disabling a profile removes its containers on the next `up` but keeps its volumes and durable Allstarr settings.
-Re-enable Spotify lyrics with `enable spotify-lyrics`; re-enable Apple by running `install-apple` again or adding `apple` to the
-local `.allstarr-profiles` file after the locked wrapper context is present.
+Disabling an optional profile removes its running containers on the next reconciliation but preserves its durable volumes and Allstarr configuration. Re-enable it explicitly when needed.
 
-## Adding another sidecar
+## Adding future optional integrations
 
-Keep custom services in a separate Compose override. Give the service a fixed image digest or locked build source,
-join the existing `allstarr` network, publish no host ports unless an operator truly needs them, persist only the
-state it owns, and point Allstarr at its private service URL. Do not mount the Docker socket into Allstarr or a
-provider. Do not put provider source pulls in container startup.
-
-Before using a new override:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.my-provider.yml config --quiet
-docker compose -f docker-compose.yml -f docker-compose.my-provider.yml up -d
-```
-
-An extension package is different from a sidecar. Provider SDK packages are installed through the WebUI registry
-flow, where checksum, manifest, permissions, settings, health, activation, rollback, and uninstall state are
-reviewed. See [Extension SDK v1](../extensions/sdk-v1.md).
+A future integration belongs in the single Compose file behind an explicit profile and an `allstarr.sh` command. Pin the upstream image or verified source, publish no unnecessary host ports, persist only owned state, and keep the Docker socket out of application containers. Do not vendor or redistribute upstream implementation code when Allstarr only needs an integration layer.

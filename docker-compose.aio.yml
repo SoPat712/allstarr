@@ -1,7 +1,0 @@
-services:
-  allstarr:
-    environment:
-      Extensions__BootstrapFirstPartyBundle: "true"
-      Extensions__FirstPartyBundleLockPath: /app/first-party-bundle/bundle.lock.json
-    volumes:
-      - ./first-party/dist:/app/first-party-bundle:ro

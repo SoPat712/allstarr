@@ -25,7 +25,7 @@ public sealed class LibraryTablesResponsiveDesignContractTests
         var script = File.ReadAllText(Path.Combine(root, "allstarr", "wwwroot", "js", "webui.js"));
 
         Assert.Contains("No playlists yet.", script, StringComparison.Ordinal);
-        Assert.Contains("Provider links and existing injected playlists live in one workspace.", script, StringComparison.Ordinal);
+        Assert.Contains("Add a playlist to choose a source and media-server target.", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Imported configuration", script, StringComparison.Ordinal);
         Assert.Contains("No mappings found.", script, StringComparison.Ordinal);
         Assert.Contains("Review match", script, StringComparison.Ordinal);

@@ -39,7 +39,7 @@ Add any other context or screenshots about the feature request here.
 - Storage Mode: [e.g. Cache]
 - Download Mode: [e.g. Track]
 - Storage: [Postgres version and readiness state]
-- Valkey Enabled: [e.g. Yes]
+- PostgreSQL readiness: [Ready / Degraded / Unavailable]
 - Playlist mode, if relevant: [virtual / materialized / hybrid]
 - Scrobbling or intelligence enabled: [e.g. Disabled]
 - Provider readiness: [Ready / Needs Config / Degraded / Unknown]

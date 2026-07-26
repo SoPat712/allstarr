@@ -47,7 +47,7 @@ public sealed class InjectedPlaylistResponsiveDesignContractTests
         Assert.Contains("syncSegmentedControls()", script, StringComparison.Ordinal);
         Assert.Contains("--tab-indicator-width", script, StringComparison.Ordinal);
         Assert.Contains("grid-template-rows: auto minmax(0, 1fr)", workspaceStyles, StringComparison.Ordinal);
-        Assert.Contains("overflow-y: auto", workspaceStyles, StringComparison.Ordinal);
+        Assert.Contains("overflow: hidden auto", workspaceStyles, StringComparison.Ordinal);
         Assert.Contains(".segmented-ready::before", designStyles, StringComparison.Ordinal);
         Assert.Contains("prefers-reduced-motion: reduce", designStyles, StringComparison.Ordinal);
     }

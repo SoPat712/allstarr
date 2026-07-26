@@ -1,122 +1,192 @@
+---
 name: allstarr
-
 services:
   postgres:
     image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-allstarr}
-      POSTGRES_USER: ${POSTGRES_USER:-allstarr}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: "${POSTGRES_DB:-allstarr}"
+      POSTGRES_USER: "${POSTGRES_USER:-allstarr}"
+      POSTGRES_PASSWORD_FILE: "/run/secrets/postgres_password"
     secrets:
-      - postgres_password
+    - postgres_password
     volumes:
-      - postgres-data:/var/lib/postgresql
+    - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 20s
     networks:
-      - allstarr
+    - allstarr
     security_opt:
-      - no-new-privileges:true
-
+    - no-new-privileges:true
   allstarr:
-    image: ${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.1.0-beta.1}
+    image: "${ALLSTARR_IMAGE:-ghcr.io/sopat712/allstarr:3.1.0-beta.1}"
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_PORT:-5274}:8080"
-      # The administration surface is loopback-only by default. Remote administration
-      # requires BOTH ADMIN_BIND_ADDRESS=0.0.0.0 and ADMIN_BIND_ANY_IP=true; restrict it
-      # further with ADMIN_TRUSTED_SUBNETS and a host firewall or reverse proxy.
-      - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-5275}:5275"
+    - "${PROXY_BIND_ADDRESS:-0.0.0.0}:${PROXY_PORT:-5274}:8080"
+    - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-5275}:5275"
     extra_hosts:
-      - host.docker.internal:host-gateway
+    - host.docker.internal:host-gateway
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      # Backend selection is deployment-owned. Keep this explicit so rebuilding or
-      # updating the container cannot fall through to an image-level default. The
-      # selected media server's bootstrap endpoint and Jellyfin service credential
-      # remain deployment-owned as well; product behavior belongs in PostgreSQL.
-      Backend__Type: ${BACKEND_TYPE:-Jellyfin}
-      Jellyfin__Url: ${JELLYFIN_URL:-}
-      Jellyfin__ApiKey: ${JELLYFIN_API_KEY:-}
-      Jellyfin__UserId: ${JELLYFIN_USER_ID:-}
-      Jellyfin__ClientUsername: ${JELLYFIN_CLIENT_USERNAME:-allstarr}
-      Jellyfin__LibraryId: ${JELLYFIN_LIBRARY_ID:-}
-      Subsonic__Url: ${SUBSONIC_URL:-}
-
-      # Bootstrap and network security. Product, provider, account, matching, retention,
-      # and feature settings are persisted through Allstarr's PostgreSQL settings store.
-      Admin__BindAnyIp: ${ADMIN_BIND_ANY_IP:-false}
-      Admin__TrustedSubnets: ${ADMIN_TRUSTED_SUBNETS:-}
-      Admin__RedactSensitiveValues: ${ADMIN_REDACT_SENSITIVE_VALUES:-false}
-      Admin__Containerized: "true"
+      Admin__Containerized: 'true'
       Admin__ContainerGateway: auto
-      CORS__ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-      CORS__ALLOWED_METHODS: ${CORS_ALLOWED_METHODS:-}
-      CORS__ALLOWED_HEADERS: ${CORS_ALLOWED_HEADERS:-}
-      CORS__ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
-
       Storage__Provider: Postgres
-      Storage__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-allstarr};Username=${POSTGRES_USER:-allstarr};Include Error Detail=false
-      Storage__PasswordFile: /run/secrets/postgres_password
-      Storage__AutoMigrate: ${STORAGE_AUTO_MIGRATE:-true}
-      Storage__BackupDirectory: /app/state/backups
-      Storage__EnforceMutationGuard: "true"
-      Secrets__KeyRingPath: /run/secrets/allstarr_keyring
-      Readiness__RequireSecretKeyRing: "true"
-      Readiness__RequiredDirectories__0: /app/state
-      Readiness__RequiredDirectories__1: /app/downloads
-      Readiness__RequiredDirectories__2: /app/kept
-
-      Library__DownloadPath: /app/downloads
-      Library__KeptPath: /app/kept
-      Extensions__Directory: /app/state/extensions
-      Extensions__AllowRemoteInstall: ${EXTENSIONS_ALLOW_REMOTE_INSTALL:-true}
-      Admin__SessionStorePath: /app/state/admin-sessions.protected
-      Diagnostics__EndpointUsageDirectory: /app/state/endpoint-usage
-
-      AppleDownload__SetupUploadDirectory: /app/apple-upload
+      Storage__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-allstarr};Username=${POSTGRES_USER:-allstarr};Include
+        Error Detail=false
+      Storage__PasswordFile: "/run/secrets/postgres_password"
+      Storage__AutoMigrate: "${STORAGE_AUTO_MIGRATE:-true}"
+      Storage__BackupDirectory: "/app/state/backups"
+      Storage__EnforceMutationGuard: 'true'
+      Secrets__KeyRingPath: "/run/secrets/allstarr_keyring"
+      Library__DownloadPath: "/app/downloads"
+      Library__KeptPath: "/app/kept"
+      Extensions__Directory: "/app/state/extensions"
+      AppleDownload__SetupUploadDirectory: "/app/apple-upload"
+      SpotifyApi__LyricsApiUrl: "${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}"
+      AppleDownload__BaseUrl: "${APPLE_DOWNLOAD_BASE_URL:-http://apple-gateway:8000}"
     secrets:
-      - postgres_password
-      - allstarr_keyring
+    - postgres_password
+    - allstarr_keyring
     volumes:
-      - allstarr-state:/app/state
-      - allstarr-cache:/app/cache
-      - ${DOWNLOAD_PATH:-./downloads}:/app/downloads
-      - ${KEPT_PATH:-./kept}:/app/kept
-      - ${APPLE_UPLOAD_PATH:-./.apple-provider/incoming}:/app/apple-upload
+    - allstarr-state:/app/state
+    - allstarr-cache:/app/cache
+    - "${DOWNLOAD_PATH:-./downloads}:/app/downloads"
+    - "${KEPT_PATH:-./kept}:/app/kept"
+    - "${APPLE_UPLOAD_PATH:-./.apple-provider/incoming}:/app/apple-upload"
+    - "./.env:/app/.env:ro"
     tmpfs:
-      - /tmp:size=128m,mode=1777
+    - "/tmp:size=128m,mode=1777"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
+      test:
+      - CMD
+      - curl
+      - "--fail"
+      - "--silent"
+      - http://localhost:8080/health/ready
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
     stop_grace_period: 45s
     networks:
-      - allstarr
+    - allstarr
     security_opt:
-      - no-new-privileges:true
-
+    - no-new-privileges:true
+    build: "."
+  spotify-lyrics:
+    image: akashrchandran/spotify-lyrics-api@sha256:c95749ad939ba136893f16604e90e7f3f070beb2dea3aaa955646ec08330b4c6
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      SP_DC: "${SPOTIFY_API_SESSION_COOKIE:-}"
+    networks:
+    - allstarr
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - "--max-time"
+      - '3'
+      - "--silent"
+      - "--show-error"
+      - "--output"
+      - "/dev/null"
+      - http://127.0.0.1:8080/
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+    - spotify-lyrics
+  apple-gateway:
+    build:
+      context: "./sidecars/apple-gateway"
+    image: "${APPLE_GATEWAY_IMAGE:-allstarr/apple-gateway:1.0.0}"
+    restart: unless-stopped
+    depends_on:
+      apple-wrapper:
+        condition: service_started
+    environment:
+      APPLE_GATEWAY_WRAPPER_URL: http://apple-wrapper:80
+      APPLE_GATEWAY_WRAPPER_DECRYPT_HOST: apple-wrapper
+      APPLE_GATEWAY_WRAPPER_DECRYPT_PORT: 10020
+      APPLE_GATEWAY_STOREFRONT: "${APPLE_GATEWAY_STOREFRONT:-us}"
+      APPLE_GATEWAY_MAX_CONCURRENCY: "${APPLE_GATEWAY_MAX_CONCURRENCY:-2}"
+      APPLE_GATEWAY_PROCESS_TIMEOUT_SECONDS: "${APPLE_GATEWAY_PROCESS_TIMEOUT_SECONDS:-900}"
+    volumes:
+    - apple-gateway-data:/data
+    networks:
+    - allstarr
+    security_opt:
+    - no-new-privileges:true
+    cap_drop:
+    - ALL
+    tmpfs:
+    - "/tmp:size=128m,mode=1777"
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - "-c"
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',
+        timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles:
+    - apple
+  apple-wrapper:
+    build:
+      context: "${APPLE_WRAPPER_CONTEXT:-./.apple-provider/wrapper-v2}"
+      dockerfile: Dockerfile
+      args:
+        TARGET_ARCH: "${APPLE_WRAPPER_TARGET_ARCH:-x86_64}"
+        BUILD_PLATFORM: linux/amd64
+        RUNTIME_PLATFORM: "${APPLE_WRAPPER_RUNTIME_PLATFORM:-linux/amd64}"
+    image: "${APPLE_WRAPPER_IMAGE:-allstarr/wrapper-v2:0.0.2}"
+    restart: unless-stopped
+    environment:
+      WRAPPER_HOST: 0.0.0.0
+      WRAPPER_PORT: 80
+      WRAPPER_DECRYPT_HOST: 0.0.0.0
+      WRAPPER_DECRYPT_PORT: 10020
+      WRAPPER_BASE_DIR: "/data/data/com.apple.android.music/files"
+      WRAPPER_RESTORE_SESSION: '1'
+    volumes:
+    - apple-wrapper-session:/app/rootfs/data/data/com.apple.android.music/files
+    networks:
+    - allstarr
+    cap_add:
+    - SYS_ADMIN
+    - SYS_CHROOT
+    - SYS_PTRACE
+    security_opt:
+    - apparmor:unconfined
+    profiles:
+    - apple
 secrets:
   postgres_password:
-    file: ${POSTGRES_PASSWORD_FILE:-./secrets/postgres-password.txt}
+    file: "${POSTGRES_PASSWORD_FILE:-./secrets/postgres-password.txt}"
   allstarr_keyring:
-    file: ${ALLSTARR_KEYRING_FILE:-./secrets/allstarr-keyring.json}
-
+    file: "${ALLSTARR_KEYRING_FILE:-./secrets/allstarr-keyring.json}"
 volumes:
   postgres-data:
   allstarr-state:
   allstarr-cache:
-
+  apple-gateway-data:
+  apple-wrapper-session:
 networks:
   allstarr:
     driver: bridge

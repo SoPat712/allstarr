@@ -599,9 +599,6 @@ public static class ExtensionControlPlaneRegistration
     public static IServiceCollection AddExtensionControlPlane(this IServiceCollection services)
     {
         services.AddSingleton<ExtensionControlPlaneService>();
-        services.AddSingleton<FirstPartyExtensionPolicy>();
-        services.AddSingleton<FirstPartyExtensionBootstrapper>();
-        services.AddHostedService(provider => provider.GetRequiredService<FirstPartyExtensionBootstrapper>());
         services.AddSingleton<ExtensionRuntimeCoordinator>();
         services.AddHostedService(provider => provider.GetRequiredService<ExtensionRuntimeCoordinator>());
         return services;

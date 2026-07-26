@@ -14,7 +14,7 @@ profiles() {
     while IFS= read -r value; do
       case "$value" in
         spotify|spotify-lyrics) values+=(spotify-lyrics) ;;
-        apple|aio) values+=("$value") ;;
+        apple) values+=("$value") ;;
       esac
     done < "$PROFILE_FILE"
   fi
@@ -35,12 +35,10 @@ set_mode() {
 
 compose_args() {
   COMPOSE=(-f "$ROOT/docker-compose.yml")
-  [[ "$(deployment_mode)" == source ]] && COMPOSE+=(-f "$ROOT/docker-compose.dev.yml")
   while IFS= read -r profile; do
     case "$profile" in
-      spotify-lyrics) COMPOSE+=(-f "$ROOT/docker-compose.spotify-lyrics.yml") ;;
-      apple) COMPOSE+=(-f "$ROOT/docker-compose.apple.yml") ;;
-      aio) COMPOSE+=(-f "$ROOT/docker-compose.aio.yml") ;;
+      spotify-lyrics) COMPOSE+=(--profile spotify-lyrics) ;;
+      apple) COMPOSE+=(--profile apple) ;;
     esac
   done < <(profiles)
 }
@@ -144,7 +142,38 @@ install_apple() {
   up
 }
 
+validate_deployment_files() {
+  local env_file="$ROOT/.env"
+  [[ -f "$env_file" ]] || die "missing .env; run ./allstarr.sh init first"
+  awk '
+    /^[[:space:]]*($|#)/ { next }
+    !/^[A-Za-z_][A-Za-z0-9_]*=/ {
+      printf "Invalid .env line %d: expected KEY=value\n", NR > "/dev/stderr"
+      bad = 1
+      next
+    }
+    {
+      key = $0
+      sub(/=.*/, "", key)
+      if (seen[key]++) {
+        printf "Duplicate .env key on line %d: %s\n", NR, key > "/dev/stderr"
+        bad = 1
+      }
+    }
+    END { exit bad ? 1 : 0 }
+  ' "$env_file"
+  if [[ -f "$PROFILE_FILE" ]]; then
+    while IFS= read -r profile; do
+      case "$profile" in
+        ""|apple|spotify|spotify-lyrics) ;;
+        *) die "unsupported saved profile '$profile'; use apple or spotify-lyrics" ;;
+      esac
+    done < "$PROFILE_FILE"
+  fi
+}
+
 up() {
+  validate_deployment_files
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
   if [[ "$(deployment_mode)" == source ]]; then
@@ -155,10 +184,14 @@ up() {
 }
 
 update() {
+  validate_deployment_files
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
   if [[ "$(deployment_mode)" == release ]]; then
-    docker compose "${COMPOSE[@]}" pull --ignore-buildable
+    docker compose "${COMPOSE[@]}" pull postgres allstarr
+    if profiles | grep -qx spotify-lyrics; then
+      docker compose "${COMPOSE[@]}" pull spotify-lyrics
+    fi
   fi
   if [[ "$(deployment_mode)" == source ]]; then
     need git
@@ -351,14 +384,14 @@ Usage: ./allstarr.sh COMMAND
   restore BACKUP --confirm-replace  Restore a portable backup; saves current state first
   status                            Show containers and the saved profile
   logs [service]                    Follow redacted container logs
-  enable spotify-lyrics|aio         Add an optional saved profile
-  disable spotify-lyrics|apple|aio  Remove an optional profile on next up
+  enable spotify-lyrics             Add an optional saved profile
+  disable spotify-lyrics|apple      Remove an optional profile on next up
   prepare-apple [INPUT] [ARCH]      Verify an APK/APKM or staged libs; enable Apple
   install-apple [ARCH]              Build and start Apple from the WebUI-staged package
   down                              Stop containers without deleting data
 
 The deployment mode is saved in .allstarr-mode. Release mode pulls reviewed
-images; source mode fast-forwards its tracked branch, then builds it using docker-compose.dev.yml.
+images; source mode fast-forwards its tracked branch, then builds the local image.
 Optional profiles are saved in .allstarr-profiles. No command deletes volumes,
 Postgres data, managed music, provider sessions, or imported settings.
 EOF
@@ -385,14 +418,14 @@ case "$command" in
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
     case "${1:-}" in
-      spotify|spotify-lyrics|aio) remember_profile "$1" ;;
+      spotify|spotify-lyrics) remember_profile "$1" ;;
       apple) die "use prepare-apple for Apple so its libraries are verified first" ;;
-      *) die "choose spotify-lyrics or aio" ;;
+      *) die "choose spotify-lyrics" ;;
     esac
     echo "Profile enabled. Run: ./allstarr.sh up"
     ;;
   disable)
-    case "${1:-}" in spotify|spotify-lyrics|apple|aio) forget_profile "$1" ;; *) die "choose spotify-lyrics, apple, or aio" ;; esac
+    case "${1:-}" in spotify|spotify-lyrics|apple) forget_profile "$1" ;; *) die "choose spotify-lyrics or apple" ;; esac
     echo "Profile disabled. Run ./allstarr.sh up to apply; stored data is preserved."
     ;;
   down) compose_args; docker compose "${COMPOSE[@]}" down ;;
