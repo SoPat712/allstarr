@@ -13,6 +13,7 @@ using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -31,6 +32,7 @@ public sealed class PlaylistLinksController(
     IProviderRegistry providerRegistry,
     IProviderRouter providerRouter,
     IBackendPlaylistTargetResolver targetResolver,
+    IMediaAssetResolver mediaAssets,
     IPlatformClock clock,
     ProviderPolicyOptions providerPolicy) : ControllerBase
 {
@@ -259,14 +261,35 @@ public sealed class PlaylistLinksController(
             var reference = new ProviderArtworkReference(
                 new ProviderExternalResourceId(providerId, ProviderResourceKind.Playlist, Required(playlistId, nameof(playlistId))),
                 revision: revision);
-            var outcome = await candidate.Implementation.ResolveArtworkAsync(
-                candidate.Context,
-                new ProviderPlaylistArtworkRequest(reference, maximumBytes: 4 * 1024 * 1024));
-            if (!outcome.IsSuccess)
-                return NotFound(new { error = "Playlist artwork is unavailable", reasonCode = outcome.Error?.Code });
-            var artwork = outcome.RequireValue();
+            ProviderError? failure = null;
+            var asset = await mediaAssets.ResolveAsync(
+                new MediaAssetIdentity(
+                    session.TenantId,
+                    session.AllstarrUserId,
+                    account.Id,
+                    providerId,
+                    "playlist",
+                    playlistId,
+                    revision),
+                async token =>
+                {
+                    var outcome = await candidate.Implementation.ResolveArtworkAsync(
+                        candidate.Context,
+                        new ProviderPlaylistArtworkRequest(reference, maximumBytes: 4 * 1024 * 1024));
+                    if (!outcome.IsSuccess)
+                    {
+                        failure = outcome.Error;
+                        return null;
+                    }
+                    var artwork = outcome.RequireValue();
+                    return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
+                },
+                4 * 1024 * 1024,
+                cancellationToken);
+            if (asset == null)
+                return NotFound(new { error = "Playlist artwork is unavailable", reasonCode = failure?.Code });
             Response.Headers.CacheControl = "private, max-age=300";
-            return File(artwork.Bytes, artwork.ContentType);
+            return File(asset.Bytes, asset.ContentType);
         });
     }
 
@@ -387,14 +410,32 @@ public sealed class PlaylistLinksController(
                 if (credentialReference == null) return NotFound();
             }
             var context = new BackendPlaylistTargetContext(identity.BackendInstanceId, identity.PrincipalId, credentialReference, identity.TenantId);
-            var result = await targetResolver.Resolve(protocol).ReadArtworkAsync(
-                context,
-                Required(playlistId, nameof(playlistId)),
-                artworkReference,
+            var backendPlaylistId = Required(playlistId, nameof(playlistId));
+            var asset = await mediaAssets.ResolveAsync(
+                new MediaAssetIdentity(
+                    session.TenantId,
+                    session.AllstarrUserId,
+                    null,
+                    protocol,
+                    "playlist",
+                    $"{identity.BackendInstanceId}:{backendPlaylistId}",
+                    artworkReference),
+                async token =>
+                {
+                    var result = await targetResolver.Resolve(protocol).ReadArtworkAsync(
+                        context,
+                        backendPlaylistId,
+                        artworkReference,
+                        token);
+                    return result.IsSuccess && result.Value != null
+                        ? new MediaAssetSource(result.Value.Bytes, result.Value.ContentType)
+                        : null;
+                },
+                4 * 1024 * 1024,
                 cancellationToken);
-            if (!result.IsSuccess || result.Value == null) return NotFound();
+            if (asset == null) return NotFound();
             Response.Headers.CacheControl = "private, max-age=300";
-            return File(result.Value.Bytes, result.Value.ContentType);
+            return File(asset.Bytes, asset.ContentType);
         });
     }
     [HttpGet]
