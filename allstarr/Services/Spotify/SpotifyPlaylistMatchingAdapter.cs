@@ -161,7 +161,7 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             }
             else
             {
-                // Fall back to legacy mode
+                // Fall back to legacy mode after a rebuild clears retained source state.
                 await MatchPlaylistTracksLegacyAsync(
                     playlist.Name, metadataService, cancellationToken);
             }
@@ -221,9 +221,24 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
             }
             else
             {
-                // Fall back to legacy mode
-                await MatchPlaylistTracksLegacyAsync(
-                    playlist.Name, metadataService, cancellationToken);
+                var cachedSource = await _cache.GetAsync<SpotifyPlaylist>(
+                    CacheKeyBuilder.BuildSpotifyPlaylistKey(playlist.Name));
+                if (cachedSource?.Tracks is { Count: > 0 } sourceTracks)
+                {
+                    await MatchPlaylistTracksWithIsrcAsync(
+                        playlist.Name,
+                        null,
+                        metadataService,
+                        cancellationToken,
+                        enrichProviderBackups,
+                        progress,
+                        sourceTracks);
+                }
+                else
+                {
+                    await MatchPlaylistTracksLegacyAsync(
+                        playlist.Name, metadataService, cancellationToken);
+                }
             }
 
             await ClearPlaylistImageCacheAsync(playlist);
@@ -497,16 +512,18 @@ public sealed class SpotifyPlaylistMatchingAdapter : IPlaylistMatchingAdapter
     /// </summary>
     private async Task MatchPlaylistTracksWithIsrcAsync(
         string playlistName,
-        SpotifyPlaylistFetcher playlistFetcher,
+        SpotifyPlaylistFetcher? playlistFetcher,
         IMusicMetadataService metadataService,
         CancellationToken cancellationToken,
         bool enrichProviderBackups = false,
-        Func<PlaylistMatchingProgress, CancellationToken, Task>? progress = null)
+        Func<PlaylistMatchingProgress, CancellationToken, Task>? progress = null,
+        IReadOnlyList<SpotifyPlaylistTrack>? sourceTracks = null)
     {
         var matchedTracksKey = CacheKeyBuilder.BuildSpotifyMatchedTracksKey(playlistName);
 
         // Get playlist tracks with full metadata including ISRC and position
-        var spotifyTracks = await playlistFetcher.GetPlaylistTracksAsync(playlistName);
+        var spotifyTracks = sourceTracks?.OrderBy(track => track.Position).ToList()
+                            ?? await playlistFetcher!.GetPlaylistTracksAsync(playlistName);
         if (spotifyTracks.Count == 0)
         {
             _logger.LogWarning("No tracks found for {Playlist}, skipping matching", playlistName);
