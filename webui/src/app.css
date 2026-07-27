@@ -324,7 +324,10 @@
   }
 
   .button-secondary {
+    display: inline-flex;
     min-height: var(--control-md);
+    align-items: center;
+    justify-content: center;
     border: 1px solid var(--color-edge);
     border-radius: var(--radius-md);
     background: var(--color-panel-raised);
@@ -333,6 +336,7 @@
     padding: 0 var(--space-4);
     font-size: var(--text-sm);
     font-weight: 700;
+    text-decoration: none;
   }
 
   .notice-error {
@@ -3918,7 +3922,7 @@
     display: grid;
     min-width: 0;
     align-content: start;
-    align-self: start;
+    align-self: stretch;
     gap: 1rem;
     border-right: 1px solid var(--color-edge);
     border-bottom: 1px solid var(--color-edge);
@@ -3986,16 +3990,22 @@
     gap: 0.75rem;
   }
 
+  .source-card > header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
   .source-identity {
     min-width: 0;
     gap: 0.8rem;
   }
 
   .source-card-actions {
-    display: flex;
+    display: grid;
     flex: none;
-    align-items: center;
-    gap: 0.5rem;
+    justify-items: end;
+    gap: 0.35rem;
   }
 
   .source-card-actions > button {

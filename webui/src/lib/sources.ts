@@ -44,13 +44,19 @@ export function sourceMetrics(
 ) {
   const checks = health.filter((item) =>
     item.provider.toLowerCase() === provider.id.toLowerCase() && item.canTest);
+  const runtime = (provider.runtimeCapabilities ?? [])
+    .filter((item) => item.supported !== false);
+  const hasSummary = (summary?.capabilityTotal ?? 0) > 0;
   return {
-    total: summary?.capabilityTotal ?? checks.length,
-    passing: summary?.healthyCapabilityCount ??
+    total: hasSummary ? summary!.capabilityTotal : runtime.length || checks.length,
+    passing: hasSummary ? summary!.healthyCapabilityCount :
+      runtime.length ? runtime.filter((item) => item.ready).length :
       checks.filter((item) => item.health === "healthy").length,
-    failed: summary?.failedCapabilityCount ??
+    failed: hasSummary ? summary!.failedCapabilityCount :
+      runtime.length ? runtime.filter((item) => item.health === "degraded").length :
       checks.filter((item) => item.health === "degraded").length,
     checkedAt: summary?.lastCheckedAt ??
+      runtime.map((item) => item.testedAt).filter(Boolean).toSorted().at(-1) ??
       checks.map((item) => item.testedAt).filter(Boolean).toSorted().at(-1) ??
       null,
   };

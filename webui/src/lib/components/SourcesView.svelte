@@ -273,6 +273,7 @@
           {@const state = sourceStatus(item, accounts, health)}
           {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
           {@const connected = providerAccounts(item.id)}
+          {@const operatorManaged = item.connectionKind === "operator_managed"}
           {#if availableSourceCount && index === activeSourceCount}
             <header class="source-section-heading">
               <div><h3>Needs setup</h3><p>Sources that require an account before they can be used.</p></div>
@@ -311,10 +312,13 @@
               {:else}<span>Capability details pending</span>{/each}
             </div>
             <dl class="source-metrics">
-              <div><dt>Connections</dt><dd>{connected.filter((account) => account.enabled).length}</dd></div>
+              <div>
+                <dt>{operatorManaged ? "Gateway" : "Connections"}</dt>
+                <dd>{operatorManaged ? state === "healthy" ? "Ready" : humanize(state) : connected.filter((account) => account.enabled).length}</dd>
+              </div>
               <div><dt>Passing</dt><dd>{metrics.total ? `${metrics.passing}/${metrics.total}` : "—"}</dd></div>
               <div><dt>Failures</dt><dd class:danger-text={metrics.failed > 0}>{metrics.failed || "—"}</dd></div>
-              <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
+              <div><dt>Last check</dt><dd>{operatorManaged && state === "healthy" && !metrics.checkedAt ? "Live" : relativeTime(metrics.checkedAt)}</dd></div>
             </dl>
             <details class="source-details">
               <summary>Capability and implementation details</summary>

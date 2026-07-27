@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
-import { accountSettings, audienceLabel, sourceNeedsAccount, sourceStatus } from "./sources";
+import { accountSettings, audienceLabel, sourceMetrics, sourceNeedsAccount, sourceStatus } from "./sources";
 
 const account = (scope: ProviderAccount["scope"] = "User"): ProviderAccount => ({
   id: "account-1",
@@ -61,5 +61,23 @@ describe("source presentation", () => {
     expect(sourceNeedsAccount(accountlessExtension)).toBe(false);
     expect(sourceStatus({ ...accountlessExtension, status: "available" }, [], []))
       .toBe("available");
+  });
+
+  it("uses runtime readiness for operator-managed Sources", () => {
+    const managed = {
+      id: "apple-download",
+      name: "Apple download",
+      connectionKind: "operator_managed",
+      runtimeCapabilities: [
+        { id: "download", ready: true, canAttempt: true, health: "healthy" },
+        { id: "lyrics", ready: true, canAttempt: true, health: "healthy" },
+      ],
+    } satisfies ProviderDefinition;
+
+    expect(sourceMetrics(managed, undefined, [])).toMatchObject({
+      total: 2,
+      passing: 2,
+      failed: 0,
+    });
   });
 });
