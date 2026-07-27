@@ -54,7 +54,8 @@ public sealed class AudioMuseRecommendationClient(
             [new("audiomuse-intelligence", item.Score,
                 item.Explanation ?? "AudioMuse-AI identified this track from the scoped listening profile.")],
             new(ProviderId, Title: item.Title, Artist: item.Artist, Album: item.Album,
-                BackendItemId: item.TrackId))).ToArray();
+                BackendItemId: item.TrackId), context.Account!.AccountId,
+            $"account:{context.Account.Revision}")).ToArray();
     }
 
     private async Task<ProviderExecutionContext?> ContextAsync(

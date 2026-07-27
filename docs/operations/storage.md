@@ -18,6 +18,12 @@ The standard Compose mounts are:
 
 The database stores application state such as users, backend identities, provider accounts, encrypted secret versions, durable jobs, outbox events, provider health, matches, playlist links, recommendation state, audit events, and the backup catalog. An audio file still belongs in a configured media root. A database row can point at a song. It does not contain the song.
 
+Recommendation candidates retain their canonical recording and scoped provider-account provenance
+when known, source revision, weighted evidence/score signals, exclusions, generated-set membership,
+and user feedback. Negative or dismissed feedback becomes an explainable exclusion on later runs in
+the same tenant, user, backend, and library scope. Full and selective state transfers preserve this
+lineage.
+
 
 ## PostgreSQL is mandatory at runtime
 

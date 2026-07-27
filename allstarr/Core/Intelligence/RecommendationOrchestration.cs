@@ -62,6 +62,7 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         IReadOnlyList<RecommendationCandidate> candidates, CancellationToken cancellationToken = default)
     {
         IntelligencePolicyService.ValidateScope(scope); name = name?.Trim() ?? ""; if (name.Length is < 1 or > 200) throw new ArgumentException("Generated set name is invalid.");
+        candidates = candidates.Where(item => item.Exclusions.Count == 0).ToArray();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId && x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId, cancellationToken);
         if (existing != null) { await EnqueueMaterialization(existing, cancellationToken); return existing.Id; }
@@ -187,9 +188,22 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
             catch { return DurableJobCompletion.Retry("recommendation_provider_temporary_failure", "A recommendation provider temporarily failed."); }
             if (outcome.State == RecommendationProviderState.Succeeded) results.AddRange(outcome.Candidates);
         }
-        var ordered = results.Where(Valid).GroupBy(x => x.TrackKey, StringComparer.Ordinal).Select(g => g.OrderByDescending(x => x.Score).First()).OrderByDescending(x => x.Score).ThenBy(x => x.TrackKey, StringComparer.Ordinal).Take(run.Limit).ToArray();
+        var excludedTrackKeys = await db.RecommendationFeedback.AsNoTracking().Where(item =>
+                item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId &&
+                item.Protocol == run.Protocol && item.BackendInstanceId == run.BackendInstanceId &&
+                item.LibraryScopeId == run.LibraryScopeId &&
+                (item.Kind == "dislike" || item.Kind == "dismiss"))
+            .Select(item => item.TrackKey).Distinct().ToListAsync(cancellationToken);
+        var excluded = excludedTrackKeys.ToHashSet(StringComparer.Ordinal);
+        var deduplicated = results.Where(Valid).GroupBy(x => x.TrackKey, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(x => x.Score).First())
+            .OrderByDescending(x => x.Score).ThenBy(x => x.TrackKey, StringComparer.Ordinal).ToArray();
+        var ordered = deduplicated.Where(item => !excluded.Contains(item.TrackKey)).Take(run.Limit)
+            .Concat(deduplicated.Where(item => excluded.Contains(item.TrackKey)).Take(Math.Min(100, run.Limit))
+                .Select(item => item with { Exclusions = ["user-feedback"] })).ToArray();
+        ordered = await ResolveProvenanceAsync(db, run, ordered, cancellationToken);
         db.RecommendationCandidates.RemoveRange(db.RecommendationCandidates.Where(x => x.RunId == run.Id));
-        for (var i = 0; i < ordered.Length; i++) db.RecommendationCandidates.Add(new() { Id = Guid.CreateVersion7(), RunId = run.Id, TenantId = run.TenantId, OwnerUserId = run.OwnerUserId, Position = i, TrackKey = ordered[i].TrackKey, Score = ordered[i].Score, Source = ordered[i].Source, SignalsJson = JsonSerializer.Serialize(ordered[i].Signals), IdentityJson = JsonSerializer.Serialize(ordered[i].Identity), CreatedAt = clock.UtcNow });
+        for (var i = 0; i < ordered.Length; i++) db.RecommendationCandidates.Add(new() { Id = Guid.CreateVersion7(), RunId = run.Id, TenantId = run.TenantId, OwnerUserId = run.OwnerUserId, Position = i, TrackKey = ordered[i].TrackKey, Score = ordered[i].Score, Source = ordered[i].Source, SignalsJson = JsonSerializer.Serialize(ordered[i].Signals), IdentityJson = JsonSerializer.Serialize(ordered[i].Identity), CanonicalRecordingId = ordered[i].CanonicalRecordingId, ProviderAccountId = ordered[i].ProviderAccountId, SourceRevision = ordered[i].SourceRevision ?? $"run:{run.Id:N}", ExclusionsJson = JsonSerializer.Serialize(ordered[i].Exclusions), CreatedAt = clock.UtcNow, Revision = 1 });
         run.State = RecommendationRunState.Succeeded; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++;
         await db.SaveChangesAsync(cancellationToken);
         return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
@@ -207,9 +221,11 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
             var records = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == run.Id &&
                     item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId).OrderBy(item => item.Position)
                 .ToListAsync(cancellationToken);
-            candidates = records.Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
+            candidates = records.Where(item => item.ExclusionsJson == "[]").Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
                 JsonSerializer.Deserialize<RecommendationSignal[]>(item.SignalsJson) ?? [],
-                JsonSerializer.Deserialize<RecommendationTrackIdentity>(item.IdentityJson))).ToArray();
+                JsonSerializer.Deserialize<RecommendationTrackIdentity>(item.IdentityJson))
+                { CanonicalRecordingId = item.CanonicalRecordingId, ProviderAccountId = item.ProviderAccountId,
+                    SourceRevision = item.SourceRevision }).ToArray();
         }
         catch (JsonException)
         {
@@ -237,12 +253,68 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         }
     }
     private static bool Valid(RecommendationCandidate x) => !string.IsNullOrWhiteSpace(x.TrackKey) && x.TrackKey.Length <= 500 && double.IsFinite(x.Score) && x.Score is >= 0 and <= 1 && x.Signals.Count is > 0 and <= 32 &&
-        x.Signals.All(s => !string.IsNullOrWhiteSpace(s.Code) && s.Code.Length <= 100 && !string.IsNullOrWhiteSpace(s.Explanation) && s.Explanation.Length <= 1000 && double.IsFinite(s.Weight)) && ValidIdentity(x.Identity);
+        x.Signals.All(s => !string.IsNullOrWhiteSpace(s.Code) && s.Code.Length <= 100 && !string.IsNullOrWhiteSpace(s.Explanation) && s.Explanation.Length <= 1000 && double.IsFinite(s.Weight)) &&
+        Bounded(x.SourceRevision, 300) && x.CanonicalRecordingId != Guid.Empty && x.ProviderAccountId != Guid.Empty &&
+        x.Exclusions.Count <= 16 && x.Exclusions.All(item => Bounded(item, 100)) && ValidIdentity(x.Identity);
     private static bool ValidIdentity(RecommendationTrackIdentity? x) => x == null ||
         Bounded(x.ProviderId, 100) && Bounded(x.ProviderTrackId, 500) && Bounded(x.Title, 500) &&
         Bounded(x.Artist, 500) && Bounded(x.Album, 500) && Bounded(x.Isrc, 20) &&
         (x.MusicBrainzRecordingId == null || Guid.TryParse(x.MusicBrainzRecordingId, out _));
     private static bool Bounded(string? value, int max) => value == null || value.Length is > 0 && value.Length <= max && !value.Any(char.IsControl);
+
+    private static async Task<RecommendationCandidate[]> ResolveProvenanceAsync(
+        AllstarrDbContext db, RecommendationRunRecord run, RecommendationCandidate[] candidates,
+        CancellationToken cancellationToken)
+    {
+        var libraryIds = candidates.Select(item => item.Identity?.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
+        var library = await db.LibraryTracks.AsNoTracking().Where(item => libraryIds.Contains(item.Id) &&
+                item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId &&
+                item.Protocol == run.Protocol && item.BackendInstanceId == run.BackendInstanceId &&
+                item.LibraryScopeId == run.LibraryScopeId)
+            .Select(item => new { item.Id, item.CanonicalRecordingId }).ToDictionaryAsync(item => item.Id, cancellationToken);
+        var providerIds = candidates.Select(item => item.Identity?.ProviderId).Where(item => item != null).Distinct().ToArray();
+        var externalIds = candidates.Select(item => item.Identity?.ProviderTrackId ?? item.Identity?.BackendItemId)
+            .Where(item => item != null).Distinct().ToArray();
+        var identities = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                item.TenantId == run.TenantId && providerIds.Contains(item.ProviderId) &&
+                externalIds.Contains(item.ExternalId))
+            .Select(item => new { item.ProviderId, item.ExternalId, item.CanonicalRecordingId, item.ProviderAccountId })
+            .ToListAsync(cancellationToken);
+        var musicBrainzIds = candidates.Select(item => item.Identity?.MusicBrainzRecordingId)
+            .Where(item => item != null).Distinct().ToArray();
+        var isrcs = candidates.Select(item => item.Identity?.Isrc).Where(item => item != null).Distinct().ToArray();
+        var canonicals = await db.CanonicalRecordings.AsNoTracking().Where(item => item.TenantId == run.TenantId &&
+                (musicBrainzIds.Contains(item.MusicBrainzRecordingId) || isrcs.Contains(item.Isrc)))
+            .Select(item => new { item.Id, item.MusicBrainzRecordingId, item.Isrc }).ToListAsync(cancellationToken);
+        var validAccounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
+                item.TenantId == run.TenantId &&
+                (item.Scope == ProviderAccountScope.User && item.OwnerUserId == run.OwnerUserId ||
+                 item.Scope == ProviderAccountScope.Library && item.LibraryScopeId == run.LibraryScopeId))
+            .Select(item => new { item.Id, item.ProviderId }).ToListAsync(cancellationToken);
+
+        return candidates.Select(candidate =>
+        {
+            var providerId = candidate.Identity?.ProviderId;
+            var externalId = candidate.Identity?.ProviderTrackId ?? candidate.Identity?.BackendItemId;
+            var providerMatches = identities.Where(item => item.ProviderId == providerId && item.ExternalId == externalId)
+                .ToArray();
+            var providerCanonical = providerMatches.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
+            var providerAccounts = providerMatches.Select(item => item.ProviderAccountId).OfType<Guid>().Distinct().ToArray();
+            Guid? providerAccount = candidate.ProviderAccountId is { } accountId &&
+                                  validAccounts.Any(item => item.Id == accountId && item.ProviderId == providerId)
+                ? accountId : providerAccounts.Length == 1 ? providerAccounts[0] : null;
+            var exactCanonicals = canonicals.Where(item =>
+                candidate.Identity?.MusicBrainzRecordingId is { } mbid && item.MusicBrainzRecordingId == mbid ||
+                candidate.Identity?.Isrc is { } isrc && item.Isrc == isrc)
+                .Select(item => item.Id).Distinct().ToArray();
+            var canonical = candidate.CanonicalRecordingId ??
+                (candidate.Identity?.LibraryTrackId is { } libraryId &&
+                library.TryGetValue(libraryId, out var track) ? track.CanonicalRecordingId : null) ??
+                (providerCanonical.Length == 1 ? providerCanonical[0] : (Guid?)null) ??
+                (exactCanonicals.Length == 1 ? exactCanonicals[0] : (Guid?)null);
+            return candidate with { CanonicalRecordingId = canonical, ProviderAccountId = providerAccount };
+        }).ToArray();
+    }
 }
 
 public sealed class GeneratedSetMaterializationJobHandler(IDbContextFactory<AllstarrDbContext> factory,

@@ -173,9 +173,10 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
+            var candidateId = Guid.Parse("33333333-3333-3333-3333-333333333333");
             db.RecommendationCandidates.Add(new()
             {
-                Id = Guid.CreateVersion7(),
+                Id = candidateId,
                 RunId = run,
                 TenantId = _tenant,
                 OwnerUserId = _user,
@@ -183,6 +184,7 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
                 TrackKey = "local:42",
                 Score = .9,
                 Source = "lastfm",
+                SourceRevision = "lastfm:fixture",
                 SignalsJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("similar", .9, "Shared listening context") }),
                 IdentityJson = JsonSerializer.Serialize(new RecommendationTrackIdentity(
                     MusicBrainzRecordingId: "11111111-1111-1111-1111-111111111111",
@@ -221,7 +223,21 @@ public sealed class IntelligenceControllerTests : IAsyncLifetime
         }
         var result = Assert.IsType<OkObjectResult>(await Controller().Get(Scope(), default)); var json = JsonSerializer.Serialize(result.Value);
         Assert.Contains("Shared listening context", json); Assert.Contains("Private preview", json); Assert.Contains("visualization", json);
+        Assert.Contains("lastfm:fixture", json, StringComparison.Ordinal);
         Assert.DoesNotContain("TenantId", json, StringComparison.Ordinal);
+        var feedback = Assert.IsType<OkObjectResult>(await Controller().SetFeedback(
+            Guid.Parse("33333333-3333-3333-3333-333333333333"), new()
+            {
+                Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "music",
+                Kind = "dislike", ReasonCode = "not-my-style", ExpectedRevision = 0
+            }, default));
+        Assert.Contains("dislike", JsonSerializer.Serialize(feedback.Value), StringComparison.Ordinal);
+        Assert.IsType<NotFoundResult>(await Controller().SetFeedback(
+            Guid.Parse("33333333-3333-3333-3333-333333333333"), new()
+            {
+                Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "other",
+                Kind = "dismiss", ExpectedRevision = 1
+            }, default));
         Assert.IsType<OkObjectResult>(await Controller().GenerateSet(new()
         {
             Protocol = "jellyfin",

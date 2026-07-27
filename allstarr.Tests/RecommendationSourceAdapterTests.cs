@@ -169,6 +169,8 @@ public sealed class RecommendationSourceAdapterTests
             new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]), accounts);
         var item = Assert.Single(await configured.RecommendAsync(Query(), default));
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
+        Assert.NotNull(item.ProviderAccountId);
+        Assert.Equal("account:1", item.SourceRevision);
         Assert.Equal(["backend:seed"], capability.Seeds);
     }
 

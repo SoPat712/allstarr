@@ -43,6 +43,11 @@ public sealed class IntelligenceController(
             var candidates = latestRun == null ? [] : await db.RecommendationCandidates.AsNoTracking()
                 .Where(item => item.RunId == latestRun.Id && item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId)
                 .OrderBy(item => item.Position).Take(100).ToListAsync(cancellationToken);
+            var candidateIds = candidates.Select(item => item.Id).ToArray();
+            var feedback = await db.RecommendationFeedback.AsNoTracking()
+                .Where(item => candidateIds.Contains(item.CandidateId) && item.TenantId == scope.TenantId &&
+                               item.OwnerUserId == scope.OwnerUserId)
+                .ToDictionaryAsync(item => item.CandidateId, cancellationToken);
             var sets = await db.GeneratedSets.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
                 item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
@@ -107,7 +112,14 @@ public sealed class IntelligenceController(
                     item.TrackKey,
                     item.Score,
                     item.Source,
-                    explanations = ParseSignals(item.SignalsJson)
+                    item.CanonicalRecordingId,
+                    item.ProviderAccountId,
+                    item.SourceRevision,
+                    explanations = ParseSignals(item.SignalsJson),
+                    exclusions = ParseArray(item.ExclusionsJson),
+                    feedback = feedback.TryGetValue(item.Id, out var value)
+                        ? new { value.Kind, value.ReasonCode, value.UpdatedAt, value.Revision }
+                        : null
                 }),
                 generatedSets = sets.Select(item => new
                 {
@@ -189,16 +201,68 @@ public sealed class IntelligenceController(
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var candidates = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == request.RunId &&
             item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId).OrderBy(item => item.Position)
-            .Select(item => new { item.TrackKey, item.Score, item.Source, item.SignalsJson, item.IdentityJson }).ToListAsync(cancellationToken);
+            .Select(item => new { item.TrackKey, item.Score, item.Source, item.SignalsJson, item.IdentityJson,
+                item.CanonicalRecordingId, item.ProviderAccountId, item.SourceRevision, item.ExclusionsJson })
+            .ToListAsync(cancellationToken);
         try
         {
             var id = await smartPlaylists.CreateGeneratedSetAsync(scope, request.RunId, request.Name,
-                candidates.Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
-                    ParseSignals(item.SignalsJson), ParseIdentity(item.IdentityJson))).ToArray(), cancellationToken);
+                candidates.Where(item => ParseArray(item.ExclusionsJson).Count == 0)
+                    .Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
+                        ParseSignals(item.SignalsJson), ParseIdentity(item.IdentityJson))
+                    { CanonicalRecordingId = item.CanonicalRecordingId, ProviderAccountId = item.ProviderAccountId,
+                        SourceRevision = item.SourceRevision }).ToArray(), cancellationToken);
             return Ok(new { id, state = "preview" });
         }
         catch (ArgumentException exception) { return BadRequest(new { error = "generated_playlist_invalid", message = exception.Message }); }
         catch (UnauthorizedAccessException) { return NotFound(); }
+    }
+
+    [HttpPut("candidates/{candidateId:guid}/feedback")]
+    public async Task<IActionResult> SetFeedback(Guid candidateId,
+        [FromBody] IntelligenceFeedbackRequest request, CancellationToken cancellationToken)
+    {
+        if (!TrySessionScope(request, out var scope, out var error)) return error!;
+        var kind = request.Kind.Trim().ToLowerInvariant();
+        var reason = string.IsNullOrWhiteSpace(request.ReasonCode) ? null : request.ReasonCode.Trim().ToLowerInvariant();
+        if (kind is not ("like" or "dislike" or "dismiss") || reason?.Length > 100 ||
+            reason?.Any(character => char.IsControl(character) || !(char.IsLetterOrDigit(character) || character is '-' or '_')) == true)
+            return BadRequest(new { error = "recommendation_feedback_invalid" });
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var candidate = await db.RecommendationCandidates.AsNoTracking()
+            .Join(db.RecommendationRuns.AsNoTracking(), item => item.RunId, run => run.Id, (item, run) => new { item, run })
+            .SingleOrDefaultAsync(value => value.item.Id == candidateId &&
+                value.item.TenantId == scope.TenantId && value.item.OwnerUserId == scope.OwnerUserId &&
+                value.run.Protocol == scope.Protocol && value.run.BackendInstanceId == scope.BackendInstanceId &&
+                value.run.LibraryScopeId == scope.LibraryScopeId, cancellationToken);
+        if (candidate == null) return NotFound();
+        var feedback = await db.RecommendationFeedback.SingleOrDefaultAsync(item =>
+            item.CandidateId == candidateId && item.TenantId == scope.TenantId &&
+            item.OwnerUserId == scope.OwnerUserId, cancellationToken);
+        if (feedback == null)
+        {
+            if (request.ExpectedRevision != 0) return Conflict(new { error = "recommendation_feedback_revision_conflict" });
+            feedback = new()
+            {
+                Id = Guid.CreateVersion7(), CandidateId = candidateId, TenantId = scope.TenantId,
+                OwnerUserId = scope.OwnerUserId, Protocol = scope.Protocol,
+                BackendInstanceId = scope.BackendInstanceId, LibraryScopeId = scope.LibraryScopeId,
+                TrackKey = candidate.item.TrackKey, CreatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow,
+                Revision = 1
+            };
+            db.RecommendationFeedback.Add(feedback);
+        }
+        else
+        {
+            if (feedback.Revision != request.ExpectedRevision)
+                return Conflict(new { error = "recommendation_feedback_revision_conflict" });
+            feedback.Revision++;
+        }
+        feedback.Kind = kind;
+        feedback.ReasonCode = reason;
+        feedback.UpdatedAt = clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { feedback.Kind, feedback.ReasonCode, feedback.UpdatedAt, feedback.Revision });
     }
 
     [HttpPost("schedules")]
@@ -416,6 +480,12 @@ public class IntelligenceScopeRequest { public string Protocol { get; set; } = "
 public sealed class IntelligencePolicyRequest : IntelligenceScopeRequest { public bool Enabled { get; set; } public int RetentionDays { get; set; } = 30; public List<string> AllowedSignalTypes { get; set; } = []; public List<string> EnabledProviders { get; set; } = []; public Guid? TargetCredentialReferenceId { get; set; } public long ExpectedRevision { get; set; } }
 public sealed class IntelligenceRunRequest : IntelligenceScopeRequest { public List<string> SeedTrackKeys { get; set; } = []; public int Limit { get; set; } = 25; public string IdempotencyKey { get; set; } = ""; }
 public sealed class IntelligenceGeneratedSetRequest : IntelligenceScopeRequest { public Guid RunId { get; set; } public string Name { get; set; } = ""; }
+public sealed class IntelligenceFeedbackRequest : IntelligenceScopeRequest
+{
+    public string Kind { get; set; } = "";
+    public string? ReasonCode { get; set; }
+    public long ExpectedRevision { get; set; }
+}
 public sealed class IntelligenceScheduleRequest : IntelligenceScopeRequest
 {
     public string Name { get; set; } = "";

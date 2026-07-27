@@ -546,9 +546,10 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         });
         var identityJson = JsonSerializer.Serialize(new RecommendationTrackIdentity("local", LibraryTrackId: libraryTrackId, BackendItemId: "local-42"));
         var signalsJson = JsonSerializer.Serialize(new[] { new RecommendationSignal("shared-artist", .8, "Shares an artist.") });
+        var recommendationCandidateId = Guid.CreateVersion7();
         context.RecommendationCandidates.Add(new RecommendationCandidateRecord
         {
-            Id = Guid.CreateVersion7(),
+            Id = recommendationCandidateId,
             RunId = recommendationRunId,
             TenantId = tenantId,
             OwnerUserId = userId,
@@ -559,6 +560,22 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
             SignalsJson = signalsJson,
             IdentityJson = identityJson,
             CreatedAt = now
+        });
+        context.RecommendationFeedback.Add(new RecommendationFeedbackRecord
+        {
+            Id = Guid.CreateVersion7(),
+            CandidateId = recommendationCandidateId,
+            TenantId = tenantId,
+            OwnerUserId = userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "transfer-backend",
+            LibraryScopeId = "music",
+            TrackKey = "local-42",
+            Kind = "like",
+            ReasonCode = "great-fit",
+            CreatedAt = now,
+            UpdatedAt = now,
+            Revision = 1
         });
         context.GeneratedSets.Add(new GeneratedSetRecord
         {
@@ -885,6 +902,7 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
         Assert.Single(await target.ListeningProfiles.ToListAsync());
         Assert.Equal(RecommendationRunState.Succeeded, (await target.RecommendationRuns.SingleAsync()).State);
         Assert.Contains("shared-artist", (await target.RecommendationCandidates.SingleAsync()).SignalsJson, StringComparison.Ordinal);
+        Assert.Equal("great-fit", (await target.RecommendationFeedback.SingleAsync()).ReasonCode);
         Assert.Equal("Transfer mix", (await target.GeneratedSets.SingleAsync()).Name);
         Assert.Equal("local-rules", (await target.GeneratedSetEntries.SingleAsync()).Source);
         var secret = await target.SecretVersions.SingleAsync();
@@ -908,6 +926,9 @@ public sealed class DurableStateTransferServiceTests : IAsyncLifetime
     [InlineData("recommendation-runs.json", "state", 4)]
     [InlineData("recommendation-candidates.json", "position", 4)]
     [InlineData("recommendation-candidates.json", "signalsJson", "[]")]
+    [InlineData("recommendation-candidates.json", "sourceRevision", "")]
+    [InlineData("recommendation-candidates.json", "exclusionsJson", "{broken")]
+    [InlineData("recommendation-feedback.json", "kind", "maybe")]
     [InlineData("generated-sets.json", "ownerUserId", "00000000-0000-0000-0000-000000000001")]
     [InlineData("generated-sets.json", "backendPlaylistId", "playlist-with-pending-state")]
     [InlineData("generated-sets.json", "revision", 0)]

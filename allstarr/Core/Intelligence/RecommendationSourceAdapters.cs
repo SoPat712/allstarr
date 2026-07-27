@@ -1,7 +1,8 @@
 namespace allstarr.Core.Intelligence;
 
 public sealed record RecommendationSourceItem(string TrackKey, double Score,
-    IReadOnlyList<RecommendationSignal> Signals, RecommendationTrackIdentity? Identity = null);
+    IReadOnlyList<RecommendationSignal> Signals, RecommendationTrackIdentity? Identity = null,
+    Guid? ProviderAccountId = null, string? SourceRevision = null);
 
 public sealed record ScopedRecommendationQuery(IntelligenceScope Scope, ListeningProfile Profile,
     IReadOnlyList<string> SeedTrackKeys, int Limit);
@@ -60,7 +61,8 @@ public abstract class BoundedRecommendationProvider(string id) : IRecommendation
             var candidates = items.Take(request.Limit).Select(item => new RecommendationCandidate(
                 Required(item.TrackKey, 500), Math.Clamp(item.Score, 0, 1), Id,
                 item.Signals.Select(signal => new RecommendationSignal(Required(signal.Code, 100),
-                    Math.Clamp(signal.Weight, 0, 1), Required(signal.Explanation, 500))).ToArray(), item.Identity)).ToArray();
+                    Math.Clamp(signal.Weight, 0, 1), Required(signal.Explanation, 500))).ToArray(), item.Identity)
+                { ProviderAccountId = item.ProviderAccountId, SourceRevision = item.SourceRevision }).ToArray();
             return new(RecommendationProviderState.Succeeded, candidates, null);
         }
         catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested) { throw; }

@@ -23,6 +23,8 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Listener", Status = PlatformUserStatus.Active, CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow });
         var identityId = Guid.CreateVersion7();
         db.BackendIdentities.Add(new() { Id = identityId, TenantId = _tenant, UserId = _user, BackendType = "jellyfin", BackendInstanceId = "main", PrincipalId = "listener", CreatedAt = _clock.UtcNow, LastSeenAt = _clock.UtcNow });
+        db.CanonicalRecordings.AddRange(Canonical(Guid.Parse("11111111-1111-1111-1111-111111111111")),
+            Canonical(Guid.Parse("22222222-2222-2222-2222-222222222222")));
         db.LibraryTracks.AddRange(Track(Guid.Parse("11111111-1111-1111-1111-111111111111"), identityId, "track-secret"),
             Track(Guid.Parse("22222222-2222-2222-2222-222222222222"), identityId, "track-two"));
         await db.SaveChangesAsync(); _policies = new(_factory, _clock);
@@ -65,8 +67,28 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         await _jobs.CompleteAsync(claim!, completion); Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
         await using var db = await _factory.CreateDbContextAsync(); var candidate = Assert.Single(await db.RecommendationCandidates.ToListAsync());
         Assert.Equal("track-1", candidate.TrackKey); Assert.Contains("shared-genre", candidate.SignalsJson, StringComparison.Ordinal);
+        Assert.Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"), candidate.CanonicalRecordingId);
+        Assert.Equal("fixture:1", candidate.SourceRevision);
         Assert.Single(await db.RecommendationRuns.ToListAsync());
+        db.RecommendationFeedback.Add(new()
+        {
+            Id = Guid.CreateVersion7(), CandidateId = candidate.Id, TenantId = _tenant, OwnerUserId = _user,
+            Protocol = "jellyfin", BackendInstanceId = "main", LibraryScopeId = "music",
+            TrackKey = candidate.TrackKey, Kind = "dislike", CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow, Revision = 1
+        });
+        await db.SaveChangesAsync();
         await db.DisposeAsync();
+        await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
+        var next = await runs.EnqueueAsync(_scope, ["seed"], 10, "feedback-run");
+        var nextClaim = await _jobs.ClaimNextAsync("intelligence-feedback", ["recommendation.generate"]);
+        var nextResult = await handler.ExecuteAsync(new(nextClaim!, EmptyServices.Instance), default);
+        await _jobs.CompleteAsync(nextClaim!, nextResult);
+        await using (var feedbackDb = await _factory.CreateDbContextAsync())
+        {
+            var excluded = await feedbackDb.RecommendationCandidates.SingleAsync(item => item.RunId == next.RunId);
+            Assert.Contains("user-feedback", excluded.ExclusionsJson, StringComparison.Ordinal);
+        }
         var smart = new SmartPlaylistService(_factory, _clock, _jobs);
         var setId = await smart.CreateGeneratedSetAsync(_scope, first.RunId, "Daily mix",
             [new("track-1", .9, "fixture", [new("genre", .8, "shared-genre")],
@@ -270,7 +292,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         {
             Assert.True(request.ExplicitlyOptedIn);
             return Task.FromResult(new RecommendationProviderResult(RecommendationProviderState.Succeeded,
-                [new("track-1", .9, Id, [new("genre", .8, "shared-genre")])]));
+                [new RecommendationCandidate("track-1", .9, Id, [new("genre", .8, "shared-genre")],
+                    new(LibraryTrackId: Guid.Parse("11111111-1111-1111-1111-111111111111")))
+                    { SourceRevision = "fixture:1" }]));
         }
     }
     private sealed class RecordingMaterializer : IGeneratedSetMaterializer
@@ -301,6 +325,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         TenantId = _tenant,
         OwnerUserId = _user,
         BackendIdentityId = identityId,
+        CanonicalRecordingId = id,
         LibraryScopeId = "music",
         Protocol = "jellyfin",
         BackendInstanceId = "main",
@@ -313,5 +338,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         IndexedAt = _clock.UtcNow,
         SourceModifiedAt = _clock.UtcNow,
         UpdatedAt = _clock.UtcNow
+    };
+
+    private CanonicalRecordingRecord Canonical(Guid id) => new()
+    {
+        Id = id, TenantId = _tenant, CreatedByUserId = _user,
+        CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow, Revision = 1
     };
 }

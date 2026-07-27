@@ -8,7 +8,14 @@ public sealed record RecommendationTrackIdentity(string? ProviderId = null, stri
     string? MusicBrainzRecordingId = null, string? Isrc = null, string? Title = null,
     string? Artist = null, string? Album = null, Guid? LibraryTrackId = null, string? BackendItemId = null);
 public sealed record RecommendationCandidate(string TrackKey, double Score, string Source,
-    IReadOnlyList<RecommendationSignal> Signals, RecommendationTrackIdentity? Identity = null);
+    IReadOnlyList<RecommendationSignal> Signals, RecommendationTrackIdentity? Identity = null)
+{
+    public Guid? CanonicalRecordingId { get; init; }
+    public Guid? ProviderAccountId { get; init; }
+    public string? SourceRevision { get; init; }
+    public IReadOnlyList<string> Exclusions { get; init; } = [];
+}
+public sealed record RecommendationFeedback(string Kind, string? ReasonCode, DateTimeOffset CreatedAt);
 public sealed record ListeningProfile(Guid TenantId, Guid OwnerUserId, string BackendInstanceId,
     string LibraryScopeId, int PlayCount, int SkipCount, int FavoriteCount,
     IReadOnlyDictionary<string, double> TopGenres, DateTimeOffset WindowStart, DateTimeOffset WindowEnd)

@@ -70,6 +70,7 @@ public sealed class DurableStateTransferService
         "listening-profiles.json",
         "recommendation-runs.json",
         "recommendation-candidates.json",
+        "recommendation-feedback.json",
         "generated-sets.json",
         "generated-set-entries.json",
         "library-tracks.json",
@@ -191,6 +192,7 @@ public sealed class DurableStateTransferService
             await WriteEntryAsync(archive, "listening-profiles.json", await context.ListeningProfiles.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "recommendation-runs.json", await context.RecommendationRuns.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "recommendation-candidates.json", await context.RecommendationCandidates.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
+            await WriteEntryAsync(archive, "recommendation-feedback.json", await context.RecommendationFeedback.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "generated-sets.json", await context.GeneratedSets.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "generated-set-entries.json", await context.GeneratedSetEntries.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
             await WriteEntryAsync(archive, "library-tracks.json", await context.LibraryTracks.AsNoTracking().ToListAsync(cancellationToken), cancellationToken);
@@ -329,6 +331,7 @@ public sealed class DurableStateTransferService
             await context.ListeningProfiles.AnyAsync(cancellationToken) ||
             await context.RecommendationRuns.AnyAsync(cancellationToken) ||
             await context.RecommendationCandidates.AnyAsync(cancellationToken) ||
+            await context.RecommendationFeedback.AnyAsync(cancellationToken) ||
             await context.GeneratedSets.AnyAsync(cancellationToken) ||
             await context.GeneratedSetEntries.AnyAsync(cancellationToken) ||
             await context.LibraryTracks.AnyAsync(cancellationToken) ||
@@ -386,6 +389,7 @@ public sealed class DurableStateTransferService
         var listeningProfiles = await ReadEntryAsync<ListeningProfileRecord>(archive, "listening-profiles.json", cancellationToken);
         var recommendationRuns = await ReadEntryAsync<RecommendationRunRecord>(archive, "recommendation-runs.json", cancellationToken);
         var recommendationCandidates = await ReadEntryAsync<RecommendationCandidateRecord>(archive, "recommendation-candidates.json", cancellationToken);
+        var recommendationFeedback = await ReadEntryAsync<RecommendationFeedbackRecord>(archive, "recommendation-feedback.json", cancellationToken);
         var generatedSets = await ReadEntryAsync<GeneratedSetRecord>(archive, "generated-sets.json", cancellationToken);
         var generatedSetEntries = await ReadEntryAsync<GeneratedSetEntryRecord>(archive, "generated-set-entries.json", cancellationToken);
         var libraryTracks = await ReadEntryAsync<LibraryTrackRecord>(archive, "library-tracks.json", cancellationToken);
@@ -410,9 +414,11 @@ public sealed class DurableStateTransferService
         ValidatePhase6Archive(tenants, users, backendIdentities, jobs, secretReferences, favoriteEvents, favoriteActions, favoriteStates,
             favoritePolicies, managedFiles, managedFileReferences, enrichmentPlans, enrichmentApplications);
         ValidateDownloadArtifactArchive(tenants, users, jobs, providerAccounts, managedFiles, downloadWorkspaces, downloadArtifacts);
-        ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences, libraryTracks, intelligencePolicies, listeningSignals,
+        ValidateIntelligenceArchive(tenants, users, backendIdentities, jobs, jobSchedules, secretReferences,
+            providerAccounts, canonicalRecordings, libraryTracks, intelligencePolicies, listeningSignals,
             playbackDeliveryCheckpoints,
-            listeningProfiles, recommendationRuns, recommendationCandidates, generatedSets, generatedSetEntries);
+            listeningProfiles, recommendationRuns, recommendationCandidates, recommendationFeedback,
+            generatedSets, generatedSetEntries);
 
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         context.Tenants.AddRange(tenants);
@@ -446,6 +452,7 @@ public sealed class DurableStateTransferService
         context.ListeningProfiles.AddRange(listeningProfiles);
         context.RecommendationRuns.AddRange(recommendationRuns);
         context.RecommendationCandidates.AddRange(recommendationCandidates);
+        context.RecommendationFeedback.AddRange(recommendationFeedback);
         context.GeneratedSets.AddRange(generatedSets);
         context.GeneratedSetEntries.AddRange(generatedSetEntries);
         context.BackendIdentities.AddRange(backendIdentities);
@@ -1080,10 +1087,14 @@ public sealed class DurableStateTransferService
         IReadOnlyCollection<TenantRecord> tenants, IReadOnlyCollection<PlatformUserRecord> users,
         IReadOnlyCollection<BackendIdentityRecord> backendIdentities, IReadOnlyCollection<DurableJobRecord> jobs,
         IReadOnlyCollection<JobScheduleRecord> schedules,
-        IReadOnlyCollection<SecretReferenceRecord> secretReferences, IReadOnlyCollection<LibraryTrackRecord> libraryTracks, IReadOnlyCollection<IntelligencePolicyRecord> policies,
+        IReadOnlyCollection<SecretReferenceRecord> secretReferences,
+        IReadOnlyCollection<ProviderAccountRecord> providerAccounts,
+        IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
+        IReadOnlyCollection<LibraryTrackRecord> libraryTracks, IReadOnlyCollection<IntelligencePolicyRecord> policies,
         IReadOnlyCollection<ListeningSignalRecord> signals, IReadOnlyCollection<PlaybackDeliveryCheckpointEntity> playbackCheckpoints,
         IReadOnlyCollection<ListeningProfileRecord> profiles,
         IReadOnlyCollection<RecommendationRunRecord> runs, IReadOnlyCollection<RecommendationCandidateRecord> candidates,
+        IReadOnlyCollection<RecommendationFeedbackRecord> feedback,
         IReadOnlyCollection<GeneratedSetRecord> sets, IReadOnlyCollection<GeneratedSetEntryRecord> entries)
     {
         var tenantIds = IndexUnique(tenants, x => x.Id, "tenant"); var userById = IndexUnique(users, x => x.Id, "user");
@@ -1215,20 +1226,51 @@ public sealed class DurableStateTransferService
                 run.State == RecommendationRunState.Cancelled && job.State != DurableJobState.Cancelled && job.CancellationRequestedAt == null)
                 RejectIntelligenceArchive("a recommendation run is malformed or crosses its immutable policy, owner, library, or job scope");
         }
-        ValidateRecommendationChildren(runById, setById, candidates, sets, entries);
+        ValidateRecommendationChildren(runById, setById, providerAccounts, canonicalRecordings,
+            candidates, feedback, sets, entries);
     }
 
     private static void ValidateRecommendationChildren(IReadOnlyDictionary<Guid, RecommendationRunRecord> runById,
-        IReadOnlyDictionary<Guid, GeneratedSetRecord> setById, IReadOnlyCollection<RecommendationCandidateRecord> candidates,
+        IReadOnlyDictionary<Guid, GeneratedSetRecord> setById,
+        IReadOnlyCollection<ProviderAccountRecord> providerAccounts,
+        IReadOnlyCollection<CanonicalRecordingRecord> canonicalRecordings,
+        IReadOnlyCollection<RecommendationCandidateRecord> candidates,
+        IReadOnlyCollection<RecommendationFeedbackRecord> feedback,
         IReadOnlyCollection<GeneratedSetRecord> sets, IReadOnlyCollection<GeneratedSetEntryRecord> entries)
     {
+        var candidateById = candidates.ToDictionary(item => item.Id);
+        var accountById = providerAccounts.ToDictionary(item => item.Id);
+        var canonicalIds = canonicalRecordings.Select(item => (item.TenantId, item.Id)).ToHashSet();
         foreach (var group in candidates.GroupBy(x => x.RunId))
         {
             if (!runById.TryGetValue(group.Key, out var run) || !Contiguous(group.Select(x => x.Position)) || group.Select(x => x.TrackKey).Distinct(StringComparer.Ordinal).Count() != group.Count()) RejectIntelligenceArchive("recommendation candidate order, uniqueness, or run lineage is invalid");
             if (run == null) continue;
             foreach (var item in group) if (item.TenantId != run.TenantId || item.OwnerUserId != run.OwnerUserId || !IsRequiredText(item.TrackKey, 500) ||
                 item.Score is < 0 or > 1 || !double.IsFinite(item.Score) || !IsRequiredText(item.Source, 100) ||
-                !ValidSignals(item.SignalsJson) || !ValidIdentity(item.IdentityJson)) RejectIntelligenceArchive("a recommendation candidate is malformed or crosses its run scope");
+                !ValidSignals(item.SignalsJson) || !ValidIdentity(item.IdentityJson) ||
+                !IsRequiredText(item.SourceRevision, 300) || !TryCatalog(item.ExclusionsJson, 100, out var exclusions) ||
+                exclusions.Length > 16 || item.Revision < 0 ||
+                item.CanonicalRecordingId is { } canonicalId && !canonicalIds.Contains((item.TenantId, canonicalId)) ||
+                item.ProviderAccountId is { } accountId &&
+                (!accountById.TryGetValue(accountId, out var account) || account.ProviderId != item.Source ||
+                 account.TenantId != item.TenantId ||
+                 account.Scope == ProviderAccountScope.User && account.OwnerUserId != item.OwnerUserId ||
+                 account.Scope == ProviderAccountScope.Library && account.LibraryScopeId != run.LibraryScopeId))
+                RejectIntelligenceArchive("a recommendation candidate is malformed or crosses its run, canonical recording, or provider-account scope");
+        }
+        var feedbackCandidates = new HashSet<Guid>();
+        foreach (var item in feedback)
+        {
+            var valid = candidateById.TryGetValue(item.CandidateId, out var candidate) &&
+                        runById.TryGetValue(candidate.RunId, out var run) &&
+                        item.TenantId == candidate.TenantId && item.OwnerUserId == candidate.OwnerUserId &&
+                        item.Protocol == run.Protocol && item.BackendInstanceId == run.BackendInstanceId &&
+                        item.LibraryScopeId == run.LibraryScopeId && item.TrackKey == candidate.TrackKey;
+            if (!valid || !feedbackCandidates.Add(item.CandidateId) ||
+                item.Kind is not ("like" or "dislike" or "dismiss") ||
+                !IsOptionalText(item.ReasonCode, 100) || item.CreatedAt == default ||
+                item.UpdatedAt < item.CreatedAt || item.Revision <= 0)
+                RejectIntelligenceArchive("recommendation feedback is malformed, duplicated, or crosses its candidate scope");
         }
         var runSets = new HashSet<Guid>(); foreach (var set in sets)
             if (!runById.TryGetValue(set.RunId, out var run) || run.State != RecommendationRunState.Succeeded || !runSets.Add(set.RunId) ||

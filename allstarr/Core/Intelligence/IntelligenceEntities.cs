@@ -72,6 +72,27 @@ public sealed class RecommendationCandidateRecord
     public string Source { get; set; } = "";
     public string SignalsJson { get; set; } = "[]"; public DateTimeOffset CreatedAt { get; set; }
     public string IdentityJson { get; set; } = "{}";
+    public Guid? CanonicalRecordingId { get; set; }
+    public Guid? ProviderAccountId { get; set; }
+    public string SourceRevision { get; set; } = "legacy";
+    public string ExclusionsJson { get; set; } = "[]";
+    public long Revision { get; set; }
+}
+public sealed class RecommendationFeedbackRecord
+{
+    public Guid Id { get; set; }
+    public Guid CandidateId { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid OwnerUserId { get; set; }
+    public string Protocol { get; set; } = "";
+    public string BackendInstanceId { get; set; } = "";
+    public string LibraryScopeId { get; set; } = "";
+    public string TrackKey { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public string? ReasonCode { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public long Revision { get; set; }
 }
 public sealed class GeneratedSetRecord
 {

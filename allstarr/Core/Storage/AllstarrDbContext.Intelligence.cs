@@ -10,6 +10,7 @@ public sealed partial class AllstarrDbContext
     public DbSet<ListeningProfileRecord> ListeningProfiles => Set<ListeningProfileRecord>();
     public DbSet<RecommendationRunRecord> RecommendationRuns => Set<RecommendationRunRecord>();
     public DbSet<RecommendationCandidateRecord> RecommendationCandidates => Set<RecommendationCandidateRecord>();
+    public DbSet<RecommendationFeedbackRecord> RecommendationFeedback => Set<RecommendationFeedbackRecord>();
     public DbSet<GeneratedSetRecord> GeneratedSets => Set<GeneratedSetRecord>();
     public DbSet<GeneratedSetEntryRecord> GeneratedSetEntries => Set<GeneratedSetEntryRecord>();
 }

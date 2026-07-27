@@ -141,6 +141,7 @@ public sealed class SelectiveStateTransferService
                 "listening-profiles",
                 "recommendation-runs",
                 "recommendation-candidates",
+                "recommendation-feedback",
                 "generated-sets",
                 "generated-set-entries",
                 "metadata-enrichment-plans",
@@ -905,6 +906,12 @@ public sealed class SelectiveStateTransferService
                     await WriteJsonAsync(archive, entry, rows, cancellationToken);
                     return rows.Count;
                 }
+            case "recommendation-feedback":
+                {
+                    var rows = await context.RecommendationFeedback.AsNoTracking().ToListAsync(cancellationToken);
+                    await WriteJsonAsync(archive, entry, rows, cancellationToken);
+                    return rows.Count;
+                }
             case "generated-sets":
                 {
                     var rows = await context.GeneratedSets.AsNoTracking().ToListAsync(cancellationToken);
@@ -1236,6 +1243,12 @@ public sealed class SelectiveStateTransferService
                 {
                     var rows = await ReadJsonAsync<RecommendationCandidateRecord>(archiveEntry, cancellationToken);
                     context.RecommendationCandidates.AddRange(rows);
+                    return rows.Count;
+                }
+            case "recommendation-feedback":
+                {
+                    var rows = await ReadJsonAsync<RecommendationFeedbackRecord>(archiveEntry, cancellationToken);
+                    context.RecommendationFeedback.AddRange(rows);
                     return rows.Count;
                 }
             case "generated-sets":
