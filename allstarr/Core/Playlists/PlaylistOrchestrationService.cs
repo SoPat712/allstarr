@@ -386,6 +386,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     {
         var collected = await _source.CollectAsync(execution, link, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended(CAST({link.ProviderAccountId} AS text), 0))",
+            cancellationToken);
         var now = _clock.UtcNow;
         var distinctEntries = collected.Entries
             .OrderBy(item => item.SourcePosition)
@@ -547,6 +551,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 SourceEntryIdHash = entry.SourceEntryIdHash
             }));
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return snapshot;
     }
 
