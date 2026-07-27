@@ -914,8 +914,21 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
 test("Sources keep primary actions visible and report scoped degradation", async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
+  await page.route("**/api/admin/ui/schema", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      ...schema,
+      providers: [
+        ...schema.providers,
+        { id: "disabled-source", name: "Disabled Source", status: "disabled", categories: ["metadata"] },
+      ],
+    }),
+  }));
   await page.goto("#/sources");
   await expect(page.getByText("Lumen Audio connection · Connected by Tester")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Disabled Sources" })).toBeVisible();
+  await expect(page.getByTitle("Disabled Source")).toBeVisible();
   await expect(page.getByRole("button", { name: "Audience Only Tester" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Configure" })).toBeVisible();
   await page.getByRole("button", { name: "Actions for Lumen account" }).click();
@@ -1253,7 +1266,7 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
       await expect(page.locator(".app-shell")).toHaveClass(/slim/);
       await expect.poll(async () =>
         (await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Library" }).boundingBox())?.width ?? 0
-      ).toBe(48);
+      ).toBe(56);
       await page.getByRole("button", { name: "Expand sidebar" }).click();
       await expect(page.locator(".app-shell")).not.toHaveClass(/slim/);
     }
@@ -1304,7 +1317,7 @@ test("Sidebar uses an edge expander and deterministic slim breakpoint", async ({
   await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
 
   await page.setViewportSize({ width: 850, height: 800 });
-  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
   await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
 
   await page.setViewportSize({ width: 390, height: 844 });

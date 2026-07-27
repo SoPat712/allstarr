@@ -34,6 +34,8 @@ describe("source presentation", () => {
     expect(sourceStatus(provider, [account()], health)).toBe("healthy");
     expect(sourceStatus(provider, [account()], [{ ...health[0], health: "degraded" }]))
       .toBe("degraded");
+    expect(sourceStatus({ ...provider, status: "disabled" }, [account()], health))
+      .toBe("disabled");
   });
 
   it("labels audiences without revealing credentials", () => {

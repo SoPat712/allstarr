@@ -823,6 +823,7 @@ public class AdminUiController : ControllerBase
             Id = "qobuz",
             Name = "Qobuz",
             Icon = "qobuz",
+            LogoUrl = "/images/providers/qobuz.webp",
             Status = ProviderStatus("qobuz", string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured"),
             Categories = ["metadata", "download", "streaming", "playlist"],
             ConfigSchema =

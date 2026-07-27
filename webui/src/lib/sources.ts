@@ -21,6 +21,7 @@ export function sourceStatus(
   accounts: ProviderAccount[],
   health: ProviderHealth[],
 ) {
+  if (provider.status === "disabled") return "disabled";
   const connected = accounts.filter((item) =>
     item.providerId.toLowerCase() === provider.id.toLowerCase() && item.enabled);
   if (connected.length) {

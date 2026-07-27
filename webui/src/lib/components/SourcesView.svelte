@@ -58,6 +58,10 @@
         left.name.localeCompare(right.name);
     }),
   );
+  const disabledSourceCount = $derived(
+    providers.filter((item) => sourceStatus(item, accounts, health) === "disabled").length,
+  );
+  const enabledSourceCount = $derived(providers.length - disabledSourceCount);
   const canManage = $derived(
     managementMode !== "AdminManaged" || administrator,
   );
@@ -249,10 +253,16 @@
       {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
 
       <div class="source-catalog">
-        {#each providers as item (item.id)}
+        {#each providers as item, index (item.id)}
           {@const state = sourceStatus(item, accounts, health)}
           {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
           {@const connected = providerAccounts(item.id)}
+          {#if disabledSourceCount && index === enabledSourceCount}
+            <header class="source-section-heading">
+              <div><h3>Disabled Sources</h3><p>Installed but excluded from routing and health evaluation.</p></div>
+              <span>{disabledSourceCount}</span>
+            </header>
+          {/if}
           <article class="source-card" data-state={state}>
             <header>
               <div class="source-identity">
