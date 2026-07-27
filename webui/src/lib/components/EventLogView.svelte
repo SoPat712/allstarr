@@ -14,6 +14,7 @@
     groupOutcome,
     groupSeverity,
     humanize,
+    mergeActivity,
     outcomeClass,
   } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -67,13 +68,6 @@
     return provider(providerId)?.name ?? humanize(providerId);
   }
 
-  function merge(next: ActivityItem[], current: ActivityItem[]) {
-    return [...new Map([...next, ...current].map((item) => [item.id, item])).values()]
-      .toSorted((left, right) =>
-        right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id))
-      .slice(0, 200);
-  }
-
   async function load(mode: "initial" | "refresh" | "older" = "refresh") {
     if (refreshing || loadingEarlier) return;
     if (mode === "older") loadingEarlier = true;
@@ -84,8 +78,8 @@
         ? { limit: 50, before: cursor, beforeId: cursorId }
         : { limit: 50 });
       if (mode === "initial") items = response.items;
-      else if (mode === "older") items = merge(items, response.items);
-      else items = merge(response.items, items);
+      else if (mode === "older") items = mergeActivity(items, response.items);
+      else items = mergeActivity(items, response.items);
       if (mode !== "refresh" || !cursor) {
         cursor = response.nextCursor || "";
         cursorId = response.nextCursorId || "";
@@ -246,7 +240,7 @@
 
     <div class="event-log-count">
       <span>{filtered.length} of {items.length} loaded events</span>
-      {#if filtering}<button type="button" onclick={resetFilters}>Reset filters</button>{/if}
+      {#if filtering && groups.length}<button type="button" onclick={resetFilters}>Reset filters</button>{/if}
     </div>
 
     <div class="event-log-list">

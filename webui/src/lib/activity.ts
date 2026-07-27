@@ -43,6 +43,12 @@ export function filterActivity(items: ActivityItem[], filters: ActivityFilters) 
   });
 }
 
+export function mergeActivity(current: ActivityItem[], incoming: ActivityItem[]) {
+  return [...new Map([...current, ...incoming].map((item) => [item.id, item])).values()]
+    .toSorted((left, right) =>
+      right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id));
+}
+
 export function groupActivity(items: ActivityItem[]) {
   const groups: ActivityGroup[] = [];
   const occurrences = new Map<string, number>();
@@ -79,7 +85,9 @@ function groupTitle(entries: ActivityItem[]) {
   if (first.kind === "matching") {
     const accepted = entries.every((item) =>
       ["accepted", "pinned"].includes(item.state.toLowerCase()));
-    return `${accepted ? "Matched" : "Evaluated"} ${entries.length} tracks`;
+    const playlists = new Set(entries.map((item) => item.playlistName).filter(Boolean));
+    return `${accepted ? "Matched" : "Evaluated"} ${entries.length} tracks` +
+      (playlists.size ? ` across ${playlists.size} playlist${playlists.size === 1 ? "" : "s"}` : "");
   }
   if (first.kind === "playlist") return `${humanize(first.label)} · ${entries.length} playlists`;
   return `${humanize(first.label)} · ${entries.length} events`;

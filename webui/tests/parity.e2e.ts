@@ -569,6 +569,54 @@ test("Suggested mappings sort by confidence and deep links open review", async (
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
 });
 
+test("Event log groups matching work and preserves actionable history", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.route("**/api/admin/ui/activity?*", (route) => {
+    const url = new URL(route.request().url());
+    const older = url.searchParams.has("before");
+    const items = older
+      ? [{
+          id: "older", kind: "job", source: "system", label: "Playlist sync",
+          state: "succeeded", detail: "Generation 1", occurredAt: "2026-01-01T00:00:00Z",
+        }]
+      : ["First", "First", "Second"].map((playlistName, index) => ({
+          id: `match-${index}`, kind: "matching", source: "lumen-audio",
+          providerId: "lumen-audio", label: "Track matched", state: "accepted",
+          detail: `Song ${index}`, occurredAt: `2026-01-02T00:00:0${2 - index}Z`,
+          correlationId: "job-1", action: "track-match.evaluate", playlistName,
+          sourceTitle: `Song ${index}`, targetProviderId: "library",
+          targetTitle: `Local Song ${index}`, confidenceLabel: "96%",
+          sourceProviderTrackId: `provider-${index}`, backendItemId: `backend-${index}`,
+        }));
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items,
+        hasMore: !older,
+        nextCursor: older ? null : "2026-01-02T00:00:00Z",
+        nextCursorId: older ? null : "match-2",
+      }),
+    });
+  });
+  await page.goto("#/activity");
+
+  await expect(page.getByText("Matched 3 tracks across 2 playlists")).toBeVisible();
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.getByLabel("Search").fill("missing event");
+  await expect(page.getByText("No events match these filters")).toBeVisible();
+  await page.getByRole("button", { name: "Reset filters" }).click();
+
+  await page.getByRole("button", { name: "Load earlier events" }).click();
+  await expect(page.getByText("4 events retained in this view")).toBeVisible();
+  await page.locator(".event-log-group summary").first().click();
+  await expect(page.getByText("Technical details").first()).toBeVisible();
+  await page.getByRole("link", { name: "Open related view" }).first().click();
+  await expect(page).toHaveURL(/#\/library\/mappings\?search=Song%200$/);
+});
+
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);

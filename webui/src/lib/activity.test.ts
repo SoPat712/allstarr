@@ -5,6 +5,7 @@ import {
   groupActivity,
   groupOutcome,
   humanize,
+  mergeActivity,
 } from "./activity";
 import type { ActivityItem } from "./api";
 
@@ -22,12 +23,29 @@ const item = (id: string, detail: string): ActivityItem => ({
 
 describe("event log presentation", () => {
   it("groups consecutive operation events and removes retry noise", () => {
-    const grouped = groupActivity([item("1", "Song A"), item("2", "Song A"), item("3", "Song B")]);
-    expect(grouped).toMatchObject([{ title: "Matched 2 tracks", entries: [{ id: "1" }, { id: "3" }] }]);
+    const grouped = groupActivity([
+      { ...item("1", "Song A"), playlistName: "First" },
+      { ...item("2", "Song A"), playlistName: "First" },
+      { ...item("3", "Song B"), playlistName: "Second" },
+    ]);
+    expect(grouped).toMatchObject([{
+      title: "Matched 2 tracks across 2 playlists",
+      entries: [{ id: "1" }, { id: "3" }],
+    }]);
     expect(groupActivity([item("0", "New Song"), item("1", "Song A")])[0].key)
       .toBe(grouped[0].key);
     expect(groupOutcome([item("1", "Song A"), { ...item("2", "Song B"), state: "suggested" }]))
       .toBe("mixed");
+  });
+
+  it("retains loaded history while deduplicating live refreshes", () => {
+    const current = Array.from({ length: 250 }, (_, index) =>
+      ({ ...item(String(index), `Song ${index}`), occurredAt: `2026-07-26T${String(index % 24).padStart(2, "0")}:00:00Z` }));
+    const merged = mergeActivity(current, [
+      { ...item("249", "Updated"), occurredAt: "2026-07-27T00:00:00Z" },
+    ]);
+    expect(merged).toHaveLength(250);
+    expect(merged[0]).toMatchObject({ id: "249", detail: "Updated" });
   });
 
   it("filters provider-neutral event fields and humanizes enums", () => {
