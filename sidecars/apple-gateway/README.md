@@ -46,7 +46,7 @@ Prepare wrapper-v2 with the operator's legal APK/APKM, then use the saved Apple 
 ./allstarr.sh up
 ```
 
-The root overlay configures `http://apple-gateway:8000` internally. Removing the profile does not change
+The root Compose profile configures `http://apple-gateway:8000` internally. Removing the profile does not change
 Allstarr's Postgres state, existing media, gateway state, or wrapper login session.
 
 The supported GAMDL URL kinds are songs, albums, playlists, artists, music videos, posts, and Apple library URLs.

@@ -4,7 +4,7 @@ These documents describe the code that is currently shipped. Planned work does n
 
 ## Start here
 
-- [Architecture overview](architecture/overview.md): runtime boundaries, ownership, and current transitional seams.
+- [Architecture overview](architecture/overview.md): runtime boundaries and ownership.
 - [Configuration](operations/configuration.md): deployment-owned values, durable settings, and secrets.
 - [Deployment profiles](operations/deployment-profiles.md): install, update, optional services, backup, and restore.
 - [Storage](operations/storage.md): PostgreSQL ownership, migration, backup, and recovery.

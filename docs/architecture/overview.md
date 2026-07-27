@@ -59,7 +59,7 @@ The public protocol controllers preserve client compatibility. New application b
 | Intelligence and generated sets | `allstarr/Core/Intelligence` |
 | Managed media lifecycle | `allstarr/Core/ManagedFiles`, `allstarr/Core/Downloads` |
 | Admin and protocol HTTP surfaces | `allstarr/Controllers` |
-| Current WebUI | `allstarr/wwwroot` |
+| WebUI source and static assets | `webui/`, `allstarr/wwwroot` |
 
 ## Sources, accounts, and capabilities
 
