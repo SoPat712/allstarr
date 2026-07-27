@@ -77,6 +77,9 @@ public sealed class PlaylistCoverageMathTests
         Assert.Equal(1, projection.MatchedCount);
         Assert.Equal(1, projection.ReviewCount);
         Assert.Equal(1, projection.RejectedCount);
+        Assert.Equal(1, projection.RouteCounts["jellyfin"]);
+        Assert.Equal(1, projection.RouteCounts["provider"]);
+        Assert.Equal(1, projection.RouteCounts["unresolved"]);
     }
 
     private static DurablePlaylistEntryProjection Entry(

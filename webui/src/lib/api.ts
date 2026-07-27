@@ -295,6 +295,7 @@ export type PlaylistLink = {
   unmatchedCount: number;
   playableCount: number;
   materializedCount: number;
+  routeCoverage: Array<{ providerId: string; count: number }>;
   metrics: PlaylistLinkMetrics;
 };
 
@@ -331,6 +332,7 @@ export type PlaylistDetails = {
   localCount: number;
   externalCount: number;
   unresolvedCount: number;
+  routeCoverage: Array<{ providerId: string; count: number }>;
   durationMs?: number | null;
   unknownDurationCount: number;
   tracks: PlaylistTrack[];

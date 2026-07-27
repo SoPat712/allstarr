@@ -1104,6 +1104,7 @@
   }
 
   .coverage-track {
+    display: flex;
     height: 0.22rem;
     overflow: hidden;
     border-radius: 999px;
@@ -1111,9 +1112,7 @@
   }
 
   .coverage-track > span {
-    display: block;
     height: 100%;
-    border-radius: inherit;
     background: var(--route-color);
   }
 

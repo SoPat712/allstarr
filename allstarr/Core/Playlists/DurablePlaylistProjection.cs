@@ -60,6 +60,12 @@ public sealed record DurablePlaylistProjection(
         item.MatchState is TrackMatchState.Suggested or TrackMatchState.Ambiguous);
     public int RejectedCount => Entries.Count(item => item.MatchState == TrackMatchState.Rejected);
     public int PlayableCount => LocalCount + ExternalCount;
+    public IReadOnlyDictionary<string, int> RouteCounts => Entries
+        .GroupBy(item => item.RouteProviderId ??
+            (item.RouteKind == "local" ? TargetProtocol :
+                item.RouteKind == "unmatched" ? "unresolved" : item.RouteKind),
+            StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
     public int UnknownDurationCount => Entries.Count(item => !item.DurationMilliseconds.HasValue);
     public long? DurationMilliseconds => Entries.Any(item => item.DurationMilliseconds.HasValue)
         ? Entries.Sum(item => item.DurationMilliseconds ?? 0)

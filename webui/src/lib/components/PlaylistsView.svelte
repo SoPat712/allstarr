@@ -16,7 +16,6 @@
     filterTracks,
     formatDuration,
     providerColor,
-    summarizeRoutes,
     type PlaylistSort,
     type TrackSort,
   } from "$lib/playlists";
@@ -56,9 +55,6 @@
   );
   const visibleTracks = $derived(
     details ? filterTracks(details.tracks, trackQuery, routeFilter, trackSort) : [],
-  );
-  const routeCoverage = $derived(
-    details ? summarizeRoutes(details.tracks, details.targetProtocol) : [],
   );
   const selected = $derived(playlists.find((playlist) => playlist.id === selectedId));
 
@@ -293,9 +289,12 @@
                 <span>{providerName(playlist.targetProtocol)}</span>
               </small>
               <span class="coverage-track" aria-label={`${percent(playlist.playableCount, playlist.trackCount)} percent playable`}>
-                <span
-                  style={`width:${percent(playlist.playableCount, playlist.trackCount)}%;--route-color:${providerColor(playlist.sourceProviderId)}`}
-                ></span>
+                {#each playlist.routeCoverage as route}
+                  <span
+                    title={`${providerName(route.providerId)}: ${route.count}`}
+                    style={`width:${percent(route.count, playlist.trackCount)}%;--route-color:${providerColor(route.providerId)}`}
+                  ></span>
+                {/each}
               </span>
             </span>
             <span class="playlist-numbers">
@@ -347,7 +346,7 @@
               <span>{providerName(details.targetProtocol)}</span>
             </div>
             <div class="coverage-stack" aria-label={`${percent(details.trackCount - details.unresolvedCount, details.trackCount)} percent playable`}>
-              {#each routeCoverage as route}
+              {#each details.routeCoverage as route}
                 <span
                   title={`${providerName(route.providerId)}: ${route.count}`}
                   style={`width:${percent(route.count, details.trackCount)}%;--route-color:${providerColor(route.providerId)}`}

@@ -6,7 +6,6 @@ import {
   formatDuration,
   orderPlaylistSources,
   providerColor,
-  summarizeRoutes,
 } from "./playlists";
 
 const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
@@ -22,6 +21,7 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
   unmatchedCount: 1,
   playableCount: 9,
   materializedCount: 8,
+  routeCoverage: [{ providerId: "target", count: 9 }, { providerId: "unresolved", count: 1 }],
   metrics: { total: 10, matched: 9, unresolved: 1, review: 0, rejected: 0, playable: 9, materialized: 8 },
   ...values,
 });
@@ -53,10 +53,6 @@ describe("playlist presentation", () => {
     expect(formatDuration(3_723_000)).toBe("1:02:03");
     expect(formatDuration(null)).toBe("—");
     expect(providerColor("any-extension")).toMatch(/^hsl\(\d+ 72% 58%\)$/);
-    expect(summarizeRoutes(tracks, "local-provider")).toEqual([
-      { providerId: "external", count: 1 },
-      { providerId: "local-provider", count: 1 },
-    ]);
   });
 
   it("orders local targets, Spotify, then configured playlist Sources", () => {

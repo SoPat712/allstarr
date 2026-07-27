@@ -81,21 +81,6 @@ export function providerColor(providerId: string) {
   return `hsl(${hash % 360} 72% 58%)`;
 }
 
-export function summarizeRoutes(tracks: PlaylistTrack[], targetProtocol: string) {
-  const counts = new Map<string, number>();
-  for (const track of tracks) {
-    const providerId =
-      track.routeProviderId ??
-      (track.routeKind === "local"
-        ? targetProtocol
-        : track.routeKind === "external"
-          ? "external"
-          : "unresolved");
-    counts.set(providerId, (counts.get(providerId) ?? 0) + 1);
-  }
-  return [...counts].map(([providerId, count]) => ({ providerId, count }));
-}
-
 export function orderPlaylistSources(
   accounts: PlaylistSourceAccount[],
   providerOrder: string[],

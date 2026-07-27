@@ -70,6 +70,7 @@ const responses: Record<string, unknown> = {
       sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
       materializationMode: "reconcile", revision: 1, trackCount: 1,
       matchedCount: 0, unmatchedCount: 0, playableCount: 1, materializedCount: 1,
+      routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
       metrics: { total: 1, matched: 0, unresolved: 0, review: 1, rejected: 0, playable: 1, materialized: 1 },
     }],
   },
@@ -191,6 +192,7 @@ async function mockApi(page: Page, options: { delay?: string; fail?: string[] } 
         name: "Test playlist", sourceProviderId: "lumen-audio", targetProtocol: "jellyfin",
         retrievedAt: "2026-01-01", completedAt: "2026-01-01", trackCount: 1,
         localCount: 0, externalCount: 1, unresolvedCount: 0, durationMs: 180_000,
+        routeCoverage: [{ providerId: "lumen-audio", count: 1 }],
         unknownDurationCount: 0, tracks: [{
           position: 1, externalSnapshotId: "snapshot", title: "Test song",
           artists: ["Artist"], album: "Album", isrc: "US-AAA-26-00001",
@@ -566,9 +568,11 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/library/playlists");
+  await expect(page.locator('.playlist-row [title="Lumen Audio: 1"]')).toBeVisible();
   await page.getByRole("button", { name: /Test playlist/ }).click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
   await expect(dialog).toBeVisible();
+  await expect(dialog.locator('[title="Lumen Audio: 1"]')).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Sync" })).toBeInViewport();
   await expect(dialog.getByRole("button", { name: "Rematch" })).toBeInViewport();
   await expect(dialog.getByRole("button", { name: "Refresh" })).toBeInViewport();

@@ -994,6 +994,11 @@ public sealed class PlaylistLinksController(
         unmatchedCount = projection?.MissingCount ?? 0,
         playableCount = projection?.PlayableCount ?? 0,
         materializedCount = projection?.MaterializedCount ?? 0,
+        routeCoverage = projection?.RouteCounts.Select(item => new
+        {
+            providerId = item.Key,
+            count = item.Value
+        }).ToArray() ?? [],
         metrics = new
         {
             total = projection?.TotalCount ?? 0,
@@ -1028,6 +1033,11 @@ public sealed class PlaylistLinksController(
         localCount = value.LocalCount,
         externalCount = value.ExternalCount,
         unresolvedCount = value.MissingCount,
+        routeCoverage = value.RouteCounts.Select(item => new
+        {
+            providerId = item.Key,
+            count = item.Value
+        }),
         durationMs = value.DurationMilliseconds,
         unknownDurationCount = value.UnknownDurationCount,
         materializationVerification = value.VerificationCode == null ? null : new
