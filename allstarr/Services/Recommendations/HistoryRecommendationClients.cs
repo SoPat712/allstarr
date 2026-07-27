@@ -2,94 +2,74 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
-using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Recommendations;
 
-public sealed class AudioMuseRecommendationClient(HttpClient http, IConfiguration configuration,
-    IDbContextFactory<AllstarrDbContext>? factory = null, EncryptedSecretStore? secrets = null) : IAudioMuseRecommendationClient
+public sealed class AudioMuseRecommendationClient(
+    IProviderRegistry providers,
+    IScopedRecommendationAccountAccessor accounts) : IAudioMuseRecommendationClient
 {
-    private string? ConfiguredUrl => configuration["Intelligence:AudioMuse:Url"];
-    public bool IsAvailable => Uri.TryCreate(ConfiguredUrl, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+    private const string ProviderId = "audiomuse-ai";
+    public bool IsAvailable => providers.TryGetCapability<IProviderIntelligenceCapability>(
+        ProviderId, ProviderCapabilityKind.Intelligence, out _);
+
     public async Task<bool> CheckHealthAsync(IntelligenceScope scope, CancellationToken cancellationToken)
     {
         if (!IsAvailable) return false;
-        using var response = await http.GetAsync(new Uri(new Uri(ConfiguredUrl!.TrimEnd('/') + "/"), "api/health"), cancellationToken);
-        return response.IsSuccessStatusCode;
-    }
-    public async Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
-    {
-        if (!IsAvailable) throw new NotSupportedException("AudioMuse-AI sidecar is not configured.");
-        var endpoint = new Uri(new Uri(ConfiguredUrl!.TrimEnd('/') + "/"), "api/sonic_fingerprint/generate");
-        var body = new Dictionary<string, object?> { ["n"] = query.Limit };
-        SecretLease? credential = null;
-        try
-        {
-            if (factory == null || secrets == null)
-            {
-                if (query.Scope.Protocol != "jellyfin") throw new NotSupportedException();
-                body["jellyfin_user_identifier"] = query.Scope.OwnerUserId.ToString("D");
-            }
-            else
-            {
-                await using var db = await factory.CreateDbContextAsync(cancellationToken);
-                var identity = await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
-                    item.TenantId == query.Scope.TenantId && item.UserId == query.Scope.OwnerUserId &&
-                    item.BackendType == query.Scope.Protocol && item.BackendInstanceId == query.Scope.BackendInstanceId,
-                    cancellationToken) ?? throw new UnauthorizedAccessException();
-                if (query.Scope.Protocol == "jellyfin")
-                {
-                    body["jellyfin_user_identifier"] = identity.PrincipalId;
-                }
-                else if (query.Scope.Protocol == "subsonic")
-                {
-                    var referenceId = await db.IntelligencePolicies.AsNoTracking().Where(item =>
-                        item.TenantId == query.Scope.TenantId && item.OwnerUserId == query.Scope.OwnerUserId &&
-                        item.Protocol == query.Scope.Protocol && item.BackendInstanceId == query.Scope.BackendInstanceId &&
-                        item.LibraryScopeId == query.Scope.LibraryScopeId && item.Enabled)
-                        .Select(item => item.TargetCredentialReferenceId).SingleOrDefaultAsync(cancellationToken);
-                    if (!referenceId.HasValue) throw new UnauthorizedAccessException();
-                    credential = await secrets.OpenAsync(referenceId.Value,
-                        new SecretAccessContext(query.Scope.TenantId, AllowGlobal: false), cancellationToken);
-                    using var secret = JsonDocument.Parse(credential.Value);
-                    body["navidrome_user"] = Required(secret.RootElement, "username");
-                    body["navidrome_password"] = Required(secret.RootElement, "password");
-                }
-                else throw new NotSupportedException();
-            }
-            using var response = await http.PostAsJsonAsync(endpoint, body, cancellationToken);
-            if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.NotImplemented) throw new NotSupportedException();
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden) throw new UnauthorizedAccessException();
-            response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength > 1024 * 1024) throw new InvalidOperationException();
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            if (document.RootElement.ValueKind != JsonValueKind.Array)
-                throw new NotSupportedException("AudioMuse-AI sonic fingerprint contract is unavailable.");
-            return document.RootElement.EnumerateArray().Take(query.Limit).Select(item =>
-            {
-                var backendId = Required(item, "item_id");
-                var title = Required(item, "title");
-                var artist = Required(item, "author");
-                var album = item.TryGetProperty("album", out var albumNode) ? albumNode.GetString() : null;
-                var distance = item.TryGetProperty("distance", out var distanceNode) && distanceNode.TryGetDouble(out var parsed)
-                    ? Math.Max(0, parsed) : 1;
-                var score = 1d / (1d + distance);
-                return new RecommendationSourceItem($"backend:{backendId}", score,
-                    [new("audiomuse-sonic-fingerprint", score, "AudioMuse-AI matched this track to the user's sonic listening fingerprint.")],
-                    new("audiomuse-ai", Title: title, Artist: artist, Album: album, BackendItemId: backendId));
-            }).ToArray();
-        }
-        finally { credential?.Dispose(); }
+        var context = await ContextAsync(scope, "intelligence-health", cancellationToken);
+        if (context == null || !providers.TryGetCapability<IProviderHealthProbeCapability>(
+                ProviderId, ProviderCapabilityKind.Health, out var health)) return false;
+        var result = await health!.ProbeAsync(context, new(ProviderCapabilityKind.Intelligence));
+        return result.IsSuccess && result.Value?.Status == ProviderProbeStatus.Healthy;
     }
 
-    private static string Required(JsonElement value, string property) =>
-        value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String &&
-        !string.IsNullOrWhiteSpace(item.GetString()) ? item.GetString()! :
-        throw new InvalidOperationException("AudioMuse-AI recommendation data is incomplete.");
+    public async Task<IReadOnlyList<RecommendationSourceItem>> RecommendAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
+    {
+        if (!providers.TryGetCapability<IProviderIntelligenceCapability>(
+                ProviderId, ProviderCapabilityKind.Intelligence, out var capability))
+            throw new NotSupportedException("AudioMuse-AI extension is not installed.");
+        var context = await ContextAsync(query.Scope, "intelligence-recommend", cancellationToken)
+            ?? throw new NotSupportedException("AudioMuse-AI has no exact-scope account.");
+        var outcome = await capability!.RecommendAsync(context, query.SeedTrackKeys, query.Limit);
+        if (!outcome.IsSuccess)
+        {
+            switch (outcome.Error?.Kind)
+            {
+                case ProviderErrorKind.AccountNeedsConfiguration:
+                case ProviderErrorKind.NotSupported:
+                case ProviderErrorKind.CapabilityUnavailable:
+                    throw new NotSupportedException();
+                case ProviderErrorKind.Forbidden:
+                    throw new UnauthorizedAccessException();
+                default:
+                    throw new InvalidOperationException("AudioMuse-AI recommendation failed.");
+            }
+        }
+        return outcome.Value!.Select(item => new RecommendationSourceItem(
+            $"provider:{ProviderId}:{item.TrackId}", item.Score,
+            [new("audiomuse-intelligence", item.Score,
+                item.Explanation ?? "AudioMuse-AI identified this track from the scoped listening profile.")],
+            new(ProviderId, Title: item.Title, Artist: item.Artist, Album: item.Album,
+                BackendItemId: item.TrackId))).ToArray();
+    }
+
+    private async Task<ProviderExecutionContext?> ContextAsync(
+        IntelligenceScope scope, string operation, CancellationToken cancellationToken)
+    {
+        var account = await accounts.FindAccountAsync(scope, ProviderId, cancellationToken);
+        if (account == null) return null;
+        var actor = new ProviderActorContext(scope.TenantId, ProviderActorKind.User, scope.OwnerUserId,
+            new(scope.Protocol, scope.BackendInstanceId, scope.OwnerUserId.ToString("D")));
+        return new(actor, ProviderId, account, new(scope.TenantId, scope.LibraryScopeId),
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, false, false, false, [ProviderId]),
+            operation, Guid.CreateVersion7().ToString("N"), DateTimeOffset.UtcNow.AddSeconds(10),
+            cancellationToken);
+    }
 }
 
 public sealed class LastFmRecommendationClient(HttpClient http, IScopedRecommendationAccountAccessor accounts)

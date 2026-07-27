@@ -193,6 +193,7 @@ public static class ProviderRegistrationValidator
             [ProviderCapabilityKind.Download] = typeof(IProviderDownloadCapability),
             [ProviderCapabilityKind.Playlist] = typeof(IProviderPlaylistCapability),
             [ProviderCapabilityKind.Lyrics] = typeof(IProviderLyricsCapability),
+            [ProviderCapabilityKind.Intelligence] = typeof(IProviderIntelligenceCapability),
             [ProviderCapabilityKind.Health] = typeof(IProviderHealthProbeCapability)
         };
 
@@ -282,9 +283,14 @@ public static class ProviderManifestValidator
             {
                 "fetchLyrics"
             },
+            [ProviderCapabilityKind.Intelligence] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "startAnalysis", "getAnalysisProgress", "getClusters", "recommend",
+                "search", "exportPlaylist", "disconnect"
+            },
             [ProviderCapabilityKind.Health] = new HashSet<string>(StringComparer.Ordinal)
             {
-                "probeMetadata", "probePlaylist", "probeStreaming", "probeDownload"
+                "probeMetadata", "probePlaylist", "probeStreaming", "probeDownload", "probeIntelligence"
             }
         };
 
@@ -310,6 +316,10 @@ public static class ProviderManifestValidator
             [ProviderCapabilityKind.Lyrics] = new HashSet<string>(StringComparer.Ordinal)
             {
                 "fetchLyrics"
+            },
+            [ProviderCapabilityKind.Intelligence] = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "recommend"
             },
             [ProviderCapabilityKind.Health] = new HashSet<string>(StringComparer.Ordinal)
         };

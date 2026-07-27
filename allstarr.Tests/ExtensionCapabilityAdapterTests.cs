@@ -447,6 +447,47 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task Intelligence_MapsAnalysisDiscoverySearchExportAndDisconnectContracts()
+    {
+        string[] hooks = ["startAnalysis", "getAnalysisProgress", "getClusters", "recommend",
+            "search", "exportPlaylist", "disconnect"];
+        var manifest = new ExtensionSdkManifest("fixture-extension", "Fixture", "1.0.0", "1", "index.js",
+        [
+            new ExtensionSdkCapability(ProviderCapabilityKind.Intelligence, hooks, [ProviderAccountScope.User]),
+            new ExtensionSdkCapability(ProviderCapabilityKind.Health, ["probeIntelligence"], [ProviderAccountScope.User])
+        ], []);
+        var sandbox = Sandbox(manifest, """
+            const track = { trackId: 'track-1', title: 'Track', artist: 'Artist', album: 'Album',
+              score: 0.9, clusterId: 'cluster-1', path: '/music/track.flac', explanation: 'Similar sound' };
+            registerExtension({
+              startAnalysis: function() { return { jobId: 'job-1', state: 'Queued', completed: 0, total: 10 }; },
+              getAnalysisProgress: function() { return { jobId: 'job-1', state: 'Running', completed: 4, total: 10 }; },
+              getClusters: function() { return { items: [{ id: 'cluster-1', name: 'Cluster', tracks: [track] }] }; },
+              recommend: function() { return { items: [track] }; },
+              search: function() { return { items: [track] }; },
+              exportPlaylist: function() { return { playlistId: 'playlist-1', revision: 'r1', trackCount: 1 }; },
+              disconnect: function() { return { disconnected: true }; },
+              probeIntelligence: function() { return { status: 'Healthy', observedAt: '2030-01-01T00:00:00Z', latencyMs: 1 }; }
+            });
+            """);
+        var intelligence = new ExtensionIntelligenceCapabilityAdapter(sandbox, manifest);
+        var health = new ExtensionHealthCapabilityAdapter(sandbox, manifest);
+        var context = Context(includeAccount: true);
+
+        Assert.Equal("job-1", (await intelligence.StartAnalysisAsync(context)).RequireValue().JobId);
+        Assert.Equal(4, (await intelligence.GetAnalysisProgressAsync(context, "job-1")).RequireValue().Completed);
+        Assert.Equal("cluster-1", Assert.Single((await intelligence.GetClustersAsync(context)).RequireValue()).Id);
+        Assert.Equal("/music/track.flac", Assert.Single((await intelligence.RecommendAsync(context, ["seed"], 10)).RequireValue()).Path);
+        Assert.Equal("Track", Assert.Single((await intelligence.SearchAsync(context, "lyrics", true, 10)).RequireValue()).Title);
+        Assert.Equal("playlist-1", (await intelligence.ExportPlaylistAsync(context, "Mix", ["track-1"])).RequireValue().PlaylistId);
+        Assert.True((await intelligence.DisconnectAsync(context)).RequireValue());
+        Assert.Equal(ProviderProbeStatus.Healthy,
+            (await health.ProbeAsync(context, new(ProviderCapabilityKind.Intelligence))).RequireValue().Status);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            intelligence.RecommendAsync(context, ["seed"], 0));
+    }
+
+    [Fact]
     public async Task ForeignResourceId_IsRejectedBeforeHookInvocation()
     {
         var manifest = Manifest(ProviderCapabilityKind.Download, "checkAvailability");

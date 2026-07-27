@@ -22,13 +22,15 @@ The manifest and archive are data from an untrusted publisher. Installation vali
 
 ## Capability contracts
 
-SDK v1 recognizes typed metadata, streaming, download, playlist, lyrics, and health hooks. Declare only hooks the package implements.
+SDK v1 recognizes typed metadata, streaming, download, playlist, lyrics, intelligence, and health hooks. Declare only hooks the package implements.
 
 - Metadata returns normalized song, album, artist, identifiers, and artwork facts.
 - Streaming returns an expiring playable response for the requested external track.
 - Download writes through the managed download lifecycle and reports media facts.
 - Playlist lists user-visible playlists and ordered tracks for the selected account.
 - Lyrics returns normalized timed or plain lyrics.
+- Intelligence starts and observes analysis jobs, returns clusters and recommendations, searches
+  text or lyrics, exports playlists, and disconnects a remote service.
 - Health tests one account and capability without changing unrelated state.
 
 Allstarr selects the tenant, user, library, provider account, capability, deadline, and policy before invocation. Extension code cannot select a different account or impersonate another user.
@@ -36,6 +38,28 @@ Allstarr selects the tenant, user, library, provider account, capability, deadli
 ## Accounts and settings
 
 Extension credentials live in provider accounts under **Settings > Accounts**. Account fields declared as secrets are encrypted before persistence. Source health, routing, and capability readiness remain under **Sources**; they are not duplicate credential stores.
+
+An external intelligence service such as AudioMuse-AI is an ordinary extension provider: its
+manifest allowlists the service origin with `network`, declares authentication fields with
+`secret`, implements the `intelligence` hooks it supports, and declares `probeIntelligence` under
+`health`. Allstarr stores only the reviewed connection/account metadata and normalized results;
+models, workers, indexes, and service implementation remain outside the Allstarr package.
+
+The intelligence capability requires `recommend`; the remaining hooks are optional:
+
+| Hook | Request | Result |
+| --- | --- | --- |
+| `startAnalysis` | `rebuild`, `idempotencyKey` | job ID, state, completed/total |
+| `getAnalysisProgress` | job ID | state, completed/total, safe code |
+| `getClusters` | limit | named clusters with normalized tracks |
+| `recommend` | seed track IDs, limit | normalized tracks with score and explanation |
+| `search` | query, include lyrics, limit | normalized tracks |
+| `exportPlaylist` | name, track IDs, idempotency key | playlist ID, revision, track count |
+| `disconnect` | idempotency key | disconnected flag |
+
+Normalized intelligence tracks may include a cluster ID and service-owned song path. They never
+grant filesystem access to the extension; the values are service results carried through the
+permission-scoped call.
 
 For the SpotiFLAC Apple Music package, catalog metadata can work without a subscription token. Subscription lyrics require the package's `mediaUserToken`. This is separate from Allstarr's built-in Apple MusicKit playlist account and the optional Apple download gateway.
 

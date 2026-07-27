@@ -1,9 +1,10 @@
+using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Storage;
 using allstarr.Services.Recommendations;
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
@@ -59,7 +60,7 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal(RecommendationProviderState.Unsupported, listenBrainz.State);
         Assert.Equal("listenbrainz_recommendations_not_configured", listenBrainz.SafeErrorCode);
         Assert.Equal(RecommendationProviderState.Unsupported, audioMuse.State);
-        Assert.Equal("audiomuse_ai_sidecar_unavailable", audioMuse.SafeErrorCode);
+        Assert.Equal("audiomuse_ai_extension_unavailable", audioMuse.SafeErrorCode);
     }
 
     [Fact]
@@ -152,18 +153,23 @@ public sealed class RecommendationSourceAdapterTests
     }
 
     [Fact]
-    public async Task AudioMuseConcreteClientIsOptionalBoundedAndPreservesIdentity()
+    public async Task AudioMuseConcreteClientUsesInstalledExtensionCapabilityAndPreservesIdentity()
     {
-        var unavailable = new AudioMuseRecommendationClient(new HttpClient(new QueueHandler("{}")),
-            new ConfigurationBuilder().AddInMemoryCollection().Build());
+        var accounts = new SecretAccessor("""{"token":"protected"}""");
+        var unavailable = new AudioMuseRecommendationClient(new ProviderRegistry([]), accounts);
         Assert.False(unavailable.IsAvailable);
 
-        var handler = new QueueHandler("""[{"item_id":"audio-333","title":"Future Song","author":"Future Artist","album":"Future Album","distance":0.25}]""");
-        var configured = new AudioMuseRecommendationClient(new HttpClient(handler), new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Intelligence:AudioMuse:Url"] = "http://audiomuse.test" }).Build());
+        var capability = new IntelligenceCapability();
+        var descriptor = new ProviderDescriptor("audiomuse-ai", "AudioMuse-AI", "External intelligence service",
+            ProviderOrigin.Extension, "1", "1.0",
+            [new(ProviderCapabilityKind.Intelligence, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.Required, "1.0", ["recommend"], [ProviderAccountScope.User])],
+            new ProviderPermissionDescriptor(), entryPoint: "index.js");
+        var configured = new AudioMuseRecommendationClient(
+            new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]), accounts);
         var item = Assert.Single(await configured.RecommendAsync(Query(), default));
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
-        Assert.Equal("/api/sonic_fingerprint/generate", handler.Requests.Single().AbsolutePath);
+        Assert.Equal(["backend:seed"], capability.Seeds);
     }
 
     [Fact]
@@ -219,8 +225,31 @@ public sealed class RecommendationSourceAdapterTests
     private sealed class SecretAccessor(string json) : IScopedRecommendationAccountAccessor
     {
         public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) => Task.FromResult(true);
+        public Task<ProviderAccountContext?> FindAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) =>
+            Task.FromResult<ProviderAccountContext?>(new(Guid.CreateVersion7(), providerId,
+                ProviderAccountScope.User, 1, tenantId: scope.TenantId, ownerUserId: scope.OwnerUserId));
         public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId, Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken token)
         { using var document = JsonDocument.Parse(json); return await operation(document.RootElement, token); }
+    }
+
+    private sealed class IntelligenceCapability : IProviderIntelligenceCapability
+    {
+        public string ProviderId => "audiomuse-ai";
+        public ProviderCapabilityKind Capability => ProviderCapabilityKind.Intelligence;
+        public IReadOnlyList<string> Seeds { get; private set; } = [];
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> RecommendAsync(
+            ProviderExecutionContext context, IReadOnlyList<string> seedTrackIds, int limit)
+        {
+            Seeds = seedTrackIds;
+            return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
+                [new("audio-333", "Future Song", "Future Artist", .8, "Future Album")]));
+        }
+        public Task<ProviderOutcome<ProviderAnalysisProgress>> StartAnalysisAsync(ProviderExecutionContext context, bool rebuild = false) => throw new NotSupportedException();
+        public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(ProviderExecutionContext context, string jobId) => throw new NotSupportedException();
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(ProviderExecutionContext context, int limit = 50) => throw new NotSupportedException();
+        public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(ProviderExecutionContext context, string query, bool includeLyrics, int limit) => throw new NotSupportedException();
+        public Task<ProviderOutcome<ProviderPlaylistExportResult>> ExportPlaylistAsync(ProviderExecutionContext context, string name, IReadOnlyList<string> trackIds) => throw new NotSupportedException();
+        public Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context) => throw new NotSupportedException();
     }
 
     private sealed class QueueHandler(params string[] responses) : HttpMessageHandler

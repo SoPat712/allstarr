@@ -9,6 +9,7 @@ public enum ProviderCapabilityKind
     Download,
     Playlist,
     Lyrics,
+    Intelligence,
     Health
 }
 

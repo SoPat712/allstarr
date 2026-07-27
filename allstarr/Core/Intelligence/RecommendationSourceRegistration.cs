@@ -13,8 +13,7 @@ public static class RecommendationSourceRegistration
             client.Timeout = TimeSpan.FromSeconds(10)).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddHttpClient<IListenBrainzRecommendationClient, ListenBrainzRecommendationClient>(client =>
             client.Timeout = TimeSpan.FromSeconds(10)).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-        services.AddHttpClient<IAudioMuseRecommendationClient, AudioMuseRecommendationClient>(client =>
-            client.Timeout = TimeSpan.FromSeconds(10)).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+        services.AddSingleton<IAudioMuseRecommendationClient, AudioMuseRecommendationClient>();
         services.AddSingleton<IRecommendationProvider, JellyfinInstantMixRecommendationProvider>();
         services.AddSingleton<IRecommendationProvider, LocalRuleRecommendationProvider>();
         services.AddSingleton<IRecommendationProvider, MusicBrainzLocalRecommendationProvider>();

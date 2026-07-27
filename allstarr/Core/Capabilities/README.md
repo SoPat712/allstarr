@@ -4,7 +4,7 @@ This folder owns the provider-facing contracts shared by built-ins and the SDK v
 select accounts, choose a provider, translate identities, persist recordings, or shape Jellyfin and Subsonic
 responses. Those jobs stay in their own layers.
 
-The first contract version covers metadata, streaming, download, playlist, lyrics, and health. Each call gets
+The first contract version covers metadata, streaming, download, playlist, lyrics, intelligence, and health. Each call gets
 an explicit `ProviderExecutionContext`, so provider code never has to discover the actor, account, library,
 policy, deadline, cancellation token, or idempotency key from ambient HTTP state.
 

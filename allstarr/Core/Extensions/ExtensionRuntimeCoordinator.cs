@@ -242,6 +242,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                 sandbox, runtimeManifest, _secrets, _downloadArtifacts, _downloadOptions),
             ProviderCapabilityKind.Playlist => new ExtensionPlaylistCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             ProviderCapabilityKind.Lyrics => new ExtensionLyricsCapabilityAdapter(sandbox, runtimeManifest, _secrets),
+            ProviderCapabilityKind.Intelligence => new ExtensionIntelligenceCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             ProviderCapabilityKind.Health => new ExtensionHealthCapabilityAdapter(sandbox, runtimeManifest, _secrets),
             _ => throw new ExtensionSdkValidationException("Unsupported extension capability.")
         })).ToArray();

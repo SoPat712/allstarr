@@ -395,7 +395,7 @@ public sealed class IntelligenceController(
     private static string SourceDescription(string id) => id switch
     {
         "lastfm" => "Personalized from your opted-in Last.fm listening context.",
-        "audiomuse-ai" => "Personalized sonic similarity from the optional AudioMuse-AI sidecar.",
+        "audiomuse-ai" => "Personalized sonic similarity from the optional AudioMuse-AI extension service.",
         "musicbrainz-local" => "Local similarity using MusicBrainz-enriched genres, credits, and relationships. MusicBrainz is metadata, not a personalized recommendation account.",
         "jellyfin-instant-mix" => "Your linked Jellyfin library's Instant Mix results.",
         "listenbrainz" => "Personalized from your opted-in ListenBrainz listening context.",

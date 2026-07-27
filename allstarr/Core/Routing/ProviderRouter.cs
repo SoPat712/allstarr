@@ -31,6 +31,7 @@ public sealed class ProviderRouter(
             [ProviderCapabilityKind.Download] = typeof(IProviderDownloadCapability),
             [ProviderCapabilityKind.Playlist] = typeof(IProviderPlaylistCapability),
             [ProviderCapabilityKind.Lyrics] = typeof(IProviderLyricsCapability),
+            [ProviderCapabilityKind.Intelligence] = typeof(IProviderIntelligenceCapability),
             [ProviderCapabilityKind.Health] = typeof(IProviderHealthProbeCapability)
         };
 

@@ -94,6 +94,9 @@ public abstract class ExtensionCapabilityAdapterBase
         value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var result) ? result : null;
     protected static int? Int(JsonElement value, string name) =>
         value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var result) ? result : null;
+    protected static double Double(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetDouble(out var result)
+            ? result : throw new JsonException();
     protected static TEnum EnumValue<TEnum>(JsonElement value, string name) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(Text(value, name), true, out var parsed) && Enum.IsDefined(parsed) ? parsed : throw new JsonException();
     protected static ProviderMediaFormat Media(JsonElement value)
@@ -205,11 +208,117 @@ public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapte
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Health;
     public Task<ProviderOutcome<ProviderHealthProbeResult>> ProbeAsync(ProviderExecutionContext context, ProviderHealthProbeRequest request)
     {
-        var hook = request.TargetCapability switch { ProviderCapabilityKind.Metadata => "probeMetadata", ProviderCapabilityKind.Playlist => "probePlaylist", ProviderCapabilityKind.Streaming => "probeStreaming", ProviderCapabilityKind.Download => "probeDownload", _ => "" };
+        var hook = request.TargetCapability switch { ProviderCapabilityKind.Metadata => "probeMetadata", ProviderCapabilityKind.Playlist => "probePlaylist", ProviderCapabilityKind.Streaming => "probeStreaming", ProviderCapabilityKind.Download => "probeDownload", ProviderCapabilityKind.Intelligence => "probeIntelligence", _ => "" };
         var started = Stopwatch.GetTimestamp();
         return InvokeAsync(context, hook, new { targetCapability = request.TargetCapability.ToString(), request.NonDestructive }, value =>
             new ProviderHealthProbeResult(EnumValue<ProviderProbeStatus>(value, "status"), value.GetProperty("observedAt").GetDateTimeOffset(),
                 value.TryGetProperty("latencyMs", out var latency) && latency.TryGetDouble(out var ms) ? TimeSpan.FromMilliseconds(ms) : Stopwatch.GetElapsedTime(started), OptionalText(value, "safeCode")));
+    }
+}
+
+public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderIntelligenceCapability
+{
+    private readonly bool accountRequired;
+
+    public ExtensionIntelligenceCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
+        IProviderAccountSecretAccessor? secrets = null)
+        : base(sandbox, manifest, ProviderCapabilityKind.Intelligence, secrets) =>
+        accountRequired = manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Intelligence).AccountRequired;
+
+    public ProviderCapabilityKind Capability => ProviderCapabilityKind.Intelligence;
+
+    public Task<ProviderOutcome<ProviderAnalysisProgress>> StartAnalysisAsync(
+        ProviderExecutionContext context, bool rebuild = false)
+    {
+        context.RequireIdempotencyKey();
+        return InvokeAsync(context, "startAnalysis", new { rebuild, context.IdempotencyKey }, MapProgress, accountRequired);
+    }
+
+    public Task<ProviderOutcome<ProviderAnalysisProgress>> GetAnalysisProgressAsync(
+        ProviderExecutionContext context, string jobId)
+    {
+        ProviderContractValidation.RequiredText(jobId, nameof(jobId), 300);
+        return InvokeAsync(context, "getAnalysisProgress", new { jobId }, MapProgress, accountRequired);
+    }
+
+    public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceCluster>>> GetClustersAsync(
+        ProviderExecutionContext context, int limit = 50)
+    {
+        Limit(limit, 100);
+        return InvokeAsync(context, "getClusters", new { limit }, value =>
+            (IReadOnlyList<ProviderIntelligenceCluster>)value.GetProperty("items").EnumerateArray().Take(limit)
+                .Select(item => new ProviderIntelligenceCluster(
+                    Required(item, "id", 300), Required(item, "name", 300),
+                    item.GetProperty("tracks").EnumerateArray().Take(200).Select(MapTrack).ToArray())).ToArray(), accountRequired);
+    }
+
+    public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> RecommendAsync(
+        ProviderExecutionContext context, IReadOnlyList<string> seedTrackIds, int limit)
+    {
+        Limit(limit, 200);
+        if (seedTrackIds.Count > 100) throw new ArgumentOutOfRangeException(nameof(seedTrackIds));
+        foreach (var trackId in seedTrackIds) ProviderContractValidation.RequiredText(trackId, nameof(seedTrackIds), 500);
+        return InvokeAsync(context, "recommend", new { seedTrackIds, limit }, value =>
+            (IReadOnlyList<ProviderIntelligenceTrack>)value.GetProperty("items").EnumerateArray().Take(limit)
+                .Select(MapTrack).ToArray(), accountRequired);
+    }
+
+    public Task<ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>> SearchAsync(
+        ProviderExecutionContext context, string query, bool includeLyrics, int limit)
+    {
+        Limit(limit, 200);
+        ProviderContractValidation.RequiredText(query, nameof(query), 500);
+        return InvokeAsync(context, "search", new { query, includeLyrics, limit }, value =>
+            (IReadOnlyList<ProviderIntelligenceTrack>)value.GetProperty("items").EnumerateArray().Take(limit)
+                .Select(MapTrack).ToArray(), accountRequired);
+    }
+
+    public Task<ProviderOutcome<ProviderPlaylistExportResult>> ExportPlaylistAsync(
+        ProviderExecutionContext context, string name, IReadOnlyList<string> trackIds)
+    {
+        context.RequireIdempotencyKey();
+        ProviderContractValidation.RequiredText(name, nameof(name), 500);
+        if (trackIds.Count is < 1 or > 10_000) throw new ArgumentOutOfRangeException(nameof(trackIds));
+        foreach (var trackId in trackIds) ProviderContractValidation.RequiredText(trackId, nameof(trackIds), 500);
+        return InvokeAsync(context, "exportPlaylist", new { name, trackIds, context.IdempotencyKey }, value =>
+            new ProviderPlaylistExportResult(Required(value, "playlistId", 500), Required(value, "revision", 300),
+                NonNegative(value, "trackCount")), accountRequired);
+    }
+
+    public Task<ProviderOutcome<bool>> DisconnectAsync(ProviderExecutionContext context)
+    {
+        context.RequireIdempotencyKey();
+        return InvokeAsync(context, "disconnect", new { context.IdempotencyKey }, value =>
+            Bool(value, "disconnected"), accountRequired);
+    }
+
+    private static ProviderAnalysisProgress MapProgress(JsonElement value)
+    {
+        var completed = NonNegative(value, "completed");
+        var total = NonNegative(value, "total");
+        if (completed > total) throw new JsonException();
+        return new(Required(value, "jobId", 300), EnumValue<ProviderAnalysisState>(value, "state"),
+            completed, total, OptionalText(value, "safeCode"));
+    }
+
+    private static ProviderIntelligenceTrack MapTrack(JsonElement value) =>
+        new(Required(value, "trackId", 500), Required(value, "title", 500), Required(value, "artist", 500),
+            Math.Clamp(Double(value, "score"), 0, 1), OptionalText(value, "album"),
+            OptionalText(value, "clusterId"), OptionalText(value, "path"),
+            OptionalText(value, "explanation"));
+
+    private static string Required(JsonElement value, string name, int maximumLength) =>
+        ProviderContractValidation.RequiredText(Text(value, name), name, maximumLength);
+
+    private static int NonNegative(JsonElement value, string name)
+    {
+        var result = value.GetProperty(name).GetInt32();
+        return result >= 0 ? result : throw new JsonException();
+    }
+
+    private static void Limit(int value, int maximum)
+    {
+        if (value is < 1 || value > maximum) throw new ArgumentOutOfRangeException(nameof(value));
     }
 }
 

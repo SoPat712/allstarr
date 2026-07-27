@@ -18,11 +18,12 @@ public sealed record ProviderHealthProbeRequest
             ProviderCapabilityKind.Metadata or
             ProviderCapabilityKind.Playlist or
             ProviderCapabilityKind.Streaming or
-            ProviderCapabilityKind.Download))
+            ProviderCapabilityKind.Download or
+            ProviderCapabilityKind.Intelligence))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(targetCapability),
-                "SDK v1 health probes target metadata, playlist, streaming, or download.");
+                "SDK v1 health probes target metadata, playlist, streaming, download, or intelligence.");
         }
 
         TargetCapability = targetCapability;
