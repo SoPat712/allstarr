@@ -46,8 +46,6 @@
   const active = $derived(tabs.some((item) => item.id === section) ? section : "general");
   const generalSections = $derived((schema?.configSections ?? [])
     .filter((item) => item.id !== "spotify-import"));
-  const routingSections = $derived((schema?.configSections ?? [])
-    .filter((item) => item.id === "spotify-import"));
 
   function provider(id: string) {
     return schema?.providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
@@ -64,20 +62,30 @@
     if (refreshing) return;
     refreshing = true;
     error = "";
-    const results = await Promise.allSettled([
-      home.schema(),
-      settings.config(),
-      sources.accounts(),
-      settings.storage(),
-      settings.cache(),
-      settings.cachePreview(),
-    ]);
-    if (results[0].status === "fulfilled") schema = results[0].value;
-    if (results[1].status === "fulfilled") config = results[1].value;
-    if (results[2].status === "fulfilled") accounts = results[2].value.accounts;
-    if (results[3].status === "fulfilled") storage = results[3].value;
-    if (results[4].status === "fulfilled") cache = results[4].value;
-    if (results[5].status === "fulfilled") cachePreview = results[5].value;
+    const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
+    if (active === "general" || active === "routing")
+      requests.push(["config", settings.config()]);
+    if (active === "accounts") requests.push(["accounts", sources.accounts()]);
+    if (active === "maintenance") requests.push(
+      ["storage", settings.storage()],
+      ["cache", settings.cache()],
+      ["cachePreview", settings.cachePreview()],
+    );
+    const results = await Promise.allSettled(requests.map((request) => request[1]));
+    results.forEach((result, index) => {
+      if (result.status !== "fulfilled") return;
+      const label = requests[index][0];
+      if (label === "schema") schema = result.value as UiSchema;
+      if (label === "config") config = result.value as Record<string, unknown>;
+      if (label === "accounts")
+        accounts = (result.value as Awaited<ReturnType<typeof sources.accounts>>).accounts;
+      if (label === "storage")
+        storage = result.value as Awaited<ReturnType<typeof settings.storage>>;
+      if (label === "cache")
+        cache = result.value as Awaited<ReturnType<typeof settings.cache>>;
+      if (label === "cachePreview")
+        cachePreview = result.value as Awaited<ReturnType<typeof settings.cachePreview>>;
+    });
     if (schema) {
       orders = Object.fromEntries((schema.priorityGroups ?? [])
         .map((group) => [group.id, routingOrder(config, group)]));
@@ -276,21 +284,6 @@
             </section>
           {/each}
         </div>
-        {#each routingSections as item}
-          <details class="panel settings-disclosure">
-            <summary><span><strong>{item.label}</strong><small>Matching schedule</small></span></summary>
-            <form class="settings-fields" onsubmit={(event) => void saveSection(event, item)}>
-              {#each item.fields as field}
-                <label class="setting-field">
-                  <span><strong>{field.label}</strong></span>
-                  {#if field.type === "toggle"}<input name={field.key} type="checkbox" checked={Boolean(fieldValue(config, field))} />
-                  {:else}<input name={field.key} type="number" value={String(fieldValue(config, field))} min={field.min ?? undefined} max={field.max ?? undefined} />{/if}
-                </label>
-              {/each}
-              <footer><button class="button-primary" type="submit">Save matching settings</button></footer>
-            </form>
-          </details>
-        {/each}
       </div>
     {:else if active === "extensions"}
       <div class="settings-stack">
@@ -323,10 +316,6 @@
             <header><div><strong>Playlist pipeline</strong><small>Source access and playable materialization</small></div></header>
             <button class="button-secondary" type="button" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</button>
           </article>
-        </section>
-        <section class="panel maintenance-transfer">
-          <div><strong>Selective state transfer</strong><p>The current browser-memory prototype is intentionally absent. Its replacement requires server-validated streaming preview, conflict reporting, confirmation, progress, and cancellation.</p></div>
-          <span class="status-pill suggested">Redesign pending</span>
         </section>
       </div>
     {/if}

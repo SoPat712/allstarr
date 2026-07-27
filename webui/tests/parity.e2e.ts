@@ -350,7 +350,7 @@ for (const viewport of viewports) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page);
       await page.goto("#/settings/extensions");
-      await expect.poll(() => page.locator(".segmented-tab-indicator").evaluate((element) =>
+      await expect.poll(() => page.locator(".settings-tabs > .segmented-tab-indicator").evaluate((element) =>
         Number.parseFloat(getComputedStyle(element).transitionDuration))).toBeLessThanOrEqual(0.01);
       await page.getByRole("button", { name: "Install extension" }).click();
       const dialog = page.getByRole("dialog", { name: "Install extension" });
@@ -671,6 +671,27 @@ test("Sources keep primary actions visible and report scoped degradation", async
   await listener.goto("#/sources");
   await expect(listener.getByText("Source readiness may be stale.")).toBeVisible();
   await expect(listener.getByText("Connections are administrator-managed")).toBeVisible();
+});
+
+test("Settings loads only the active section owners", async ({ page }) => {
+  const requests: string[] = [];
+  page.on("request", (request) => requests.push(new URL(request.url()).pathname));
+  await mockApi(page);
+  await page.goto("#/settings/general");
+  await expect(page.getByRole("heading", { name: "General", level: 2 })).toBeVisible();
+  expect(requests).toContain("/api/admin/config");
+  expect(requests).not.toContain("/api/admin/provider-accounts");
+  expect(requests).not.toContain("/api/admin/storage");
+  expect(requests).not.toContain("/api/admin/cache");
+
+  requests.length = 0;
+  await page.getByRole("tab", { name: "Maintenance" }).click();
+  await expect(page.getByRole("heading", { name: "Maintenance", level: 2 })).toBeVisible();
+  await expect.poll(() => requests.includes("/api/admin/cache/maintenance/preview")).toBe(true);
+  expect(requests).toContain("/api/admin/storage");
+  expect(requests).toContain("/api/admin/cache");
+  expect(requests).not.toContain("/api/admin/config");
+  expect(requests).not.toContain("/api/admin/provider-accounts");
 });
 
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
