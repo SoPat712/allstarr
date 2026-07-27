@@ -33,9 +33,10 @@
   let previousPermissions = $state<ExtensionPermission[]>([]);
   let decisions = $state<Record<string, boolean>>({});
   let permissionConfirmed = $state(false);
+  let activatePackage = $state<ExtensionPackage | null>(null);
   let removePackage = $state<ExtensionPackage | null>(null);
   let removeRegistry = $state<ExtensionRegistry | null>(null);
-  let removeOpen = $state(false);
+  let confirmOpen = $state(false);
 
   const installed = $derived(currentPackages(packages));
   const available = $derived(availablePackages(store, installed)
@@ -157,11 +158,16 @@
         value: item.permissionValue,
         approved: decisions[item.id],
       })));
-      if (reviewed.state.toLowerCase() === "staged") await extensions.activate(reviewed);
       reviewPackage = null;
       reviewOpen = false;
-      feedback = "Extension permissions saved and runtime enabled.";
-      await refresh();
+      if (reviewed.state.toLowerCase() === "staged") {
+        activatePackage = reviewed;
+        feedback = "Extension permissions saved. Confirm activation to start its runtime.";
+        confirmOpen = true;
+      } else {
+        feedback = "Extension permissions saved.";
+        await refresh();
+      }
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "Permission review failed.";
     } finally {
@@ -177,6 +183,7 @@
   }
 
   function confirmRemoval(item: ExtensionPackage | ExtensionRegistry) {
+    activatePackage = null;
     if ("extensionId" in item) {
       removePackage = item;
       removeRegistry = null;
@@ -184,15 +191,25 @@
       removeRegistry = item;
       removePackage = null;
     }
-    removeOpen = true;
+    confirmOpen = true;
   }
 
-  async function remove() {
-    if (removePackage)
+  function confirmActivation(item: ExtensionPackage) {
+    activatePackage = item;
+    removePackage = null;
+    removeRegistry = null;
+    confirmOpen = true;
+  }
+
+  async function confirm() {
+    if (activatePackage)
+      await run(`activate:${activatePackage.id}`, () => extensions.activate(activatePackage!), "Extension enabled.");
+    else if (removePackage)
       await run(`remove:${removePackage.id}`, () => extensions.uninstall(removePackage!), "Extension uninstalled. Saved Source accounts were retained.");
     else if (removeRegistry)
       await run(`registry:${removeRegistry.id}`, () => extensions.removeRegistry(removeRegistry!), "Extension registry removed.");
-    removeOpen = false;
+    confirmOpen = false;
+    activatePackage = null;
     removePackage = null;
     removeRegistry = null;
   }
@@ -239,7 +256,7 @@
             <span class={`status-pill ${item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}`}>{humanize(item.state)}</span>
             <div class="extension-actions">
               {#if item.permissionReviewRequired}<button class="button-primary" type="button" onclick={() => void openReview(item)}>Review permissions</button>
-              {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.activate(item), "Extension enabled.")}>Enable</button>
+              {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<button class="button-primary" type="button" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</button>
               {:else if item.active}<button type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</button>{/if}
               {#if item.active && item.previousPackageId}<button type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.rollback(item), "Previous extension version restored.")}>Rollback</button>{/if}
               {#if ["active", "disabled"].includes(item.state.toLowerCase())}<button type="button" disabled={Boolean(action)} onclick={() => void run(item.id, () => extensions.revokePermissions(item), "Permissions revoked. Review is required before re-enabling.")}>Review access</button>{/if}
@@ -325,15 +342,15 @@
         {/each}
       </div>
       <label class="permission-confirm"><input type="checkbox" bind:checked={permissionConfirmed} /><span>I understand the access requested by this extension.</span></label>
-      <footer class="dialog-actions"><button class="button-secondary" type="button" onclick={() => void cancelReview()}>Cancel installation</button><button class="button-primary" type="button" disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>Approve and enable</button></footer>
+      <footer class="dialog-actions"><button class="button-secondary" type="button" onclick={() => void cancelReview()}>Cancel installation</button><button class="button-primary" type="button" disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>Save review</button></footer>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
 
-  <AlertDialog.Root bind:open={removeOpen}>
+  <AlertDialog.Root bind:open={confirmOpen}>
     <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class="confirm-dialog">
-      <AlertDialog.Title>{removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
-      <AlertDialog.Description>{removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
-      <footer><AlertDialog.Cancel class="button-secondary">Cancel</AlertDialog.Cancel><AlertDialog.Action class="button-danger" onclick={() => void remove()}>{removePackage ? "Uninstall" : "Remove registry"}</AlertDialog.Action></footer>
+      <AlertDialog.Title>{activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
+      <AlertDialog.Description>{activatePackage ? "The reviewed runtime will start with only the approved capabilities and permissions." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
+      <footer><AlertDialog.Cancel class="button-secondary">Cancel</AlertDialog.Cancel><AlertDialog.Action class={activatePackage ? "button-primary" : "button-danger"} onclick={() => void confirm()}>{activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</AlertDialog.Action></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>
 {/if}

@@ -445,6 +445,24 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
     contentType: "application/json",
     body: JSON.stringify([permission("new-network", "network", "https://api.example.test/"), permission("new-secret", "secret", "accountToken")]),
   }));
+  await page.route("**/packages/new/review", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      ...basePackage, id: "new", version: "2.0.0", state: "staged",
+      previousPackageId: "old", revision: 2,
+    }),
+  }));
+  let activationRequests = 0;
+  await page.route("**/packages/new/activate", (route) => {
+    activationRequests++;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...basePackage, id: "new", version: "2.0.0", state: "active",
+        active: true, previousPackageId: "old", revision: 3,
+      }),
+    });
+  });
 
   await page.goto("#/settings/extensions");
   await page.getByRole("button", { name: "Review permissions" }).click();
@@ -452,7 +470,16 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(review.getByText("Update 1.0.0 → 2.0.0. Capability and permission changes are shown below.")).toBeVisible();
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
-  await expect(review.getByRole("button", { name: "Approve and enable" })).toBeInViewport();
+  await expect(review.getByRole("button", { name: "Save review" })).toBeInViewport();
+  for (const button of await review.getByRole("button", { name: "Allow" }).all())
+    await button.click();
+  await review.getByRole("checkbox").check();
+  await review.getByRole("button", { name: "Save review" }).click();
+  const activation = page.getByRole("alertdialog", { name: "Activate Lumen Audio?" });
+  await expect(activation).toBeVisible();
+  expect(activationRequests).toBe(0);
+  await activation.getByRole("button", { name: "Activate extension" }).click();
+  await expect.poll(() => activationRequests).toBe(1);
 });
 
 test("Add playlist prioritizes local and configured Sources on mobile", async ({ page }) => {
